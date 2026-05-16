@@ -32,3 +32,5 @@ jobs:
 
   network-exposure-lint:
     uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@main
+    with:
+      compose_paths: ''
