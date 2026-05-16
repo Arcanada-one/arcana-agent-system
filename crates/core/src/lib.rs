@@ -2,6 +2,11 @@
 //!
 //! Skeleton stage; real surface lands in subsequent releases.
 
+pub mod agent_loop;
+pub mod cost;
+pub mod permission;
+pub mod tool;
+
 #[must_use]
 pub fn skeleton_marker() -> &'static str {
     "arcana-core bootstrap"

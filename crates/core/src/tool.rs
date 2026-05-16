@@ -1,0 +1,114 @@
+//! Tool trait + dispatcher seam.
+//!
+//! Tools are the only place the agent loop is permitted to perform
+//! external I/O. The trait is intentionally minimal in Phase 1: name,
+//! human-readable description, JSON-Schema for the input, and an async
+//! `execute` step. Built-in tools (Read/Edit/Write/Bash/Grep/WebFetch)
+//! land in a subsequent task; the dispatcher here only owns the registry
+//! and the lookup path.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde_json::Value;
+use thiserror::Error;
+
+/// Successful tool result fed back into the agent loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolOutput {
+    pub content: String,
+    pub metadata: Option<Value>,
+}
+
+/// Recoverable failure surface emitted by a tool implementation.
+#[derive(Debug, Error)]
+pub enum ToolError {
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+    #[error("execution failed: {0}")]
+    ExecutionFailed(String),
+    #[error("not implemented")]
+    NotImplemented,
+}
+
+/// Trait every concrete tool implements.
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+    fn input_schema(&self) -> Value;
+    async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError>;
+}
+
+/// Failure modes raised by the dispatcher itself, not by an individual tool.
+#[derive(Debug, Error)]
+pub enum DispatchError {
+    #[error("tool not registered: {0}")]
+    Unknown(String),
+    #[error("tool already registered: {0}")]
+    DuplicateRegistration(String),
+    #[error(transparent)]
+    Tool(#[from] ToolError),
+}
+
+/// Owns the active tool set and routes calls by name.
+#[derive(Default)]
+pub struct ToolDispatcher {
+    tools: HashMap<String, Arc<dyn Tool>>,
+}
+
+impl ToolDispatcher {
+    /// Construct an empty dispatcher.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a tool by its declared name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatchError::DuplicateRegistration`] when a tool with
+    /// the same name is already registered.
+    pub fn register(&mut self, tool: Arc<dyn Tool>) -> Result<(), DispatchError> {
+        let name = tool.name().to_owned();
+        if self.tools.contains_key(&name) {
+            return Err(DispatchError::DuplicateRegistration(name));
+        }
+        self.tools.insert(name, tool);
+        Ok(())
+    }
+
+    /// Number of registered tools.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tools.len()
+    }
+
+    /// True when no tools are registered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
+
+    /// Resolve a tool by name (lookup helper for the agent loop).
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.get(name).cloned()
+    }
+
+    /// Look up the tool by name and run it against `input`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatchError::Unknown`] when no tool is registered under
+    /// `name`, or the underlying [`ToolError`] when the tool itself fails.
+    pub async fn dispatch(&self, name: &str, input: Value) -> Result<ToolOutput, DispatchError> {
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| DispatchError::Unknown(name.to_owned()))?;
+        tool.execute(input).await.map_err(DispatchError::Tool)
+    }
+}
