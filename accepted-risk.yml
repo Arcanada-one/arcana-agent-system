@@ -4,4 +4,13 @@
 # Source-of-truth — SECURITY.md § Accepted Risks renders from this file.
 
 schema_version: 1
-entries: []
+
+entries:
+  - id: RUSTSEC-2023-0071
+    pkg: rsa
+    severity: medium
+    scope: transitive
+    reason: not-applicable to this project; PASETO V1 (RSA-based) is never used here. The PASETO surface is OIDC ID-token verification only (Ed25519 / Vault Transit) per the Auth Arcana RP contract; the `rsa` crate is not in `cargo tree`. Re-review on each major dependency change.
+    last_review: 2026-05-16
+    re_review: 2026-08-14
+    reviewed_by: agent
