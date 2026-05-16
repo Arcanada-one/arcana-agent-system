@@ -1,0 +1,7 @@
+# Accepted security-risk register
+# Schema: v1
+# Canonical template: Projects/Datarim/code/datarim/templates/accepted-risk.yml
+# Source-of-truth — SECURITY.md § Accepted Risks renders from this file.
+
+schema_version: 1
+risks: []

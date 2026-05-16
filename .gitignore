@@ -1,0 +1,34 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock.bak
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+
+# Datarim workflow state (local, per File Sync Policy)
+/datarim/
+
+# Ephemeral docs (transient working material)
+/docs/ephemeral/
+
+# Build / dist artefacts
+/dist/
+/build/
+
+# Logs
+*.log
+
+# Credentials — defence in depth (canonical store is Vault per CLAUDE.md)
+*.pem
+*.key
+*.token
+**/Credentials/**
+.env
+.env.*
+!.env.example

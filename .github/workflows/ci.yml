@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+
+  security-audit:
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@main
+    with:
+      stack: rust_cargo
+
+  network-exposure-lint:
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@main

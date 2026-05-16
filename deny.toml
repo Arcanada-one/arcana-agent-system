@@ -1,0 +1,52 @@
+# cargo-deny configuration
+# Arcanada Agent System — license + advisory + bans + sources policy
+# Decided-by: agent (FB-4). Rationale: without deny.toml cargo-deny uses a
+# default config that rejects all licenses. A minimal Rust-ecosystem allow-list
+# covering MIT, Apache-2.0, BSD-3-Clause, ISC, and Unicode-3.0 is the de-facto
+# standard for Rust projects; all added deps (clap, assert_cmd, predicates)
+# carry MIT OR Apache-2.0. Unicode-3.0 is required by unicode-ident (proc-macro
+# transitive dep). ISC covers libc on some targets.
+
+[licenses]
+# Minimum confidence threshold for license text matching.
+confidence-threshold = 0.8
+
+# SPDX identifiers that are explicitly allowed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# Clarifications for licenses detected via file scan (not SPDX field).
+[[licenses.clarify]]
+name = "unicode-ident"
+version = "*"
+expression = "(MIT OR Apache-2.0) AND Unicode-3.0"
+license-files = [
+    { path = "LICENSE-UNICODE", hash = 0x785640d5 },
+    { path = "LICENSE-MIT", hash = 0x001c7e6c },
+    { path = "LICENSE-APACHE", hash = 0xd6ad9c15 },
+]
+
+[advisories]
+# Reject any crate with an unpatched security advisory.
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+
+[bans]
+# Warn on duplicate versions of direct dependencies.
+multiple-versions = "warn"
+# workspace path dependencies have no version — allow them.
+wildcards = "allow"
+
+[sources]
+# Only allow crates.io and local path sources.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

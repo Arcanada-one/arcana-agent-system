@@ -1,0 +1,26 @@
+# Auth Arcana dependency graph entry
+# Required at repo root per the Arcanada Auth Arcana Mandate.
+
+service: arcana-agent-system
+repo: Arcanada-one/arcana-agent-system
+auth_arcana_min_version: "0.1.0"   # update after first OIDC integration commit
+last_validated: null                # set after Phase 2 integration verification
+integration_status: planned         # planned | in_progress | active | deprecated
+
+# Scopes the CLI will request once OIDC RP is wired
+oidc_scopes:
+  - openid
+  - profile
+  - email
+  - offline_access
+
+# Token surfaces consumed
+consumes:
+  - jwks                  # https://auth.arcanada.one/.well-known/jwks.json
+  - userinfo
+  - device_authorization  # CLI device-code flow planned
+  - arc_pat_*             # personal access tokens
+  - arc_api_*             # service API keys (if CLI ever runs unattended)
+
+# Reverse direction — what this service exposes to Auth Arcana (none for a CLI)
+exposes: []
