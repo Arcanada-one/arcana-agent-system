@@ -57,6 +57,12 @@ pub enum RuleLoadError {
         #[source]
         source: regex::Error,
     },
+    #[error("failed to canonicalize permission file path `{path}`: {source}")]
+    Canonicalize {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Pre-compiled rule set for one tool.
@@ -104,23 +110,24 @@ impl RuleLayer {
     /// Load user-level and (optionally) project-local rule files. Missing
     /// files are tolerated; parse / size / schema errors are surfaced.
     ///
+    /// Paths are canonicalized internally before reading so that all
+    /// diagnostics, error messages, and downstream identifiers reference
+    /// the real on-disk file rather than a relative path or symlink alias.
+    /// Callers do not need to pre-canonicalize.
+    ///
     /// # Errors
     ///
-    /// Returns [`RuleLoadError`] when a file exceeds the size cap, fails to
-    /// parse, declares an unsupported schema version, or contains an
-    /// uncompilable regex.
+    /// Returns [`RuleLoadError`] when path canonicalization fails (file
+    /// exists but cannot be resolved — typically EACCES on a parent
+    /// directory), when a file exceeds the size cap, fails to parse,
+    /// declares an unsupported schema version, or contains an uncompilable
+    /// regex.
     pub fn load(
         user_path: Option<&Path>,
         project_path: Option<&Path>,
     ) -> Result<Self, RuleLoadError> {
-        let user = match user_path {
-            Some(p) if p.exists() => load_snapshot(p)?,
-            _ => RuleSnapshot::default(),
-        };
-        let project = match project_path {
-            Some(p) if p.exists() => load_snapshot(p)?,
-            _ => RuleSnapshot::default(),
-        };
+        let user = load_optional_snapshot(user_path)?;
+        let project = load_optional_snapshot(project_path)?;
         Ok(Self { user, project })
     }
 
@@ -259,6 +266,20 @@ fn extract_host(url: &str) -> Option<String> {
     } else {
         Some(host.to_string())
     }
+}
+
+fn load_optional_snapshot(path: Option<&Path>) -> Result<RuleSnapshot, RuleLoadError> {
+    let Some(raw_path) = path else {
+        return Ok(RuleSnapshot::default());
+    };
+    if !raw_path.exists() {
+        return Ok(RuleSnapshot::default());
+    }
+    let canonical = fs::canonicalize(raw_path).map_err(|source| RuleLoadError::Canonicalize {
+        path: raw_path.to_path_buf(),
+        source,
+    })?;
+    load_snapshot(&canonical)
 }
 
 fn load_snapshot(path: &Path) -> Result<RuleSnapshot, RuleLoadError> {

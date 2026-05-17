@@ -249,3 +249,70 @@ async fn missing_files_tolerated() {
         .then_some(())
         .expect("expected Defer when no rules");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn project_path_via_symlink_loads_correctly() {
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().expect("tempdir");
+    let real_target = dir.path().join("real-permissions.toml");
+    std::fs::write(
+        &real_target,
+        r#"schema_version = 1
+
+[mcp]
+allow = ['^linear/']
+"#,
+    )
+    .expect("write real file");
+
+    let symlink = dir.path().join(".arcana-permissions.toml");
+    std::os::unix::fs::symlink(&real_target, &symlink).expect("symlink");
+
+    let layer = RuleLayer::load(None, Some(&symlink)).expect("load via symlink");
+
+    let allowed = layer.evaluate("mcp:linear/list", &json!({})).await;
+    matches!(allowed, LayerDecision::Allow)
+        .then_some(())
+        .expect("symlinked project rules must reach evaluation path identically to direct path");
+
+    let denied = layer.evaluate("mcp:slack/post", &json!({})).await;
+    matches!(denied, LayerDecision::Deny(_))
+        .then_some(())
+        .expect("MCP default-deny invariant must survive symlinked load");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn bad_regex_through_symlink_reports_canonical_path() {
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().expect("tempdir");
+    let real_target = dir.path().join("real-permissions.toml");
+    std::fs::write(
+        &real_target,
+        r#"schema_version = 1
+
+[tool.bash]
+allow_commands = ['(unclosed']
+"#,
+    )
+    .expect("write real file");
+    let canonical_target = std::fs::canonicalize(&real_target).expect("canonicalize");
+
+    let symlink = dir.path().join(".arcana-permissions.toml");
+    std::os::unix::fs::symlink(&real_target, &symlink).expect("symlink");
+
+    let err = RuleLayer::load(None, Some(&symlink)).expect_err("bad regex must surface");
+    match err {
+        RuleLoadError::BadRegex { path, .. } => {
+            assert_eq!(
+                path, canonical_target,
+                "diagnostic path must be canonical, not the symlink alias \
+                 (operator copies the path from the error to debug)"
+            );
+        }
+        other => panic!("expected BadRegex, got {other:?}"),
+    }
+}
