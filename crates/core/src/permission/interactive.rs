@@ -64,9 +64,9 @@ impl AutoFromEnv {
     /// process environment at call time.
     #[must_use]
     pub fn from_env() -> Self {
-        let directive = env::var(ENV_AUTO_DIRECTIVE)
-            .map(|raw| InteractiveDirective::parse(&raw))
-            .unwrap_or(InteractiveDirective::Ask);
+        let directive = env::var(ENV_AUTO_DIRECTIVE).map_or(InteractiveDirective::Ask, |raw| {
+            InteractiveDirective::parse(&raw)
+        });
         Self { directive }
     }
 
