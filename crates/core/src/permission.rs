@@ -12,6 +12,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
+use crate::tool::ToolDispatcher;
+
 /// Verdict returned by a single layer.
 #[derive(Debug, Clone)]
 pub enum LayerDecision {
@@ -81,6 +83,42 @@ impl PermissionCascade {
         }
         CascadeOutcome::Allowed {
             transformed_input: current,
+        }
+    }
+}
+
+/// Layer 1 of the permission cascade: validate the payload against the
+/// tool's declared JSON Schema before any downstream gate runs.
+///
+/// `SchemaLayer` defers when the schema accepts the input — letting
+/// `PreHook` / `Rule` / `Interactive` layers carry the rest of the decision.
+/// It denies when the tool is unknown or when the payload violates the
+/// schema, short-circuiting the cascade.
+pub struct SchemaLayer {
+    dispatcher: Arc<ToolDispatcher>,
+}
+
+impl SchemaLayer {
+    /// Construct a layer that resolves tools through `dispatcher`.
+    #[must_use]
+    pub fn new(dispatcher: Arc<ToolDispatcher>) -> Self {
+        Self { dispatcher }
+    }
+}
+
+#[async_trait]
+impl PermissionLayer for SchemaLayer {
+    fn name(&self) -> &'static str {
+        "schema"
+    }
+
+    async fn evaluate(&self, tool: &str, input: &Value) -> LayerDecision {
+        let Some(handle) = self.dispatcher.get(tool) else {
+            return LayerDecision::Deny(format!("unknown tool: {tool}"));
+        };
+        match handle.validate_input(input).await {
+            Ok(()) => LayerDecision::Defer,
+            Err(err) => LayerDecision::Deny(format!("schema: {err}")),
         }
     }
 }

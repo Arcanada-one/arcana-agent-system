@@ -39,6 +39,32 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &'static str;
     fn input_schema(&self) -> Value;
     async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError>;
+
+    /// Validate `input` against the JSON Schema returned by [`Tool::input_schema`].
+    ///
+    /// The default implementation compiles the schema with `jsonschema` and
+    /// rejects mismatched payloads as [`ToolError::InvalidInput`]. Concrete
+    /// tools rarely override this — they only need a precise `input_schema`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolError::ExecutionFailed`] when the schema itself fails
+    /// to compile, and [`ToolError::InvalidInput`] when the payload does
+    /// not satisfy the schema.
+    async fn validate_input(&self, input: &Value) -> Result<(), ToolError> {
+        let schema = self.input_schema();
+        let validator = jsonschema::validator_for(&schema)
+            .map_err(|err| ToolError::ExecutionFailed(format!("schema compile: {err}")))?;
+        if validator.is_valid(input) {
+            return Ok(());
+        }
+        let detail = validator
+            .iter_errors(input)
+            .map(|err| err.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(ToolError::InvalidInput(detail))
+    }
 }
 
 /// Failure modes raised by the dispatcher itself, not by an individual tool.
