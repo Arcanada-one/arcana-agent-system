@@ -62,8 +62,9 @@ allow = ['<regex>', ...]            # default-deny without an explicit match
 
 Tools that publish their input via a different field name are not
 restricted by Layer 3 today; the schema gate (Layer 1) is their first
-defence. Backlog items ARAS-0021 / ARAS-0022 / ARAS-0023 wire enforcement
-into the tool implementations themselves.
+defence. Per-tool enforcement (Bash regex sandbox, WebFetch host
+allowlist, path-traversal guards on Read/Write/Edit) is wired in the
+tool implementations themselves in subsequent releases.
 
 ## Evaluation order
 
@@ -84,10 +85,9 @@ For MCP tools (`mcp:<name>`):
 2. If any `[mcp] allow` pattern matches → **`Allow`**.
 3. Otherwise → **`Deny`** (`"no explicit allow for MCP tool: <name>"`).
 
-This is the **default-deny invariant** for MCP tools (PRD-ARAS-0001
-§ 9.2 V-AC-15). It is not configurable; an operator who wants a
-permissive MCP posture authors a broad pattern (e.g. `allow = [".*"]`)
-explicitly.
+This is the **default-deny invariant** for MCP tools. It is not
+configurable; an operator who wants a permissive MCP posture authors a
+broad pattern (e.g. `allow = [".*"]`) explicitly.
 
 ## Worked example
 
