@@ -4,6 +4,7 @@
 
 pub mod agent_loop;
 pub mod cost;
+pub mod hooks;
 pub mod permission;
 pub mod tool;
 
