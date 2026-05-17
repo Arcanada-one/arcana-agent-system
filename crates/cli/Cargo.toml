@@ -8,17 +8,27 @@ repository.workspace = true
 authors.workspace = true
 description = "Interactive CLI agent for the Arcanada service mesh"
 
+[lib]
+name = "arcana_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "arcana"
 path = "src/main.rs"
 
 [dependencies]
 arcana-core = { path = "../core" }
+async-trait = "0.1"
 clap = { version = "4.5", features = ["derive", "cargo"] }
+rustyline = "14"
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

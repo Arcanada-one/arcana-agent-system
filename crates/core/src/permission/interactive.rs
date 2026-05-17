@@ -3,9 +3,9 @@
 //! Provides a sealed [`InteractiveLayer`] trait extending [`PermissionLayer`]
 //! plus an [`AutoFromEnv`] implementation that resolves the verdict from the
 //! `ARCANA_PERMISSION_AUTO` environment variable without touching the
-//! terminal. The CLI ships a [`ReadlinePrompt`](https://docs.rs/rustyline)
-//! implementation in `crates/cli`; the TUI (ARAS-0015) will eventually add
-//! a `RatatuiPrompt`.
+//! terminal. The CLI ships a `ReadlinePrompt` impl (rustyline 14) in
+//! `crates/cli/src/permission_prompt.rs` for the human REPL path; the TUI
+//! (ARAS-0015) will eventually add a `RatatuiPrompt`.
 
 use std::env;
 
