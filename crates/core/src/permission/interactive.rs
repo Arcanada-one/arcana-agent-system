@@ -4,8 +4,8 @@
 //! plus an [`AutoFromEnv`] implementation that resolves the verdict from the
 //! `ARCANA_PERMISSION_AUTO` environment variable without touching the
 //! terminal. The CLI ships a `ReadlinePrompt` impl (rustyline 14) in
-//! `crates/cli/src/permission_prompt.rs` for the human REPL path; the TUI
-//! (ARAS-0015) will eventually add a `RatatuiPrompt`.
+//! `crates/cli/src/permission_prompt.rs` for the human REPL path; a future
+//! TUI integration will add a `RatatuiPrompt`.
 
 use std::env;
 
