@@ -210,3 +210,100 @@ async fn schema_deny_short_circuits_entire_cascade() {
     }
     assert_eq!(log.snapshot(), vec!["schema"]);
 }
+
+/// V-AC-15 (PRD § 9.2): integration test for default-deny on unknown MCP tool.
+///
+/// Assembles a realistic cascade — Layer 1 omitted (`Schema` validates against
+/// the dispatcher's registered tools; MCP tools live outside the built-in
+/// dispatcher); Layer 2 substituted with a `Defer` fake (hook bridge is
+/// wiring-only here); Layer 3 [`RuleLayer::empty`] (no operator-authored
+/// rules); Layer 4 [`AutoFromEnv`] with the `Ask` directive (non-TTY → Deny
+/// fallback). The contract: an `mcp:*` tool without explicit allow MUST
+/// resolve to `Denied { layer: "rule", reason: contains "no explicit allow
+/// for MCP" }`.
+#[tokio::test]
+async fn v_ac_15_default_deny_unknown_mcp_tool() {
+    use arcana_core::permission::{AutoFromEnv, InteractiveDirective, RuleLayer};
+
+    let log = Arc::new(CallLog::default());
+    let cascade = PermissionCascade::new(vec![
+        fake("prehook", LayerDecision::Defer, &log),
+        Arc::new(RuleLayer::empty()),
+        Arc::new(AutoFromEnv::with_directive(InteractiveDirective::Ask)),
+    ]);
+
+    let outcome = cascade.evaluate("mcp:unknown/foo", json!({"x": 1})).await;
+
+    match outcome {
+        CascadeOutcome::Denied { layer, reason } => {
+            assert_eq!(layer, "rule");
+            assert!(
+                reason.contains("no explicit allow for MCP"),
+                "expected MCP-default-deny reason, got: {reason}"
+            );
+        }
+        other => panic!("expected Denied at rule layer, got {other:?}"),
+    }
+}
+
+/// Complementary case (tiered posture D-3): built-in tools without explicit
+/// rule entries fall through to the Interactive layer. With `Allow`
+/// directive the cascade resolves to `Allowed`, documenting that built-in
+/// tools default-allow unless the operator restricts them.
+#[tokio::test]
+async fn builtin_tool_without_rules_falls_through_to_interactive_allow() {
+    use arcana_core::permission::{AutoFromEnv, InteractiveDirective, RuleLayer};
+
+    let log = Arc::new(CallLog::default());
+    let cascade = PermissionCascade::new(vec![
+        fake("prehook", LayerDecision::Defer, &log),
+        Arc::new(RuleLayer::empty()),
+        Arc::new(AutoFromEnv::with_directive(InteractiveDirective::Allow)),
+    ]);
+
+    let outcome = cascade.evaluate("read", json!({"path": "/tmp/x"})).await;
+
+    match outcome {
+        CascadeOutcome::Allowed { .. } => {}
+        other => panic!("expected Allowed via auto-allow, got {other:?}"),
+    }
+}
+
+/// First-Deny short-circuit invariant — exhaustive sweep over layer
+/// arrangements. For each ordering of `total` layers with exactly one forced
+/// `Deny` at position `deny_at`, downstream layers MUST NOT run. This is the
+/// in-test property-style coverage for the invariant declared in `RuleLayer`
+/// + cascade docs; full `proptest` integration is deferred (R-3 mitigation).
+#[tokio::test]
+async fn first_deny_short_circuit_sweep() {
+    for total in 2..=6_usize {
+        for deny_at in 0..total {
+            let log = Arc::new(CallLog::default());
+            let names: [&'static str; 6] = ["L0", "L1", "L2", "L3", "L4", "L5"];
+            let layers: Vec<Arc<dyn PermissionLayer>> = (0..total)
+                .map(|i| {
+                    let decision = if i == deny_at {
+                        LayerDecision::Deny(format!("denied-at-{i}"))
+                    } else {
+                        LayerDecision::Defer
+                    };
+                    fake(names[i], decision, &log)
+                })
+                .collect();
+            let cascade = PermissionCascade::new(layers);
+            let outcome = cascade.evaluate("read", json!({})).await;
+            match outcome {
+                CascadeOutcome::Denied { reason, .. } => {
+                    assert_eq!(reason, format!("denied-at-{deny_at}"));
+                }
+                other => panic!("expected Denied, got {other:?}"),
+            }
+            let snapshot = log.snapshot();
+            assert_eq!(
+                snapshot.len(),
+                deny_at + 1,
+                "downstream layers ran after deny at position {deny_at}: {snapshot:?}"
+            );
+        }
+    }
+}
