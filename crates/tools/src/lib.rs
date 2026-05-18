@@ -10,6 +10,7 @@
 pub mod bash;
 pub mod edit;
 pub mod grep;
+pub mod path_guard;
 pub mod read;
 pub mod webfetch;
 pub mod write;

@@ -20,7 +20,7 @@ async fn seed(dir: &tempfile::TempDir, body: &str) -> String {
 
 #[tokio::test]
 async fn edit_unique_substring_succeeds() {
-    let tool = EditTool::new();
+    let tool = EditTool::default();
     let dir = tempdir().expect("tempdir");
     let path = seed(&dir, "alpha BETA gamma").await;
     let output = tool
@@ -40,7 +40,7 @@ async fn edit_unique_substring_succeeds() {
 
 #[tokio::test]
 async fn edit_fails_when_old_string_not_found() {
-    let tool = EditTool::new();
+    let tool = EditTool::default();
     let dir = tempdir().expect("tempdir");
     let path = seed(&dir, "abc").await;
     let err = tool
@@ -56,7 +56,7 @@ async fn edit_fails_when_old_string_not_found() {
 
 #[tokio::test]
 async fn edit_fails_when_old_string_not_unique() {
-    let tool = EditTool::new();
+    let tool = EditTool::default();
     let dir = tempdir().expect("tempdir");
     let path = seed(&dir, "x x x").await;
     let err = tool
@@ -72,7 +72,7 @@ async fn edit_fails_when_old_string_not_unique() {
 
 #[tokio::test]
 async fn edit_fails_when_file_missing() {
-    let tool = EditTool::new();
+    let tool = EditTool::default();
     let err = tool
         .execute(json!({
             "path": "/nonexistent/arcana/edit-target.txt",

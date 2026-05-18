@@ -1,9 +1,19 @@
 //! `EditTool` — replace a unique substring inside a file.
+//!
+//! The constructor takes an `Arc<ToolRuleSet>` so the path-traversal guard
+//! (`path_guard::check`, CWE-22) can short-circuit denied paths before any
+//! filesystem I/O. [`EditTool::default`] ships a permissive rule set;
+//! production cascade wiring lands in the CLI bootstrap step.
 
+use std::sync::Arc;
+
+use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::tool::{Tool, ToolError, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+use crate::path_guard;
 
 #[derive(Debug, Deserialize)]
 struct EditInput {
@@ -12,13 +22,22 @@ struct EditInput {
     new_string: String,
 }
 
-#[derive(Default)]
-pub struct EditTool;
+pub struct EditTool {
+    rules: Arc<ToolRuleSet>,
+}
+
+impl Default for EditTool {
+    fn default() -> Self {
+        Self {
+            rules: Arc::new(ToolRuleSet::default()),
+        }
+    }
+}
 
 impl EditTool {
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(rules: Arc<ToolRuleSet>) -> Self {
+        Self { rules }
     }
 }
 
@@ -48,30 +67,36 @@ impl Tool for EditTool {
     async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
         let parsed: EditInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
-        let contents = tokio::fs::read_to_string(&parsed.path)
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(format!("read {}: {err}", parsed.path)))?;
+        let cwd = std::env::current_dir()
+            .map_err(|err| ToolError::ExecutionFailed(format!("cwd unavailable: {err}")))?;
+        let canonical = path_guard::check(&parsed.path, &self.rules, &cwd)?;
+        let contents = tokio::fs::read_to_string(&canonical).await.map_err(|err| {
+            ToolError::ExecutionFailed(format!("read {}: {err}", canonical.display()))
+        })?;
         let occurrences = contents.matches(&parsed.old_string).count();
         match occurrences {
             0 => Err(ToolError::ExecutionFailed(format!(
                 "old_string not found in {}",
-                parsed.path
+                canonical.display()
             ))),
             1 => {
                 let updated = contents.replacen(&parsed.old_string, &parsed.new_string, 1);
-                tokio::fs::write(&parsed.path, updated.as_bytes())
+                tokio::fs::write(&canonical, updated.as_bytes())
                     .await
                     .map_err(|err| {
-                        ToolError::ExecutionFailed(format!("write {}: {err}", parsed.path))
+                        ToolError::ExecutionFailed(format!("write {}: {err}", canonical.display()))
                     })?;
                 Ok(ToolOutput {
-                    content: format!("edited {}", parsed.path),
-                    metadata: Some(json!({ "path": parsed.path, "replacements": 1 })),
+                    content: format!("edited {}", canonical.display()),
+                    metadata: Some(json!({
+                        "path": canonical.to_string_lossy(),
+                        "replacements": 1
+                    })),
                 })
             }
             n => Err(ToolError::ExecutionFailed(format!(
                 "old_string is not unique in {}: {n} occurrences",
-                parsed.path
+                canonical.display()
             ))),
         }
     }

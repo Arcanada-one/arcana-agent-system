@@ -21,7 +21,7 @@ async fn write_temp(content: &[u8]) -> NamedTempFile {
 
 #[tokio::test]
 async fn read_existing_file_returns_content() {
-    let tool = ReadTool::new();
+    let tool = ReadTool::default();
     let file = write_temp(b"hello world").await;
     let path = file.path().to_string_lossy().into_owned();
     let output = tool
@@ -35,7 +35,7 @@ async fn read_existing_file_returns_content() {
 
 #[tokio::test]
 async fn read_missing_file_returns_execution_failed() {
-    let tool = ReadTool::new();
+    let tool = ReadTool::default();
     let err = tool
         .execute(json!({ "path": "/nonexistent/arcana/test/file.txt" }))
         .await
@@ -45,7 +45,7 @@ async fn read_missing_file_returns_execution_failed() {
 
 #[tokio::test]
 async fn read_rejects_oversized_file() {
-    let tool = ReadTool::new();
+    let tool = ReadTool::default();
     let file = write_temp(b"abcdefghij").await; // 10 bytes
     let path = file.path().to_string_lossy().into_owned();
     let err = tool
@@ -57,7 +57,7 @@ async fn read_rejects_oversized_file() {
 
 #[tokio::test]
 async fn read_schema_rejects_missing_path() {
-    let tool = ReadTool::new();
+    let tool = ReadTool::default();
     let err = tool
         .validate_input(&json!({}))
         .await
