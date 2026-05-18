@@ -57,12 +57,14 @@ async fn read_rejects_direct_etc_passwd() {
 #[tokio::test]
 #[cfg(unix)]
 async fn read_rejects_canonicalized_traversal() {
-    // /private/etc/../etc/passwd canonicalizes to /private/etc/passwd
-    // (and equivalently /etc/passwd resolves to /private/etc/passwd on macOS).
+    // `/tmp/../etc/passwd` canonicalizes by walking each segment through
+    // the filesystem:
+    //   Linux:  /tmp → /tmp;         ..  → /;        /etc/passwd → /etc/passwd.
+    //   macOS:  /tmp → /private/tmp; ..  → /private; /etc → /private/etc;
+    //           passwd → /private/etc/passwd.
+    // Both forms are caught by `^/(private/)?etc/passwd$`.
     let tool = ReadTool::new(deny_etc_passwd());
-    let result = tool
-        .execute(json!({ "path": "/private/etc/../etc/passwd" }))
-        .await;
+    let result = tool.execute(json!({ "path": "/tmp/../etc/passwd" })).await;
     assert_permission_denied(result);
 }
 
@@ -76,7 +78,7 @@ async fn write_rejects_etc_passwd_variants() {
     assert_permission_denied(direct);
     let traversal = tool
         .execute(json!({
-            "path": "/private/etc/../etc/passwd",
+            "path": "/tmp/../etc/passwd",
             "content": "hacked"
         }))
         .await;
@@ -97,7 +99,7 @@ async fn edit_rejects_etc_passwd_variants() {
     assert_permission_denied(direct);
     let traversal = tool
         .execute(json!({
-            "path": "/private/etc/../etc/passwd",
+            "path": "/tmp/../etc/passwd",
             "old_string": "root",
             "new_string": "pwn"
         }))
