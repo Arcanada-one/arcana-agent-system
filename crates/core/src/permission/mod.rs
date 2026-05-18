@@ -6,13 +6,23 @@
 //! mutates the working payload before the next layer evaluates. Layers that
 //! return `Defer` pass the responsibility on; if every layer defers, the
 //! cascade resolves to `Allowed` with the most recent payload.
+//!
+//! Canonical Phase 1 chain: `Schema → HookBridge → Rule → Interactive`.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::tool::ToolDispatcher;
+pub mod hook_bridge;
+pub mod interactive;
+pub mod rule;
+pub mod schema;
+
+pub use hook_bridge::HookBridgeLayer;
+pub use interactive::{AutoFromEnv, InteractiveDirective, InteractiveLayer};
+pub use rule::{RuleLayer, RuleLoadError};
+pub use schema::SchemaLayer;
 
 /// Verdict returned by a single layer.
 #[derive(Debug, Clone)]
@@ -53,7 +63,7 @@ impl PermissionCascade {
     /// Construct a cascade from an ordered layer list.
     ///
     /// The supplied order is the evaluation order. The canonical Phase 1
-    /// chain is `Schema → PreHook → Rule → Interactive`.
+    /// chain is `Schema → HookBridge → Rule → Interactive`.
     #[must_use]
     pub fn new(layers: Vec<Arc<dyn PermissionLayer>>) -> Self {
         Self { layers }
@@ -83,42 +93,6 @@ impl PermissionCascade {
         }
         CascadeOutcome::Allowed {
             transformed_input: current,
-        }
-    }
-}
-
-/// Layer 1 of the permission cascade: validate the payload against the
-/// tool's declared JSON Schema before any downstream gate runs.
-///
-/// `SchemaLayer` defers when the schema accepts the input — letting
-/// `PreHook` / `Rule` / `Interactive` layers carry the rest of the decision.
-/// It denies when the tool is unknown or when the payload violates the
-/// schema, short-circuiting the cascade.
-pub struct SchemaLayer {
-    dispatcher: Arc<ToolDispatcher>,
-}
-
-impl SchemaLayer {
-    /// Construct a layer that resolves tools through `dispatcher`.
-    #[must_use]
-    pub fn new(dispatcher: Arc<ToolDispatcher>) -> Self {
-        Self { dispatcher }
-    }
-}
-
-#[async_trait]
-impl PermissionLayer for SchemaLayer {
-    fn name(&self) -> &'static str {
-        "schema"
-    }
-
-    async fn evaluate(&self, tool: &str, input: &Value) -> LayerDecision {
-        let Some(handle) = self.dispatcher.get(tool) else {
-            return LayerDecision::Deny(format!("unknown tool: {tool}"));
-        };
-        match handle.validate_input(input).await {
-            Ok(()) => LayerDecision::Defer,
-            Err(err) => LayerDecision::Deny(format!("schema: {err}")),
         }
     }
 }
