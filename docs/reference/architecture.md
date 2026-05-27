@@ -37,6 +37,12 @@ user input → REPL → core::agent_loop
                     terminal UI render
 ```
 
+## Permission layer
+
+The cascade `Schema → HookBridge → Rule → Interactive` runs ahead of every tool dispatch (see `crates/core/src/permission/`). Filesystem tools (`Read`, `Write`, `Edit`) additionally route their `path` argument through `crates/tools/src/path_guard.rs::check()` before any I/O — a tool-internal seam against path traversal (CWE-22). The guard canonicalizes the input (resolving `..`, `.`, symlinks) and matches the canonical `PathBuf` against the active `ToolRuleSet`'s `deny_paths` and `allow_paths`. Matches block the call with `ToolError::PermissionDenied`.
+
+`Tool::default()` ships a permissive rule set so existing call sites are not regressed. Production rule loading — wiring a real `ToolRuleSet` derived from `permissions.toml` into the tool constructors — is the next step on the permission stack and lands in a follow-up CLI bootstrap task.
+
 ## Ecosystem boundaries (mandates apply)
 
 - All identity through Auth Arcana (per the Arcanada Auth Arcana Mandate).

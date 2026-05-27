@@ -23,13 +23,13 @@ use serde_json::json;
 fn registered_dispatcher() -> Arc<ToolDispatcher> {
     let mut dispatcher = ToolDispatcher::new();
     dispatcher
-        .register(Arc::new(ReadTool::new()))
+        .register(Arc::new(ReadTool::default()))
         .expect("read");
     dispatcher
-        .register(Arc::new(WriteTool::new()))
+        .register(Arc::new(WriteTool::default()))
         .expect("write");
     dispatcher
-        .register(Arc::new(EditTool::new()))
+        .register(Arc::new(EditTool::default()))
         .expect("edit");
     dispatcher
         .register(Arc::new(GrepTool::new()))

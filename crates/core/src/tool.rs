@@ -30,6 +30,8 @@ pub enum ToolError {
     ExecutionFailed(String),
     #[error("not implemented")]
     NotImplemented,
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
 }
 
 /// Trait every concrete tool implements.

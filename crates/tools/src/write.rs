@@ -1,11 +1,19 @@
 //! `WriteTool` — create or overwrite a file at the given path.
+//!
+//! The constructor takes an `Arc<ToolRuleSet>` so the path-traversal guard
+//! (`path_guard::check`, CWE-22) can short-circuit denied paths before any
+//! filesystem I/O. [`WriteTool::default`] ships a permissive rule set;
+//! production cascade wiring lands in the CLI bootstrap step.
 
-use std::path::Path;
+use std::sync::Arc;
 
+use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::tool::{Tool, ToolError, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+use crate::path_guard;
 
 #[derive(Debug, Deserialize)]
 struct WriteInput {
@@ -15,13 +23,22 @@ struct WriteInput {
     create_parent_dirs: bool,
 }
 
-#[derive(Default)]
-pub struct WriteTool;
+pub struct WriteTool {
+    rules: Arc<ToolRuleSet>,
+}
+
+impl Default for WriteTool {
+    fn default() -> Self {
+        Self {
+            rules: Arc::new(ToolRuleSet::default()),
+        }
+    }
+}
 
 impl WriteTool {
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(rules: Arc<ToolRuleSet>) -> Self {
+        Self { rules }
     }
 }
 
@@ -51,11 +68,14 @@ impl Tool for WriteTool {
     async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
         let parsed: WriteInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
+        let cwd = std::env::current_dir()
+            .map_err(|err| ToolError::ExecutionFailed(format!("cwd unavailable: {err}")))?;
+        let canonical = path_guard::check(&parsed.path, &self.rules, &cwd)?;
 
-        let existed = tokio::fs::metadata(&parsed.path).await.is_ok();
+        let existed = tokio::fs::metadata(&canonical).await.is_ok();
 
         if parsed.create_parent_dirs {
-            if let Some(parent) = Path::new(&parsed.path).parent() {
+            if let Some(parent) = canonical.parent() {
                 if !parent.as_os_str().is_empty() {
                     tokio::fs::create_dir_all(parent).await.map_err(|err| {
                         ToolError::ExecutionFailed(format!(
@@ -68,14 +88,16 @@ impl Tool for WriteTool {
         }
 
         let bytes_written = parsed.content.len();
-        tokio::fs::write(&parsed.path, parsed.content.as_bytes())
+        tokio::fs::write(&canonical, parsed.content.as_bytes())
             .await
-            .map_err(|err| ToolError::ExecutionFailed(format!("write {}: {err}", parsed.path)))?;
+            .map_err(|err| {
+                ToolError::ExecutionFailed(format!("write {}: {err}", canonical.display()))
+            })?;
 
         Ok(ToolOutput {
-            content: format!("wrote {bytes_written} bytes to {}", parsed.path),
+            content: format!("wrote {bytes_written} bytes to {}", canonical.display()),
             metadata: Some(json!({
-                "path": parsed.path,
+                "path": canonical.to_string_lossy(),
                 "bytes_written": bytes_written,
                 "created": !existed
             })),
