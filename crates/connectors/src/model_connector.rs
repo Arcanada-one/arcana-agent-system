@@ -178,15 +178,12 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
     })
 }
 
-/// `NestJS` `HttpException` body shape: `{message, error, statusCode}`.
+/// `NestJS` `HttpException` body shape `{message, error, statusCode}`. Only
+/// `message` is surfaced; `error` / `statusCode` are ignored (the HTTP status
+/// line already carries the code, and serde tolerates the extra fields).
 #[derive(serde::Deserialize)]
 struct NestExceptionEnvelope {
     message: String,
-    #[allow(dead_code)]
-    error: Option<String>,
-    #[serde(rename = "statusCode")]
-    #[allow(dead_code)]
-    status_code: Option<u16>,
 }
 
 #[cfg(test)]
