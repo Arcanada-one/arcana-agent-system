@@ -3,6 +3,7 @@
 //! Skeleton stage; real surface lands in subsequent releases.
 
 pub mod agent_loop;
+pub mod connector;
 pub mod cost;
 pub mod hooks;
 pub mod permission;

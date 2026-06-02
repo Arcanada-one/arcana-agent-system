@@ -85,6 +85,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "arcana-agent-system"
 version = "0.1.0"
 dependencies = [
+ "arcana-connectors",
  "arcana-core",
  "assert_cmd",
  "async-trait",
@@ -94,6 +95,21 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+]
+
+[[package]]
+name = "arcana-connectors"
+version = "0.1.0"
+dependencies = [
+ "arcana-core",
+ "async-trait",
+ "reqwest 0.13.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -1714,6 +1730,8 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
