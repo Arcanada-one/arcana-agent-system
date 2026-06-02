@@ -26,6 +26,9 @@ jobs:
         run: cargo test --workspace
 
   security-audit:
+    # The reusable workflow provisions the Rust toolchain itself for the
+    # rust_cargo profile, so this job runs on self-hosted runners without a
+    # pre-installed cargo.
     uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@main
     with:
       stack: rust_cargo
