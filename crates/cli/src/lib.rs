@@ -4,4 +4,5 @@
 //! integration tests. The binary stays a thin entrypoint; the substantive
 //! logic lives here so it can be unit-tested without spawning a subprocess.
 
+pub mod bootstrap;
 pub mod permission_prompt;
