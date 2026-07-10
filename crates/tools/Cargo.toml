@@ -6,9 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Built-in tools: Read, Write, Edit, Grep, Bash, WebFetch"
+description = "Built-in tools: Read, Write, Edit, Grep, Bash, WebFetch, ArcanaSearch"
 
 [dependencies]
+arcana-connectors = { path = "../connectors" }
 arcana-core = { path = "../core" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +25,7 @@ jsonschema = "0.30"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 wiremock = "0.6"
 tempfile = "3"
+url = "2"
 
 [lints]
 workspace = true
