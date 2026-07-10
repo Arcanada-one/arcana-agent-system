@@ -81,12 +81,14 @@ cargo build --release --target x86_64-unknown-linux-musl
 - **Modules:** snake_case, один публичный API на крейт через `lib.rs`.
 - **No `unsafe`:** запрещён без архитектурного review.
 - **Public surface hygiene:** no internal task IDs / PRD-refs в публикуемых артефактах (README, CHANGELOG, sources в crates.io).
+- **Atomic-only state:** when all state fits in independent atomic counters (`CostTracker`-style — no cross-field invariant to preserve), prefer bare `AtomicU64` fields over `Mutex`. `Mutex` is reserved for composite invariants (a snapshot that must stay consistent across multiple fields). Read PRD wordings like `Arc<Mutex<...>> + atomics` as `Arc<Self>` shared ownership with atomic fields, not a literal `Mutex`-wrapped struct. Reference: `crates/core/src/cost.rs::CostTracker`. (Source: reflection-ARAS-0003 evolution-proposal #1; approved 2026-05-16)
+- **Phase gate-set docs:** for tools/connectors/surfaces shipped behind a phased permission cascade, the module-level docstring MUST enumerate the gate-set in force for the current phase, the gate-set deferred to the next phase, and the operator constraint (e.g. "MUST NOT register without Layer N"). Reference: `crates/tools/src/bash.rs` Phase-1 schema-only header. (Source: reflection-ARAS-0004 evolution-proposal #3; approved 2026-05-16)
 
 ## Gotchas
 
 > Заполняется по ходу проекта. Каждая запись — одна строка, императив, конкретно.
 
-1. *(TODO: добавлять по факту)*
+1. `fs::canonicalize`-based path-traversal integration tests MUST use input path segments that exist on every supported unix target — `/tmp` is universal, `/private/etc` is macOS-only (real path behind the `/etc` symlink), `/dev/shm` is Linux-only. (Source: ARAS-0023 reflection lesson #1 — `documentation/archive/arcana-agent-system/archive-ARAS-0023.md`)
 
 ## Datarim Workflow
 
