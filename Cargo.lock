@@ -93,8 +93,11 @@ dependencies = [
  "predicates",
  "rustyline",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
+ "xdg",
 ]
 
 [[package]]

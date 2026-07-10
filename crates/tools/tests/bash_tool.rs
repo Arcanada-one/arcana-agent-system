@@ -5,9 +5,20 @@
     clippy::doc_markdown
 )]
 
-use arcana_core::tool::Tool;
+use std::io::Write;
+use std::sync::Arc;
+
+use arcana_core::permission::RuleLayer;
+use arcana_core::tool::{Tool, ToolError};
 use arcana_tools::bash::BashTool;
 use serde_json::json;
+use tempfile::NamedTempFile;
+
+fn write_toml(content: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::new().expect("tmpfile");
+    file.write_all(content.as_bytes()).expect("write");
+    file
+}
 
 #[tokio::test]
 async fn bash_exit_zero_captures_stdout() {
@@ -64,4 +75,45 @@ async fn bash_schema_rejects_missing_command() {
         .await
         .expect_err("schema must reject");
     assert!(err.to_string().to_lowercase().contains("command"), "{err}");
+}
+
+#[tokio::test]
+async fn bash_with_rules_denies_configured_deny_command() {
+    let file = write_toml(
+        r"schema_version = 1
+
+[tool.bash]
+deny_commands = ['rm -rf /']
+",
+    );
+    let rules = RuleLayer::load(Some(file.path()), None).expect("load rules");
+    let tool = BashTool::with_rules(Arc::new(rules));
+
+    let err = tool
+        .execute(json!({ "command": "rm -rf /" }))
+        .await
+        .expect_err("deny_commands rule must block execution");
+    assert!(
+        matches!(err, ToolError::PermissionDenied(_)),
+        "expected PermissionDenied, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn bash_with_rules_allows_non_matching_command() {
+    let file = write_toml(
+        r"schema_version = 1
+
+[tool.bash]
+deny_commands = ['rm -rf /']
+",
+    );
+    let rules = RuleLayer::load(Some(file.path()), None).expect("load rules");
+    let tool = BashTool::with_rules(Arc::new(rules));
+
+    let output = tool
+        .execute(json!({ "command": "echo hi" }))
+        .await
+        .expect("harmless command must still execute");
+    assert!(output.content.contains("hi"));
 }
