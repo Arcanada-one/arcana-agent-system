@@ -125,6 +125,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 | `docs/tutorials/` | Learning — onboarding для нового разработчика |
 | `docs/how-to/testing.md` | Test strategy, cargo test, integration tests |
 | `docs/how-to/deployment.md` | Release pipeline, cross-compile matrix, GitHub Releases |
+| `docs/how-to/install.md` | Binary-name collision probe + `cargo install` path |
 | `docs/how-to/gotchas.md` | Hard-won lessons |
 | `docs/reference/architecture.md` | System architecture, components, data flow |
 | `docs/explanation/` | Why Rust, design rationale, AAL plan |
