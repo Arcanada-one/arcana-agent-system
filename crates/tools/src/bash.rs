@@ -1,13 +1,25 @@
 //! `BashTool` — shell command execution with timeout and stderr capture.
 //!
 //! Phase 1 ships the tool behind a schema-only gate (Layer 1 of the
-//! permission cascade). Runtime allow/deny rules belong to Layer 3 and
-//! land in a subsequent task. Operators MUST NOT register `BashTool` in a
-//! cascade that lacks Layer 3 enforcement.
+//! permission cascade). `BashTool::new()` keeps that pre-Layer-3 behaviour
+//! unchanged — no rule checking, fully backward compatible — and remains
+//! genuinely unguarded: it MUST NOT be registered in a cascade that relies
+//! on `bash` respecting `permissions.toml`.
+//!
+//! `BashTool::with_rules` layers Layer 3 (`RuleLayer` / `permissions.toml`
+//! `[tool.bash] allow_commands` / `deny_commands`) directly onto `execute()`
+//! as a hard denylist backstop: an explicit `Deny` verdict blocks the
+//! command before `/bin/sh` is ever spawned. `Allow`, `Defer`, and
+//! `ReplaceInput` all fall through to normal execution — this is
+//! intentionally not a full re-implementation of the Schema/HookBridge/
+//! Interactive cascade, just the tool-local enforcement point Layer 3
+//! needs.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use arcana_core::permission::{LayerDecision, PermissionLayer, RuleLayer};
 use arcana_core::tool::{Tool, ToolError, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -26,12 +38,25 @@ struct BashInput {
 }
 
 #[derive(Default)]
-pub struct BashTool;
+pub struct BashTool {
+    rules: Option<Arc<RuleLayer>>,
+}
 
 impl BashTool {
+    /// Construct a `BashTool` with no Layer-3 enforcement. Pre-Layer-3
+    /// behaviour: every command reaches `/bin/sh` unchecked.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self { rules: None }
+    }
+
+    /// Construct a `BashTool` that consults `rules` before spawning a
+    /// shell. A `Deny` verdict from the `RuleLayer` short-circuits
+    /// `execute()` with `ToolError::PermissionDenied` before `/bin/sh` is
+    /// invoked.
+    #[must_use]
+    pub fn with_rules(rules: Arc<RuleLayer>) -> Self {
+        Self { rules: Some(rules) }
     }
 }
 
@@ -62,6 +87,12 @@ impl Tool for BashTool {
     }
 
     async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
+        if let Some(rules) = &self.rules {
+            if let LayerDecision::Deny(reason) = rules.evaluate("bash", &input).await {
+                return Err(ToolError::PermissionDenied(reason));
+            }
+        }
+
         let parsed: BashInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
         let timeout_secs = parsed.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS);
