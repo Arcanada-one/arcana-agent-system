@@ -20,12 +20,12 @@ tracing = "0.1"
 regex = "1.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots"] }
 jsonschema = "0.30"
+url = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 wiremock = "0.6"
 tempfile = "3"
-url = "2"
 
 [lints]
 workspace = true
