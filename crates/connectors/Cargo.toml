@@ -11,7 +11,8 @@ description = "Ecosystem connectors: HTTP bridges to Arcanada services (Model Co
 [dependencies]
 arcana-core = { path = "../core" }
 async-trait = "0.1"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
+secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -20,8 +21,12 @@ tracing = "0.1"
 url = "2"
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
 
 [lints]
 workspace = true

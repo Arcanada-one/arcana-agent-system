@@ -8,7 +8,7 @@ use arcana_core::connector::{ConnectorError, ConnectorResponse, ExecuteRequest, 
 use async_trait::async_trait;
 use url::Url;
 
-const DEFAULT_BASE_URL: &str = "https://connector.arcanada.one";
+const DEFAULT_BASE_URL: &str = "https://connector.arcanada.ai";
 const ENV_API_KEY: &str = "ARCANA_MC_TOKEN";
 /// Optional base-URL override — lets a smoke harness point the probe at a
 /// loopback replay fixture (`http://127.0.0.1:PORT`) without a live mesh.
@@ -57,16 +57,43 @@ impl ModelConnectorClient {
     /// Build a client from the `ARCANA_MC_TOKEN` env var and the default base
     /// `URL`.
     ///
-    /// The base `URL` is [`ENV_BASE_URL`] (`ARCANA_MC_BASE_URL`) when set to a
-    /// non-empty value, else [`DEFAULT_BASE_URL`]. An `http://` override
-    /// disables `https_only` (see [`ModelConnectorClient::new`]) so a loopback
-    /// replay fixture works; the production default stays HTTPS-only.
+    /// A non-empty [`ENV_BASE_URL`] is accepted only when it is exactly the
+    /// canonical production origin. Loopback replay belongs exclusively to
+    /// [`Self::try_from_probe_env`].
     ///
     /// # Errors
     /// Returns [`ConnectorError::MissingApiKey`] if `ARCANA_MC_TOKEN` is unset
     /// or empty, or [`ConnectorError::Transport`] if the base URL fails to
     /// parse or the client fails to build.
     pub fn try_from_env() -> Result<Self, ConnectorError> {
+        let token = std::env::var(ENV_API_KEY).map_err(|_| ConnectorError::MissingApiKey)?;
+        if token.trim().is_empty() {
+            return Err(ConnectorError::MissingApiKey);
+        }
+        let base = std::env::var(ENV_BASE_URL)
+            .ok()
+            .filter(|raw| !raw.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+        let base_url =
+            Url::parse(&base).map_err(|err| ConnectorError::Transport(err.to_string()))?;
+        let approved = Url::parse(DEFAULT_BASE_URL)
+            .map_err(|err| ConnectorError::Transport(err.to_string()))?;
+        if base_url != approved {
+            return Err(ConnectorError::Transport(
+                "Model Connector production base URL is not approved".into(),
+            ));
+        }
+        Self::new(base_url, ApiKey::new(token))
+    }
+
+    /// Build the hidden diagnostic probe client, allowing the explicit
+    /// loopback replay override used by the offline production-gate harness.
+    /// Agent capability composition must use [`Self::try_from_env`] instead.
+    ///
+    /// # Errors
+    /// Returns the same credential, URL parsing, and HTTP-client errors as the
+    /// production constructor.
+    pub fn try_from_probe_env() -> Result<Self, ConnectorError> {
         let token = std::env::var(ENV_API_KEY).map_err(|_| ConnectorError::MissingApiKey)?;
         if token.trim().is_empty() {
             return Err(ConnectorError::MissingApiKey);
@@ -89,6 +116,7 @@ impl ModelConnectorClient {
     pub fn new(base_url: Url, api_key: ApiKey) -> Result<Self, ConnectorError> {
         let http = reqwest::Client::builder()
             .https_only(base_url.scheme() == "https")
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))
@@ -204,6 +232,8 @@ struct NestExceptionEnvelope {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn api_key_debug_and_display_are_redacted() {
         let key = ApiKey::new("mc-supersecret-value");
@@ -215,6 +245,7 @@ mod tests {
 
     #[test]
     fn try_from_env_errors_when_var_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: single-threaded test; we restore by removing.
         std::env::remove_var(ENV_API_KEY);
         match ModelConnectorClient::try_from_env() {
@@ -225,6 +256,7 @@ mod tests {
 
     #[test]
     fn try_from_env_errors_when_var_empty() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var(ENV_API_KEY, "   ");
         let result = ModelConnectorClient::try_from_env();
         std::env::remove_var(ENV_API_KEY);
@@ -235,15 +267,29 @@ mod tests {
     }
 
     #[test]
+    fn production_constructor_rejects_loopback_base_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_API_KEY, "staging");
+        std::env::set_var(ENV_BASE_URL, "http://127.0.0.1:9999");
+        let result = ModelConnectorClient::try_from_env();
+        std::env::remove_var(ENV_BASE_URL);
+        std::env::remove_var(ENV_API_KEY);
+        assert!(
+            result.is_err(),
+            "production constructor accepted replay URL"
+        );
+    }
+
+    #[test]
     fn execute_url_appends_path_segment() {
         let client = ModelConnectorClient::new(
-            Url::parse("https://connector.arcanada.one").unwrap(),
+            Url::parse("https://connector.arcanada.ai").unwrap(),
             ApiKey::new("mc-test"),
         )
         .unwrap();
         assert_eq!(
             client.execute_url().unwrap().as_str(),
-            "https://connector.arcanada.one/execute"
+            "https://connector.arcanada.ai/execute"
         );
     }
 }

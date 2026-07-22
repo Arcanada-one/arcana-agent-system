@@ -1,9 +1,10 @@
 //! ARAS-0040 items 2 + 2b: `arcana mc-ping` must return a non-zero,
 //! capability-assertion exit code (2) on a **degenerate** success envelope
 //! (HTTP 201 `{"status":"success","result":""}`) instead of the historical
-//! blanket exit 0 for any `Ok(response)`; and `try_from_env` must honour the
-//! optional `ARCANA_MC_BASE_URL` override so the harness can point the probe at
-//! a loopback replay fixture. Both are proven end-to-end here against a
+//! blanket exit 0 for any `Ok(response)`; and the probe-only constructor must
+//! honour the optional `ARCANA_MC_BASE_URL` override so the harness can point
+//! the hidden diagnostic at a loopback replay fixture without widening the
+//! production agent constructor. Both are proven end-to-end here against a
 //! minimal 127.0.0.1 responder — no live mesh, no `ARCANA_MC_TOKEN` secret.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]

@@ -11,6 +11,7 @@
 //! (fail-soft, see module docs); wiring it into the agent loop's
 //! composition root is a separate follow-up (`ARAS-0024`).
 
+pub mod auth_arcana;
 pub mod coworker;
 pub mod model_connector;
 pub mod ops_bot;

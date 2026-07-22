@@ -87,16 +87,20 @@ version = "0.1.0"
 dependencies = [
  "arcana-connectors",
  "arcana-core",
+ "arcana-tools",
  "assert_cmd",
  "async-trait",
  "clap",
  "predicates",
  "rustyline",
+ "secrecy",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+ "url",
+ "wiremock",
  "xdg",
 ]
 
@@ -107,8 +111,11 @@ dependencies = [
  "arcana-core",
  "async-trait",
  "reqwest 0.13.1",
+ "rustix",
+ "secrecy",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -124,6 +131,7 @@ dependencies = [
  "blake3",
  "jsonschema",
  "regex",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -147,6 +155,7 @@ dependencies = [
  "jsonschema",
  "regex",
  "reqwest 0.13.1",
+ "secrecy",
  "serde",
  "serde_json",
  "tempfile",
@@ -1740,6 +1749,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -1918,6 +1928,15 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "security-framework"

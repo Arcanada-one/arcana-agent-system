@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use arcana_connectors::auth_arcana::{AuthTokenError, BearerTokenProvider};
 use arcana_connectors::ScrutatorClient;
 use arcana_core::permission::{
     CascadeOutcome, LayerDecision, PermissionCascade, PermissionLayer, SchemaLayer,
@@ -23,12 +24,16 @@ use arcana_tools::read::ReadTool;
 use arcana_tools::webfetch::WebFetchTool;
 use arcana_tools::write::WriteTool;
 use async_trait::async_trait;
+use secrecy::SecretString;
 use serde_json::json;
 use url::Url;
 
 fn registered_tools() -> Vec<Arc<dyn Tool>> {
-    let scrutator = ScrutatorClient::new(Url::parse("http://127.0.0.1:0").unwrap())
-        .expect("scrutator client builds");
+    let scrutator = ScrutatorClient::new(
+        Url::parse("http://127.0.0.1:0").unwrap(),
+        Arc::new(TestToken),
+    )
+    .expect("scrutator client builds");
     vec![
         Arc::new(ReadTool::default()),
         Arc::new(WriteTool::default()),
@@ -58,6 +63,15 @@ impl PermissionLayer for AllowLayer {
 
     async fn evaluate(&self, _tool: &str, _input: &serde_json::Value) -> LayerDecision {
         LayerDecision::Allow
+    }
+}
+
+struct TestToken;
+
+#[async_trait]
+impl BearerTokenProvider for TestToken {
+    async fn bearer_token(&self) -> Result<SecretString, AuthTokenError> {
+        Ok(SecretString::from("test-token"))
     }
 }
 

@@ -41,6 +41,14 @@ fn policy_select_by_task_type() {
     assert_eq!(policy.select(TaskType::Default), default);
 }
 
+#[test]
+fn single_model_policy_pins_every_task_class_to_one_model() {
+    let policy = ModelPolicy::single_model("deepseek-v4-flash");
+    for task in [TaskType::Code, TaskType::Summarize, TaskType::Default] {
+        assert_eq!(policy.select(task).model_id, "deepseek-v4-flash");
+    }
+}
+
 /// V-AC-3: `classify` is deterministic and fails closed — a code-signal task →
 /// `Code`, a trailing tool-result → `Summarize`, anything unrecognised (incl.
 /// empty history) → `Default`; repeated calls on the same context are identical.

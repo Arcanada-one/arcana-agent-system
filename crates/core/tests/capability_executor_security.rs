@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use arcana_core::cost::CostTracker;
 use arcana_core::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
-use arcana_core::hooks::audit::AuditLog;
+use arcana_core::hooks::audit::{AuditLog, DurableAuditWriter};
 use arcana_core::hooks::{HookChain, HookContext};
 use arcana_core::permission::{LayerDecision, PermissionCascade, PermissionLayer};
 use arcana_core::tool::ToolDispatcher;
@@ -32,6 +32,9 @@ struct WriterState {
     bytes: Vec<u8>,
     successful_records: usize,
     fail_after_records: Option<usize>,
+    fail_once: bool,
+    failure_injected: bool,
+    fail_sync: bool,
 }
 
 impl ControlledWriter {
@@ -40,6 +43,9 @@ impl ControlledWriter {
             bytes: Vec::new(),
             successful_records: 0,
             fail_after_records: None,
+            fail_once: false,
+            failure_injected: false,
+            fail_sync: false,
         }));
         (
             Self {
@@ -55,7 +61,46 @@ impl ControlledWriter {
                 bytes: Vec::new(),
                 successful_records: 0,
                 fail_after_records: Some(records),
+                fail_once: false,
+                failure_injected: false,
+                fail_sync: false,
             })),
+        }
+    }
+
+    fn fail_once_after(records: usize) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(WriterState {
+                bytes: Vec::new(),
+                successful_records: 0,
+                fail_after_records: Some(records),
+                fail_once: true,
+                failure_injected: false,
+                fail_sync: false,
+            })),
+        }
+    }
+
+    fn fail_sync() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(WriterState {
+                bytes: Vec::new(),
+                successful_records: 0,
+                fail_after_records: None,
+                fail_once: false,
+                failure_injected: false,
+                fail_sync: true,
+            })),
+        }
+    }
+}
+
+impl DurableAuditWriter for ControlledWriter {
+    fn sync_data(&mut self) -> io::Result<()> {
+        if self.state.lock().expect("writer state lock").fail_sync {
+            Err(io::Error::other("injected audit sync failure"))
+        } else {
+            Ok(())
         }
     }
 }
@@ -63,10 +108,12 @@ impl ControlledWriter {
 impl Write for ControlledWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut state = self.state.lock().expect("writer state lock");
-        if state
+        let should_fail = state
             .fail_after_records
             .is_some_and(|limit| state.successful_records >= limit)
-        {
+            && (!state.fail_once || !state.failure_injected);
+        if should_fail {
+            state.failure_injected = true;
             return Err(io::Error::other("injected audit failure"));
         }
         state.bytes.extend_from_slice(buf);
@@ -102,7 +149,7 @@ async fn all_defer_cascade_denies_and_executes_zero_tools() {
     let executor = executor(
         Arc::clone(&count),
         PermissionCascade::new(vec![]),
-        AuditLog::from_writer(Box::new(writer)),
+        AuditLog::from_durable_writer(Box::new(writer)),
     );
 
     let err = executor
@@ -148,7 +195,7 @@ async fn post_cascade_replaceinput_hook_aborts_and_executes_zero_tools() {
         registry,
         PermissionCascade::new(vec![Arc::new(AllowLayer)]),
         hooks,
-        AuditLog::from_writer(Box::new(writer)),
+        AuditLog::from_durable_writer(Box::new(writer)),
     );
 
     let err = executor
@@ -179,7 +226,7 @@ async fn transformed_input_is_revalidated_immediately_before_execution() {
     let executor = executor(
         Arc::clone(&count),
         cascade,
-        AuditLog::from_writer(Box::new(writer)),
+        AuditLog::from_durable_writer(Box::new(writer)),
     );
 
     let err = executor
@@ -203,7 +250,7 @@ async fn pre_audit_failure_executes_zero_tools() {
     let executor = executor(
         Arc::clone(&count),
         PermissionCascade::new(vec![Arc::new(AllowLayer)]),
-        AuditLog::from_writer(Box::new(ControlledWriter::fail_after(0))),
+        AuditLog::from_durable_writer(Box::new(ControlledWriter::fail_after(0))),
     );
 
     let err = executor
@@ -222,12 +269,66 @@ async fn pre_audit_failure_executes_zero_tools() {
 }
 
 #[tokio::test]
+async fn decision_audit_failure_latches_executor_closed() {
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let executor = executor(
+        Arc::clone(&count),
+        PermissionCascade::new(vec![Arc::new(AllowLayer)]),
+        AuditLog::from_durable_writer(Box::new(ControlledWriter::fail_once_after(0))),
+    );
+
+    let first = executor
+        .execute(&context(), "counting", json!({ "value": 1 }))
+        .await
+        .expect_err("decision audit failure must fail closed");
+    assert!(matches!(
+        first,
+        CapabilityError::AuditFailure {
+            phase: AuditFailurePhase::Decision,
+            ..
+        }
+    ));
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    let second = executor
+        .execute(&context(), "counting", json!({ "value": 2 }))
+        .await
+        .expect_err("decision audit failure must permanently latch the executor");
+    assert!(matches!(second, CapabilityError::AuditLatched));
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn audit_sync_failure_executes_zero_tools() {
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let executor = executor(
+        Arc::clone(&count),
+        PermissionCascade::new(vec![Arc::new(AllowLayer)]),
+        AuditLog::from_durable_writer(Box::new(ControlledWriter::fail_sync())),
+    );
+
+    let err = executor
+        .execute(&context(), "counting", json!({ "value": 1 }))
+        .await
+        .expect_err("decision sync must fail closed");
+
+    assert!(matches!(
+        err,
+        CapabilityError::AuditFailure {
+            phase: AuditFailurePhase::Decision,
+            ..
+        }
+    ));
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn post_audit_failure_is_fatal_and_latches_executor_closed() {
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let executor = executor(
         Arc::clone(&count),
         PermissionCascade::new(vec![Arc::new(AllowLayer)]),
-        AuditLog::from_writer(Box::new(ControlledWriter::fail_after(1))),
+        AuditLog::from_durable_writer(Box::new(ControlledWriter::fail_after(1))),
     );
 
     let first = executor
@@ -258,7 +359,7 @@ async fn concurrent_attempts_have_unique_correlated_audit_pairs() {
     let executor = Arc::new(executor(
         Arc::clone(&count),
         PermissionCascade::new(vec![Arc::new(AllowLayer)]),
-        AuditLog::from_writer(Box::new(writer)),
+        AuditLog::from_durable_writer(Box::new(writer)),
     ));
 
     let mut tasks = Vec::new();

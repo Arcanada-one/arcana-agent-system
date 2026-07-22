@@ -7,8 +7,13 @@
 
 mod common;
 
+use std::sync::Arc;
+
+use arcana_connectors::auth_arcana::{AuthTokenError, BearerTokenProvider};
 use arcana_connectors::ScrutatorClient;
 use arcana_tools::arcana_search::ArcanaSearchTool;
+use async_trait::async_trait;
+use secrecy::SecretString;
 use serde_json::json;
 use url::Url;
 use wiremock::matchers::{method, path};
@@ -16,8 +21,17 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn tool_for(server: &MockServer) -> common::Harness {
     let base = Url::parse(&server.uri()).expect("mock uri parses");
-    let client = ScrutatorClient::new(base).expect("client builds");
+    let client = ScrutatorClient::new(base, Arc::new(TestToken)).expect("client builds");
     common::Harness::new(ArcanaSearchTool::with_client(client))
+}
+
+struct TestToken;
+
+#[async_trait]
+impl BearerTokenProvider for TestToken {
+    async fn bearer_token(&self) -> Result<SecretString, AuthTokenError> {
+        Ok(SecretString::from("test-token"))
+    }
 }
 
 #[tokio::test]
