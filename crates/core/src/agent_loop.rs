@@ -270,7 +270,7 @@ pub struct DriverConfig {
     pub model: Option<String>,
     /// Optional system prompt passed to the connector.
     pub system_prompt: Option<String>,
-    /// Hard turn cap → [`TerminalReason::MaxTurns`].
+    /// Hard connector-attempt cap → [`TerminalReason::MaxTurns`].
     pub max_turns: u32,
     /// Optional cost cap (USD) → [`TerminalReason::MaxCostUsd`].
     pub max_cost_usd: Option<f64>,
@@ -279,8 +279,9 @@ pub struct DriverConfig {
 }
 
 impl DriverConfig {
-    /// Config for `connector_id` with defensive defaults (8 turns, no cost cap,
-    /// a generous context budget). Callers tune individual fields.
+    /// Config for `connector_id` with defensive defaults (8 connector
+    /// attempts, no cost cap, a generous context budget). Callers tune
+    /// individual fields.
     #[must_use]
     pub fn new(connector_id: impl Into<String>) -> Self {
         Self {
@@ -292,6 +293,24 @@ impl DriverConfig {
             context_budget_chars: 1_000_000,
         }
     }
+
+    /// Map an invalid budget to the existing fail-closed terminal reason that
+    /// owns that budget. Validation happens before any connector attempt.
+    fn invalid_reason(&self) -> Option<TerminalReason> {
+        if self.max_turns == 0 {
+            return Some(TerminalReason::MaxTurns);
+        }
+        if self
+            .max_cost_usd
+            .is_some_and(|cap| !cap.is_finite() || cap < 0.0)
+        {
+            return Some(TerminalReason::MaxCostUsd);
+        }
+        if self.context_budget_chars == 0 {
+            return Some(TerminalReason::ContextWindowExhausted);
+        }
+        None
+    }
 }
 
 /// Result of a completed run.
@@ -301,7 +320,7 @@ pub struct RunOutput {
     pub reason: TerminalReason,
     /// The model's final text — `Some` only when `reason == Completed`.
     pub final_text: Option<String>,
-    /// Number of turns consumed.
+    /// Number of connector attempts consumed.
     pub turns: u32,
     /// Cost accounting snapshot at termination.
     pub cost: CostSnapshot,
@@ -322,7 +341,7 @@ pub struct Driver<'a> {
     config: DriverConfig,
 }
 
-/// Internal per-turn result: a `Continue` reason, or a terminal cause carrying
+/// Internal per-step result: a `Continue` reason, or a terminal cause carrying
 /// the final text (only for `Completed`).
 enum StepResult {
     Continue(ContinueReason),
@@ -360,16 +379,24 @@ impl<'a> Driver<'a> {
 
     /// Drive `task` to a terminal outcome — the single public entrypoint.
     pub async fn run(&self, task: &str) -> RunOutput {
+        if let Some(reason) = self.config.invalid_reason() {
+            return RunOutput {
+                reason,
+                final_text: None,
+                turns: 0,
+                cost: self.cost.snapshot(),
+            };
+        }
         let mut history = vec![HistoryEntry::Task(task.to_owned())];
-        let mut turn: u32 = 0;
+        let mut attempts: u32 = 0;
         loop {
-            let step = self.step(&mut history, turn).await;
+            let step = self.step(&mut history, &mut attempts).await;
             let outcome = match &step {
                 StepResult::Continue(reason) => TurnOutcome::Continue(*reason),
                 StepResult::Terminal(reason, _) => TurnOutcome::Terminal(*reason),
             };
             match reduce(outcome) {
-                LoopControl::Reloop => turn = turn.saturating_add(1),
+                LoopControl::Reloop => {}
                 LoopControl::Stop(reason) => {
                     let final_text = match step {
                         StepResult::Terminal(_, text) => text,
@@ -378,7 +405,7 @@ impl<'a> Driver<'a> {
                     return RunOutput {
                         reason,
                         final_text,
-                        turns: turn,
+                        turns: attempts,
                         cost: self.cost.snapshot(),
                     };
                 }
@@ -386,12 +413,12 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// One turn: guards → connector call → interpret → (tool turn | final).
-    async fn step(&self, history: &mut Vec<HistoryEntry>, turn: u32) -> StepResult {
+    /// One step: guards → connector attempt → interpret → (tool turn | final).
+    async fn step(&self, history: &mut Vec<HistoryEntry>, attempts: &mut u32) -> StepResult {
         if self.cancel.is_cancelled() {
             return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
         }
-        if turn >= self.config.max_turns {
+        if *attempts >= self.config.max_turns {
             return StepResult::Terminal(TerminalReason::MaxTurns, None);
         }
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
@@ -409,10 +436,14 @@ impl<'a> Driver<'a> {
             }
         }
         let prompt = serialize_history(history);
+        *attempts = attempts.saturating_add(1);
         let resp = match self.call_connector(prompt).await {
             Ok(resp) => resp,
             Err(reason) => return StepResult::Terminal(reason, None),
         };
+        if self.cost.check_budget(self.config.max_cost_usd).is_err() {
+            return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
+        }
         history.push(HistoryEntry::Assistant(resp.result.clone()));
         match interpret(&resp) {
             AssistantAction::Final { text } => {
@@ -435,7 +466,7 @@ impl<'a> Driver<'a> {
         req.model = self.config.model.clone();
         req.system_prompt = self.config.system_prompt.clone();
         req.max_turns = Some(self.config.max_turns);
-        req.max_budget_usd = self.config.max_cost_usd;
+        req.max_budget_usd = self.remaining_cost_budget();
         match self.connector.execute(req).await {
             Ok(resp) => {
                 // `record_llm_call` takes u32; `Usage` fields are u64 — saturate.
@@ -447,6 +478,17 @@ impl<'a> Driver<'a> {
             }
             Err(_) => Err(TerminalReason::ConnectorFatal),
         }
+    }
+
+    /// Budget still available to the next connector request. The tracker uses
+    /// integer micro-USD, so repeated requests cannot receive a fresh copy of
+    /// the original allowance.
+    #[allow(clippy::cast_precision_loss)]
+    fn remaining_cost_budget(&self) -> Option<f64> {
+        self.config.max_cost_usd.map(|cap| {
+            let spent = self.cost.snapshot().total_cost_usd_micros as f64 / 1_000_000.0;
+            (cap - spent).max(0.0)
+        })
     }
 
     /// Reuse-only tool turn: cascade → `pre_tool` → dispatch → `post_tool`, folding
@@ -524,7 +566,7 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
         | ContinueReason::ReactiveCompactRetry
         | ContinueReason::MicrocompactCompleted => LoopControl::Reloop,
         // Inert under the unary Phase-C connector (no streaming, no token
-        // cursor): a documented no-op re-loop bounded by `max_turns` — never
+        // cursor): a documented no-op re-loop — never
         // `unreachable!`/`panic!` (clippy `panic = warn` under `-D warnings`).
         ContinueReason::MaxOutputTokensRecovery | ContinueReason::CollapseDrainRetry => {
             tracing::debug!(

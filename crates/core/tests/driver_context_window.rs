@@ -24,9 +24,10 @@ use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
 use arcana_core::permission::PermissionCascade;
 use arcana_core::tool::ToolDispatcher;
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use common::{response, ScriptedConnector};
+use common::{response, tool_call_result, EchoTool, ScriptedConnector};
 
 fn tool_result(content_len: usize) -> HistoryEntry {
     HistoryEntry::ToolResult {
@@ -118,5 +119,45 @@ async fn driver_context_window_irreducible_terminates() {
     assert!(
         connector.requests().is_empty(),
         "irreducible budget must terminate before any connector call"
+    );
+}
+
+#[tokio::test]
+async fn driver_compaction_consumes_no_turn() {
+    let connector = ScriptedConnector::new(vec![
+        response(&tool_call_result("echo", json!({ "text": "x" })), 0.0),
+        response("done", 0.0),
+    ]);
+    let mut dispatcher = ToolDispatcher::new();
+    dispatcher
+        .register(Arc::new(EchoTool))
+        .expect("register echo");
+    let cascade = PermissionCascade::new(vec![]);
+    let hooks = HookChain::new();
+    let cost = Arc::new(CostTracker::new());
+    let mut config = DriverConfig::new("scripted");
+    config.max_turns = 2;
+    // The first request fits. After the tool turn, trimming the tool result
+    // brings history below this ceiling and forces one compaction re-loop.
+    config.context_budget_chars = 110;
+
+    let driver = Driver::new(
+        &connector,
+        &dispatcher,
+        &cascade,
+        &hooks,
+        cost,
+        CancellationToken::new(),
+        config,
+    );
+    let out = driver.run("x").await;
+
+    assert_eq!(out.reason, TerminalReason::Completed);
+    assert_eq!(out.turns, 2, "only the two connector attempts count");
+    let requests = connector.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        !requests[1].prompt.contains("echo:"),
+        "the tool result must have been compacted before the second call"
     );
 }

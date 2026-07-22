@@ -55,7 +55,7 @@ async fn driver_completes_small_task() {
     assert_eq!(out.final_text.as_deref(), Some("all done"));
 
     // Exactly one tool turn happened before the final answer.
-    assert_eq!(out.turns, 1, "one tool turn then a final turn");
+    assert_eq!(out.turns, 2, "tool response + final response = two calls");
 
     // Two connector calls were made (offline, via the scripted double).
     let requests = connector.requests();

@@ -74,6 +74,7 @@ async fn driver_terminal_mapping() {
     .await;
     assert_eq!(out.reason, TerminalReason::Completed, "final → Completed");
     assert_eq!(out.final_text.as_deref(), Some("final answer"));
+    assert_eq!(out.turns, 1, "a final-only run makes one connector attempt");
 
     // 2. MaxTurns — a connector that never stops calling the tool hits the cap.
     let mut cfg = DriverConfig::new("scripted");
@@ -88,6 +89,7 @@ async fn driver_terminal_mapping() {
     )
     .await;
     assert_eq!(out.reason, TerminalReason::MaxTurns, "tool loop → MaxTurns");
+    assert_eq!(out.turns, 2, "the turn cap counts connector attempts");
 
     // 3. MaxCostUsd — cumulative cost strictly over the cap stops the loop.
     let mut cfg = DriverConfig::new("scripted");
@@ -107,6 +109,7 @@ async fn driver_terminal_mapping() {
         TerminalReason::MaxCostUsd,
         "cost cap → MaxCostUsd"
     );
+    assert_eq!(out.turns, 1, "the over-cap response consumed one attempt");
 
     // 4. AbortedByOperator — a pre-cancelled token aborts before any call.
     let cancel = CancellationToken::new();
@@ -125,6 +128,7 @@ async fn driver_terminal_mapping() {
         TerminalReason::AbortedByOperator,
         "cancel → AbortedByOperator"
     );
+    assert_eq!(out.turns, 0, "pre-call cancellation consumes no turn");
 
     // 5. AbortedByHook — a pre-tool hook Stop aborts the tool turn.
     let mut hooks = HookChain::new();
@@ -143,6 +147,7 @@ async fn driver_terminal_mapping() {
         TerminalReason::AbortedByHook,
         "hook Stop → AbortedByHook"
     );
+    assert_eq!(out.turns, 1, "the tool response consumed one attempt");
 
     // 6. PermissionDenied — a denying cascade layer refuses the tool call.
     let out = run_scenario(
@@ -159,6 +164,7 @@ async fn driver_terminal_mapping() {
         TerminalReason::PermissionDenied,
         "cascade Deny → PermissionDenied"
     );
+    assert_eq!(out.turns, 1, "the tool response consumed one attempt");
 
     // 7. ContextWindowExhausted — an irreducible budget stops before any call.
     let mut cfg = DriverConfig::new("scripted");
@@ -177,6 +183,7 @@ async fn driver_terminal_mapping() {
         TerminalReason::ContextWindowExhausted,
         "irreducible budget → ContextWindowExhausted"
     );
+    assert_eq!(out.turns, 0, "pre-call context rejection consumes no turn");
 
     // 8. ConnectorFatal — a transport error terminates the run.
     let out = run_scenario(
@@ -192,5 +199,9 @@ async fn driver_terminal_mapping() {
         out.reason,
         TerminalReason::ConnectorFatal,
         "connector Err → ConnectorFatal"
+    );
+    assert_eq!(
+        out.turns, 1,
+        "a failed connector attempt still consumes a turn"
     );
 }
