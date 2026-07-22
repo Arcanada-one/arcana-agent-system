@@ -32,3 +32,4 @@ Cargo.lock.bak
 .env
 .env.*
 !.env.example
+dev-tools/smoke/.out/

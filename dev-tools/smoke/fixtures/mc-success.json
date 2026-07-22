@@ -1,0 +1,1 @@
+{"id":"smoke-replay-0001","connector":"claude-code","model":"claude-code","result":"ARCANA-__NONCE__","usage":{"inputTokens":4,"outputTokens":6,"totalTokens":10,"costUsd":0.0000123},"latencyMs":42,"status":"success"}
