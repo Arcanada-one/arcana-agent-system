@@ -21,6 +21,7 @@
 //! config authorizes.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::interpreter::SkillError;
@@ -217,13 +218,87 @@ pub struct FetchUnavailable(pub String);
 /// network on a hit (V-AC-7).
 pub struct ScrutatorStore<C: FetchConn> {
     conn: Arc<C>,
+    cache: Option<BlakeCache>,
 }
 
 impl<C: FetchConn> ScrutatorStore<C> {
-    /// Build a store over an injected fetch connector, with no cache.
+    /// Build a store over an injected fetch connector, with no cache (every
+    /// load fetches).
     #[must_use]
     pub fn new(conn: Arc<C>) -> Self {
-        Self { conn }
+        Self { conn, cache: None }
+    }
+
+    /// Enable the blake3-content-addressed cache: a hit short-circuits the
+    /// network (V-AC-7), a verified fetch is written back.
+    #[must_use]
+    pub fn with_cache(mut self, cache: BlakeCache) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+}
+
+/// A blake3-content-addressed byte cache under the XDG cache directory.
+///
+/// Entries are keyed by the **full blake3 hex** of their content, so a cache
+/// hit is verifiable by construction — and is re-verified on read, failing
+/// closed if an on-disk entry was tampered. Only hex-charset keys are accepted,
+/// so a key can never escape the cache root (no path traversal).
+#[derive(Debug, Clone)]
+pub struct BlakeCache {
+    root: PathBuf,
+}
+
+impl BlakeCache {
+    /// Open the XDG-rooted cache (`$XDG_CACHE_HOME/arcana/skills/blake3`),
+    /// creating the directory if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] if the XDG base directories cannot be
+    /// resolved or the cache directory cannot be created.
+    pub fn open() -> std::io::Result<Self> {
+        let base =
+            xdg::BaseDirectories::with_prefix("arcana/skills").map_err(std::io::Error::other)?;
+        let root = base.create_cache_directory("blake3")?;
+        Ok(Self { root })
+    }
+
+    /// Build a cache rooted at an explicit directory (used by tests to stay off
+    /// the operator's real `$XDG_CACHE_HOME`).
+    #[must_use]
+    pub fn with_root(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    /// Read the cached bytes for `blake3_hex`, or `None` on a miss or a
+    /// non-hex (rejected) key.
+    #[must_use]
+    pub fn get(&self, blake3_hex: &str) -> Option<Vec<u8>> {
+        let path = self.path_for(blake3_hex)?;
+        std::fs::read(path).ok()
+    }
+
+    /// Write `bytes` under `blake3_hex`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] on a non-hex key or a write failure.
+    pub fn put(&self, blake3_hex: &str, bytes: &[u8]) -> std::io::Result<()> {
+        let path = self
+            .path_for(blake3_hex)
+            .ok_or_else(|| std::io::Error::other("refusing non-hex cache key"))?;
+        std::fs::write(path, bytes)
+    }
+
+    /// Resolve a hex key to a path inside the cache root, rejecting any key that
+    /// is empty or contains a non-hex byte (path-traversal defence).
+    fn path_for(&self, hex: &str) -> Option<PathBuf> {
+        if !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            Some(self.root.join(hex))
+        } else {
+            None
+        }
     }
 }
 
@@ -243,6 +318,16 @@ fn verify_blake3(bytes: &[u8], pinned_hex: &str, source_id: &str) -> Result<(), 
 #[async_trait::async_trait]
 impl<C: FetchConn> SkillStore for ScrutatorStore<C> {
     async fn load(&self, pin: &SkillPin) -> Result<SkillPlan, SkillError> {
+        // Cache first: a hit short-circuits the network. The entry is keyed by
+        // blake3, but re-verified so a tampered cache file fails closed.
+        if let Some(cache) = &self.cache {
+            if let Some(cached) = cache.get(&pin.blake3) {
+                verify_blake3(&cached, &pin.blake3, &pin.source_id)?;
+                return parse_and_validate(&cached);
+            }
+        }
+        // Miss: fetch. A store failure fails closed to StoreUnavailable — never
+        // a silent fallback to a different or stale skill.
         let bytes = self
             .conn
             .fetch_bytes(&pin.source_id)
@@ -253,9 +338,19 @@ impl<C: FetchConn> SkillStore for ScrutatorStore<C> {
             })?;
         // GATE 1 — local full-blake3 verify BEFORE parse (trust keystone).
         verify_blake3(&bytes, &pin.blake3, &pin.source_id)?;
+        // Cache the verified bytes (best-effort — a write failure must not
+        // change the run result; the bytes in hand are already verified).
+        if let Some(cache) = &self.cache {
+            let _ = cache.put(&pin.blake3, &bytes);
+        }
         // GATE 2 — parse, then intrinsic schema validation.
-        let plan: SkillPlan = serde_json::from_slice(&bytes).map_err(SkillError::Parse)?;
-        plan.validate()?;
-        Ok(plan)
+        parse_and_validate(&bytes)
     }
+}
+
+/// Parse verified bytes into a validated plan (GATE 2 — schema).
+fn parse_and_validate(bytes: &[u8]) -> Result<SkillPlan, SkillError> {
+    let plan: SkillPlan = serde_json::from_slice(bytes).map_err(SkillError::Parse)?;
+    plan.validate()?;
+    Ok(plan)
 }

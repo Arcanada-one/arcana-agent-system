@@ -15,14 +15,51 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use arcana_core::dispatch::ModelPolicy;
+use arcana_core::tool::{Tool, ToolError, ToolInvocation, ToolOutput};
 use arcana_skills::{
-    FetchConn, FetchUnavailable, FileStore, ModelAllowlist, ScrutatorStore, SkillError,
+    BlakeCache, FetchConn, FetchUnavailable, FileStore, ModelAllowlist, ScrutatorStore, SkillError,
     SkillInterpreter, SkillPin, SkillStore, ToolCeiling,
 };
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use common::{executor_with, hook_ctx, EchoTool};
+
+/// A `FetchConn` that always fails — models a store that is down.
+struct DownConn;
+
+#[async_trait]
+impl FetchConn for DownConn {
+    async fn fetch_bytes(&self, _source_id: &str) -> Result<Vec<u8>, FetchUnavailable> {
+        Err(FetchUnavailable("connection refused".into()))
+    }
+}
+
+/// An `echo`-named tool that counts how many times the executor invoked it, so
+/// a "no silent fallback" test can prove the executor ran zero stages.
+struct CountingEcho {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingEcho {
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+    fn description(&self) -> &'static str {
+        "counts invocations (test tool)"
+    }
+    fn input_schema(&self) -> Value {
+        json!({ "type": "object" })
+    }
+    async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolOutput {
+            content: invocation.into_input().to_string(),
+            metadata: None,
+        })
+    }
+}
 
 /// A `FetchConn` that returns fixed bytes and counts how many times it is
 /// called (so a cache-hit test can assert zero network fetches).
@@ -251,4 +288,75 @@ async fn model_spec_allowlist() {
         .await
         .expect("an allowlisted model must run");
     assert_eq!(out.selected_models, vec!["m-review"]);
+}
+
+/// V-AC-6 — when the store is down **and** the cache misses, the run fails
+/// closed to `StoreUnavailable`; the executor is invoked **zero** times (no
+/// silent fallback to a different or stale skill).
+#[tokio::test]
+async fn store_unavailable_never_falls_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("audit");
+    std::fs::create_dir(&audit).unwrap();
+    let cache_dir = dir.path().join("cache");
+    std::fs::create_dir(&cache_dir).unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let executor = executor_with(vec![Arc::new(CountingEcho { calls: calls.clone() })], &audit);
+    let interpreter = SkillInterpreter::new(executor, ModelPolicy::new());
+
+    // Store down + empty cache → miss → StoreUnavailable.
+    let store = ScrutatorStore::new(Arc::new(DownConn)).with_cache(BlakeCache::with_root(cache_dir));
+    let pin = SkillPin::new("codegen-review", 3, "00", "kb:skill:codegen-review:3");
+
+    let err = interpreter
+        .run_pinned(&store, &pin, &hook_ctx())
+        .await
+        .expect_err("a down store with no cache must fail closed");
+    match err {
+        SkillError::StoreUnavailable { source_id, .. } => {
+            assert_eq!(source_id, "kb:skill:codegen-review:3");
+        }
+        other => panic!("expected StoreUnavailable, got {other:?}"),
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "the executor must run zero stages on a store failure"
+    );
+}
+
+/// V-AC-7 — a blake3-keyed cache hit runs without any network fetch.
+#[tokio::test]
+async fn cache_hit_no_network() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("audit");
+    std::fs::create_dir(&audit).unwrap();
+    let cache_dir = dir.path().join("cache");
+    std::fs::create_dir(&cache_dir).unwrap();
+
+    let bytes = serde_json::to_vec(&production_echo_plan()).unwrap();
+    let hash = blake3_hex(&bytes);
+    let cache = BlakeCache::with_root(cache_dir);
+    cache.put(&hash, &bytes).unwrap();
+
+    // The connector would return the wrong bytes and counts its calls — it must
+    // never be reached on a cache hit.
+    let conn = Arc::new(FixedConn::new(b"SHOULD-NOT-BE-FETCHED".to_vec()));
+    let store = ScrutatorStore::new(conn.clone()).with_cache(cache);
+    let pin = SkillPin::new("codegen-review", 3, hash, "kb:skill:codegen-review:3");
+
+    let executor = executor_with(vec![Arc::new(EchoTool)], &audit);
+    let interpreter = SkillInterpreter::new(executor, ModelPolicy::new());
+
+    let out = interpreter
+        .run_pinned(&store, &pin, &hook_ctx())
+        .await
+        .expect("a cache hit must run");
+    assert_eq!(out.version, 3);
+    assert_eq!(
+        conn.calls.load(Ordering::SeqCst),
+        0,
+        "a cache hit must perform zero network fetches"
+    );
 }
