@@ -28,8 +28,10 @@ const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
 
 /// Resolve the XDG state directory (the audit sink), mirroring the CLI.
 fn state_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("arcana")
-        .map_or_else(|_| PathBuf::from(".arcana-state"), |base| base.get_state_home())
+    xdg::BaseDirectories::with_prefix("arcana").map_or_else(
+        |_| PathBuf::from(".arcana-state"),
+        |base| base.get_state_home(),
+    )
 }
 
 /// Serve the default production server over stdio until the peer disconnects.
@@ -41,7 +43,8 @@ pub async fn serve_stdio() -> Result<(), Box<dyn std::error::Error>> {
     use rmcp::ServiceExt;
     use rmcp::transport::stdio;
 
-    let server = ArcanaMcpServer::assemble_default(&state_dir(), &PathBuf::from(PROJECT_RULES_RELATIVE))?;
+    let server =
+        ArcanaMcpServer::assemble_default(&state_dir(), &PathBuf::from(PROJECT_RULES_RELATIVE))?;
     let running = server.serve(stdio()).await?;
     running.waiting().await?;
     Ok(())
@@ -70,7 +73,10 @@ pub fn run_mcp_serve(bind: Option<&str>) -> i32 {
 
 /// Block on the stdio server, mapping the outcome to an exit code.
 fn run_stdio() -> i32 {
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(err) => {
             eprintln!("arcana mcp serve: runtime initialization failed: {err}");
@@ -90,7 +96,10 @@ fn run_stdio() -> i32 {
 /// [`bind_guard::guard_loopback`]; full streamable-HTTP serving is wired via
 /// the optional `transport-streamable-http-server` feature.
 fn run_http(addr: std::net::SocketAddr) -> i32 {
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(err) => {
             eprintln!("arcana mcp serve: runtime initialization failed: {err}");

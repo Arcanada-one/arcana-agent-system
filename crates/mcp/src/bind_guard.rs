@@ -22,9 +22,7 @@ pub enum BindGuardError {
         source: std::net::AddrParseError,
     },
     /// The address parsed but is not a loopback address.
-    #[error(
-        "mcp serve: refusing non-loopback bind '{0}' — Tier-1 loopback only (127.0.0.1 / ::1)"
-    )]
+    #[error("mcp serve: refusing non-loopback bind '{0}' — Tier-1 loopback only (127.0.0.1 / ::1)")]
     NonLoopback(SocketAddr),
 }
 
@@ -75,8 +73,11 @@ mod tests {
 
     #[test]
     fn rejects_mesh_ip() {
-        let err =
-            guard_loopback("100.106.230.125:0").expect_err("mesh IP must be refused (stricter than mesh tier)");
-        assert!(matches!(err, BindGuardError::NonLoopback(_)), "unexpected error: {err}");
+        let err = guard_loopback("100.106.230.125:0")
+            .expect_err("mesh IP must be refused (stricter than mesh tier)");
+        assert!(
+            matches!(err, BindGuardError::NonLoopback(_)),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -216,7 +216,11 @@ impl ArcanaMcpServer {
         let Some(token) = args.get("token").and_then(Value::as_str) else {
             return Ok(envelope::map_denied("resume: missing token".to_owned()));
         };
-        let pending = self.pending.lock().ok().and_then(|mut map| map.remove(token));
+        let pending = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut map| map.remove(token));
         let Some(pending) = pending else {
             return Ok(envelope::map_denied(
                 "unknown or expired interaction token".to_owned(),

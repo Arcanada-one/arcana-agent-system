@@ -101,6 +101,18 @@ impl PermissionLayer for DeferLayer {
     }
 }
 
+struct DenyLayer;
+
+#[async_trait]
+impl PermissionLayer for DenyLayer {
+    fn name(&self) -> &'static str {
+        "test-deny"
+    }
+    async fn evaluate(&self, _tool: &str, _input: &Value) -> LayerDecision {
+        LayerDecision::Deny("test denial".to_owned())
+    }
+}
+
 // --- harness --------------------------------------------------------------
 
 fn tools() -> Vec<Arc<dyn Tool>> {
@@ -147,6 +159,33 @@ fn text_of(result: &CallToolResult) -> String {
         .iter()
         .filter_map(|block| block.get("text").and_then(Value::as_str).map(str::to_owned))
         .collect::<String>()
+}
+
+/// The synchronous append-only audit log written under `dir` (empty if absent).
+fn audit_text(dir: &std::path::Path) -> String {
+    std::fs::read_to_string(dir.join("audit.log")).unwrap_or_default()
+}
+
+/// Assert the ARAS-0033 invariant: exactly one Blake3 decision+result pair for a
+/// single executed capability — one `Allowed` decision, one `success` result,
+/// and the tool named in exactly those two lines. A double-audit regression
+/// (e.g. a resume that re-runs the executor) pushes a count above its bound.
+fn assert_one_audit_pair(log: &str, tool: &str) {
+    assert_eq!(
+        log.matches("\"decision\":\"Allowed\"").count(),
+        1,
+        "exactly one decision line per executed capability, got:\n{log}"
+    );
+    assert_eq!(
+        log.matches("\"outcome\":\"success\"").count(),
+        1,
+        "exactly one success result line per executed capability, got:\n{log}"
+    );
+    assert_eq!(
+        log.matches(&format!("\"tool\":\"{tool}\"")).count(),
+        2,
+        "one decision + one result, both naming the tool, got:\n{log}"
+    );
 }
 
 // --- tests ----------------------------------------------------------------
@@ -298,6 +337,101 @@ async fn resume_with_replace_input_sets_effective_args() {
 
     assert_eq!(ext["status"], json!("completed"));
     assert_eq!(ext["effective_args"], json!({ "msg": "R" }));
+
+    client.cancel().await.ok();
+}
+
+// --- N1: single-audit-line invariant (ARAS-0033) --------------------------
+
+#[tokio::test]
+async fn executed_capability_emits_exactly_one_audit_pair() {
+    // Holds by construction on the MCP path but was unguarded by any MCP test
+    // (QA finding N1). The interesting regression is a resume that re-runs the
+    // executor and double-audits, so cover both entry paths: a direct Allow and
+    // a Defer→resume round-trip must each leave exactly one decision+result pair.
+
+    // (1) Direct Allow path.
+    let direct = TempDir::new().unwrap();
+    let client = connect(ArcanaMcpServer::new(
+        tools(),
+        vec![Arc::new(AllowLayer)],
+        PathBuf::from(direct.path()),
+    ))
+    .await;
+    client
+        .call_tool(call("echo", json!({ "msg": "hi" })))
+        .await
+        .expect("tools/call echo");
+    client.cancel().await.ok();
+    assert_one_audit_pair(&audit_text(direct.path()), "echo");
+
+    // (2) Defer → resume(allow): the executor runs exactly once across the
+    // suspend/resume boundary — resume must not re-execute (and re-audit).
+    let resumed = TempDir::new().unwrap();
+    let client = connect(ArcanaMcpServer::new(
+        tools(),
+        vec![Arc::new(DeferLayer)],
+        PathBuf::from(resumed.path()),
+    ))
+    .await;
+    let suspended = client
+        .call_tool(call("echo", json!({ "msg": "hi" })))
+        .await
+        .expect("tools/call echo suspends");
+    let token = arcana(&suspended)["interaction_required"]["token"]
+        .as_str()
+        .expect("interaction token")
+        .to_owned();
+    client
+        .call_tool(call(
+            "arcana.resume",
+            json!({ "token": token, "resolution": "allow" }),
+        ))
+        .await
+        .expect("arcana.resume allow");
+    client.cancel().await.ok();
+    assert_one_audit_pair(&audit_text(resumed.path()), "echo");
+}
+
+// --- N2: an upstream Deny is not rescued by the trailing ProceedLayer ------
+
+#[tokio::test]
+async fn deny_is_not_rescued_by_proceed_layer() {
+    // The `ProceedLayer` appended after the terminal `SuspendLayer` is always
+    // Allow. A cascade `Deny` must NOT be converted to Allow by it. The property
+    // currently holds only by short-circuit ordering (Deny returns before the
+    // trailing layers are reached); this guards a future layer-reorder regression.
+    let tmp = TempDir::new().unwrap();
+    let server = ArcanaMcpServer::new(
+        tools(),
+        vec![Arc::new(DenyLayer)],
+        PathBuf::from(tmp.path()),
+    );
+    let client = connect(server).await;
+
+    let result = client
+        .call_tool(call("echo", json!({ "msg": "hi" })))
+        .await
+        .expect("tools/call echo");
+    let ext = arcana(&result);
+
+    assert_eq!(
+        ext["status"],
+        json!("denied"),
+        "an upstream Deny must surface as a denied envelope, not be rescued to completed"
+    );
+    assert_eq!(result.is_error, Some(true));
+
+    let log = audit_text(tmp.path());
+    assert_eq!(
+        log.matches("\"outcome\":\"success\"").count(),
+        0,
+        "the tool must not execute when the cascade denies, got:\n{log}"
+    );
+    assert!(
+        log.contains("\"decision\":\"Denied\""),
+        "the denial must be audited, got:\n{log}"
+    );
 
     client.cancel().await.ok();
 }

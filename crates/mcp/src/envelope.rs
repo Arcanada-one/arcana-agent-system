@@ -8,7 +8,7 @@
 //! while an arcana-aware client reads the structured extension.
 
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Meta};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Status of a capability attempt as seen at the MCP boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

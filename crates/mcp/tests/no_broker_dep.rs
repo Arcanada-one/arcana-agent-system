@@ -10,7 +10,14 @@ use std::path::PathBuf;
 
 /// Broker crate names that MUST NOT appear as a resolved package.
 const BROKER_CRATES: &[&str] = &[
-    "kafka", "rdkafka", "amqp", "lapin", "nats", "async-nats", "pulsar", "rabbitmq-stream-client",
+    "kafka",
+    "rdkafka",
+    "amqp",
+    "lapin",
+    "nats",
+    "async-nats",
+    "pulsar",
+    "rabbitmq-stream-client",
     "nsq",
 ];
 
