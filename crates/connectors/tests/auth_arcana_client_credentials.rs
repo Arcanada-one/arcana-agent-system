@@ -168,3 +168,27 @@ fn production_config_rejects_unapproved_https_token_endpoint() {
         "production config accepted an arbitrary HTTPS endpoint"
     );
 }
+
+#[test]
+fn production_config_pins_the_ai_issuer_token_endpoint_and_rejects_one() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
+    std::env::set_var("ARCANA_KB_CLIENT_SECRET_FILE", "/tmp/unused-reader-secret");
+    let default_config = ClientCredentialsConfig::from_env().unwrap();
+    assert_eq!(
+        default_config.token_url.as_str(),
+        "https://auth.arcanada.ai/oidc/token"
+    );
+
+    std::env::set_var(
+        "ARCANA_AUTH_TOKEN_URL",
+        "https://auth.arcanada.one/oidc/token",
+    );
+    let one_issuer = ClientCredentialsConfig::from_env();
+    std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
+    std::env::remove_var("ARCANA_KB_CLIENT_SECRET_FILE");
+    assert!(
+        one_issuer.is_err(),
+        "production config accepted the incompatible .one issuer endpoint"
+    );
+}
