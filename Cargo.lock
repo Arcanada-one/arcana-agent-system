@@ -181,12 +181,14 @@ dependencies = [
  "arcana-core",
  "arcana-tools",
  "async-trait",
+ "blake3",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "xdg",
 ]
 
 [[package]]
