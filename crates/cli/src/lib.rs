@@ -5,4 +5,5 @@
 //! logic lives here so it can be unit-tested without spawning a subprocess.
 
 pub mod bootstrap;
+pub mod demo;
 pub mod permission_prompt;

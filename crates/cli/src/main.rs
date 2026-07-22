@@ -30,6 +30,18 @@ enum Cmd {
     /// Bootstrap smoke check: assemble the default permission cascade,
     /// walk it once, and report where the audit log landed.
     Whoami,
+    /// Phase-C vertical prototype: assemble the full driver + multi-model
+    /// dispatch + tool dispatch + permission cascade + audit loop, run a small
+    /// task, and print the three phases (attempt / check / conclusion). Offline
+    /// and deterministic by default; `--live` routes through the real Model
+    /// Connector when `ARCANA_MC_TOKEN` is set, else falls back to offline.
+    Demo {
+        /// The small task to drive (defaults to a built-in code-signal task).
+        task: Option<String>,
+        /// Route through the real Model Connector when `ARCANA_MC_TOKEN` is set.
+        #[arg(long)]
+        live: bool,
+    },
 }
 
 fn main() {
@@ -52,6 +64,9 @@ fn main() {
         }
         Some(Cmd::Whoami) => {
             std::process::exit(run_whoami());
+        }
+        Some(Cmd::Demo { task, live }) => {
+            std::process::exit(arcana_cli::demo::run_demo(task, live));
         }
         None => {
             println!("arcana {VERSION} (REPL stub — interactive mode coming soon)");
