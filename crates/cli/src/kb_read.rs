@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-const KB_MODEL_CONNECTOR: &str = "openmodel";
+const KB_MODEL_CONNECTOR: &str = "orq";
 const KB_MODEL: &str = "deepseek-v4-flash";
 const KB_NAMESPACE: &str = "wiki";
 const KB_LIMIT: u64 = 5;
@@ -229,12 +229,14 @@ async fn run_kb_read_with(
     config.policy = ModelPolicy::single_model(KB_MODEL);
     config.max_turns = 3;
     config.max_cost_usd = Some(0.10);
+    let encoded_query = serde_json::to_string(&query)
+        .map_err(|error| KbReadError::Composition(error.to_string()))?;
     config.system_prompt = Some(format!(
-        "You are a read-only KB agent. Call arcana_search exactly once, then answer from its hits. \
-         The capability boundary fixes the literal query to {} and namespace to wiki. \
-         Cite at least one returned source_path verbatim. Never request another tool.",
-        serde_json::to_string(&query)
-            .map_err(|error| KbReadError::Composition(error.to_string()))?
+        "You are a read-only KB agent. On the first turn, emit exactly one tool request and no \
+         prose, using this driver-owned wire format:\n```tool_call\n{{\"name\":\"arcana_search\",\
+         \"input\":{{\"query\":{encoded_query},\"namespace\":\"wiki\",\"limit\":5}}}}\n```\n\
+         After the tool result, answer only from its hits and cite at least one returned \
+         source_path verbatim. Never request another tool."
     ));
     let cost = Arc::new(CostTracker::new());
     let driver = Driver::new(connector, &executor, cost, CancellationToken::new(), config);
@@ -407,7 +409,7 @@ mod tests {
     fn response(result: &str) -> ConnectorResponse {
         ConnectorResponse {
             id: "test-id".into(),
-            connector: "openmodel".into(),
+            connector: "orq".into(),
             model: "deepseek-v4-flash".into(),
             result: result.into(),
             usage: Usage {
@@ -494,12 +496,18 @@ mod tests {
         assert!(report.final_text.contains("wiki/services/scrutator.md"));
         let requests = connector.requests();
         assert_eq!(requests.len(), 2);
-        assert!(requests
-            .iter()
-            .all(|request| request.connector == "openmodel"));
+        assert!(requests.iter().all(|request| request.connector == "orq"));
         assert!(requests
             .iter()
             .all(|request| request.model.as_deref() == Some("deepseek-v4-flash")));
+        let system_prompt = requests[0]
+            .system_prompt
+            .as_deref()
+            .expect("KB loop has a fixed system prompt");
+        assert!(system_prompt.contains("```tool_call"));
+        assert!(system_prompt.contains(
+            r#"{"name":"arcana_search","input":{"query":"What is Scrutator?","namespace":"wiki","limit":5}}"#
+        ));
         let audit_text = std::fs::read_to_string(audit.path().join("audit.log")).unwrap();
         assert_eq!(audit_text.matches("\"tool\":\"arcana_search\"").count(), 2);
         assert!(audit_text.contains("\"outcome\":\"success\""));
