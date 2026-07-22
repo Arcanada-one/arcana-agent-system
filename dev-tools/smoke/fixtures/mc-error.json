@@ -1,0 +1,1 @@
+{"id":"smoke-replay-err0","connector":"claude-code","model":"claude-code","result":"","usage":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"costUsd":0.0},"latencyMs":11,"status":"error","error":{"type":"circuit_open","message":"circuit breaker open for claude-code","retryable":false,"recommendation":"wait"}}

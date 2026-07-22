@@ -98,6 +98,60 @@ async fn driver_cost_cap_terminates() {
 }
 
 #[tokio::test]
+async fn driver_cost_breaker_replay_transcript_terminates_on_maxcost() {
+    // ARAS-0040 item 5 (S5): drive the loop against a MULTI-TURN replay
+    // transcript that accrues cost across turns and trips a low `MaxCostUsd`
+    // cap MID-transcript. Proves the AAL-L3 hard cost breaker actually fires on
+    // accumulated (not just single-call) cost. Falsifiability: a regression
+    // making `CostTracker::check_budget` always `Ok(())` would consume the
+    // unreached third response and return `Completed` (turns == 3) — the
+    // Phase-3 mutation matrix drives exactly this RED while the unit suite
+    // stays green.
+    let mut config = DriverConfig::new("scripted");
+    config.max_cost_usd = Some(0.001); // 1000 micro-USD cap
+
+    // Turn 1: tool_call @ 0.0006 → cumulative 600µ (≤ cap, continue).
+    // Turn 2: tool_call @ 0.0006 → cumulative 1200µ (> cap, terminate here).
+    // Turn 3: a final answer that must NEVER be reached.
+    let connector = ScriptedConnector::new(vec![
+        response(&tool_call_result("echo", json!({ "text": "a" })), 0.0006),
+        response(&tool_call_result("echo", json!({ "text": "b" })), 0.0006),
+        response("this final answer must not be reached", 0.0),
+    ]);
+    let dispatcher = echo_dispatcher();
+    let cascade = common::allow_cascade();
+    let hooks = HookChain::new();
+    let cost = Arc::new(CostTracker::new());
+
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        cost.clone(),
+        CancellationToken::new(),
+        config,
+    );
+    let out = driver.run("accrue cost across turns").await;
+
+    assert_eq!(out.reason, TerminalReason::MaxCostUsd);
+    assert_eq!(
+        out.final_text, None,
+        "over-cap run must not yield final text"
+    );
+    assert_eq!(out.turns, 2, "breaker must trip on the 2nd turn's accrual");
+    assert_eq!(
+        connector.requests().len(),
+        2,
+        "the 3rd transcript response must be left unconsumed"
+    );
+    assert_eq!(
+        cost.snapshot().total_cost_usd_micros,
+        1_200,
+        "two 0.0006 USD calls accrued before termination"
+    );
+}
+
+#[tokio::test]
 async fn driver_cost_cap_precedes_tool_interpretation() {
     let mut config = DriverConfig::new("scripted");
     config.max_cost_usd = Some(0.001);

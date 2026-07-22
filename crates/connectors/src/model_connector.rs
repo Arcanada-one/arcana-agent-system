@@ -10,6 +10,9 @@ use url::Url;
 
 const DEFAULT_BASE_URL: &str = "https://connector.arcanada.one";
 const ENV_API_KEY: &str = "ARCANA_MC_TOKEN";
+/// Optional base-URL override — lets a smoke harness point the probe at a
+/// loopback replay fixture (`http://127.0.0.1:PORT`) without a live mesh.
+const ENV_BASE_URL: &str = "ARCANA_MC_BASE_URL";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -54,16 +57,26 @@ impl ModelConnectorClient {
     /// Build a client from the `ARCANA_MC_TOKEN` env var and the default base
     /// `URL`.
     ///
+    /// The base `URL` is [`ENV_BASE_URL`] (`ARCANA_MC_BASE_URL`) when set to a
+    /// non-empty value, else [`DEFAULT_BASE_URL`]. An `http://` override
+    /// disables `https_only` (see [`ModelConnectorClient::new`]) so a loopback
+    /// replay fixture works; the production default stays HTTPS-only.
+    ///
     /// # Errors
     /// Returns [`ConnectorError::MissingApiKey`] if `ARCANA_MC_TOKEN` is unset
-    /// or empty, or [`ConnectorError::Transport`] if the client fails to build.
+    /// or empty, or [`ConnectorError::Transport`] if the base URL fails to
+    /// parse or the client fails to build.
     pub fn try_from_env() -> Result<Self, ConnectorError> {
         let token = std::env::var(ENV_API_KEY).map_err(|_| ConnectorError::MissingApiKey)?;
         if token.trim().is_empty() {
             return Err(ConnectorError::MissingApiKey);
         }
-        let base_url = Url::parse(DEFAULT_BASE_URL)
-            .map_err(|err| ConnectorError::Transport(err.to_string()))?;
+        let base = std::env::var(ENV_BASE_URL)
+            .ok()
+            .filter(|raw| !raw.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+        let base_url =
+            Url::parse(&base).map_err(|err| ConnectorError::Transport(err.to_string()))?;
         Self::new(base_url, ApiKey::new(token))
     }
 
