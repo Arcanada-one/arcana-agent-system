@@ -77,6 +77,31 @@ async fn denied_attempt_writes_terminal_result_without_execution_payload() {
     assert_eq!(records[1]["outcome"], "denied");
 }
 
+#[test]
+fn audit_record_event() {
+    let dir = TempDir::new().expect("tempdir");
+    let audit = AuditLog::new(dir.path()).expect("audit log");
+
+    audit
+        .record_event("corr-1", "spawn", &json!({ "child_id": 7 }))
+        .expect("record event");
+
+    let records = records(&dir);
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record["version"], 2);
+    assert_eq!(record["phase"], "supervisor");
+    assert_eq!(record["kind"], "spawn");
+    assert_eq!(record["correlation_id"], "corr-1");
+    let fields_hash = record["fields_hash"]
+        .as_str()
+        .expect("fields_hash is a string");
+    assert_eq!(fields_hash.len(), 16);
+    assert!(fields_hash.chars().all(|c| c.is_ascii_hexdigit()));
+    // Hashes-only invariant: the raw fields object is never persisted.
+    assert!(record.get("fields").is_none());
+}
+
 fn records(dir: &TempDir) -> Vec<Value> {
     std::fs::read_to_string(dir.path().join("audit.log"))
         .expect("read audit")
