@@ -102,6 +102,20 @@ fn run_mc_ping() -> i32 {
         let request = ExecuteRequest::new("claude-code", "ping");
         match client.execute(request).await {
             Ok(response) => {
+                // A `201 {"status":"success","result":""}` is control-plane
+                // green but data-plane dead — the model returned nothing. Treat
+                // a degenerate/empty result as a capability-assertion failure
+                // (exit 2), distinct from a transport/operational error (exit
+                // 1). `status == "error"` never reaches here (it maps to
+                // `ConnectorError::Logical` upstream), so an empty `result` is
+                // the degenerate case to guard.
+                if response.result.trim().is_empty() {
+                    eprintln!(
+                        "arcana mc-ping: degenerate success envelope — status={} model={} empty result (capability dead)",
+                        response.status, response.model
+                    );
+                    return 2;
+                }
                 println!(
                     "mc-ping ok: status={} model={} result={:?} tokens={} cost_usd={}",
                     response.status,
@@ -146,6 +160,11 @@ fn run_whoami() -> i32 {
         }
     };
 
+    // Route through `Bootstrap::evaluate` (not the raw `cascade`): the
+    // bootstrap-owned `AuditLog` (C4 / ARAS-0033) writes the correlated
+    // `decision`/`result` records synchronously and returns `Err` if that
+    // durable write fails — so a successful `Ok` guarantees the audit trail
+    // we advertise below is on disk.
     let outcome = match runtime.block_on(bootstrap.evaluate("whoami", serde_json::json!({}))) {
         Ok(outcome) => outcome,
         Err(err) => {
@@ -154,17 +173,46 @@ fn run_whoami() -> i32 {
         }
     };
 
-    match outcome {
+    let denied = match &outcome {
         CascadeOutcome::Allowed { .. } => {
             println!("arcana whoami: {}", bootstrap::local_identity());
+            false
         }
         CascadeOutcome::Denied { layer, reason } => {
             println!(
                 "arcana whoami: cascade denied at layer `{layer}` ({reason}) — local identity would be `{}`",
                 bootstrap::local_identity()
             );
+            true
+        }
+    };
+
+    // Stat the audit path we advertise — closes the creative's "prints an
+    // `audit log:` it never stats" false-green hole (Supreme-Directive Law-5
+    // audit trail). C4's `AuditLog` is a synchronous append+flush sink owned by
+    // `Bootstrap`, so the record is already durable once `evaluate` returned
+    // `Ok` — no writer-guard drop is needed to force a flush.
+    let audit_log_path = &bootstrap.audit_log_path;
+    println!("audit log: {}", audit_log_path.display());
+
+    match std::fs::metadata(audit_log_path) {
+        // Audit trail exists and is non-empty. A denied capability is a
+        // capability-assertion failure (exit 2); an allow is success (0).
+        Ok(meta) if meta.len() > 0 => {
+            if denied {
+                2
+            } else {
+                0
+            }
+        }
+        // The audit path we advertised is missing or empty → operational
+        // failure (exit 1), independent of the cascade verdict.
+        _ => {
+            eprintln!(
+                "arcana whoami: audit log missing or empty at {}",
+                audit_log_path.display()
+            );
+            1
         }
     }
-    println!("audit log: {}", bootstrap.audit_log_path.display());
-    0
 }
