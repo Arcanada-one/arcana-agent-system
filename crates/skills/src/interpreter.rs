@@ -194,9 +194,9 @@ impl SkillInterpreter {
         self.execute(&plan, ctx).await
     }
 
-    /// Enforce the run-path gates (maturity → tool-ceiling → model_spec) and
-    /// then execute each stage in declared order. No stage executes if any gate
-    /// rejects the plan (fail-closed before side effects).
+    /// Enforce the run-path gates (maturity → tool-ceiling → model allowlist)
+    /// and then execute each stage in declared order. No stage executes if any
+    /// gate rejects the plan (fail-closed before side effects).
     async fn execute(
         &self,
         plan: &SkillPlan,
