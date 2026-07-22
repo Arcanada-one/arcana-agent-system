@@ -26,5 +26,6 @@ pub use plan::{
     StageAction, StageLimits, TaskType,
 };
 pub use store::{
-    FileStore, ModelAllowlist, SkillCandidate, SkillPin, SkillStore, ToolCeiling,
+    FetchConn, FetchUnavailable, FileStore, ModelAllowlist, ScrutatorStore, SkillCandidate,
+    SkillPin, SkillStore, ToolCeiling,
 };

@@ -21,6 +21,7 @@
 //! config authorizes.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use crate::interpreter::SkillError;
 use crate::plan::{Maturity, SkillPlan};
@@ -180,5 +181,81 @@ impl ModelAllowlist {
     #[must_use]
     pub fn permits(&self, model: &str) -> bool {
         self.allowed.contains(model)
+    }
+}
+
+/// The single fetch primitive a [`ScrutatorStore`] needs.
+///
+/// Kept minimal and crate-local so `arcana-skills` takes **no** dependency on
+/// `arcana-connectors`; the live adapter (a `ScrutatorClient` impl of this
+/// trait) is Phase-2 wiring gated on SRCH-0038. Tests inject fixture bytes.
+#[async_trait::async_trait]
+pub trait FetchConn: Send + Sync {
+    /// Fetch the full content bytes for an opaque `source_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FetchUnavailable`] on any transport/status failure — the store
+    /// maps this to [`SkillError::StoreUnavailable`] (never a silent fallback).
+    async fn fetch_bytes(&self, source_id: &str) -> Result<Vec<u8>, FetchUnavailable>;
+}
+
+/// Marker error: a [`FetchConn`] could not produce bytes (network down, non-2xx,
+/// timeout, decode failure). Carries a human-readable reason for the typed
+/// [`SkillError::StoreUnavailable`].
+#[derive(Debug, Clone)]
+pub struct FetchUnavailable(pub String);
+
+/// The untrusted KB-backed store.
+///
+/// Bytes returned by the injected [`FetchConn`] are verified against the
+/// config-pinned full blake3 **before** any parse (the trust keystone,
+/// V-AC-3). A fetch failure with no verified cache entry fails closed to
+/// [`SkillError::StoreUnavailable`] — the store never falls back to a
+/// different or stale skill (V-AC-6). The optional blake3-content-addressed
+/// [`BlakeCache`] (wired via [`ScrutatorStore::with_cache`]) short-circuits the
+/// network on a hit (V-AC-7).
+pub struct ScrutatorStore<C: FetchConn> {
+    conn: Arc<C>,
+}
+
+impl<C: FetchConn> ScrutatorStore<C> {
+    /// Build a store over an injected fetch connector, with no cache.
+    #[must_use]
+    pub fn new(conn: Arc<C>) -> Self {
+        Self { conn }
+    }
+}
+
+/// Recompute the full blake3 of `bytes` and compare it to the config-pinned
+/// hex. Rejects mismatches **before** the caller parses — the keystone.
+fn verify_blake3(bytes: &[u8], pinned_hex: &str, source_id: &str) -> Result<(), SkillError> {
+    let actual = blake3::hash(bytes);
+    if actual.to_hex().as_str() == pinned_hex {
+        Ok(())
+    } else {
+        Err(SkillError::HashMismatch {
+            source_id: source_id.to_owned(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl<C: FetchConn> SkillStore for ScrutatorStore<C> {
+    async fn load(&self, pin: &SkillPin) -> Result<SkillPlan, SkillError> {
+        let bytes = self
+            .conn
+            .fetch_bytes(&pin.source_id)
+            .await
+            .map_err(|err| SkillError::StoreUnavailable {
+                source_id: pin.source_id.clone(),
+                reason: err.0,
+            })?;
+        // GATE 1 — local full-blake3 verify BEFORE parse (trust keystone).
+        verify_blake3(&bytes, &pin.blake3, &pin.source_id)?;
+        // GATE 2 — parse, then intrinsic schema validation.
+        let plan: SkillPlan = serde_json::from_slice(&bytes).map_err(SkillError::Parse)?;
+        plan.validate()?;
+        Ok(plan)
     }
 }

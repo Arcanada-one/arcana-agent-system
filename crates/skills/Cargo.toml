@@ -19,6 +19,7 @@ xdg = "2.5"
 
 [dev-dependencies]
 arcana-tools = { path = "../tools" }
+blake3 = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false }
