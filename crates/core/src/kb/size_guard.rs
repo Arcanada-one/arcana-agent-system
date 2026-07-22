@@ -117,8 +117,16 @@ impl SizeGuard {
 }
 
 /// Map a byte offset to the whitespace-word index it falls in (clamped).
+///
+/// The offset is server-derived and may land mid-UTF-8-codepoint; slicing
+/// `text[..clamped]` there would panic. We walk the clamp down to the nearest
+/// char boundary first (`str::floor_char_boundary` is still unstable on the
+/// pinned toolchain, so this is the manual equivalent).
 fn word_index_at_byte(text: &str, byte: u64) -> usize {
-    let clamped = usize::try_from(byte).unwrap_or(usize::MAX).min(text.len());
+    let mut clamped = usize::try_from(byte).unwrap_or(usize::MAX).min(text.len());
+    while clamped > 0 && !text.is_char_boundary(clamped) {
+        clamped -= 1;
+    }
     // Words fully before the offset ≈ the answer word's index.
     text[..clamped].split_whitespace().count()
 }
@@ -168,5 +176,32 @@ mod tests {
             "answer span was not reranked to the edge: {}",
             out.text
         );
+    }
+
+    #[test]
+    fn mid_codepoint_offset_does_not_panic_and_clamps_down() {
+        // Offset 1 lands inside the 2-byte Cyrillic 'с' of the first word.
+        assert_eq!(word_index_at_byte("слово мир", 1), 0);
+        // A boundary offset behaves normally.
+        assert_eq!(word_index_at_byte("слово мир", "слово".len() as u64), 1);
+    }
+
+    #[test]
+    fn windowing_over_cap_multibyte_body_mid_codepoint_does_not_panic() {
+        let g = SizeGuard::new(20, 0.5); // cap 10
+                                         // 100 multibyte (Cyrillic) words → over-cap, forces word_index_at_byte.
+        let text = (0..100)
+            .map(|n| format!("сл{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Offset 1 is mid the first 2-byte char — must not panic.
+        let body = EvidenceBody {
+            text,
+            answer_offset: 1,
+        };
+        let out = g.apply(&body);
+        assert!(out.truncated);
+        assert!(out.token_count <= g.cap_tokens(), "guard exceeded the cap");
+        assert!(!out.text.is_empty());
     }
 }

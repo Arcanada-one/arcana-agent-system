@@ -77,6 +77,21 @@ pub enum FetchRange {
     ParentOfChunk(String),
 }
 
+impl FetchRange {
+    /// A stable discriminant folded into the session-cache key so a later
+    /// different-range escalation for the same `(source_id, content_hash)` is a
+    /// MISS rather than being served the first range's body. (Under the thin-v1
+    /// whole-document fetch the two ranges return the same bytes but a different
+    /// answer offset; keying on the range keeps rerank-to-edge correct.)
+    #[must_use]
+    pub fn cache_key(&self) -> String {
+        match self {
+            FetchRange::Full => "full".to_owned(),
+            FetchRange::ParentOfChunk(chunk_id) => format!("parent:{chunk_id}"),
+        }
+    }
+}
+
 /// The content + server-derived trust metadata a fetch returns.
 #[derive(Debug, Clone)]
 pub struct FetchedEvidence {
@@ -347,7 +362,11 @@ impl<C: EvidenceFetch> KbCascade<C> {
         hit: &RetrievedChunk,
         range: FetchRange,
     ) -> Result<(EvidenceBody, Provenance, bool), CascadeError> {
-        if let Some(cached) = self.cache.get(&hit.source_id, &hit.content_hash) {
+        let range_key = range.cache_key();
+        if let Some(cached) = self
+            .cache
+            .get(&hit.source_id, &hit.content_hash, &range_key)
+        {
             return Ok((cached.body, cached.provenance, true));
         }
         let fetched = self
@@ -367,10 +386,12 @@ impl<C: EvidenceFetch> KbCascade<C> {
             text: fetched.content,
             answer_offset: fetched.answer_offset,
         };
-        // Cache under (source_id, content_hash) — a later hash change misses.
+        // Cache under (source_id, content_hash, range_key) — a later hash change
+        // or different escalation range misses.
         self.cache.put(
             &hit.source_id,
             &hit.content_hash,
+            &range_key,
             CachedEvidence {
                 body: body.clone(),
                 provenance: provenance.clone(),

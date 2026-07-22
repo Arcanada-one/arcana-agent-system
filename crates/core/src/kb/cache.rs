@@ -1,4 +1,5 @@
-//! Content-addressed **session** cache, keyed on `(source_id, content_hash)`.
+//! Content-addressed **session** cache, keyed on
+//! `(source_id, content_hash, range_key)`.
 //!
 //! The cache short-circuits a re-fetch of the same source at the same ingest
 //! version within one agent session. The key pairs the opaque `source_id` with
@@ -7,6 +8,10 @@
 //! cache MISS: a different `content_hash` never collides with the old entry, and
 //! the cascade re-fetches rather than serving stale bytes. The `content_hash` is
 //! used here purely as a cache/staleness discriminator, never as a trust anchor.
+//!
+//! The key also carries a `range_key` (the escalation [`FetchRange`] discriminant)
+//! so a later different-range escalation for the same source+hash does not get
+//! served the first range's body/answer-offset.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -30,7 +35,7 @@ pub struct CachedEvidence {
 /// atomic-counter case.
 #[derive(Debug, Default)]
 pub struct SessionCache {
-    inner: Mutex<HashMap<(String, String), CachedEvidence>>,
+    inner: Mutex<HashMap<(String, String, String), CachedEvidence>>,
 }
 
 impl SessionCache {
@@ -42,20 +47,34 @@ impl SessionCache {
         }
     }
 
-    /// Look up the entry for `(source_id, content_hash)`. A different
-    /// `content_hash` for the same `source_id` is a MISS (staleness → refetch).
+    /// Look up the entry for `(source_id, content_hash, range_key)`. A different
+    /// `content_hash` (staleness) or `range_key` (different escalation range) for
+    /// the same `source_id` is a MISS → refetch.
     #[must_use]
-    pub fn get(&self, source_id: &str, content_hash: &str) -> Option<CachedEvidence> {
-        let key = (source_id.to_owned(), content_hash.to_owned());
+    pub fn get(
+        &self,
+        source_id: &str,
+        content_hash: &str,
+        range_key: &str,
+    ) -> Option<CachedEvidence> {
+        let key = (
+            source_id.to_owned(),
+            content_hash.to_owned(),
+            range_key.to_owned(),
+        );
         self.inner
             .lock()
             .ok()
             .and_then(|map| map.get(&key).cloned())
     }
 
-    /// Insert (or replace) the entry for `(source_id, content_hash)`.
-    pub fn put(&self, source_id: &str, content_hash: &str, value: CachedEvidence) {
-        let key = (source_id.to_owned(), content_hash.to_owned());
+    /// Insert (or replace) the entry for `(source_id, content_hash, range_key)`.
+    pub fn put(&self, source_id: &str, content_hash: &str, range_key: &str, value: CachedEvidence) {
+        let key = (
+            source_id.to_owned(),
+            content_hash.to_owned(),
+            range_key.to_owned(),
+        );
         if let Ok(mut map) = self.inner.lock() {
             map.insert(key, value);
         }
@@ -93,8 +112,8 @@ mod tests {
     #[test]
     fn put_then_get_same_key_hits() {
         let cache = SessionCache::new();
-        cache.put("src-1", "h1", entry("doc body", "h1"));
-        let got = cache.get("src-1", "h1").expect("hit");
+        cache.put("src-1", "h1", "full", entry("doc body", "h1"));
+        let got = cache.get("src-1", "h1", "full").expect("hit");
         assert_eq!(got.body.text, "doc body");
         assert_eq!(cache.len(), 1);
     }
@@ -102,15 +121,27 @@ mod tests {
     #[test]
     fn changed_content_hash_is_a_miss_staleness() {
         let cache = SessionCache::new();
-        cache.put("src-1", "h1", entry("stale body", "h1"));
+        cache.put("src-1", "h1", "full", entry("stale body", "h1"));
         // Same source_id, new ingest hash → MISS (do not serve stale bytes).
-        assert!(cache.get("src-1", "h2").is_none());
+        assert!(cache.get("src-1", "h2", "full").is_none());
     }
 
     #[test]
     fn different_source_id_is_a_miss() {
         let cache = SessionCache::new();
-        cache.put("src-1", "h1", entry("body", "h1"));
-        assert!(cache.get("src-2", "h1").is_none());
+        cache.put("src-1", "h1", "full", entry("body", "h1"));
+        assert!(cache.get("src-2", "h1", "full").is_none());
+    }
+
+    #[test]
+    fn different_range_key_is_a_miss() {
+        let cache = SessionCache::new();
+        // First escalation cached the parent-section range.
+        cache.put("src-1", "h1", "parent:chunk-7", entry("parent body", "h1"));
+        // A later full-source escalation for the same source+hash must NOT be
+        // served the parent range's body/answer-offset — it is a MISS.
+        assert!(cache.get("src-1", "h1", "full").is_none());
+        // …but the original range still hits.
+        assert!(cache.get("src-1", "h1", "parent:chunk-7").is_some());
     }
 }
