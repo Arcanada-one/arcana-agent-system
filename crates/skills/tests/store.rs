@@ -360,3 +360,53 @@ async fn cache_hit_no_network() {
         "a cache hit must perform zero network fetches"
     );
 }
+
+/// V-AC-9 — the two-phase firewall: a fuzzy `SkillCandidate` can never become a
+/// `SkillPin` (that absence is proven at compile time by a `compile_fail`
+/// doctest on `SkillCandidate`). Here we prove the *security consequence*: the
+/// only field a candidate could offer as a hash is its SHA-256 `content_hash`,
+/// which is not a blake3 anchor — so even if code naively fed it to a pin, the
+/// run fails closed with `HashMismatch`, never executing the skill.
+#[tokio::test]
+async fn candidate_cannot_construct_pin() {
+    use arcana_skills::{Maturity, SkillCandidate};
+
+    let bytes = serde_json::to_vec(&production_echo_plan()).unwrap();
+
+    // A search proposal. It carries a SHA-256 content_hash, no blake3.
+    let candidate = SkillCandidate {
+        name: "codegen-review".into(),
+        version: 3,
+        content_hash: format!("sha256:{}", "de".repeat(32)),
+        maturity: Maturity::Production,
+        score: 0.94,
+    };
+
+    // The ONLY way to reach a pin is to author one from trusted config. If an
+    // attacker/naive caller instead tried to derive the pin's trust anchor from
+    // the candidate's content_hash, the fetched bytes' real blake3 will not
+    // match it → HashMismatch, before parse, before any execution.
+    let forged_pin = SkillPin::new(
+        candidate.name.clone(),
+        candidate.version,
+        candidate.content_hash.clone(), // SHA-256 masquerading as the blake3 anchor
+        "kb:skill:codegen-review:3",
+    );
+    let store = ScrutatorStore::new(Arc::new(FixedConn::new(bytes.clone())));
+    let err = store
+        .load(&forged_pin)
+        .await
+        .expect_err("a candidate-derived hash can never authorize a run");
+    assert!(
+        matches!(err, SkillError::HashMismatch { .. }),
+        "expected HashMismatch, got {err:?}"
+    );
+
+    // A correctly config-authored pin (real blake3) loads — proving the pin
+    // itself is the authorization boundary, not the candidate.
+    let real_pin = SkillPin::new("codegen-review", 3, blake3_hex(&bytes), "kb:skill:codegen-review:3");
+    ScrutatorStore::new(Arc::new(FixedConn::new(bytes)))
+        .load(&real_pin)
+        .await
+        .expect("a config-authored pin loads");
+}

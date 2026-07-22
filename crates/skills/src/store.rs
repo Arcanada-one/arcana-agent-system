@@ -82,7 +82,25 @@ impl SkillPin {
 /// signal only, of a different algorithm and role from the run-path blake3
 /// trust anchor. There is intentionally no path from a `SkillCandidate` to a
 /// [`SkillPin`]: a candidate can only *propose* a skill to a human/config
-/// author, who then pins it.
+/// author, who then pins it (search proposes, config authorizes).
+///
+/// The firewall is **type-level**: there is no `From<SkillCandidate>` for
+/// [`SkillPin`] and no method returning one, so a candidate can never be turned
+/// directly into run authorization. The following does not compile:
+///
+/// ```compile_fail
+/// use arcana_skills::{Maturity, SkillCandidate, SkillPin};
+/// let candidate = SkillCandidate {
+///     name: "codegen-review".into(),
+///     version: 3,
+///     content_hash: "sha256:deadbeef".into(),
+///     maturity: Maturity::Production,
+///     score: 0.94,
+/// };
+/// // ERROR[E0277]: the trait `From<SkillCandidate>` is not implemented for
+/// // `SkillPin` — search proposes, config authorizes.
+/// let _pin: SkillPin = candidate.into();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkillCandidate {
     /// Proposed skill name.
