@@ -5,6 +5,7 @@ members = [
     "crates/connectors",
     "crates/core",
     "crates/mcp",
+    "crates/skills",
     "crates/supervisor",
     "crates/tools",
 ]
