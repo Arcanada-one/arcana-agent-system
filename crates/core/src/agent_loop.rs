@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connector::{ConnectorResponse, ExecuteRequest, ModelConnector};
 use crate::cost::{CostSnapshot, CostTracker};
+use crate::dispatch::{classify, ModelPolicy, SelectionContext};
 use crate::hooks::{HookChain, HookContext, PostToolOutcome, PreToolOutcome};
 use crate::permission::{CascadeOutcome, PermissionCascade};
 use crate::tool::ToolDispatcher;
@@ -276,6 +277,11 @@ pub struct DriverConfig {
     pub max_cost_usd: Option<f64>,
     /// Serialized-history ceiling (chars) → compaction / `ContextWindowExhausted`.
     pub context_budget_chars: usize,
+    /// Per-turn model-selection policy (D-REQ-01). The classifier keys a
+    /// [`crate::dispatch::TaskType`] off the turn context and the policy maps it
+    /// to the model id written onto `ExecuteRequest.model`. The former static
+    /// `model` above seeds this policy's `Default` fallback in [`Driver::new`].
+    pub policy: ModelPolicy,
 }
 
 impl DriverConfig {
@@ -291,6 +297,7 @@ impl DriverConfig {
             max_turns: 8,
             max_cost_usd: None,
             context_budget_chars: 1_000_000,
+            policy: ModelPolicy::new(),
         }
     }
 
@@ -324,6 +331,10 @@ pub struct RunOutput {
     pub turns: u32,
     /// Cost accounting snapshot at termination.
     pub cost: CostSnapshot,
+    /// The ordered sequence of model ids selected, one per connector call
+    /// (D-REQ-05). Mirrors each `ExecuteRequest.model` in call order, making the
+    /// ≥2-distinct-selections property runtime-verifiable.
+    pub selected_models: Vec<String>,
 }
 
 /// The agent-loop driver. Borrows its collaborators; owns only run config and
@@ -364,8 +375,14 @@ impl<'a> Driver<'a> {
         hooks: &'a HookChain,
         cost: Arc<CostTracker>,
         cancel: CancellationToken,
-        config: DriverConfig,
+        mut config: DriverConfig,
     ) -> Self {
+        // The former static `model` becomes the policy's `Default` fallback, so a
+        // caller that only sets `model` keeps its single-model behaviour on the
+        // `Default` arm while task-typed turns still route to the tiered models.
+        if let Some(model) = config.model.clone() {
+            config.policy = config.policy.with_default_model(model);
+        }
         Self {
             connector,
             dispatcher,
@@ -385,12 +402,14 @@ impl<'a> Driver<'a> {
                 final_text: None,
                 turns: 0,
                 cost: self.cost.snapshot(),
+                selected_models: Vec::new(),
             };
         }
         let mut history = vec![HistoryEntry::Task(task.to_owned())];
         let mut attempts: u32 = 0;
+        let mut selected: Vec<String> = Vec::new();
         loop {
-            let step = self.step(&mut history, &mut attempts).await;
+            let step = self.step(&mut history, &mut attempts, &mut selected).await;
             let outcome = match &step {
                 StepResult::Continue(reason) => TurnOutcome::Continue(*reason),
                 StepResult::Terminal(reason, _) => TurnOutcome::Terminal(*reason),
@@ -407,14 +426,23 @@ impl<'a> Driver<'a> {
                         final_text,
                         turns: attempts,
                         cost: self.cost.snapshot(),
+                        selected_models: selected,
                     };
                 }
             }
         }
     }
 
-    /// One step: guards → connector attempt → interpret → (tool turn | final).
-    async fn step(&self, history: &mut Vec<HistoryEntry>, attempts: &mut u32) -> StepResult {
+    /// One step: guards → select model → connector attempt → interpret → (tool
+    /// turn | final). `attempts` is the shared connector-attempt counter that
+    /// enforces `max_turns`; `selected` accumulates the ordered per-step model
+    /// ids.
+    async fn step(
+        &self,
+        history: &mut Vec<HistoryEntry>,
+        attempts: &mut u32,
+        selected: &mut Vec<String>,
+    ) -> StepResult {
         if self.cancel.is_cancelled() {
             return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
         }
@@ -436,8 +464,20 @@ impl<'a> Driver<'a> {
             }
         }
         let prompt = serialize_history(history);
+        // Per-step multi-model dispatch (D-REQ-01/03/05): classify the step
+        // context, select the model, record it, and route it through the
+        // connector on `ExecuteRequest.model`. Selection keys off the current
+        // connector-attempt index (`*attempts`) before that counter is consumed
+        // by the `max_turns`-enforcing increment below, preserving the
+        // zero-based turn index the classifier expects on the first attempt.
+        let ctx = SelectionContext {
+            history,
+            turn: *attempts,
+        };
+        let choice = self.config.policy.select(classify(&ctx));
+        selected.push(choice.model_id.clone());
         *attempts = attempts.saturating_add(1);
-        let resp = match self.call_connector(prompt).await {
+        let resp = match self.call_connector(prompt, Some(choice.model_id)).await {
             Ok(resp) => resp,
             Err(reason) => return StepResult::Terminal(reason, None),
         };
@@ -461,9 +501,13 @@ impl<'a> Driver<'a> {
 
     /// Build the request, call the connector, and record its cost. Maps a
     /// connector error to [`TerminalReason::ConnectorFatal`].
-    async fn call_connector(&self, prompt: String) -> Result<ConnectorResponse, TerminalReason> {
+    async fn call_connector(
+        &self,
+        prompt: String,
+        model: Option<String>,
+    ) -> Result<ConnectorResponse, TerminalReason> {
         let mut req = ExecuteRequest::new(self.config.connector_id.clone(), prompt);
-        req.model = self.config.model.clone();
+        req.model = model;
         req.system_prompt = self.config.system_prompt.clone();
         req.max_turns = Some(self.config.max_turns);
         req.max_budget_usd = self.remaining_cost_budget();

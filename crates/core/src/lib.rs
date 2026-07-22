@@ -5,6 +5,7 @@
 pub mod agent_loop;
 pub mod connector;
 pub mod cost;
+pub mod dispatch;
 pub mod hooks;
 pub mod permission;
 pub mod tool;
