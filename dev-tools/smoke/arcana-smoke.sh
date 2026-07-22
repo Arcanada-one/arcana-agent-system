@@ -273,14 +273,18 @@ stage_secret() {
         skip "SEC no-secret-in-binary" "no binary"
         return
     fi
-    # Secret-value-shaped, word-boundary anchored (F6): `\b` prevents honest
-    # code literals such as the rustls CMC-OID symbols `id-cmc-identityProof`
-    # from false-RED-ing every build (there `mc-` is glued to a preceding word
-    # char), while a bounded leaked token literal (e.g. the canary
-    # `mc-deadbeef…`, which `strings` prints line-bounded) still fires. Proven
-    # able to fire in dev-tools/smoke/mutation-matrix.md.
+    # Secret-value-shaped, HEX-anchored (F6, corrected). A word-boundary anchor
+    # is useless here: rustc concatenates every &str literal into one contiguous
+    # rodata blob with no separators, so `strings` emits them as a single line
+    # and a real leaked token would be glued to its neighbours (no boundary).
+    # Instead we key on token SHAPE: `mc-` immediately followed by ≥8 lowercase
+    # hex chars. Honest code literals such as the rustls CMC-OID symbols
+    # (`id-cmc-identityProof`, `id-cmc-revokeRequest`, …) carry non-hex camelCase
+    # after `mc-` and never match; a real `mc-<hex>` token / the `mc-deadbeef…`
+    # canary matches even when glued. Proven able to fire (canary) AND empty on
+    # an honest build in dev-tools/smoke/mutation-matrix.md.
     local hits
-    hits="$(strings "$BIN" 2>/dev/null | grep -E '\bmc-[a-z0-9]{6,}' || true)"
+    hits="$(strings "$BIN" 2>/dev/null | grep -oE 'mc-[0-9a-f]{8,}' || true)"
     if [ -z "$hits" ]; then
         pass "SEC no-secret-in-binary"
     else
