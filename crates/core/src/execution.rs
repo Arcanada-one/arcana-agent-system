@@ -242,9 +242,12 @@ impl CapabilityExecutor {
     ) -> Result<(), CapabilityError> {
         self.audit
             .record_decision(invocation_id, tool, input, decision, layer)
-            .map_err(|source| CapabilityError::AuditFailure {
-                phase: AuditFailurePhase::Decision,
-                source,
+            .map_err(|source| {
+                self.audit_latched.store(true, Ordering::Release);
+                CapabilityError::AuditFailure {
+                    phase: AuditFailurePhase::Decision,
+                    source,
+                }
             })
     }
 

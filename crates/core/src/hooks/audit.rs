@@ -35,6 +35,8 @@ pub enum AuditHookError {
     FilePermissions { mode: u32 },
     #[error("audit file owner does not match the running user")]
     FileOwner,
+    #[error("audit metadata durability failed: {0}")]
+    MetadataSyncFailed(std::io::Error),
     #[error("audit writer lock poisoned")]
     LockPoisoned,
     #[error("audit write failed: {0}")]
@@ -168,6 +170,24 @@ impl AuditLog {
 
 #[cfg(unix)]
 fn open_secure_audit_file(dir: &Path) -> Result<File, AuditHookError> {
+    open_secure_audit_file_with_sync(dir, &mut |file, _transition| {
+        file.sync_all().map_err(AuditHookError::MetadataSyncFailed)
+    })
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetadataTransition {
+    DirectoryMode,
+    AuditFileMode,
+    AuditFileDirectoryEntry,
+}
+
+#[cfg(unix)]
+fn open_secure_audit_file_with_sync(
+    dir: &Path,
+    sync: &mut impl FnMut(&File, MetadataTransition) -> Result<(), AuditHookError>,
+) -> Result<File, AuditHookError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     std::fs::create_dir_all(dir).map_err(AuditHookError::DirectoryFailed)?;
@@ -188,9 +208,12 @@ fn open_secure_audit_file(dir: &Path) -> Result<File, AuditHookError> {
     if !metadata.is_dir() || metadata.uid() != expected_uid {
         return Err(AuditHookError::DirectorySecurity);
     }
-    directory
-        .set_permissions(std::fs::Permissions::from_mode(0o700))
-        .map_err(AuditHookError::DirectoryFailed)?;
+    if metadata.permissions().mode() & 0o777 != 0o700 {
+        directory
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
+            .map_err(AuditHookError::DirectoryFailed)?;
+        sync(&directory, MetadataTransition::DirectoryMode)?;
+    }
     let secured = directory
         .metadata()
         .map_err(AuditHookError::DirectoryFailed)?;
@@ -223,6 +246,8 @@ fn open_secure_audit_file(dir: &Path) -> Result<File, AuditHookError> {
         metadata.uid(),
         expected_uid,
     )?;
+    sync(&file, MetadataTransition::AuditFileMode)?;
+    sync(&directory, MetadataTransition::AuditFileDirectoryEntry)?;
     Ok(file)
 }
 
@@ -286,8 +311,10 @@ fn now_rfc3339() -> String {
 }
 
 #[cfg(all(test, unix))]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn file_owner_mismatch_is_rejected() {
@@ -295,5 +322,30 @@ mod tests {
             validate_file_security(true, 0o600, 41, 42),
             Err(AuditHookError::FileOwner)
         ));
+    }
+
+    #[test]
+    fn secure_open_persists_mode_and_directory_entry_transitions() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let audit_dir = root.path().join("audit");
+        std::fs::create_dir(&audit_dir).expect("create audit dir");
+        std::fs::set_permissions(&audit_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("set initial directory mode");
+        let mut transitions = Vec::new();
+
+        let _file = open_secure_audit_file_with_sync(&audit_dir, &mut |_file, transition| {
+            transitions.push(transition);
+            Ok(())
+        })
+        .expect("secure audit open");
+
+        assert_eq!(
+            transitions,
+            [
+                MetadataTransition::DirectoryMode,
+                MetadataTransition::AuditFileMode,
+                MetadataTransition::AuditFileDirectoryEntry,
+            ]
+        );
     }
 }

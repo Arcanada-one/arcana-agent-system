@@ -32,6 +32,8 @@ struct WriterState {
     bytes: Vec<u8>,
     successful_records: usize,
     fail_after_records: Option<usize>,
+    fail_once: bool,
+    failure_injected: bool,
     fail_sync: bool,
 }
 
@@ -41,6 +43,8 @@ impl ControlledWriter {
             bytes: Vec::new(),
             successful_records: 0,
             fail_after_records: None,
+            fail_once: false,
+            failure_injected: false,
             fail_sync: false,
         }));
         (
@@ -57,6 +61,21 @@ impl ControlledWriter {
                 bytes: Vec::new(),
                 successful_records: 0,
                 fail_after_records: Some(records),
+                fail_once: false,
+                failure_injected: false,
+                fail_sync: false,
+            })),
+        }
+    }
+
+    fn fail_once_after(records: usize) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(WriterState {
+                bytes: Vec::new(),
+                successful_records: 0,
+                fail_after_records: Some(records),
+                fail_once: true,
+                failure_injected: false,
                 fail_sync: false,
             })),
         }
@@ -68,6 +87,8 @@ impl ControlledWriter {
                 bytes: Vec::new(),
                 successful_records: 0,
                 fail_after_records: None,
+                fail_once: false,
+                failure_injected: false,
                 fail_sync: true,
             })),
         }
@@ -87,10 +108,12 @@ impl DurableAuditWriter for ControlledWriter {
 impl Write for ControlledWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut state = self.state.lock().expect("writer state lock");
-        if state
+        let should_fail = state
             .fail_after_records
             .is_some_and(|limit| state.successful_records >= limit)
-        {
+            && (!state.fail_once || !state.failure_injected);
+        if should_fail {
+            state.failure_injected = true;
             return Err(io::Error::other("injected audit failure"));
         }
         state.bytes.extend_from_slice(buf);
@@ -242,6 +265,36 @@ async fn pre_audit_failure_executes_zero_tools() {
             ..
         }
     ));
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn decision_audit_failure_latches_executor_closed() {
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let executor = executor(
+        Arc::clone(&count),
+        PermissionCascade::new(vec![Arc::new(AllowLayer)]),
+        AuditLog::from_durable_writer(Box::new(ControlledWriter::fail_once_after(0))),
+    );
+
+    let first = executor
+        .execute(&context(), "counting", json!({ "value": 1 }))
+        .await
+        .expect_err("decision audit failure must fail closed");
+    assert!(matches!(
+        first,
+        CapabilityError::AuditFailure {
+            phase: AuditFailurePhase::Decision,
+            ..
+        }
+    ));
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    let second = executor
+        .execute(&context(), "counting", json!({ "value": 2 }))
+        .await
+        .expect_err("decision audit failure must permanently latch the executor");
+    assert!(matches!(second, CapabilityError::AuditLatched));
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
