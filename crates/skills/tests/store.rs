@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use arcana_core::dispatch::ModelPolicy;
 use arcana_skills::{
-    FetchConn, FetchUnavailable, FileStore, ScrutatorStore, SkillError, SkillInterpreter, SkillPin,
-    SkillStore,
+    FetchConn, FetchUnavailable, FileStore, ModelAllowlist, ScrutatorStore, SkillError,
+    SkillInterpreter, SkillPin, SkillStore, ToolCeiling,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -158,4 +158,97 @@ async fn hash_pin_accepts_matching_bytes() {
         .expect("matching bytes must load and run");
     assert_eq!(out.version, 3);
     assert!(out.stages[0].output.content.contains("keystone"));
+}
+
+/// A one-stage production plan with the given tool list and model id.
+fn plan_with(tools: serde_json::Value, model: &str) -> serde_json::Value {
+    json!({
+        "schema_version": 1,
+        "name": "codegen-review",
+        "version": 3,
+        "kind": "instance",
+        "maturity": "production",
+        "stages": [{
+            "id": "s1",
+            "model": { "literal": model },
+            "agent_count": 1,
+            "limits": { "max_turns": 1, "max_cost_usd": 0.0, "context_budget_chars": 1024 },
+            "tools": tools,
+            "metrics": [],
+            "action": { "capability": "echo", "input": { "marker": "gated" } }
+        }],
+        "defaults": { "model": { "literal": model } }
+    })
+}
+
+/// Run `plan` through a guarded `interpreter` via a `FileStore` local pin.
+async fn run_local(
+    interpreter: &SkillInterpreter,
+    plan: serde_json::Value,
+    dir: &std::path::Path,
+) -> Result<arcana_skills::SkillRunOutput, SkillError> {
+    let plan_path = dir.join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    interpreter.run(&plan_path, &hook_ctx()).await
+}
+
+/// V-AC-4 — a plan declaring a tool outside the per-agent ceiling is rejected;
+/// a plan whose tools are a subset of the ceiling runs (the ceiling can only be
+/// narrowed, never widened).
+#[tokio::test]
+async fn tool_ceiling_cannot_widen() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("audit");
+    std::fs::create_dir(&audit).unwrap();
+    let executor = executor_with(vec![Arc::new(EchoTool)], &audit);
+    let interpreter = SkillInterpreter::new(executor, ModelPolicy::new())
+        .with_tool_ceiling(ToolCeiling::new(["echo", "read"]));
+
+    // Outside the ceiling → rejected.
+    let err = run_local(&interpreter, plan_with(json!(["echo", "bash"]), "m-default"), dir.path())
+        .await
+        .expect_err("a tool outside the ceiling must be rejected");
+    match err {
+        SkillError::ToolCeilingExceeded { stage_id, tool } => {
+            assert_eq!(stage_id, "s1");
+            assert_eq!(tool, "bash");
+        }
+        other => panic!("expected ToolCeilingExceeded, got {other:?}"),
+    }
+
+    // Subset of the ceiling → runs.
+    let out = run_local(&interpreter, plan_with(json!(["echo"]), "m-default"), dir.path())
+        .await
+        .expect("a subset-of-ceiling plan must run");
+    assert_eq!(out.stages.len(), 1);
+}
+
+/// V-AC-5 — a stage whose resolved model endpoint is outside the per-agent
+/// allowlist is rejected with `ModelNotAllowed`; an allowed endpoint runs.
+#[tokio::test]
+async fn model_spec_allowlist() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("audit");
+    std::fs::create_dir(&audit).unwrap();
+    let executor = executor_with(vec![Arc::new(EchoTool)], &audit);
+    let interpreter = SkillInterpreter::new(executor, ModelPolicy::new())
+        .with_model_allowlist(ModelAllowlist::new(["m-default", "m-review"]));
+
+    // Off-list model → rejected before any stage executes.
+    let err = run_local(&interpreter, plan_with(json!(["echo"]), "m-exfiltrator"), dir.path())
+        .await
+        .expect_err("an off-allowlist model must be rejected");
+    match err {
+        SkillError::ModelNotAllowed { stage_id, model } => {
+            assert_eq!(stage_id, "s1");
+            assert_eq!(model, "m-exfiltrator");
+        }
+        other => panic!("expected ModelNotAllowed, got {other:?}"),
+    }
+
+    // Allowed model → runs.
+    let out = run_local(&interpreter, plan_with(json!(["echo"]), "m-review"), dir.path())
+        .await
+        .expect("an allowlisted model must run");
+    assert_eq!(out.selected_models, vec!["m-review"]);
 }
