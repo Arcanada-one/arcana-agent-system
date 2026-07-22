@@ -4,7 +4,7 @@
 # Stages S0–S5 against the release `arcana` binary + the agent-loop driver:
 #   S0  build-provenance   embedded GIT_SHA == `git rev-parse --short=7 HEAD`
 #   S1  whoami + audit      allow → identity + Allowed record; deny → exit 2 +
-#                           Denied{layer} record; real audit log untouched
+#                           Denied record (+ layer field); real audit untouched
 #   S2  mc-ping             nonce-bound replay success (+ optional live leg)
 #   S3  negative controls   pinned ConnectorError Display strings (token unset /
 #                           stub-200 / 201-error) — assert the MESSAGE, not the
@@ -168,9 +168,13 @@ stage_s1() {
     local daudit="$ISO_STATE/state/arcana/audit.log"
     if [ $ISO_CODE -eq 2 ]; then pass "S1 whoami-deny exit-2"; else
         fail "S1 whoami-deny exit-2" "expected 2, got $ISO_CODE: $ISO_OUT"; fi
-    if grep -q '"decision":"Denied{interactive_auto}"' "$daudit" 2>/dev/null; then
+    # C4 (ARAS-0033) writes the terminal deny as `"decision":"Denied"` with the
+    # deciding layer in a SEPARATE `"layer"` field — assert both so an allow and
+    # a deny stay structurally distinct in the log (Supreme-Directive Law-5).
+    if grep -q '"decision":"Denied"' "$daudit" 2>/dev/null \
+        && grep -q '"layer":"interactive_auto"' "$daudit" 2>/dev/null; then
         pass "S1 whoami-deny audit-Denied-record"; else
-        fail "S1 whoami-deny audit-Denied-record" "no Denied{layer} terminal record"; fi
+        fail "S1 whoami-deny audit-Denied-record" "no Denied terminal record naming layer interactive_auto"; fi
 }
 
 # ==========================================================================

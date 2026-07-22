@@ -30,7 +30,7 @@ ARCANA_SMOKE_OUT=$OUT bash dev-tools/smoke/arcana-smoke.sh   # exit 0, not-ok=0
 | # | Injected defect | File | RED stage(s) | Baseline |
 |---|-----------------|------|--------------|----------|
 | M1 | `run_whoami` Denied arm returns 0 (revert item 1) | `crates/cli/src/main.rs` | `not ok 7 - S1 whoami-deny exit-2` | GREEN |
-| M2 | cascade emits an identical hardcoded `"Continue"` decision (the F2 regression) | `crates/core/src/permission/mod.rs` | `not ok 6 - S1 whoami-allow audit-Allowed-record`; `not ok 8 - S1 whoami-deny audit-Denied-record` | GREEN |
+| M2 | audit emits an identical hardcoded decision label (Allow == Deny in the log) | `crates/cli/src/bootstrap.rs` | `not ok 6 - S1 whoami-allow audit-Allowed-record`; `not ok 8 - S1 whoami-deny audit-Denied-record` | GREEN |
 | M3 | replay fixture returns a degenerate empty `result` (dead-data MC) | `dev-tools/smoke/fixtures/mc-success.json` | `not ok 9 - S2 mc-ping-replay exit-0`; `not ok 10 - S2 mc-ping-replay nonce-bound` | GREEN |
 | M4 | corrupt the pinned `UnexpectedStatus` Display string | `crates/core/src/connector.rs` | `not ok 13 - S3 stub-200 pinned-Display` (12 & 14 stay `ok` — per-message discrimination, F5) | GREEN |
 | M5 | `CostTracker::check_budget` always `Ok(())` (breaker disabled, F4) | `crates/core/src/cost.rs` | `not ok 16 - S5 cost-breaker maxcost-unit`; `not ok 17 - S5 cost-breaker maxcost-replay-transcript` — **unit accounting test stays GREEN** (`driver_cost_accounting` 1 passed) | GREEN |
@@ -45,13 +45,21 @@ cargo build --release && bash dev-tools/smoke/arcana-smoke.sh
 ```
 `sha256 = 22f6177e7e0b8f0aaf0709954ab6e92b263e370996eba38899cc2f25e474fdb1` — RED at S1 deny (exit 2 lost).
 
-**M2** — decision label hardcoded to `"Continue"` (Allow == Deny in the log).
+**M2** — decision label hardcoded so an allow is indistinguishable from a deny
+in the audit log. Post-C4 (ARAS-0033) the decision label is minted in
+`Bootstrap::evaluate` (`crates/cli/src/bootstrap.rs`), which feeds
+`AuditLog::record_decision`:
 ```
-# replace the `match &outcome { Allowed => "Allowed", Denied{layer} => "Denied{…}" }`
-# with `let decision = "Continue".to_string();` in permission/mod.rs::evaluate
+# replace the `let (decision, layer) = match &outcome {
+#     CascadeOutcome::Allowed { .. } => ("Allowed", "cascade"),
+#     CascadeOutcome::Denied { layer, .. } => ("Denied", *layer),
+# };`
+# with `let (decision, layer) = ("Continue", "cascade");` in bootstrap.rs::evaluate
 cargo build --release && bash dev-tools/smoke/arcana-smoke.sh
 ```
-`sha256 = b511ca2d6d45b4d5b2ef6fee1b57fe98c26f8d457334ad372b7e3ad3ae4e6099` — RED: no distinct `Allowed`/`Denied{layer}` records (the exact F2 hole).
+RED: no distinct `Allowed` / `Denied` decision records (the same audit-trail
+false-green hole the pre-C4 F2 finding named, now guarded at the executor-owned
+audit boundary).
 
 **M3** — replay success envelope has `"result":""`.
 ```

@@ -61,7 +61,7 @@ teardown_file() {
     grep -qE '# SKIP\(' "$TAP"
 }
 
-@test "the S1 deny stage asserts a Denied{layer} audit record" {
+@test "the S1 deny stage asserts a Denied audit record naming the layer" {
     grep -qE '^ok [0-9]+ - S1 whoami-deny audit-Denied-record' "$TAP"
 }
 
