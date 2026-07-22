@@ -21,7 +21,7 @@ use url::Url;
 pub const KB_READER_CLIENT_ID: &str = "arcana-agent-kb-reader";
 pub const SCRUTATOR_LTM_RESOURCE: &str = "urn:arcanada:scrutator:ltm";
 pub const SCRUTATOR_LTM_SCOPE: &str = "kb:ltm.read";
-const DEFAULT_TOKEN_URL: &str = "https://auth.arcanada.one/oidc/token";
+const DEFAULT_TOKEN_URL: &str = "https://auth.arcanada.ai/oidc/token";
 const DEFAULT_CREDENTIAL_NAME: &str = "arcana-agent-kb-reader-client-secret";
 const MAX_TOKEN_LIFETIME_SECONDS: u64 = 300;
 const MAX_SECRET_BYTES: u64 = 4096;
