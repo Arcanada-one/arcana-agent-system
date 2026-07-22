@@ -14,6 +14,8 @@
 pub mod bind_guard;
 pub mod builtins;
 pub mod envelope;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod server;
 pub mod suspend;
 
