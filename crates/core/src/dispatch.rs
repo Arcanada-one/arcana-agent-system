@@ -67,6 +67,25 @@ impl ModelPolicy {
         }
     }
 
+    /// Pin every task class to one abstract model id.
+    ///
+    /// This is the fail-closed policy for purpose-built loops whose approved
+    /// provider/model is part of the capability contract rather than a
+    /// per-turn routing decision.
+    #[must_use]
+    pub fn single_model(model_id: impl Into<String>) -> Self {
+        let model_id = model_id.into();
+        let choice = ModelChoice {
+            model_id,
+            tier: CostTier::Cheap,
+        };
+        Self {
+            code: choice.clone(),
+            summarize: choice.clone(),
+            default: choice,
+        }
+    }
+
     /// Override the `Default`-arm model id — the former static
     /// `DriverConfig.model` becomes the policy fallback (D-REQ-03).
     #[must_use]

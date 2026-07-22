@@ -6,7 +6,8 @@
 //! credential), mints short-lived Bearer JWTs, and serializes refreshes so a
 //! process never creates a token stampede.
 
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -191,9 +192,27 @@ impl ClientCredentialsTokenProvider {
         {
             use std::os::unix::fs::MetadataExt;
 
-            let metadata =
-                fs::symlink_metadata(path).map_err(AuthTokenError::SecretFileUnavailable)?;
-            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            let descriptor = rustix::fs::open(
+                path,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::CLOEXEC
+                    | rustix::fs::OFlags::NOFOLLOW,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|err| {
+                if err == rustix::io::Errno::LOOP {
+                    AuthTokenError::SecretFileType
+                } else {
+                    AuthTokenError::SecretFileUnavailable(std::io::Error::from_raw_os_error(
+                        err.raw_os_error(),
+                    ))
+                }
+            })?;
+            let file = File::from(descriptor);
+            let metadata = file
+                .metadata()
+                .map_err(AuthTokenError::SecretFileUnavailable)?;
+            if !metadata.file_type().is_file() {
                 return Err(AuthTokenError::SecretFileType);
             }
             if metadata.len() == 0 || metadata.len() > MAX_SECRET_BYTES {
@@ -206,7 +225,13 @@ impl ClientCredentialsTokenProvider {
             if metadata.uid() != rustix::process::geteuid().as_raw() {
                 return Err(AuthTokenError::SecretFileOwner);
             }
-            let raw = fs::read_to_string(path).map_err(AuthTokenError::SecretFileUnavailable)?;
+            let mut raw = String::new();
+            file.take(MAX_SECRET_BYTES + 1)
+                .read_to_string(&mut raw)
+                .map_err(AuthTokenError::SecretFileUnavailable)?;
+            if raw.len() as u64 > MAX_SECRET_BYTES {
+                return Err(AuthTokenError::SecretFileSize);
+            }
             let secret = raw.trim();
             if secret.is_empty() {
                 return Err(AuthTokenError::SecretFileSize);

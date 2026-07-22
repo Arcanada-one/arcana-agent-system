@@ -87,16 +87,20 @@ version = "0.1.0"
 dependencies = [
  "arcana-connectors",
  "arcana-core",
+ "arcana-tools",
  "assert_cmd",
  "async-trait",
  "clap",
  "predicates",
  "rustyline",
+ "secrecy",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+ "url",
+ "wiremock",
  "xdg",
 ]
 

@@ -42,6 +42,12 @@ enum Cmd {
         #[arg(long)]
         live: bool,
     },
+    /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
+    KbRead {
+        /// Literal search query. Multiple shell words are canonicalized into one query.
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+    },
 }
 
 fn main() {
@@ -67,6 +73,9 @@ fn main() {
         }
         Some(Cmd::Demo { task, live }) => {
             std::process::exit(arcana_cli::demo::run_demo(task, live));
+        }
+        Some(Cmd::KbRead { query }) => {
+            std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));
         }
         None => {
             println!("arcana {VERSION} (REPL stub — interactive mode coming soon)");

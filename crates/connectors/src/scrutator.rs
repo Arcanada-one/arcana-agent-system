@@ -159,6 +159,7 @@ impl ScrutatorClient {
         base_url: Url,
         token_provider: Arc<dyn BearerTokenProvider>,
     ) -> Result<Self, ScrutatorError> {
+        validate_base_url(&base_url)?;
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
@@ -236,6 +237,35 @@ impl ScrutatorClient {
             message,
         })
     }
+}
+
+fn validate_base_url(base_url: &Url) -> Result<(), ScrutatorError> {
+    let host = base_url
+        .host_str()
+        .ok_or_else(|| ScrutatorError::Transport("Scrutator base URL has no host".into()))?;
+    let has_credentials = !base_url.username().is_empty() || base_url.password().is_some();
+    if has_credentials || base_url.query().is_some() || base_url.fragment().is_some() {
+        return Err(ScrutatorError::Transport(
+            "Scrutator base URL must not contain credentials, query, or fragment".into(),
+        ));
+    }
+
+    let loopback = match base_url.host() {
+        Some(url::Host::Domain(domain)) => domain == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    let exact_mesh = host == "100.70.137.104"
+        && base_url.port_or_known_default() == Some(8310)
+        && base_url.path() == "/";
+    if base_url.scheme() == "https" || (base_url.scheme() == "http" && (loopback || exact_mesh)) {
+        return Ok(());
+    }
+
+    Err(ScrutatorError::Transport(
+        "Scrutator base URL must use HTTPS, loopback HTTP, or the approved mesh endpoint".into(),
+    ))
 }
 
 /// FastAPI-style validation error envelope: `{"detail": ...}`, where

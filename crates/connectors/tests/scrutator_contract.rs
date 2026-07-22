@@ -29,6 +29,35 @@ fn client_for(server: &MockServer) -> ScrutatorClient {
     ScrutatorClient::new(base, Arc::new(StaticToken("test-token"))).expect("client builds")
 }
 
+#[test]
+fn base_url_policy_allows_https_loopback_and_the_exact_mesh_endpoint() {
+    let token: Arc<dyn BearerTokenProvider> = Arc::new(StaticToken("test-token"));
+    for raw in [
+        "https://kb.example.test",
+        "http://localhost:8310",
+        "http://127.0.0.1:8310",
+        "http://[::1]:8310",
+        "http://100.70.137.104:8310",
+    ] {
+        ScrutatorClient::new(Url::parse(raw).unwrap(), token.clone())
+            .unwrap_or_else(|err| panic!("expected approved base {raw}: {err}"));
+    }
+}
+
+#[test]
+fn base_url_policy_rejects_every_other_plain_http_endpoint() {
+    let token: Arc<dyn BearerTokenProvider> = Arc::new(StaticToken("test-token"));
+    for raw in [
+        "http://100.70.137.105:8310",
+        "http://100.70.137.104:8311",
+        "http://192.0.2.10:8310",
+        "http://example.test:8310",
+    ] {
+        let result = ScrutatorClient::new(Url::parse(raw).unwrap(), token.clone());
+        assert!(result.is_err(), "unapproved plaintext base accepted: {raw}");
+    }
+}
+
 struct StaticToken(&'static str);
 
 #[async_trait]
