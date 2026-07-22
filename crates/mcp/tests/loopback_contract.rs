@@ -146,8 +146,7 @@ fn text_of(result: &CallToolResult) -> String {
         .unwrap()
         .iter()
         .filter_map(|block| block.get("text").and_then(Value::as_str).map(str::to_owned))
-        .collect::<Vec<_>>()
-        .join("")
+        .collect::<String>()
 }
 
 // --- tests ----------------------------------------------------------------

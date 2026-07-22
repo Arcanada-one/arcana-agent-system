@@ -81,11 +81,11 @@ fn fast_meta(status: EnvelopeStatus, token: Option<&str>) -> Meta {
 /// Completed call: `content` carries the tool output, `effective_args` the
 /// cascade-authorized input the tool actually executed on.
 #[must_use]
-pub fn map_completed(output_text: String, effective_args: Value) -> CallToolResult {
+pub fn map_completed(output_text: String, effective_args: &Value) -> CallToolResult {
     let mut result = CallToolResult::success(vec![ContentBlock::text(output_text)]);
     result.structured_content = Some(structured(
         EnvelopeStatus::Completed,
-        Some(&effective_args),
+        Some(effective_args),
         None,
     ));
     result.is_error = None;

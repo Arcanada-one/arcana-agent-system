@@ -53,8 +53,8 @@ pub async fn serve_stdio() -> Result<(), Box<dyn std::error::Error>> {
 /// Returns a process exit code (0 = clean shutdown, non-zero = setup or
 /// transport failure, including a rejected non-loopback bind).
 #[must_use]
-pub fn run_mcp_serve(bind: Option<String>) -> i32 {
-    if let Some(raw) = bind.as_deref() {
+pub fn run_mcp_serve(bind: Option<&str>) -> i32 {
+    if let Some(raw) = bind {
         // Enforce the loopback guard *before* any listener is created.
         match bind_guard::guard_loopback(raw) {
             Ok(addr) => run_http(addr),

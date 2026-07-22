@@ -281,7 +281,7 @@ fn map_execution_result(
     outcome: Result<Result<CapabilityOutput, CapabilityError>, oneshot::error::RecvError>,
 ) -> CallToolResult {
     match outcome {
-        Ok(Ok(output)) => envelope::map_completed(output.output.content, output.effective_input),
+        Ok(Ok(output)) => envelope::map_completed(output.output.content, &output.effective_input),
         Ok(Err(err)) => envelope::map_denied(err.to_string()),
         Err(_) => {
             envelope::map_denied("execution task dropped before returning a result".to_owned())

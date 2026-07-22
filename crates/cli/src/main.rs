@@ -98,7 +98,7 @@ fn main() {
         Some(Cmd::Mcp {
             command: McpCmd::Serve { bind },
         }) => {
-            std::process::exit(arcana_mcp::run_mcp_serve(bind));
+            std::process::exit(arcana_mcp::run_mcp_serve(bind.as_deref()));
         }
         None => {
             println!("arcana {VERSION} (REPL stub — interactive mode coming soon)");
