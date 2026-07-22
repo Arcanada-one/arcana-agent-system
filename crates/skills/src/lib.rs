@@ -18,6 +18,7 @@ pub mod builder;
 pub mod interpreter;
 pub mod plan;
 
+pub use builder::SkillBuilder;
 pub use interpreter::{SkillError, SkillInterpreter, SkillRunOutput, StageResult};
 pub use plan::{
     Maturity, MetricSpec, ModelSpec, PlanDefaults, PlanKind, SkillPlan, SkillPlanError, Stage,
