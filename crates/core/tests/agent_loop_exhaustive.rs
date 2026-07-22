@@ -41,6 +41,7 @@ fn classify_terminal(reason: TerminalReason) -> &'static str {
         TerminalReason::PermissionDenied => "permission_denied",
         TerminalReason::ContextWindowExhausted => "context_window_exhausted",
         TerminalReason::ConnectorFatal => "connector_fatal",
+        TerminalReason::AuditFatal => "audit_fatal",
     }
 }
 

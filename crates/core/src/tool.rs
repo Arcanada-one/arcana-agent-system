@@ -40,7 +40,7 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn input_schema(&self) -> Value;
-    async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError>;
+    async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError>;
 
     /// Validate `input` against the JSON Schema returned by [`Tool::input_schema`].
     ///
@@ -66,6 +66,36 @@ pub trait Tool: Send + Sync {
             .collect::<Vec<_>>()
             .join("; ");
         Err(ToolError::InvalidInput(detail))
+    }
+}
+
+/// Move-only input minted by the canonical capability executor.
+///
+/// The private field and crate-private constructor make raw tool execution
+/// impossible for callers. Tool implementations may only consume an
+/// invocation that [`crate::execution::CapabilityExecutor`] created after the
+/// fail-closed cascade, final schema validation, and durable decision audit.
+///
+/// ```compile_fail,E0451
+/// use arcana_core::tool::ToolInvocation;
+/// use serde_json::json;
+///
+/// let forged = ToolInvocation { input: json!({"unsafe": true}) };
+/// ```
+#[derive(Debug)]
+pub struct ToolInvocation {
+    input: Value,
+}
+
+impl ToolInvocation {
+    pub(crate) fn new(input: Value) -> Self {
+        Self { input }
+    }
+
+    /// Consume the single-use invocation and return its validated input.
+    #[must_use]
+    pub fn into_input(self) -> Value {
+        self.input
     }
 }
 
@@ -120,23 +150,16 @@ impl ToolDispatcher {
         self.tools.is_empty()
     }
 
-    /// Resolve a tool by name (lookup helper for the agent loop).
-    #[must_use]
-    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+    /// Resolve a tool inside the fused executor/schema boundary.
+    ///
+    /// External callers cannot obtain the raw registered implementation:
+    ///
+    /// ```compile_fail,E0624
+    /// use arcana_core::tool::ToolDispatcher;
+    /// let registry = ToolDispatcher::new();
+    /// let _bypass = registry.get("bash");
+    /// ```
+    pub(crate) fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
-    }
-
-    /// Look up the tool by name and run it against `input`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DispatchError::Unknown`] when no tool is registered under
-    /// `name`, or the underlying [`ToolError`] when the tool itself fails.
-    pub async fn dispatch(&self, name: &str, input: Value) -> Result<ToolOutput, DispatchError> {
-        let tool = self
-            .tools
-            .get(name)
-            .ok_or_else(|| DispatchError::Unknown(name.to_owned()))?;
-        tool.execute(input).await.map_err(DispatchError::Tool)
     }
 }

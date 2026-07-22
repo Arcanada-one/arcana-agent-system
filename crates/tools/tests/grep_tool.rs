@@ -5,14 +5,15 @@
     clippy::doc_markdown
 )]
 
-use arcana_core::tool::Tool;
+mod common;
+
 use arcana_tools::grep::GrepTool;
 use serde_json::json;
 use tempfile::tempdir;
 
 #[tokio::test]
 async fn grep_matches_single_line_in_file() {
-    let tool = GrepTool::new();
+    let tool = common::Harness::new(GrepTool::new());
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("a.txt");
     tokio::fs::write(&path, b"alpha\nBETA\ngamma\n")
@@ -32,7 +33,7 @@ async fn grep_matches_single_line_in_file() {
 
 #[tokio::test]
 async fn grep_no_match_returns_empty() {
-    let tool = GrepTool::new();
+    let tool = common::Harness::new(GrepTool::new());
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("a.txt");
     tokio::fs::write(&path, b"alpha\n").await.expect("seed");
@@ -50,7 +51,7 @@ async fn grep_no_match_returns_empty() {
 
 #[tokio::test]
 async fn grep_recursive_walks_subdirs() {
-    let tool = GrepTool::new();
+    let tool = common::Harness::new(GrepTool::new());
     let dir = tempdir().expect("tempdir");
     let nested = dir.path().join("sub");
     tokio::fs::create_dir_all(&nested).await.expect("mkdir");
@@ -75,7 +76,7 @@ async fn grep_recursive_walks_subdirs() {
 
 #[tokio::test]
 async fn grep_case_insensitive_flag_works() {
-    let tool = GrepTool::new();
+    let tool = common::Harness::new(GrepTool::new());
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("a.txt");
     tokio::fs::write(&path, b"Hello World\n")
@@ -95,10 +96,9 @@ async fn grep_case_insensitive_flag_works() {
 
 #[tokio::test]
 async fn grep_schema_rejects_missing_pattern() {
-    let tool = GrepTool::new();
+    let tool = common::Harness::new(GrepTool::new());
     let err = tool
         .validate_input(&json!({}))
-        .await
         .expect_err("schema must reject");
     assert!(err.to_string().to_lowercase().contains("pattern"), "{err}");
 }

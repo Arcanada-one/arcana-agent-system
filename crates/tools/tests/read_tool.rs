@@ -5,7 +5,8 @@
     clippy::doc_markdown
 )]
 
-use arcana_core::tool::Tool;
+mod common;
+
 use arcana_tools::read::ReadTool;
 use serde_json::json;
 use tempfile::NamedTempFile;
@@ -21,7 +22,7 @@ async fn write_temp(content: &[u8]) -> NamedTempFile {
 
 #[tokio::test]
 async fn read_existing_file_returns_content() {
-    let tool = ReadTool::default();
+    let tool = common::Harness::new(ReadTool::default());
     let file = write_temp(b"hello world").await;
     let path = file.path().to_string_lossy().into_owned();
     let output = tool
@@ -35,7 +36,7 @@ async fn read_existing_file_returns_content() {
 
 #[tokio::test]
 async fn read_missing_file_returns_execution_failed() {
-    let tool = ReadTool::default();
+    let tool = common::Harness::new(ReadTool::default());
     let err = tool
         .execute(json!({ "path": "/nonexistent/arcana/test/file.txt" }))
         .await
@@ -45,7 +46,7 @@ async fn read_missing_file_returns_execution_failed() {
 
 #[tokio::test]
 async fn read_rejects_oversized_file() {
-    let tool = ReadTool::default();
+    let tool = common::Harness::new(ReadTool::default());
     let file = write_temp(b"abcdefghij").await; // 10 bytes
     let path = file.path().to_string_lossy().into_owned();
     let err = tool
@@ -57,10 +58,9 @@ async fn read_rejects_oversized_file() {
 
 #[tokio::test]
 async fn read_schema_rejects_missing_path() {
-    let tool = ReadTool::default();
+    let tool = common::Harness::new(ReadTool::default());
     let err = tool
         .validate_input(&json!({}))
-        .await
         .expect_err("schema rejection");
     assert!(err.to_string().to_lowercase().contains("path"), "{err}");
 }

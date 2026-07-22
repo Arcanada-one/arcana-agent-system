@@ -5,7 +5,7 @@
 //! the first concrete answer (`Allow` or `Deny`). A `ReplaceInput` decision
 //! mutates the working payload before the next layer evaluates. Layers that
 //! return `Defer` pass the responsibility on; if every layer defers, the
-//! cascade resolves to `Allowed` with the most recent payload.
+//! cascade denies closed because no authority approved the attempt.
 //!
 //! Canonical Phase 1 chain: `Schema → HookBridge → Rule → Interactive`.
 
@@ -37,13 +37,25 @@ pub enum LayerDecision {
     Defer,
 }
 
-/// Final outcome of running a payload through every layer in the cascade.
+/// Public decision-only outcome. The transformed input never escapes the
+/// fused executor, so this type cannot be used as an execution capability.
 #[derive(Debug, Clone)]
 pub enum CascadeOutcome {
-    /// All gates passed; the payload (possibly mutated) is approved.
-    Allowed { transformed_input: Value },
+    /// A layer explicitly approved the call.
+    Allowed {},
     /// A layer rejected the call.
     Denied { layer: &'static str, reason: String },
+}
+
+pub(crate) enum EvaluatedCapability {
+    Allowed {
+        transformed_input: Value,
+    },
+    Denied {
+        layer: &'static str,
+        reason: String,
+        final_input: Value,
+    },
 }
 
 /// Pluggable gate evaluated by [`PermissionCascade`].
@@ -69,20 +81,34 @@ impl PermissionCascade {
         Self { layers }
     }
 
-    /// Walk the chain against `input` and return the cascade verdict.
+    /// Walk the chain and expose only its decision, never an executable token.
     pub async fn evaluate(&self, tool: &str, input: Value) -> CascadeOutcome {
+        match self.evaluate_for_execution(tool, input).await {
+            EvaluatedCapability::Allowed { .. } => CascadeOutcome::Allowed {},
+            EvaluatedCapability::Denied { layer, reason, .. } => {
+                CascadeOutcome::Denied { layer, reason }
+            }
+        }
+    }
+
+    pub(crate) async fn evaluate_for_execution(
+        &self,
+        tool: &str,
+        input: Value,
+    ) -> EvaluatedCapability {
         let mut current = input;
         for layer in &self.layers {
             match layer.evaluate(tool, &current).await {
                 LayerDecision::Allow => {
-                    return CascadeOutcome::Allowed {
+                    return EvaluatedCapability::Allowed {
                         transformed_input: current,
                     };
                 }
                 LayerDecision::Deny(reason) => {
-                    return CascadeOutcome::Denied {
+                    return EvaluatedCapability::Denied {
                         layer: layer.name(),
                         reason,
+                        final_input: current,
                     };
                 }
                 LayerDecision::ReplaceInput(next) => {
@@ -91,8 +117,10 @@ impl PermissionCascade {
                 LayerDecision::Defer => {}
             }
         }
-        CascadeOutcome::Allowed {
-            transformed_input: current,
+        EvaluatedCapability::Denied {
+            layer: "cascade",
+            reason: "no permission layer explicitly allowed the capability".to_owned(),
+            final_input: current,
         }
     }
 }

@@ -5,7 +5,8 @@
 //!   2. First-`Deny` short-circuit — downstream layers do not run.
 //!   3. `ReplaceInput` propagation — pre-hook may mutate the payload and
 //!      every downstream layer sees the new value.
-//!   4. All-`Defer` resolves to an automatic `Allowed`.
+//!   4. All-`Defer` resolves fail-closed to `Denied { layer: "cascade" }` —
+//!      no authority answered, so the call is refused, not auto-approved.
 
 #![allow(
     clippy::unwrap_used,
@@ -159,17 +160,12 @@ async fn replace_input_propagates_to_downstream_layers() {
         .evaluate("read", json!({"path": "/etc/shadow"}))
         .await;
 
-    match outcome {
-        CascadeOutcome::Allowed { transformed_input } => {
-            assert_eq!(transformed_input, replaced);
-        }
-        other => panic!("expected Allowed, got {other:?}"),
-    }
+    assert!(matches!(outcome, CascadeOutcome::Allowed { .. }));
     assert_eq!(seen.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
-async fn all_defer_resolves_to_auto_allow_with_original_input() {
+async fn all_defer_denies_closed_without_an_authority() {
     let log = Arc::new(CallLog::default());
     let cascade = PermissionCascade::new(vec![
         fake("schema", LayerDecision::Defer, &log),
@@ -177,15 +173,16 @@ async fn all_defer_resolves_to_auto_allow_with_original_input() {
         fake("rule", LayerDecision::Defer, &log),
         fake("interactive", LayerDecision::Defer, &log),
     ]);
-    let input = json!({"path": "/etc/hosts"});
-
-    let outcome = cascade.evaluate("read", input.clone()).await;
+    let outcome = cascade
+        .evaluate("read", json!({"path": "/etc/hosts"}))
+        .await;
 
     match outcome {
-        CascadeOutcome::Allowed { transformed_input } => {
-            assert_eq!(transformed_input, input);
+        CascadeOutcome::Denied { layer, reason } => {
+            assert_eq!(layer, "cascade");
+            assert!(reason.contains("explicitly allowed"));
         }
-        other => panic!("expected Allowed, got {other:?}"),
+        other => panic!("expected fail-closed Denied, got {other:?}"),
     }
 }
 

@@ -22,7 +22,6 @@ use arcana_core::agent_loop::{
 };
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
-use arcana_core::permission::PermissionCascade;
 use arcana_core::tool::ToolDispatcher;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -96,17 +95,16 @@ async fn driver_context_window_irreducible_terminates() {
     // End-to-end: a budget below the task framing terminates before any call.
     let connector = ScriptedConnector::new(vec![response("unused", 0.0)]);
     let dispatcher = ToolDispatcher::new();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
     let mut config = DriverConfig::new("scripted");
     config.context_budget_chars = 4;
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         config,
@@ -132,7 +130,7 @@ async fn driver_compaction_consumes_no_turn() {
     dispatcher
         .register(Arc::new(EchoTool))
         .expect("register echo");
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
     let mut config = DriverConfig::new("scripted");
@@ -141,11 +139,10 @@ async fn driver_compaction_consumes_no_turn() {
     // brings history below this ceiling and forces one compaction re-loop.
     config.context_budget_chars = 110;
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         config,

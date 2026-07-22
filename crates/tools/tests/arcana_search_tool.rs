@@ -5,18 +5,19 @@
     clippy::doc_markdown
 )]
 
+mod common;
+
 use arcana_connectors::ScrutatorClient;
-use arcana_core::tool::Tool;
 use arcana_tools::arcana_search::ArcanaSearchTool;
 use serde_json::json;
 use url::Url;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn tool_for(server: &MockServer) -> ArcanaSearchTool {
+fn tool_for(server: &MockServer) -> common::Harness {
     let base = Url::parse(&server.uri()).expect("mock uri parses");
     let client = ScrutatorClient::new(base).expect("client builds");
-    ArcanaSearchTool::with_client(client)
+    common::Harness::new(ArcanaSearchTool::with_client(client))
 }
 
 #[tokio::test]
@@ -125,7 +126,6 @@ async fn arcana_search_schema_rejects_missing_query() {
     let tool = tool_for(&server);
     let err = tool
         .validate_input(&json!({}))
-        .await
         .expect_err("schema must reject");
     assert!(err.to_string().to_lowercase().contains("query"), "{err}");
 }
@@ -136,7 +136,6 @@ async fn arcana_search_schema_rejects_out_of_range_limit() {
     let tool = tool_for(&server);
     let err = tool
         .validate_input(&json!({ "query": "q", "limit": 999 }))
-        .await
         .expect_err("schema must reject limit > 50");
     assert!(!err.to_string().is_empty());
 }

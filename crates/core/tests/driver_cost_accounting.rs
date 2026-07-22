@@ -40,15 +40,14 @@ async fn driver_cost_accounting() {
         response("done", 0.003),
     ]);
     let dispatcher = echo_dispatcher();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost.clone(),
         CancellationToken::new(),
         DriverConfig::new("scripted"),
@@ -75,15 +74,14 @@ async fn driver_cost_cap_terminates() {
 
     let connector = ScriptedConnector::new(vec![response("expensive final", 0.01)]);
     let dispatcher = echo_dispatcher();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost.clone(),
         CancellationToken::new(),
         config,
@@ -112,11 +110,10 @@ async fn driver_cost_cap_precedes_tool_interpretation() {
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         config,
@@ -136,15 +133,14 @@ async fn driver_propagates_remaining_cost_budget() {
         response("done", 0.003),
     ]);
     let dispatcher = echo_dispatcher();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         config,

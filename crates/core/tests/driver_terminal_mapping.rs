@@ -38,15 +38,8 @@ async fn run_scenario(
     config: DriverConfig,
 ) -> RunOutput {
     let cost = Arc::new(CostTracker::new());
-    let driver = Driver::new(
-        &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
-        cost,
-        cancel,
-        config,
-    );
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
+    let driver = Driver::new(&connector, &executor, cost, cancel, config);
     driver.run("do a small task").await
 }
 
@@ -66,7 +59,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::new(vec![response("final answer", 0.0)]),
         ToolDispatcher::new(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         HookChain::new(),
         CancellationToken::new(),
         DriverConfig::new("scripted"),
@@ -82,7 +75,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::repeating(tool_call_response(0.0)),
         echo_dispatcher(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         HookChain::new(),
         CancellationToken::new(),
         cfg,
@@ -98,7 +91,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::repeating(tool_call_response(0.01)),
         echo_dispatcher(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         HookChain::new(),
         CancellationToken::new(),
         cfg,
@@ -117,7 +110,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::new(vec![response("final", 0.0)]),
         ToolDispatcher::new(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         HookChain::new(),
         cancel,
         DriverConfig::new("scripted"),
@@ -136,7 +129,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::repeating(tool_call_response(0.0)),
         echo_dispatcher(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         hooks,
         CancellationToken::new(),
         DriverConfig::new("scripted"),
@@ -172,7 +165,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::new(vec![response("final", 0.0)]),
         ToolDispatcher::new(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         HookChain::new(),
         CancellationToken::new(),
         cfg,
@@ -189,7 +182,7 @@ async fn driver_terminal_mapping() {
     let out = run_scenario(
         ScriptedConnector::failing(),
         ToolDispatcher::new(),
-        PermissionCascade::new(vec![]),
+        common::allow_cascade(),
         HookChain::new(),
         CancellationToken::new(),
         DriverConfig::new("scripted"),

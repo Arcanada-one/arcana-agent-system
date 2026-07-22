@@ -14,7 +14,6 @@ use std::sync::Arc;
 use arcana_core::agent_loop::{Driver, DriverConfig, RunOutput, TerminalReason};
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
-use arcana_core::permission::PermissionCascade;
 use arcana_core::tool::ToolDispatcher;
 use tokio_util::sync::CancellationToken;
 
@@ -23,13 +22,12 @@ use common::{response, ScriptedConnector};
 async fn run_with(config: DriverConfig) -> (RunOutput, usize) {
     let connector = ScriptedConnector::new(vec![response("must not run", 0.0)]);
     let dispatcher = ToolDispatcher::new();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         Arc::new(CostTracker::new()),
         CancellationToken::new(),
         config,

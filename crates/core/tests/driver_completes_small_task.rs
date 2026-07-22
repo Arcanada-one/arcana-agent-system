@@ -17,7 +17,6 @@ use std::sync::Arc;
 use arcana_core::agent_loop::{Driver, DriverConfig, TerminalReason};
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
-use arcana_core::permission::PermissionCascade;
 use arcana_core::tool::ToolDispatcher;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -35,15 +34,14 @@ async fn driver_completes_small_task() {
     dispatcher
         .register(Arc::new(EchoTool))
         .expect("register echo tool");
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         DriverConfig::new("scripted"),

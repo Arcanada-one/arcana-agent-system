@@ -8,8 +8,7 @@
 //! convention the next reader might forget.
 //!
 //! The [`Driver`] wires the sealed outcomes to the mature capability core —
-//! [`crate::connector::ModelConnector`], [`crate::permission::PermissionCascade`],
-//! [`crate::hooks::HookChain`], [`crate::tool::ToolDispatcher`], and
+//! [`crate::connector::ModelConnector`], [`crate::execution::CapabilityExecutor`], and
 //! [`crate::cost::CostTracker`] — driving a task through
 //! attempt → interpret → (tool turn | final) until a `Terminal` outcome. It
 //! adds no new `Tool`/`PermissionLayer`/`ToolHook`; every collaborator is
@@ -23,9 +22,8 @@ use tokio_util::sync::CancellationToken;
 use crate::connector::{ConnectorResponse, ExecuteRequest, ModelConnector};
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
-use crate::hooks::{HookChain, HookContext, PostToolOutcome, PreToolOutcome};
-use crate::permission::{CascadeOutcome, PermissionCascade};
-use crate::tool::ToolDispatcher;
+use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
+use crate::hooks::HookContext;
 
 /// Reasons a turn yields control back to the driver for another LLM call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,6 +61,8 @@ pub enum TerminalReason {
     ContextWindowExhausted,
     /// Upstream connector returned a non-recoverable error.
     ConnectorFatal,
+    /// Mandatory capability audit failed; executor is latched closed.
+    AuditFatal,
 }
 
 /// Tagged outcome of a single turn.
@@ -344,9 +344,7 @@ pub struct RunOutput {
 /// is consumed through its existing signature (D-REQ-05 / V-AC-7).
 pub struct Driver<'a> {
     connector: &'a dyn ModelConnector,
-    dispatcher: &'a ToolDispatcher,
-    cascade: &'a PermissionCascade,
-    hooks: &'a HookChain,
+    executor: &'a CapabilityExecutor,
     cost: Arc<CostTracker>,
     cancel: CancellationToken,
     config: DriverConfig,
@@ -370,9 +368,7 @@ impl<'a> Driver<'a> {
     #[must_use]
     pub fn new(
         connector: &'a dyn ModelConnector,
-        dispatcher: &'a ToolDispatcher,
-        cascade: &'a PermissionCascade,
-        hooks: &'a HookChain,
+        executor: &'a CapabilityExecutor,
         cost: Arc<CostTracker>,
         cancel: CancellationToken,
         mut config: DriverConfig,
@@ -385,9 +381,7 @@ impl<'a> Driver<'a> {
         }
         Self {
             connector,
-            dispatcher,
-            cascade,
-            hooks,
+            executor,
             cost,
             cancel,
             config,
@@ -544,22 +538,25 @@ impl<'a> Driver<'a> {
         name: &str,
         input: Value,
     ) -> StepResult {
-        let approved = match self.cascade.evaluate(name, input).await {
-            CascadeOutcome::Allowed { transformed_input } => transformed_input,
-            CascadeOutcome::Denied { .. } => {
+        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
+        let capability = match self.executor.execute(&ctx, name, input).await {
+            Ok(capability) => capability,
+            Err(CapabilityError::Denied { .. }) => {
                 return StepResult::Terminal(TerminalReason::PermissionDenied, None);
             }
-        };
-        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
-        let dispatched_input = match self.hooks.pre_tool(&ctx, name, &approved).await {
-            Ok(PreToolOutcome::Proceed { input }) => input,
-            Ok(PreToolOutcome::Stop { .. }) | Err(_) => {
+            Err(CapabilityError::HookAborted) => {
                 return StepResult::Terminal(TerminalReason::AbortedByHook, None);
             }
-        };
-        let output = match self.dispatcher.dispatch(name, dispatched_input).await {
-            Ok(output) => output,
-            Err(err) => {
+            Err(
+                CapabilityError::AuditFailure {
+                    phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
+                    ..
+                }
+                | CapabilityError::AuditLatched,
+            ) => {
+                return StepResult::Terminal(TerminalReason::AuditFatal, None);
+            }
+            Err(CapabilityError::Tool(err)) => {
                 history.push(HistoryEntry::ToolResult {
                     name: name.to_owned(),
                     content: format!("dispatch error: {err}"),
@@ -569,23 +566,16 @@ impl<'a> Driver<'a> {
         };
         history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
-            content: output.content.clone(),
+            content: capability.output.content,
         });
-        match self.hooks.post_tool(&ctx, name, &output).await {
-            Ok(PostToolOutcome::Proceed { injected }) => {
-                let injected_context = !injected.is_empty();
-                for line in injected {
-                    history.push(HistoryEntry::Injected(line));
-                }
-                if injected_context {
-                    StepResult::Continue(ContinueReason::HookContinuation)
-                } else {
-                    StepResult::Continue(ContinueReason::ToolResultsReady)
-                }
-            }
-            Ok(PostToolOutcome::Stop { .. }) | Err(_) => {
-                StepResult::Terminal(TerminalReason::AbortedByHook, None)
-            }
+        let injected_context = !capability.injected.is_empty();
+        for line in capability.injected {
+            history.push(HistoryEntry::Injected(line));
+        }
+        if injected_context {
+            StepResult::Continue(ContinueReason::HookContinuation)
+        } else {
+            StepResult::Continue(ContinueReason::ToolResultsReady)
         }
     }
 }
@@ -632,6 +622,7 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::AbortedByHook
         | TerminalReason::PermissionDenied
         | TerminalReason::ContextWindowExhausted
-        | TerminalReason::ConnectorFatal => LoopControl::Stop(reason),
+        | TerminalReason::ConnectorFatal
+        | TerminalReason::AuditFatal => LoopControl::Stop(reason),
     }
 }

@@ -104,6 +104,28 @@ pub enum PreToolOutcome {
     Stop { reason: String },
 }
 
+/// Outcome of a post-cascade `HookChain::pre_tool_gate` traversal.
+///
+/// Unlike [`PreToolOutcome`], this gate carries **no input**. Post-cascade
+/// hooks may veto (`Stop`) or run side effects only; the permission cascade
+/// is the sole input-transform authority. A post-cascade transform is
+/// therefore unrepresentable — `Proceed` has no payload the executor could
+/// route into execution in place of the cascade-authorized input:
+///
+/// ```compile_fail,E0559
+/// use arcana_core::hooks::PreToolGate;
+/// use serde_json::json;
+///
+/// let _ = PreToolGate::Proceed { input: json!({ "unsafe": true }) };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreToolGate {
+    /// All hooks passed; execution proceeds with the cascade-authorized input.
+    Proceed,
+    /// A hook or cancellation requested termination of this call.
+    Stop { reason: String },
+}
+
 /// Outcome of a `HookChain::post_tool` traversal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostToolOutcome {
@@ -184,6 +206,58 @@ impl HookChain {
             }
         }
         Ok(PreToolOutcome::Proceed { input: current })
+    }
+
+    /// Run the pre-tool half of the chain as a **post-cascade veto gate**.
+    ///
+    /// This is the entry point [`crate::execution::CapabilityExecutor`] uses
+    /// *after* the permission cascade has already produced the authorized
+    /// input. Hooks may pass through, veto (`StopExecution`), or fail — they
+    /// may **not** transform the input. A `ReplaceInput` at this stage is a
+    /// misconfiguration: input transforms must register as a cascade
+    /// [`crate::permission::HookBridgeLayer`], where the downstream Rule and
+    /// Interactive layers re-govern the mutated payload. The returned
+    /// [`PreToolGate`] carries no input, so a post-cascade transform cannot be
+    /// routed into execution even by mistake.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`HookError`] raised by a participating hook, and raises
+    /// [`HookError::ExecutionFailed`] if a hook returns `ReplaceInput`
+    /// (unauthorized post-cascade transform) or `InjectContext` (pre-phase
+    /// misuse).
+    pub async fn pre_tool_gate(
+        &self,
+        ctx: &HookContext,
+        tool: &str,
+        input: &Value,
+    ) -> Result<PreToolGate, HookError> {
+        for hook in &self.hooks {
+            if ctx.cancel.is_cancelled() {
+                return Ok(PreToolGate::Stop {
+                    reason: "cancelled".to_string(),
+                });
+            }
+            match hook.pre_tool(ctx, tool, input).await? {
+                HookResult::Continue => {}
+                HookResult::StopExecution(reason) => {
+                    return Ok(PreToolGate::Stop { reason });
+                }
+                HookResult::ReplaceInput(_) => {
+                    return Err(HookError::ExecutionFailed(
+                        "post-cascade hooks cannot transform input; register the \
+                         transform as a cascade layer (HookBridge) instead"
+                            .to_string(),
+                    ));
+                }
+                HookResult::InjectContext(_) => {
+                    return Err(HookError::ExecutionFailed(
+                        "InjectContext is not allowed in pre_tool".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(PreToolGate::Proceed)
     }
 
     /// Run the post-tool half of the chain.

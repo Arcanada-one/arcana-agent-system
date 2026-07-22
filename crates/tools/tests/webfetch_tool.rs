@@ -5,11 +5,13 @@
     clippy::doc_markdown
 )]
 
+mod common;
+
 use std::io::Write;
 use std::sync::Arc;
 
 use arcana_core::permission::RuleLayer;
-use arcana_core::tool::{Tool, ToolError};
+use arcana_core::tool::ToolError;
 use arcana_tools::webfetch::{WebFetchTool, ENV_ALLOW_HOSTS};
 use serde_json::json;
 use tempfile::NamedTempFile;
@@ -35,7 +37,7 @@ async fn webfetch_200_returns_body() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let url = format!("{}/hello", server.uri());
     let output = tool.execute(json!({ "url": url })).await.expect("fetch ok");
     assert_eq!(output.content, "hello, arcana");
@@ -53,7 +55,7 @@ async fn webfetch_404_becomes_execution_failed() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let url = format!("{}/missing", server.uri());
     let err = tool
         .execute(json!({ "url": url }))
@@ -72,7 +74,7 @@ async fn webfetch_body_over_cap_rejected() {
         .mount(&server)
         .await;
 
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let url = format!("{}/big", server.uri());
     let err = tool
         .execute(json!({ "url": url, "max_bytes": 10 }))
@@ -83,20 +85,22 @@ async fn webfetch_body_over_cap_rejected() {
 
 #[tokio::test]
 async fn webfetch_non_get_method_rejected() {
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let err = tool
         .execute(json!({ "url": "http://example.invalid/", "method": "POST" }))
         .await
         .expect_err("must reject");
-    assert!(err.to_string().contains("only GET"), "{err}");
+    assert!(
+        err.to_string().contains("POST") && err.to_string().contains("GET"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
 async fn webfetch_schema_rejects_missing_url() {
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let err = tool
         .validate_input(&json!({}))
-        .await
         .expect_err("schema must reject");
     assert!(err.to_string().to_lowercase().contains("url"), "{err}");
 }
@@ -115,7 +119,7 @@ allow_hosts = ["allowed\\.example\\.com"]
 "#,
     );
     let rules = Arc::new(RuleLayer::load(Some(permissions_file.path()), None).expect("load rules"));
-    let tool = WebFetchTool::with_rules(rules);
+    let tool = common::Harness::new(WebFetchTool::with_rules(rules));
 
     let url = format!("{}/x", server.uri());
     let err = tool
@@ -156,7 +160,7 @@ allow_hosts = ["^127\\.0\\.0\\.1(:\\d+)?$"]
 "#,
     );
     let rules = Arc::new(RuleLayer::load(Some(permissions_file.path()), None).expect("load rules"));
-    let tool = WebFetchTool::with_rules(rules);
+    let tool = common::Harness::new(WebFetchTool::with_rules(rules));
 
     let url = format!("{}/hello", server.uri());
     let output = tool
@@ -196,7 +200,7 @@ async fn env_var_fallback_denies_when_host_excluded_child() {
     let server = MockServer::start().await;
     // No responder mounted: a real call here would 404 rather than
     // PermissionDenied, which also fails the assertion below.
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let url = format!("{}/hello", server.uri());
     let err = tool
         .execute(json!({ "url": url }))
@@ -214,7 +218,7 @@ async fn env_var_fallback_allows_when_host_included_child() {
         .respond_with(ResponseTemplate::new(200).set_body_string("hi"))
         .mount(&server)
         .await;
-    let tool = WebFetchTool::new();
+    let tool = common::Harness::new(WebFetchTool::new());
     let url = format!("{}/hello", server.uri());
     let output = tool
         .execute(json!({ "url": url }))

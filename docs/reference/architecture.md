@@ -30,16 +30,43 @@ user input → REPL → core::agent_loop
                        │
                        ├─ context::pack()
                        ├─ connectors::model_connector::call() (preferred) or direct provider
-                       ├─ tool dispatcher (permission gate → tool exec → result envelope)
-                       └─ hooks (pre/post)
+                       └─ capability executor
+                            (registry → cascade → hooks → final schema check
+                             → decision audit → move-only invocation → tool
+                             → terminal audit)
                        │
                        ↓
                     terminal UI render
 ```
 
-## Permission layer
+## Capability execution trust boundary
 
-The cascade `Schema → HookBridge → Rule → Interactive` runs ahead of every tool dispatch (see `crates/core/src/permission/`). Filesystem tools (`Read`, `Write`, `Edit`) additionally route their `path` argument through `crates/tools/src/path_guard.rs::check()` before any I/O — a tool-internal seam against path traversal (CWE-22). The guard canonicalizes the input (resolving `..`, `.`, symlinks) and matches the canonical `PathBuf` against the active `ToolRuleSet`'s `deny_paths` and `allow_paths`. Matches block the call with `ToolError::PermissionDenied`.
+`CapabilityExecutor` is the only execution authority. It consumes a mutable
+`ToolDispatcher` at construction, freezing the registry, and owns the
+permission cascade, non-audit hooks, and mandatory synchronous audit sink.
+There is no public dispatcher lookup or raw-value execution function.
+`Tool::execute` requires a private-field, non-`Clone` `ToolInvocation`; only the
+executor can construct one, and it moves the invocation directly into the
+registered implementation.
+
+An attempt validates the raw payload, walks the cascade, then runs the
+executor-owned pre-tool hooks as a **veto/side-effect gate only** — the cascade
+is the sole input-transform authority, so those hooks cannot change the executed
+value (their outcome type carries no input; a post-cascade transform is a
+compile error). It then validates the cascade-authorized payload again
+immediately before writing the allow decision and invoking the tool. Empty or
+all-`Defer` cascades deny (fail-closed).
+The audit format is version 2: one `decision` and one terminal `result` record
+share an `invocation_id`; records carry hashes, never raw input/output or error
+text. A decision-write failure executes zero tools. A result-write failure is
+fatal and latches the executor closed for all later attempts. Because the audit
+sink is not a `ToolHook`, callers cannot double-bridge the audit authority.
+
+Filesystem tools (`Read`, `Write`, `Edit`) additionally route their `path`
+argument through `crates/tools/src/path_guard.rs::check()` before any I/O — a
+tool-internal seam against path traversal (CWE-22). The guard canonicalizes the
+input and matches it against the active `ToolRuleSet` deny/allow paths. Matches
+block the call with `ToolError::PermissionDenied`.
 
 `Tool::default()` ships a permissive rule set so existing call sites are not regressed. Production rule loading — wiring a real `ToolRuleSet` derived from `permissions.toml` into the tool constructors — is the next step on the permission stack and lands in a follow-up CLI bootstrap task.
 

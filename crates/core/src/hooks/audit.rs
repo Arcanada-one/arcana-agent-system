@@ -1,56 +1,48 @@
-//! Append-only audit log hook.
+//! Synchronous, fail-closed capability audit log.
 //!
-//! Writes one JSON line per hook invocation describing the tool name, a
-//! Blake3-truncated hash of the input, the phase, an RFC 3339 timestamp, and
-//! the decision returned. Writes go through a non-blocking writer; errors are
-//! demoted to warning traces so that audit failures cannot terminate the
-//! agent loop.
+//! Records are versioned and contain hashes only: raw inputs, outputs,
+//! credentials, and error strings are never persisted. The capability
+//! executor owns this sink directly, so audit cannot be accidentally omitted
+//! or double-bridged through a hook chain.
 
+use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
-use async_trait::async_trait;
 use serde_json::Value;
 use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
-use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 
-use crate::hooks::{HookContext, HookError, HookResult, ToolHook};
 use crate::tool::ToolOutput;
 
-const INPUT_HASH_HEX_PREFIX: usize = 16;
+const AUDIT_VERSION: u8 = 2;
+const HASH_HEX_PREFIX: usize = 16;
 
-/// Construction failures for [`AuditHook`].
+/// Construction and durable-write failures for [`AuditLog`].
 #[derive(Debug, Error)]
 pub enum AuditHookError {
-    /// The parent directory for the audit log could not be created.
     #[error("audit directory setup failed: {0}")]
     DirectoryFailed(std::io::Error),
-    /// The audit log file could not be opened.
     #[error("audit file open failed: {0}")]
     FileOpenFailed(std::io::Error),
+    #[error("audit writer lock poisoned")]
+    LockPoisoned,
+    #[error("audit write failed: {0}")]
+    WriteFailed(std::io::Error),
 }
 
-/// Pino-style structured-log hook.
-///
-/// The hook owns a [`WorkerGuard`] to keep the background writer alive for
-/// the lifetime of the hook; dropping the hook flushes the queue.
-pub struct AuditHook {
-    writer: Mutex<NonBlocking>,
-    _guard: WorkerGuard,
+/// Mandatory append-only sink owned by [`crate::execution::CapabilityExecutor`].
+pub struct AuditLog {
+    writer: Mutex<Box<dyn Write + Send>>,
 }
 
-impl AuditHook {
-    /// Construct an audit hook writing to `<dir>/audit.log`.
-    ///
-    /// The parent directory is created if missing.
+impl AuditLog {
+    /// Open `<dir>/audit.log` for synchronous append.
     ///
     /// # Errors
     ///
-    /// Returns [`AuditHookError::DirectoryFailed`] when the directory
-    /// cannot be created, or [`AuditHookError::FileOpenFailed`] when the
-    /// log file cannot be opened.
+    /// Returns [`AuditHookError`] when the directory or file cannot be opened.
     pub fn new(dir: &Path) -> Result<Self, AuditHookError> {
         std::fs::create_dir_all(dir).map_err(AuditHookError::DirectoryFailed)?;
         let file = std::fs::OpenOptions::new()
@@ -58,73 +50,109 @@ impl AuditHook {
             .append(true)
             .open(dir.join("audit.log"))
             .map_err(AuditHookError::FileOpenFailed)?;
-        let (writer, guard) = tracing_appender::non_blocking(file);
-        Ok(Self {
-            writer: Mutex::new(writer),
-            _guard: guard,
-        })
+        Ok(Self::from_writer(Box::new(file)))
     }
 
-    fn emit(&self, line: &str) {
-        use std::io::Write as _;
-        let Ok(mut writer) = self.writer.lock() else {
-            tracing::warn!("audit writer lock poisoned, dropping record");
-            return;
-        };
-        if let Err(err) = writeln!(writer, "{line}") {
-            tracing::warn!(error = %err, "audit write failed, dropping record");
+    /// Construct over an already-open writer.
+    ///
+    /// This seam supports supervised embeddings and deterministic failure
+    /// tests. Every record is synchronously written and flushed; any failure
+    /// is returned to the executor and closes execution.
+    #[must_use]
+    pub fn from_writer(writer: Box<dyn Write + Send>) -> Self {
+        Self {
+            writer: Mutex::new(writer),
         }
     }
 
-    fn hash_input(input: &Value) -> String {
-        // serde_json never errors on owned Values; fall back to "{}" for the
-        // theoretical Err arm to avoid `unwrap`.
-        let bytes = serde_json::to_vec(input).unwrap_or_else(|_| b"{}".to_vec());
-        let hash = blake3::hash(&bytes);
-        hash.to_hex().as_str()[..INPUT_HASH_HEX_PREFIX].to_string()
+    /// Audit a permission decision that intentionally does not execute a tool
+    /// (for example the CLI's `whoami` bootstrap probe).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuditHookError`] if either correlated record cannot be
+    /// synchronously written and flushed.
+    pub fn record_decision_only(
+        &self,
+        invocation_id: u64,
+        tool: &str,
+        input: &Value,
+        decision: &str,
+        layer: &str,
+    ) -> Result<(), AuditHookError> {
+        self.record_decision(invocation_id, tool, input, decision, layer)?;
+        self.record_result(invocation_id, tool, "decision_only", None)
     }
 
-    fn now_rfc3339() -> String {
-        OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| String::from("1970-01-01T00:00:00Z"))
-    }
-
-    fn render(phase: &str, tool: &str, input_hash: &str, decision: &str) -> String {
-        let record = serde_json::json!({
-            "ts": Self::now_rfc3339(),
-            "phase": phase,
+    pub(crate) fn record_decision(
+        &self,
+        invocation_id: u64,
+        tool: &str,
+        input: &Value,
+        decision: &str,
+        layer: &str,
+    ) -> Result<(), AuditHookError> {
+        self.append(&serde_json::json!({
+            "version": AUDIT_VERSION,
+            "ts": now_rfc3339(),
+            "phase": "decision",
+            "invocation_id": invocation_id,
             "tool": tool,
-            "input_hash": input_hash,
+            "input_hash": hash_value(input),
             "decision": decision,
+            "layer": layer,
+        }))
+    }
+
+    pub(crate) fn record_result(
+        &self,
+        invocation_id: u64,
+        tool: &str,
+        outcome: &str,
+        output: Option<&ToolOutput>,
+    ) -> Result<(), AuditHookError> {
+        let output_hash = output.map(|value| {
+            hash_value(&serde_json::json!({
+                "content": value.content,
+                "metadata": value.metadata,
+            }))
         });
-        record.to_string()
+        self.append(&serde_json::json!({
+            "version": AUDIT_VERSION,
+            "ts": now_rfc3339(),
+            "phase": "result",
+            "invocation_id": invocation_id,
+            "tool": tool,
+            "outcome": outcome,
+            "output_hash": output_hash,
+        }))
+    }
+
+    fn append(&self, record: &Value) -> Result<(), AuditHookError> {
+        let mut bytes = serde_json::to_vec(&record)
+            .map_err(|err| AuditHookError::WriteFailed(std::io::Error::other(err.to_string())))?;
+        bytes.push(b'\n');
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| AuditHookError::LockPoisoned)?;
+        writer
+            .write_all(&bytes)
+            .map_err(AuditHookError::WriteFailed)?;
+        writer.flush().map_err(AuditHookError::WriteFailed)
     }
 }
 
-#[async_trait]
-impl ToolHook for AuditHook {
-    async fn pre_tool(
-        &self,
-        _ctx: &HookContext,
-        tool: &str,
-        input: &Value,
-    ) -> Result<HookResult, HookError> {
-        let hash = Self::hash_input(input);
-        let line = Self::render("pre", tool, &hash, "Continue");
-        self.emit(&line);
-        Ok(HookResult::Continue)
-    }
+/// Backward-compatible type name for callers constructing the audit sink.
+pub type AuditHook = AuditLog;
 
-    async fn post_tool(
-        &self,
-        _ctx: &HookContext,
-        tool: &str,
-        output: &ToolOutput,
-    ) -> Result<HookResult, HookError> {
-        let hash = Self::hash_input(&serde_json::Value::String(output.content.clone()));
-        let line = Self::render("post", tool, &hash, "Continue");
-        self.emit(&line);
-        Ok(HookResult::Continue)
-    }
+fn hash_value(value: &Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_else(|_| b"{}".to_vec());
+    blake3::hash(&bytes).to_hex().as_str()[..HASH_HEX_PREFIX].to_owned()
+}
+
+fn now_rfc3339() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| String::from("1970-01-01T00:00:00Z"))
 }

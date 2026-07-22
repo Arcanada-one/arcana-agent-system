@@ -8,7 +8,8 @@
 //! - the REAL multi-model [`ModelPolicy`] (ARAS-0031) routes two turns to two
 //!   DISTINCT model ids (a `Code` step, then a `Summarize` step);
 //! - a REAL [`EchoTool`] dispatch happens through the [`ToolDispatcher`];
-//! - the ONE [`AuditHook`] on the [`HookChain`] is the single audit surface;
+//! - the executor-owned [`AuditLog`] is the single audit surface (audit is a
+//!   field of the fused `CapabilityExecutor`, single audit by construction);
 //! - the driver's exhaustive `reduce` reaches
 //!   [`TerminalReason::Completed`].
 //!
@@ -35,9 +36,9 @@ use std::sync::Arc;
 
 use arcana_core::agent_loop::{Driver, DriverConfig, TerminalReason};
 use arcana_core::cost::CostTracker;
-use arcana_core::hooks::audit::AuditHook;
+use arcana_core::execution::CapabilityExecutor;
+use arcana_core::hooks::audit::AuditLog;
 use arcana_core::hooks::HookChain;
-use arcana_core::permission::PermissionCascade;
 use arcana_core::tool::ToolDispatcher;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -68,13 +69,18 @@ async fn capstone_vertical_prototype_attempt_check_conclusion() {
         .register(Arc::new(EchoTool))
         .expect("register echo tool");
 
-    // Empty (always-allow) cascade + the ONE AuditHook on the HookChain: the
-    // single audit surface the driver walks (mirrors driver_audit_inherited).
-    let cascade = PermissionCascade::new(vec![]);
-    let audit = Arc::new(AuditHook::new(dir.path()).expect("audit hook construction"));
-    let mut hooks = HookChain::new();
-    hooks.push(audit.clone());
+    // Allowing cascade + an executor-OWNED AuditLog: the single audit surface
+    // the fused executor writes (mirrors driver_audit_inherited). An empty
+    // cascade would fail-closed (all-defer → Denied) under C4, so the run uses
+    // an explicit allow layer to reach the tool.
+    let cascade = common::allow_cascade();
+    let audit = AuditLog::new(dir.path()).expect("audit log construction");
+    let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
+
+    // The executor fuses authorize→audit→execute and owns the dispatcher,
+    // cascade, post-cascade hooks, and the AuditLog.
+    let executor = CapabilityExecutor::new(dispatcher, cascade, hooks, audit);
 
     // Default ModelPolicy already maps Code→"arcana-code-strong" and
     // Summarize→"arcana-cheap-fast" (distinct ids) — reused verbatim, no
@@ -82,9 +88,7 @@ async fn capstone_vertical_prototype_attempt_check_conclusion() {
     let out = {
         let driver = Driver::new(
             &connector,
-            &dispatcher,
-            &cascade,
-            &hooks,
+            &executor,
             cost,
             CancellationToken::new(),
             DriverConfig::new("scripted"),
@@ -134,10 +138,8 @@ async fn capstone_vertical_prototype_attempt_check_conclusion() {
     );
 
     // --- CONCLUSION: single-source audit (V-AC-6) ---------------------------
-    // Drop every AuditHook owner so the non-blocking WorkerGuard flushes.
-    drop(hooks);
-    drop(audit);
-
+    // The executor-owned AuditLog appends synchronously and flushes per record,
+    // so the file is already complete and readable here.
     let contents =
         std::fs::read_to_string(dir.path().join("audit.log")).expect("audit.log read failed");
     let lines: Vec<Value> = contents
@@ -145,28 +147,39 @@ async fn capstone_vertical_prototype_attempt_check_conclusion() {
         .map(|line| serde_json::from_str(line).expect("audit line is not JSON"))
         .collect();
 
-    let pre: Vec<&Value> = lines
+    // The fused executor writes the correlated pair with the C4 audit schema:
+    // one `decision` record (carrying `input_hash`) and one terminal `result`
+    // record (carrying `output_hash`), both for the same executed capability.
+    let decision: Vec<&Value> = lines
         .iter()
-        .filter(|l| l["phase"].as_str() == Some("pre"))
+        .filter(|l| l["phase"].as_str() == Some("decision"))
         .collect();
-    let post: Vec<&Value> = lines
+    let result: Vec<&Value> = lines
         .iter()
-        .filter(|l| l["phase"].as_str() == Some("post"))
+        .filter(|l| l["phase"].as_str() == Some("result"))
         .collect();
 
-    // Exactly one pre + one post line for the ONE executed `echo` capability —
-    // no bypass, no double audit (single cascade/hook path).
-    assert_eq!(pre.len(), 1, "exactly one pre-tool audit line for echo");
-    assert_eq!(post.len(), 1, "exactly one post-tool audit line for echo");
-    for record in [pre[0], post[0]] {
-        assert_eq!(record["tool"].as_str(), Some("echo"));
-        let hash = record["input_hash"]
+    // Exactly one decision + one result line for the ONE executed `echo`
+    // capability — no bypass, no double audit (single executor-owned path).
+    assert_eq!(
+        decision.len(),
+        1,
+        "exactly one decision audit line for echo"
+    );
+    assert_eq!(result.len(), 1, "exactly one result audit line for echo");
+    assert_eq!(decision[0]["tool"].as_str(), Some("echo"));
+    assert_eq!(result[0]["tool"].as_str(), Some("echo"));
+
+    // The decision record carries a Blake3 input hash; the result record a
+    // Blake3 output hash — both 16 hex chars.
+    for (record, field) in [(decision[0], "input_hash"), (result[0], "output_hash")] {
+        let hash = record[field]
             .as_str()
-            .expect("input_hash is a string");
-        assert_eq!(hash.len(), 16, "Blake3 input hash is 16 hex chars: {hash}");
+            .unwrap_or_else(|| panic!("{field} is a string"));
+        assert_eq!(hash.len(), 16, "Blake3 {field} is 16 hex chars: {hash}");
         assert!(
             hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "input_hash must be hex: {hash}"
+            "{field} must be hex: {hash}"
         );
     }
 }
