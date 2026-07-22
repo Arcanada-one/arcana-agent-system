@@ -6,11 +6,15 @@
 //! rerank parameter on `/v1/search` — this client does not add one; it
 //! forwards the hybrid-search contract as-is.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
+
+use crate::auth_arcana::{AuthTokenError, BearerTokenProvider, ClientCredentialsTokenProvider};
 
 /// Default Scrutator mesh endpoint (Tailscale-only, host `arcana-kb`).
 /// Confirmed live 2026-07 — do not point at the retired `arcana-db`
@@ -85,6 +89,9 @@ pub struct SearchResponse {
 /// Every way a `/v1/search` call can fail.
 #[derive(Debug, thiserror::Error)]
 pub enum ScrutatorError {
+    /// Dedicated reader credential setup or refresh failed.
+    #[error("authentication failed: {0}")]
+    Authentication(#[from] AuthTokenError),
     /// Transport-level failure (DNS, TLS, connect, timeout, body read).
     #[error("transport error: {0}")]
     Transport(String),
@@ -100,10 +107,20 @@ pub enum ScrutatorError {
 }
 
 /// HTTP client for the Scrutator `POST /v1/search` endpoint.
-#[derive(Debug)]
 pub struct ScrutatorClient {
     http: reqwest::Client,
     base_url: Url,
+    token_provider: Arc<dyn BearerTokenProvider>,
+}
+
+impl std::fmt::Debug for ScrutatorClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ScrutatorClient")
+            .field("base_url", &self.base_url)
+            .field("token_provider", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl ScrutatorClient {
@@ -115,6 +132,12 @@ impl ScrutatorClient {
     /// Returns [`ScrutatorError::Transport`] if the resolved base URL fails
     /// to parse or the underlying `reqwest` client fails to build.
     pub fn try_from_env() -> Result<Self, ScrutatorError> {
+        let base_url = Self::base_url_from_env()?;
+        let token_provider = ClientCredentialsTokenProvider::try_from_env()?;
+        Self::new(base_url, token_provider)
+    }
+
+    fn base_url_from_env() -> Result<Url, ScrutatorError> {
         let raw = std::env::var(ENV_BASE_URL).unwrap_or_default();
         let raw = if raw.trim().is_empty() {
             DEFAULT_BASE_URL.to_owned()
@@ -123,7 +146,7 @@ impl ScrutatorClient {
         };
         let base_url =
             Url::parse(&raw).map_err(|err| ScrutatorError::Transport(err.to_string()))?;
-        Self::new(base_url)
+        Ok(base_url)
     }
 
     /// Build a client with an explicit base `URL` (used by tests and any
@@ -132,14 +155,21 @@ impl ScrutatorClient {
     /// # Errors
     /// Returns [`ScrutatorError::Transport`] if the underlying `reqwest`
     /// client fails to build.
-    pub fn new(base_url: Url) -> Result<Self, ScrutatorError> {
+    pub fn new(
+        base_url: Url,
+        token_provider: Arc<dyn BearerTokenProvider>,
+    ) -> Result<Self, ScrutatorError> {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|err| ScrutatorError::Transport(err.to_string()))?;
-        Ok(Self { http, base_url })
+        Ok(Self {
+            http,
+            base_url,
+            token_provider,
+        })
     }
 
     fn search_url(&self) -> Result<Url, ScrutatorError> {
@@ -158,14 +188,25 @@ impl ScrutatorClient {
     /// [`ScrutatorError`].
     pub async fn search(&self, query: &SearchQuery) -> Result<SearchResponse, ScrutatorError> {
         let url = self.search_url()?;
-        let resp = self
-            .http
-            .post(url.clone())
-            .header(reqwest::header::ACCEPT, "application/json")
-            .json(query)
-            .send()
-            .await
-            .map_err(|err| ScrutatorError::Transport(format!("POST {url}: {err}")))?;
+        let mut refreshed = false;
+        let resp = loop {
+            let token = self.token_provider.bearer_token().await?;
+            let response = self
+                .http
+                .post(url.clone())
+                .header(reqwest::header::ACCEPT, "application/json")
+                .bearer_auth(token.expose_secret())
+                .json(query)
+                .send()
+                .await
+                .map_err(|err| ScrutatorError::Transport(format!("POST {url}: {err}")))?;
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED && !refreshed {
+                self.token_provider.invalidate().await;
+                refreshed = true;
+                continue;
+            }
+            break response;
+        };
 
         let status = resp.status();
         let content_type = resp
@@ -221,6 +262,19 @@ impl ErrorEnvelope {
 mod tests {
     use super::*;
 
+    struct TestToken;
+
+    #[async_trait::async_trait]
+    impl BearerTokenProvider for TestToken {
+        async fn bearer_token(&self) -> Result<secrecy::SecretString, AuthTokenError> {
+            Ok(secrecy::SecretString::from("test-token"))
+        }
+    }
+
+    fn test_provider() -> Arc<dyn BearerTokenProvider> {
+        Arc::new(TestToken)
+    }
+
     #[test]
     fn search_query_new_leaves_optionals_unset() {
         let query = SearchQuery::new("hello world");
@@ -234,8 +288,11 @@ mod tests {
 
     #[test]
     fn search_url_appends_v1_search_segments() {
-        let client = ScrutatorClient::new(Url::parse("http://100.70.137.104:8310").unwrap())
-            .expect("client builds");
+        let client = ScrutatorClient::new(
+            Url::parse("http://100.70.137.104:8310").unwrap(),
+            test_provider(),
+        )
+        .expect("client builds");
         assert_eq!(
             client.search_url().unwrap().as_str(),
             "http://100.70.137.104:8310/v1/search"
@@ -248,22 +305,16 @@ mod tests {
         // is scoped to this crate's tests only (mirrors the existing
         // `model_connector` convention for env-based construction tests).
         std::env::remove_var(ENV_BASE_URL);
-        let client = ScrutatorClient::try_from_env().expect("client builds from default");
-        assert_eq!(
-            client.search_url().unwrap().as_str(),
-            "http://100.70.137.104:8310/v1/search"
-        );
+        let base_url = ScrutatorClient::base_url_from_env().expect("default URL resolves");
+        assert_eq!(base_url.as_str(), "http://100.70.137.104:8310/");
     }
 
     #[test]
     fn try_from_env_honors_override() {
         std::env::set_var(ENV_BASE_URL, "http://localhost:9999");
-        let client = ScrutatorClient::try_from_env().expect("client builds from override");
+        let base_url = ScrutatorClient::base_url_from_env().expect("override URL resolves");
         std::env::remove_var(ENV_BASE_URL);
-        assert_eq!(
-            client.search_url().unwrap().as_str(),
-            "http://localhost:9999/v1/search"
-        );
+        assert_eq!(base_url.as_str(), "http://localhost:9999/");
     }
 
     #[test]

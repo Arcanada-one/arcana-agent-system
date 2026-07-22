@@ -11,16 +11,52 @@
     clippy::float_cmp
 )]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use arcana_connectors::auth_arcana::{AuthTokenError, BearerTokenProvider};
 use arcana_connectors::scrutator::{ScrutatorError, SearchQuery};
 use arcana_connectors::ScrutatorClient;
+use async_trait::async_trait;
+use secrecy::SecretString;
 use serde_json::json;
 use url::Url;
-use wiremock::matchers::{body_json, method, path};
+use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client_for(server: &MockServer) -> ScrutatorClient {
     let base = Url::parse(&server.uri()).expect("mock uri parses");
-    ScrutatorClient::new(base).expect("client builds")
+    ScrutatorClient::new(base, Arc::new(StaticToken("test-token"))).expect("client builds")
+}
+
+struct StaticToken(&'static str);
+
+#[async_trait]
+impl BearerTokenProvider for StaticToken {
+    async fn bearer_token(&self) -> Result<SecretString, AuthTokenError> {
+        Ok(SecretString::from(self.0))
+    }
+}
+
+struct RefreshingToken {
+    calls: AtomicUsize,
+    invalidations: AtomicUsize,
+}
+
+#[async_trait]
+impl BearerTokenProvider for RefreshingToken {
+    async fn bearer_token(&self) -> Result<SecretString, AuthTokenError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(SecretString::from(if call == 0 {
+            "stale-token"
+        } else {
+            "fresh-token"
+        }))
+    }
+
+    async fn invalidate(&self) {
+        self.invalidations.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 #[tokio::test]
@@ -54,6 +90,7 @@ async fn search_200_returns_results() {
     });
     Mock::given(method("POST"))
         .and(path("/v1/search"))
+        .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .mount(&server)
         .await;
@@ -66,6 +103,37 @@ async fn search_200_returns_results() {
     assert_eq!(resp.results[0].chunk_id, "c1");
     assert_eq!(resp.results[0].score, 0.83);
     assert_eq!(resp.results[1].metadata, None);
+}
+
+#[tokio::test]
+async fn search_rejects_unauthenticated_fallback_and_refreshes_once_on_401() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
+        .and(header("authorization", "Bearer stale-token"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
+        .and(header("authorization", "Bearer fresh-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = Arc::new(RefreshingToken {
+        calls: AtomicUsize::new(0),
+        invalidations: AtomicUsize::new(0),
+    });
+    let client =
+        ScrutatorClient::new(Url::parse(&server.uri()).unwrap(), provider.clone()).unwrap();
+    let response = client.search(&SearchQuery::new("ground me")).await.unwrap();
+
+    assert!(response.results.is_empty());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.invalidations.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
