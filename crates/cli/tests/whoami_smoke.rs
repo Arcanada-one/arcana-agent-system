@@ -1,6 +1,6 @@
 //! Black-box smoke test for ARAS-0024: `arcana whoami` boots the canonical
-//! default permission cascade (Schema -> HookBridge -> Rule -> Interactive)
-//! and the `HookBridge` layer's `AuditHook` appends a record to
+//! default permission cascade (Schema -> Rule -> Interactive) and the
+//! bootstrap-owned audit sink appends a correlated decision/result pair to
 //! `<XDG_STATE_HOME>/arcana/audit.log`.
 //!
 //! The subprocess gets an isolated `XDG_STATE_HOME`/`XDG_CONFIG_HOME` per
@@ -40,8 +40,10 @@ fn whoami_smoke_creates_audit_log_with_whoami_record() {
         "audit.log missing whoami record, got: {contents}"
     );
     assert!(
-        contents.contains("\"phase\":\"pre\""),
-        "audit.log missing pre-tool phase, got: {contents}"
+        contents.contains("\"phase\":\"decision\"")
+            && contents.contains("\"phase\":\"result\"")
+            && contents.contains("\"version\":2"),
+        "audit.log missing v2 decision/result pair, got: {contents}"
     );
 }
 

@@ -14,10 +14,12 @@
     clippy::doc_markdown
 )]
 
+mod common;
+
 use std::sync::Arc;
 
 use arcana_core::permission::rule::ToolRuleSet;
-use arcana_core::tool::{Tool, ToolError};
+use arcana_core::tool::ToolError;
 use regex::Regex;
 use serde_json::json;
 
@@ -49,7 +51,7 @@ fn assert_permission_denied<T>(result: Result<T, ToolError>) {
 #[tokio::test]
 #[cfg(unix)]
 async fn read_rejects_direct_etc_passwd() {
-    let tool = ReadTool::new(deny_etc_passwd());
+    let tool = common::Harness::new(ReadTool::new(deny_etc_passwd()));
     let result = tool.execute(json!({ "path": "/etc/passwd" })).await;
     assert_permission_denied(result);
 }
@@ -63,7 +65,7 @@ async fn read_rejects_canonicalized_traversal() {
     //   macOS:  /tmp → /private/tmp; ..  → /private; /etc → /private/etc;
     //           passwd → /private/etc/passwd.
     // Both forms are caught by `^/(private/)?etc/passwd$`.
-    let tool = ReadTool::new(deny_etc_passwd());
+    let tool = common::Harness::new(ReadTool::new(deny_etc_passwd()));
     let result = tool.execute(json!({ "path": "/tmp/../etc/passwd" })).await;
     assert_permission_denied(result);
 }
@@ -71,7 +73,7 @@ async fn read_rejects_canonicalized_traversal() {
 #[tokio::test]
 #[cfg(unix)]
 async fn write_rejects_etc_passwd_variants() {
-    let tool = WriteTool::new(deny_etc_passwd());
+    let tool = common::Harness::new(WriteTool::new(deny_etc_passwd()));
     let direct = tool
         .execute(json!({ "path": "/etc/passwd", "content": "hacked" }))
         .await;
@@ -88,7 +90,7 @@ async fn write_rejects_etc_passwd_variants() {
 #[tokio::test]
 #[cfg(unix)]
 async fn edit_rejects_etc_passwd_variants() {
-    let tool = EditTool::new(deny_etc_passwd());
+    let tool = common::Harness::new(EditTool::new(deny_etc_passwd()));
     let direct = tool
         .execute(json!({
             "path": "/etc/passwd",
@@ -116,7 +118,7 @@ async fn read_allows_when_no_deny_match() {
     tokio::fs::write(&target, b"hello arcana")
         .await
         .expect("seed file");
-    let tool = ReadTool::default();
+    let tool = common::Harness::new(ReadTool::default());
     let result = tool
         .execute(json!({ "path": target.to_string_lossy().to_string() }))
         .await

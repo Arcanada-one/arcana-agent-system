@@ -5,7 +5,8 @@
     clippy::doc_markdown
 )]
 
-use arcana_core::tool::Tool;
+mod common;
+
 use arcana_tools::edit::EditTool;
 use serde_json::json;
 use tempfile::tempdir;
@@ -20,7 +21,7 @@ async fn seed(dir: &tempfile::TempDir, body: &str) -> String {
 
 #[tokio::test]
 async fn edit_unique_substring_succeeds() {
-    let tool = EditTool::default();
+    let tool = common::Harness::new(EditTool::default());
     let dir = tempdir().expect("tempdir");
     let path = seed(&dir, "alpha BETA gamma").await;
     let output = tool
@@ -40,7 +41,7 @@ async fn edit_unique_substring_succeeds() {
 
 #[tokio::test]
 async fn edit_fails_when_old_string_not_found() {
-    let tool = EditTool::default();
+    let tool = common::Harness::new(EditTool::default());
     let dir = tempdir().expect("tempdir");
     let path = seed(&dir, "abc").await;
     let err = tool
@@ -56,7 +57,7 @@ async fn edit_fails_when_old_string_not_found() {
 
 #[tokio::test]
 async fn edit_fails_when_old_string_not_unique() {
-    let tool = EditTool::default();
+    let tool = common::Harness::new(EditTool::default());
     let dir = tempdir().expect("tempdir");
     let path = seed(&dir, "x x x").await;
     let err = tool
@@ -72,7 +73,7 @@ async fn edit_fails_when_old_string_not_unique() {
 
 #[tokio::test]
 async fn edit_fails_when_file_missing() {
-    let tool = EditTool::default();
+    let tool = common::Harness::new(EditTool::default());
     let err = tool
         .execute(json!({
             "path": "/nonexistent/arcana/edit-target.txt",

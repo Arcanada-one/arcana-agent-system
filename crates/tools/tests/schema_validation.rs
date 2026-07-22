@@ -11,8 +11,10 @@
 use std::sync::Arc;
 
 use arcana_connectors::ScrutatorClient;
-use arcana_core::permission::{CascadeOutcome, PermissionCascade, PermissionLayer, SchemaLayer};
-use arcana_core::tool::ToolDispatcher;
+use arcana_core::permission::{
+    CascadeOutcome, LayerDecision, PermissionCascade, PermissionLayer, SchemaLayer,
+};
+use arcana_core::tool::{Tool, ToolDispatcher};
 use arcana_tools::arcana_search::ArcanaSearchTool;
 use arcana_tools::bash::BashTool;
 use arcana_tools::edit::EditTool;
@@ -20,52 +22,49 @@ use arcana_tools::grep::GrepTool;
 use arcana_tools::read::ReadTool;
 use arcana_tools::webfetch::WebFetchTool;
 use arcana_tools::write::WriteTool;
+use async_trait::async_trait;
 use serde_json::json;
 use url::Url;
 
-fn registered_dispatcher() -> Arc<ToolDispatcher> {
-    let mut dispatcher = ToolDispatcher::new();
-    dispatcher
-        .register(Arc::new(ReadTool::default()))
-        .expect("read");
-    dispatcher
-        .register(Arc::new(WriteTool::default()))
-        .expect("write");
-    dispatcher
-        .register(Arc::new(EditTool::default()))
-        .expect("edit");
-    dispatcher
-        .register(Arc::new(GrepTool::new()))
-        .expect("grep");
-    dispatcher
-        .register(Arc::new(BashTool::new()))
-        .expect("bash");
-    dispatcher
-        .register(Arc::new(WebFetchTool::new()))
-        .expect("webfetch");
-    // arcana_search never dials out during schema-only checks — point it at
-    // an inert base URL rather than the real Scrutator mesh endpoint.
+fn registered_tools() -> Vec<Arc<dyn Tool>> {
     let scrutator = ScrutatorClient::new(Url::parse("http://127.0.0.1:0").unwrap())
         .expect("scrutator client builds");
-    dispatcher
-        .register(Arc::new(ArcanaSearchTool::with_client(scrutator)))
-        .expect("arcana_search");
+    vec![
+        Arc::new(ReadTool::default()),
+        Arc::new(WriteTool::default()),
+        Arc::new(EditTool::default()),
+        Arc::new(GrepTool::new()),
+        Arc::new(BashTool::new()),
+        Arc::new(WebFetchTool::new()),
+        Arc::new(ArcanaSearchTool::with_client(scrutator)),
+    ]
+}
+
+fn registered_dispatcher() -> Arc<ToolDispatcher> {
+    let mut dispatcher = ToolDispatcher::new();
+    for tool in registered_tools() {
+        dispatcher.register(tool).expect("unique tool");
+    }
     Arc::new(dispatcher)
+}
+
+struct AllowLayer;
+
+#[async_trait]
+impl PermissionLayer for AllowLayer {
+    fn name(&self) -> &'static str {
+        "test-allow"
+    }
+
+    async fn evaluate(&self, _tool: &str, _input: &serde_json::Value) -> LayerDecision {
+        LayerDecision::Allow
+    }
 }
 
 #[tokio::test]
 async fn every_tool_schema_compiles() {
-    let dispatcher = registered_dispatcher();
-    for name in [
-        "read",
-        "write",
-        "edit",
-        "grep",
-        "bash",
-        "webfetch",
-        "arcana_search",
-    ] {
-        let tool = dispatcher.get(name).expect("registered");
+    for tool in registered_tools() {
+        let name = tool.name();
         let schema = tool.input_schema();
         assert!(
             jsonschema::validator_for(&schema).is_ok(),
@@ -93,9 +92,7 @@ async fn cascade_denies_malformed_payload_per_tool() {
         let verdict = cascade.evaluate(name, json!({})).await;
         match verdict {
             CascadeOutcome::Denied { layer, .. } => assert_eq!(layer, "schema"),
-            CascadeOutcome::Allowed { transformed_input } => {
-                panic!("tool {name} accepted empty payload: {transformed_input}")
-            }
+            CascadeOutcome::Allowed { .. } => panic!("tool {name} accepted empty payload"),
         }
     }
 }
@@ -104,7 +101,7 @@ async fn cascade_denies_malformed_payload_per_tool() {
 async fn cascade_allows_valid_payload_for_every_tool() {
     let dispatcher = registered_dispatcher();
     let schema_layer: Arc<dyn PermissionLayer> = Arc::new(SchemaLayer::new(dispatcher));
-    let cascade = PermissionCascade::new(vec![schema_layer]);
+    let cascade = PermissionCascade::new(vec![schema_layer, Arc::new(AllowLayer)]);
 
     let cases = [
         ("read", json!({ "path": "/etc/hosts" })),

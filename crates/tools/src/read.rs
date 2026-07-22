@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use arcana_core::permission::rule::ToolRuleSet;
-use arcana_core::tool::{Tool, ToolError, ToolOutput};
+use arcana_core::tool::{Tool, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -68,7 +68,8 @@ impl Tool for ReadTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+        let input = invocation.into_input();
         let parsed: ReadInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
         let cwd = std::env::current_dir()

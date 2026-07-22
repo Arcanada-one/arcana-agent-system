@@ -1,16 +1,15 @@
 //! CLI bootstrap — assembles the canonical default permission cascade.
 //!
 //! `assemble()` wires the Phase 1 chain documented in
-//! `docs/reference/architecture.md`: `Schema -> HookBridge -> Rule ->
-//! Interactive`.
+//! `docs/reference/architecture.md`: `Schema -> Rule -> Interactive` for this
+//! standalone decision probe. Capability execution additionally runs its
+//! executor-owned non-audit hooks and final schema revalidation.
 //!
 //! 1. [`SchemaLayer`] validates payloads against the tools registered in a
 //!    fresh [`ToolDispatcher`] (only the [`WhoamiProbe`] smoke tool exists
 //!    in this build — real tool registration is a separate concern).
-//! 2. [`HookBridgeLayer`] wraps a [`HookChain`] carrying an [`AuditHook`]
-//!    that appends JSON lines to `<state_dir>/audit.log`. The default entry
-//!    point resolves `state_dir` via the XDG state directory
-//!    (`~/.local/state/arcana`, created on demand).
+//! 2. A mandatory [`AuditLog`] owned by [`Bootstrap`] records the standalone
+//!    decision probe without entering the capability execution boundary.
 //! 3. [`RuleLayer::load`] reads the XDG user-level `permissions.toml` and
 //!    an optional project-local `.arcana/permissions.toml`; missing files
 //!    are tolerated (see `RuleLayer::load` doc comment).
@@ -25,18 +24,15 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arcana_core::cost::CostTracker;
-use arcana_core::hooks::audit::{AuditHook, AuditHookError};
-use arcana_core::hooks::HookChain;
+use arcana_core::hooks::audit::{AuditHookError, AuditLog};
 use arcana_core::permission::{
-    AutoFromEnv, HookBridgeLayer, PermissionCascade, PermissionLayer, RuleLayer, RuleLoadError,
+    AutoFromEnv, CascadeOutcome, PermissionCascade, PermissionLayer, RuleLayer, RuleLoadError,
     SchemaLayer,
 };
-use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolOutput};
+use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use serde_json::Value;
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 
 use crate::permission_prompt::ReadlinePrompt;
 
@@ -62,6 +58,30 @@ pub struct Bootstrap {
     pub cascade: PermissionCascade,
     /// Absolute path to the audit log file the `HookBridge` layer writes.
     pub audit_log_path: PathBuf,
+    audit: AuditLog,
+}
+
+impl Bootstrap {
+    /// Evaluate and synchronously audit a decision-only bootstrap probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BootstrapError::Audit`] when either audit record cannot be
+    /// synchronously written and flushed.
+    pub async fn evaluate(
+        &self,
+        tool: &str,
+        input: Value,
+    ) -> Result<CascadeOutcome, BootstrapError> {
+        let outcome = self.cascade.evaluate(tool, input.clone()).await;
+        let (decision, layer) = match &outcome {
+            CascadeOutcome::Allowed { .. } => ("Allowed", "cascade"),
+            CascadeOutcome::Denied { layer, .. } => ("Denied", *layer),
+        };
+        self.audit
+            .record_decision_only(1, tool, &input, decision, layer)?;
+        Ok(outcome)
+    }
 }
 
 /// Assemble the canonical default permission cascade using the real XDG
@@ -91,7 +111,7 @@ pub fn assemble_at(
     state_dir: &Path,
     project_rules_path: &Path,
 ) -> Result<Bootstrap, BootstrapError> {
-    let audit_hook = AuditHook::new(state_dir)?;
+    let audit = AuditLog::new(state_dir)?;
     let audit_log_path = state_dir.join("audit.log");
 
     let mut dispatcher = ToolDispatcher::new();
@@ -99,12 +119,6 @@ pub fn assemble_at(
     // tool can never collide.
     let _ = dispatcher.register(Arc::new(WhoamiProbe));
     let dispatcher = Arc::new(dispatcher);
-
-    let mut chain = HookChain::new();
-    chain.push(Arc::new(audit_hook));
-
-    let cancel = CancellationToken::new();
-    let cost = Arc::new(CostTracker::new());
 
     let user_rules_path = RuleLayer::xdg_user_path().ok();
     let rule_layer = RuleLayer::load(user_rules_path.as_deref(), Some(project_rules_path))?;
@@ -120,7 +134,6 @@ pub fn assemble_at(
 
     let cascade = PermissionCascade::new(vec![
         Arc::new(SchemaLayer::new(dispatcher)),
-        Arc::new(HookBridgeLayer::new(Arc::new(chain), cancel, cost)),
         Arc::new(rule_layer),
         interactive,
     ]);
@@ -128,13 +141,14 @@ pub fn assemble_at(
     Ok(Bootstrap {
         cascade,
         audit_log_path,
+        audit,
     })
 }
 
 /// Trivial always-schema-valid tool registered purely so the `whoami`
 /// smoke command has something for the cascade to walk end-to-end
 /// (`SchemaLayer` denies outright on an unregistered tool name, which
-/// would never reach `HookBridge`/`AuditHook`).
+/// would otherwise be denied before the standalone decision audit).
 struct WhoamiProbe;
 
 #[async_trait]
@@ -151,7 +165,7 @@ impl Tool for WhoamiProbe {
         serde_json::json!({ "type": "object" })
     }
 
-    async fn execute(&self, _input: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, _invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput {
             content: local_identity(),
             metadata: None,
@@ -196,21 +210,16 @@ mod tests {
         let bootstrap = assemble_at(state.path(), &project_rules).unwrap();
         assert_eq!(bootstrap.audit_log_path, state.path().join("audit.log"));
 
-        let _ = bootstrap.cascade.evaluate("whoami", json!({})).await;
+        let _ = bootstrap.evaluate("whoami", json!({})).await.unwrap();
         let audit_log_path = bootstrap.audit_log_path.clone();
-        // Drop the cascade (and with it the sole `AuditHook` / `WorkerGuard`
-        // reference) to force the non-blocking writer to flush before we
-        // read the file back — mirrors `crates/core/tests/hooks_audit.rs`.
-        drop(bootstrap);
-
         let contents = std::fs::read_to_string(&audit_log_path).unwrap();
         assert!(
             contents.contains("\"tool\":\"whoami\""),
             "expected whoami audit record, got: {contents}"
         );
         assert!(
-            contents.contains("\"phase\":\"pre\""),
-            "expected pre-tool phase, got: {contents}"
+            contents.contains("\"phase\":\"decision\""),
+            "expected decision phase, got: {contents}"
         );
     }
 
@@ -222,7 +231,7 @@ mod tests {
         let project_rules = state.path().join("unused-project-rules.toml");
         let bootstrap = assemble_at(state.path(), &project_rules).unwrap();
 
-        let outcome = bootstrap.cascade.evaluate("no_such_tool", json!({})).await;
+        let outcome = bootstrap.evaluate("no_such_tool", json!({})).await.unwrap();
         match outcome {
             CascadeOutcome::Denied { layer, reason } => {
                 assert_eq!(layer, "schema");
@@ -231,10 +240,9 @@ mod tests {
             other => panic!("expected Denied at schema layer, got {other:?}"),
         }
 
-        // The unknown-tool call never reached HookBridge, so no audit
-        // record should have been written for it.
+        // Denied attempts are audited without exposing their raw input.
         let contents = std::fs::read_to_string(&bootstrap.audit_log_path).unwrap();
-        assert!(!contents.contains("no_such_tool"));
+        assert!(contents.contains("no_such_tool"));
     }
 
     #[tokio::test]
@@ -244,7 +252,7 @@ mod tests {
 
         // Should not error even though the project rules path does not exist.
         let bootstrap = assemble_at(state.path(), &missing_project_rules).unwrap();
-        let outcome = bootstrap.cascade.evaluate("whoami", json!({})).await;
+        let outcome = bootstrap.evaluate("whoami", json!({})).await.unwrap();
         // Schema + HookBridge defer, Rule defers (no rules loaded), and the
         // non-interactive tail (no TTY under `cargo test`) denies — the
         // exact verdict is not the point here, only that loading tolerated

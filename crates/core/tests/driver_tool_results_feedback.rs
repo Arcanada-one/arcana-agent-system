@@ -18,7 +18,6 @@ use std::sync::Arc;
 use arcana_core::agent_loop::{Driver, DriverConfig, TerminalReason};
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
-use arcana_core::permission::PermissionCascade;
 use arcana_core::tool::ToolDispatcher;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -44,15 +43,14 @@ async fn driver_tool_results_feedback() {
         response("acknowledged", 0.0),
     ]);
     let dispatcher = echo_dispatcher();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let hooks = HookChain::new();
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         DriverConfig::new("scripted"),
@@ -93,18 +91,17 @@ async fn driver_tool_results_feedback_hook_continuation() {
         response("ok", 0.0),
     ]);
     let dispatcher = echo_dispatcher();
-    let cascade = PermissionCascade::new(vec![]);
+    let cascade = common::allow_cascade();
     let mut hooks = HookChain::new();
     hooks.push(Arc::new(InjectHook {
         line: "INJECTED_CTX_LINE".to_string(),
     }));
     let cost = Arc::new(CostTracker::new());
 
+    let (executor, _audit_dir) = common::test_executor(dispatcher, cascade, hooks);
     let driver = Driver::new(
         &connector,
-        &dispatcher,
-        &cascade,
-        &hooks,
+        &executor,
         cost,
         CancellationToken::new(),
         DriverConfig::new("scripted"),

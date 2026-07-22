@@ -2,10 +2,12 @@
 //!
 //! Assembles the SAME real capability core the `DoD` integration test uses —
 //! the [`Driver`](arcana_core::agent_loop::Driver) (ARAS-0030), the multi-model
-//! [`ModelPolicy`](arcana_core::dispatch::ModelPolicy) (ARAS-0031), a
-//! [`ToolDispatcher`], a [`PermissionCascade`], and a [`HookChain`] carrying the
-//! real [`AuditHook`] — and drives one attempt → check → conclusion loop,
-//! printing three labelled phases.
+//! [`ModelPolicy`](arcana_core::dispatch::ModelPolicy) (ARAS-0031), and the
+//! fused [`CapabilityExecutor`](arcana_core::execution::CapabilityExecutor)
+//! (ARAS-0033) that owns the `ToolDispatcher`, the `PermissionCascade`, an empty
+//! post-cascade `HookChain`, and the `AuditLog` (audit is a field of the fused
+//! authorize→audit→execute transaction — single audit by construction) — and
+//! drives one attempt → check → conclusion loop, printing three labelled phases.
 //!
 //! ## Demo-only scaffolding (NOT capability core)
 //!
@@ -35,10 +37,11 @@ use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, Usage,
 };
 use arcana_core::cost::CostTracker;
-use arcana_core::hooks::audit::AuditHook;
+use arcana_core::execution::CapabilityExecutor;
+use arcana_core::hooks::audit::AuditLog;
 use arcana_core::hooks::HookChain;
 use arcana_core::permission::PermissionCascade;
-use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolOutput};
+use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -99,28 +102,31 @@ async fn run_demo_async(task: &str, live: bool) -> i32 {
         return 1;
     }
 
-    // Empty (always-allow) cascade + the ONE AuditHook on the HookChain: the
-    // single audit surface (no double audit), mirroring the DoD test wiring.
+    // Empty (always-allow) cascade + an executor-OWNED AuditLog: in the C4
+    // CapabilityExecutor the audit is a field of the fused
+    // authorize→audit→execute transaction (single audit by construction), not a
+    // composable ToolHook.
     let cascade = PermissionCascade::new(vec![]);
-    let audit = match AuditHook::new(&audit_dir) {
-        Ok(hook) => Arc::new(hook),
+    let audit = match AuditLog::new(&audit_dir) {
+        Ok(log) => log,
         Err(err) => {
-            eprintln!("arcana demo: audit hook setup failed: {err}");
+            eprintln!("arcana demo: audit log setup failed: {err}");
             return 1;
         }
     };
-    let mut hooks = HookChain::new();
-    hooks.push(audit.clone());
     let cost = Arc::new(CostTracker::new());
+
+    // Fuse the capability core: the executor takes ownership of the dispatcher,
+    // the cascade, an empty post-cascade HookChain, and the AuditLog. The driver
+    // dispatches every tool THROUGH this executor.
+    let executor = CapabilityExecutor::new(dispatcher, cascade, HookChain::new(), audit);
 
     // Default ModelPolicy maps Code→"arcana-code-strong" and
     // Summarize→"arcana-cheap-fast" (distinct ids) — reused verbatim.
     let out = {
         let driver = Driver::new(
             connector.as_ref(),
-            &dispatcher,
-            &cascade,
-            &hooks,
+            &executor,
             cost,
             CancellationToken::new(),
             DriverConfig::new("arcana-demo"),
@@ -149,9 +155,8 @@ async fn run_demo_async(task: &str, live: bool) -> i32 {
     );
     println!("audit log: {}", audit_dir.join("audit.log").display());
 
-    // Drop the AuditHook owners so the non-blocking writer flushes to disk.
-    drop(hooks);
-    drop(audit);
+    // `AuditLog` appends synchronously and flushes per record; the executor owns
+    // it and drops at function scope end, so no explicit flush is required.
 
     i32::from(out.reason != TerminalReason::Completed)
 }
@@ -249,7 +254,8 @@ impl Tool for DemoEchoTool {
         json!({ "type": "object" })
     }
 
-    async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+        let input = invocation.into_input();
         Ok(ToolOutput {
             content: format!("echo:{input}"),
             metadata: None,

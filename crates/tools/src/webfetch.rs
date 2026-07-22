@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arcana_core::permission::{LayerDecision, PermissionLayer, RuleLayer};
-use arcana_core::tool::{Tool, ToolError, ToolOutput};
+use arcana_core::tool::{Tool, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::Client;
@@ -102,7 +102,8 @@ impl Tool for WebFetchTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+        let input = invocation.into_input();
         if let Some(rules) = &self.rules {
             match rules.evaluate("webfetch", &input).await {
                 LayerDecision::Deny(reason) => return Err(ToolError::PermissionDenied(reason)),

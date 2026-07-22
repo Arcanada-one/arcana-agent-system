@@ -5,14 +5,15 @@
     clippy::doc_markdown
 )]
 
-use arcana_core::tool::Tool;
+mod common;
+
 use arcana_tools::write::WriteTool;
 use serde_json::json;
 use tempfile::tempdir;
 
 #[tokio::test]
 async fn write_creates_new_file() {
-    let tool = WriteTool::default();
+    let tool = common::Harness::new(WriteTool::default());
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("new.txt").to_string_lossy().into_owned();
     let output = tool
@@ -30,7 +31,7 @@ async fn write_creates_new_file() {
 
 #[tokio::test]
 async fn write_overwrites_existing_file() {
-    let tool = WriteTool::default();
+    let tool = common::Harness::new(WriteTool::default());
     let dir = tempdir().expect("tempdir");
     let path = dir
         .path()
@@ -54,7 +55,7 @@ async fn write_overwrites_existing_file() {
 
 #[tokio::test]
 async fn write_creates_parent_dirs_when_requested() {
-    let tool = WriteTool::default();
+    let tool = common::Harness::new(WriteTool::default());
     let dir = tempdir().expect("tempdir");
     let nested = dir.path().join("a/b/c/leaf.txt");
     let path = nested.to_string_lossy().into_owned();
@@ -73,10 +74,9 @@ async fn write_creates_parent_dirs_when_requested() {
 
 #[tokio::test]
 async fn write_schema_rejects_missing_content() {
-    let tool = WriteTool::default();
+    let tool = common::Harness::new(WriteTool::default());
     let err = tool
         .validate_input(&json!({ "path": "/tmp/x" }))
-        .await
         .expect_err("must reject");
     assert!(err.to_string().to_lowercase().contains("content"), "{err}");
 }

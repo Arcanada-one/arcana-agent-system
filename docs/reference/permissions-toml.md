@@ -1,8 +1,9 @@
 # `permissions.toml` reference
 
-Permission rules for the `arcana` CLI. The file is consulted by Layer 3
-(`RuleLayer`) of the 4-layer permission cascade
-(`Schema → HookBridge → Rule → Interactive`).
+Permission rules for the `arcana` CLI. The file is consulted by `RuleLayer`
+inside the fail-closed permission cascade. The capability executor owns the
+non-audit hook chain separately, then revalidates the transformed payload
+immediately before execution.
 
 ## Discovery
 
@@ -77,7 +78,8 @@ For a built-in tool with both deny and allow patterns:
    * Input matches → **`Allow`** (cascade short circuits).
    * Input does NOT match → **`Deny`** (`"<input-field> does not match any
      allow_<field> rule on tool \`<name>\`"`).
-3. If neither side fires → **`Defer`** to Layer 4 (Interactive).
+3. If neither side fires → **`Defer`** to the next configured authority
+   (normally Interactive). If every authority defers, the executor denies.
 
 For MCP tools (`mcp:<name>`):
 

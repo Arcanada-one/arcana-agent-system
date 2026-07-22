@@ -2,6 +2,9 @@
 
 Understanding-oriented — background, motivation, design rationale.
 
+- `capability-execution-boundary.md` — why tool execution is one fused,
+  fail-closed boundary: the `ToolInvocation` token, sole transform authority,
+  and single-audit-by-construction.
 - *(planned)* `why-rust.md` — full distilled rationale (source: `wiki/_raw_/RUST.md`).
 - *(planned)* `why-derive-from-claude-code.md` — what we take, what we leave, licence stance.
 - *(planned)* `aal-plan.md` — autonomy plan L1 → L3.

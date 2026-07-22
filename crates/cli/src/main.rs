@@ -146,7 +146,13 @@ fn run_whoami() -> i32 {
         }
     };
 
-    let outcome = runtime.block_on(bootstrap.cascade.evaluate("whoami", serde_json::json!({})));
+    let outcome = match runtime.block_on(bootstrap.evaluate("whoami", serde_json::json!({}))) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            eprintln!("arcana whoami: audit failed: {err}");
+            return 1;
+        }
+    };
 
     match outcome {
         CascadeOutcome::Allowed { .. } => {

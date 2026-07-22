@@ -1,75 +1,86 @@
-//! AC-4: AuditHook emits one JSON line per phase with the documented field
-//! set `{ts, phase, tool, input_hash, decision}`.
+//! Version-2 mandatory audit record contract.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::doc_markdown,
-    clippy::match_wildcard_for_single_variants
-)]
+#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
+mod common;
+
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use arcana_core::cost::CostTracker;
-use arcana_core::hooks::audit::AuditHook;
-use arcana_core::hooks::{HookContext, HookResult, ToolHook};
-use arcana_core::tool::ToolOutput;
-use serde_json::Value;
+use arcana_core::execution::CapabilityExecutor;
+use arcana_core::hooks::audit::AuditLog;
+use arcana_core::hooks::{HookChain, HookContext};
+use arcana_core::permission::PermissionCascade;
+use arcana_core::tool::ToolDispatcher;
+use serde_json::{json, Value};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-fn ctx() -> HookContext {
+use common::{AllowLayer, CountingTool, DenyLayer};
+
+fn context() -> HookContext {
     HookContext::new(CancellationToken::new(), Arc::new(CostTracker::new()))
 }
 
-#[tokio::test]
-async fn audit_pre_writes_json_line_with_documented_fields() {
-    let dir = TempDir::new().expect("tempdir creation failed");
-    let hook = AuditHook::new(dir.path()).expect("audit hook construction failed");
-
-    let result = hook
-        .pre_tool(&ctx(), "read", &serde_json::json!({"path": "/etc/passwd"}))
-        .await
-        .expect("pre_tool returned an error");
-    assert_eq!(result, HookResult::Continue);
-
-    drop(hook); // flush WorkerGuard
-    let contents =
-        std::fs::read_to_string(dir.path().join("audit.log")).expect("audit.log read failed");
-    let line = contents.lines().next().expect("audit.log is empty");
-    let parsed: Value = serde_json::from_str(line).expect("audit line is not JSON");
-
-    let object = parsed.as_object().expect("audit record is not an object");
-    for field in ["ts", "phase", "tool", "input_hash", "decision"] {
-        assert!(object.contains_key(field), "missing field: {field}");
-    }
-    assert_eq!(object["phase"].as_str(), Some("pre"));
-    assert_eq!(object["tool"].as_str(), Some("read"));
-    assert_eq!(object["decision"].as_str(), Some("Continue"));
-    let hash = object["input_hash"]
-        .as_str()
-        .expect("input_hash is not a string");
-    assert_eq!(hash.len(), 16, "input_hash is not 16 hex chars: {hash}");
+fn executor(dir: &TempDir, cascade: PermissionCascade) -> CapabilityExecutor {
+    let mut registry = ToolDispatcher::new();
+    registry
+        .register(Arc::new(CountingTool::new(Arc::new(AtomicUsize::new(0)))))
+        .expect("register tool");
+    CapabilityExecutor::new(
+        registry,
+        cascade,
+        HookChain::new(),
+        AuditLog::new(dir.path()).expect("audit log"),
+    )
 }
 
 #[tokio::test]
-async fn audit_post_writes_distinct_phase_marker() {
-    let dir = TempDir::new().expect("tempdir creation failed");
-    let hook = AuditHook::new(dir.path()).expect("audit hook construction failed");
+async fn successful_attempt_writes_correlated_decision_and_result() {
+    let dir = TempDir::new().expect("tempdir");
+    let executor = executor(&dir, PermissionCascade::new(vec![Arc::new(AllowLayer)]));
 
-    let output = ToolOutput {
-        content: "hello".to_string(),
-        metadata: None,
-    };
-    hook.post_tool(&ctx(), "read", &output)
+    executor
+        .execute(&context(), "counting", json!({"value": 1}))
         .await
-        .expect("post_tool returned an error");
-    drop(hook);
+        .expect("execute");
 
-    let contents =
-        std::fs::read_to_string(dir.path().join("audit.log")).expect("audit.log read failed");
-    let line = contents.lines().next().expect("audit.log is empty");
-    let parsed: Value = serde_json::from_str(line).expect("audit line is not JSON");
-    assert_eq!(parsed["phase"].as_str(), Some("post"));
+    let records = records(&dir);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["version"], 2);
+    assert_eq!(records[0]["phase"], "decision");
+    assert_eq!(records[1]["phase"], "result");
+    assert_eq!(records[0]["invocation_id"], records[1]["invocation_id"]);
+    assert_eq!(records[0]["decision"], "Allowed");
+    assert_eq!(records[1]["outcome"], "success");
+    for record in records {
+        assert!(record.get("input").is_none());
+        assert!(record.get("output").is_none());
+        assert!(record.get("reason").is_none());
+    }
+}
+
+#[tokio::test]
+async fn denied_attempt_writes_terminal_result_without_execution_payload() {
+    let dir = TempDir::new().expect("tempdir");
+    let executor = executor(&dir, PermissionCascade::new(vec![Arc::new(DenyLayer)]));
+
+    let _ = executor
+        .execute(&context(), "counting", json!({"value": 1}))
+        .await
+        .expect_err("denied");
+
+    let records = records(&dir);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["decision"], "Denied");
+    assert_eq!(records[1]["outcome"], "denied");
+}
+
+fn records(dir: &TempDir) -> Vec<Value> {
+    std::fs::read_to_string(dir.path().join("audit.log"))
+        .expect("read audit")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("json record"))
+        .collect()
 }

@@ -5,11 +5,13 @@
     clippy::doc_markdown
 )]
 
+mod common;
+
 use std::io::Write;
 use std::sync::Arc;
 
 use arcana_core::permission::RuleLayer;
-use arcana_core::tool::{Tool, ToolError};
+use arcana_core::tool::ToolError;
 use arcana_tools::bash::BashTool;
 use serde_json::json;
 use tempfile::NamedTempFile;
@@ -22,7 +24,7 @@ fn write_toml(content: &str) -> NamedTempFile {
 
 #[tokio::test]
 async fn bash_exit_zero_captures_stdout() {
-    let tool = BashTool::new();
+    let tool = common::Harness::new(BashTool::new());
     let output = tool
         .execute(json!({ "command": "echo hello" }))
         .await
@@ -33,7 +35,7 @@ async fn bash_exit_zero_captures_stdout() {
 
 #[tokio::test]
 async fn bash_non_zero_exit_becomes_execution_failed() {
-    let tool = BashTool::new();
+    let tool = common::Harness::new(BashTool::new());
     let err = tool
         .execute(json!({ "command": "exit 7" }))
         .await
@@ -43,7 +45,7 @@ async fn bash_non_zero_exit_becomes_execution_failed() {
 
 #[tokio::test]
 async fn bash_timeout_aborts_long_command() {
-    let tool = BashTool::new();
+    let tool = common::Harness::new(BashTool::new());
     let err = tool
         .execute(json!({
             "command": "sleep 5",
@@ -56,7 +58,7 @@ async fn bash_timeout_aborts_long_command() {
 
 #[tokio::test]
 async fn bash_env_var_propagation_works() {
-    let tool = BashTool::new();
+    let tool = common::Harness::new(BashTool::new());
     let output = tool
         .execute(json!({
             "command": "printf %s \"$MY_VAR\"",
@@ -69,10 +71,9 @@ async fn bash_env_var_propagation_works() {
 
 #[tokio::test]
 async fn bash_schema_rejects_missing_command() {
-    let tool = BashTool::new();
+    let tool = common::Harness::new(BashTool::new());
     let err = tool
         .validate_input(&json!({}))
-        .await
         .expect_err("schema must reject");
     assert!(err.to_string().to_lowercase().contains("command"), "{err}");
 }
@@ -87,7 +88,7 @@ deny_commands = ['rm -rf /']
 ",
     );
     let rules = RuleLayer::load(Some(file.path()), None).expect("load rules");
-    let tool = BashTool::with_rules(Arc::new(rules));
+    let tool = common::Harness::new(BashTool::with_rules(Arc::new(rules)));
 
     let err = tool
         .execute(json!({ "command": "rm -rf /" }))
@@ -109,7 +110,7 @@ deny_commands = ['rm -rf /']
 ",
     );
     let rules = RuleLayer::load(Some(file.path()), None).expect("load rules");
-    let tool = BashTool::with_rules(Arc::new(rules));
+    let tool = common::Harness::new(BashTool::with_rules(Arc::new(rules)));
 
     let output = tool
         .execute(json!({ "command": "echo hi" }))

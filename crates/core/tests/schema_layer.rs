@@ -17,7 +17,7 @@ use std::sync::Arc;
 use arcana_core::permission::{
     CascadeOutcome, LayerDecision, PermissionCascade, PermissionLayer, SchemaLayer,
 };
-use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolOutput};
+use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -44,7 +44,7 @@ impl Tool for StrictTool {
         })
     }
 
-    async fn execute(&self, _input: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, _invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput {
             content: "ok".to_owned(),
             metadata: None,
@@ -109,8 +109,6 @@ async fn cascade_short_circuits_on_schema_deny() {
             assert_eq!(layer, "schema");
             assert!(reason.starts_with("schema:"), "{reason}");
         }
-        CascadeOutcome::Allowed { transformed_input } => {
-            panic!("expected Denied, got Allowed({transformed_input})");
-        }
+        CascadeOutcome::Allowed { .. } => panic!("expected Denied, got Allowed"),
     }
 }

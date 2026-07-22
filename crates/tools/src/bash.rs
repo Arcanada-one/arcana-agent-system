@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arcana_core::permission::{LayerDecision, PermissionLayer, RuleLayer};
-use arcana_core::tool::{Tool, ToolError, ToolOutput};
+use arcana_core::tool::{Tool, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -86,7 +86,8 @@ impl Tool for BashTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+        let input = invocation.into_input();
         if let Some(rules) = &self.rules {
             if let LayerDecision::Deny(reason) = rules.evaluate("bash", &input).await {
                 return Err(ToolError::PermissionDenied(reason));
