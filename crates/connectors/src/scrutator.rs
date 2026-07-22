@@ -402,6 +402,57 @@ impl arcana_skills::FetchConn for ScrutatorClient {
     }
 }
 
+/// Live adapter: bridges the `arcana-core` KB-cascade `EvidenceFetch` seam
+/// (ARAS-0049) to the real `POST /v1/fetch` endpoint (SRCH-0038). A `KbCascade`
+/// wraps an `Arc<ScrutatorClient>` and drives the evidence read path through
+/// this impl.
+///
+/// Like the skills [`arcana_skills::FetchConn`] adapter, this is a pure
+/// transport + shape mapping: it forwards the server-derived `trust_class` /
+/// `namespace` / `content_hash` envelope untouched (all *policy* — the
+/// `trust_class` fence, size-guard, fence/datamark — lives in the cascade,
+/// never here) and maps every [`ScrutatorError`] to a fail-closed
+/// `FetchUnavailable`.
+///
+/// **Thin v1 range mapping.** Both `FetchRange::Full` and
+/// `FetchRange::ParentOfChunk` issue a whole-document fetch (`by_source_id`,
+/// `range="full"`); the cascade's size-guard then windows to the parent section
+/// agent-side (least-context is the consumer's policy, not the KB's). For a
+/// chunk escalation the answer offset is recovered from the response
+/// `chunk_manifest`, so rerank-to-edge still targets the right span. A native
+/// server-side `parent_of_chunk` range is a deferred v2 optimisation.
+#[async_trait::async_trait]
+impl arcana_core::kb::EvidenceFetch for ScrutatorClient {
+    async fn fetch(
+        &self,
+        source_id: &str,
+        range: arcana_core::kb::FetchRange,
+    ) -> Result<arcana_core::kb::FetchedEvidence, arcana_core::kb::FetchUnavailable> {
+        let query = FetchQuery::by_source_id(source_id);
+        let resp = ScrutatorClient::fetch(self, &query)
+            .await
+            .map_err(|err| arcana_core::kb::FetchUnavailable(err.to_string()))?;
+        let answer_offset = match &range {
+            arcana_core::kb::FetchRange::ParentOfChunk(chunk_id) => resp
+                .chunk_manifest
+                .iter()
+                .find(|entry| &entry.chunk_id == chunk_id)
+                .map_or(0, |entry| entry.offset_start),
+            arcana_core::kb::FetchRange::Full => 0,
+        };
+        Ok(arcana_core::kb::FetchedEvidence {
+            source_id: resp.source_id,
+            path: resp.path,
+            content: resp.content,
+            content_hash: resp.content_hash,
+            index_snapshot_id: resp.index_snapshot_id,
+            namespace: resp.namespace,
+            trust_class: resp.trust_class,
+            answer_offset,
+        })
+    }
+}
+
 fn validate_base_url(base_url: &Url) -> Result<(), ScrutatorError> {
     let host = base_url
         .host_str()

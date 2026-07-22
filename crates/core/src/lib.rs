@@ -8,6 +8,7 @@ pub mod cost;
 pub mod dispatch;
 pub mod execution;
 pub mod hooks;
+pub mod kb;
 pub mod permission;
 pub mod tool;
 
