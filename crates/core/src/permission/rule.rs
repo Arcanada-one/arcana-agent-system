@@ -73,6 +73,8 @@ pub struct ToolRuleSet {
     pub allow_hosts: Vec<Regex>,
     pub allow_paths: Vec<Regex>,
     pub deny_paths: Vec<Regex>,
+    pub allow_models: Vec<Regex>,
+    pub deny_models: Vec<Regex>,
 }
 
 /// Pre-compiled MCP rule set.
@@ -193,6 +195,12 @@ fn merge_tool_rules(user: Option<&ToolRuleSet>, project: Option<&ToolRuleSet>) -
             .allow_paths
             .extend(source.allow_paths.iter().cloned());
         merged.deny_paths.extend(source.deny_paths.iter().cloned());
+        merged
+            .allow_models
+            .extend(source.allow_models.iter().cloned());
+        merged
+            .deny_models
+            .extend(source.deny_models.iter().cloned());
     }
     merged
 }
@@ -204,6 +212,7 @@ fn match_tool_rules(tool: &str, rules: &ToolRuleSet, input: &Value) -> Option<La
         .and_then(Value::as_str)
         .and_then(extract_host);
     let path = input.get("path").and_then(Value::as_str);
+    let model = input.get("model").and_then(Value::as_str);
 
     if let Some(cmd) = command {
         if let Some(rx) = rules.deny_commands.iter().find(|re| re.is_match(cmd)) {
@@ -218,6 +227,24 @@ fn match_tool_rules(tool: &str, rules: &ToolRuleSet, input: &Value) -> Option<La
             return Some(LayerDecision::Deny(format!(
                 "denied by deny_paths rule `{pat}` on tool `{tool}`",
                 pat = rx.as_str(),
+            )));
+        }
+    }
+    if let Some(m) = model {
+        if let Some(rx) = rules.deny_models.iter().find(|re| re.is_match(m)) {
+            return Some(LayerDecision::Deny(format!(
+                "denied by deny_models rule `{pat}` on tool `{tool}`",
+                pat = rx.as_str(),
+            )));
+        }
+    }
+    if let Some(m) = model {
+        if !rules.allow_models.is_empty() {
+            if rules.allow_models.iter().any(|re| re.is_match(m)) {
+                return Some(LayerDecision::Allow);
+            }
+            return Some(LayerDecision::Deny(format!(
+                "model does not match any allow_models rule on tool `{tool}`"
             )));
         }
     }
@@ -347,6 +374,20 @@ fn compile_snapshot(path: &Path, raw: RawConfig) -> Result<RuleSnapshot, RuleLoa
             &section,
             "deny_paths",
         )?;
+        compile_into(
+            &mut set.allow_models,
+            &raw_tool.allow_models,
+            path,
+            &section,
+            "allow_models",
+        )?;
+        compile_into(
+            &mut set.deny_models,
+            &raw_tool.deny_models,
+            path,
+            &section,
+            "deny_models",
+        )?;
         tools.insert(name, set);
     }
     let mut mcp = McpRuleSet::default();
@@ -396,6 +437,10 @@ struct RawToolRules {
     allow_paths: Vec<String>,
     #[serde(default)]
     deny_paths: Vec<String>,
+    #[serde(default)]
+    allow_models: Vec<String>,
+    #[serde(default)]
+    deny_models: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
