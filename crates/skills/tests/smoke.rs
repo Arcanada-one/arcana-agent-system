@@ -2,7 +2,12 @@
 //! Rust-only / no-broker / non-regression gate is enforced at the workspace
 //! level (cargo build/test/clippy + grep), this test is the crate's entry
 //! smoke.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 use arcana_skills::{Maturity, PlanKind, SkillBuilder};
 

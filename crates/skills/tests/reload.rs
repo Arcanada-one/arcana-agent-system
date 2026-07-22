@@ -2,7 +2,12 @@
 //! binary picks up a bumped on-disk plan version on the next run. This is a
 //! data reload, not a recompile: the test does no `cargo build` between runs
 //! and the interpreter holds no cached parse (proven by the observed change).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -47,17 +52,28 @@ async fn skill_new_version_picked_up_next_run() {
     let ctx = hook_ctx();
 
     // Run 1: version 1.
-    std::fs::write(&plan_path, serde_json::to_vec(&plan_at(1, "behaviour-v1")).unwrap()).unwrap();
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec(&plan_at(1, "behaviour-v1")).unwrap(),
+    )
+    .unwrap();
     let first = interpreter.run(&plan_path, &ctx).await.expect("run v1");
     assert_eq!(first.version, 1);
     assert!(first.stages[0].output.content.contains("behaviour-v1"));
 
     // Bump the SAME file to version 2 with changed stage behaviour. No rebuild.
-    std::fs::write(&plan_path, serde_json::to_vec(&plan_at(2, "behaviour-v2")).unwrap()).unwrap();
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec(&plan_at(2, "behaviour-v2")).unwrap(),
+    )
+    .unwrap();
 
     // Run 2: the SAME interpreter observes the new version + new behaviour.
     let second = interpreter.run(&plan_path, &ctx).await.expect("run v2");
-    assert_eq!(second.version, 2, "bumped version must be picked up next run");
+    assert_eq!(
+        second.version, 2,
+        "bumped version must be picked up next run"
+    );
     assert!(second.stages[0].output.content.contains("behaviour-v2"));
 
     // The change is real: v1 behaviour is gone on run 2 (no cached parse).

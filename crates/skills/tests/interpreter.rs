@@ -1,6 +1,11 @@
 //! P2 / V-AC-1 — the interpreter reads a plan from disk and runs its stages in
 //! declared order with deterministic, observable output.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 mod common;
 

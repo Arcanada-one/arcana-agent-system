@@ -1,7 +1,12 @@
 //! P3 / V-AC-4 — a stage executes through `CapabilityExecutor`, producing
 //! exactly one decision+result audit pair via the executor-owned `AuditLog`.
 //! The engine opens no sink of its own (grep guard enforced separately).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -59,13 +64,17 @@ async fn skill_stage_single_audit_via_executor() {
     assert_eq!(decision["phase"], "decision");
     assert_eq!(decision["decision"], "Allowed");
     assert!(
-        decision["input_hash"].as_str().is_some_and(|h| !h.is_empty()),
+        decision["input_hash"]
+            .as_str()
+            .is_some_and(|h| !h.is_empty()),
         "decision record carries a Blake3 input_hash"
     );
     assert_eq!(result["phase"], "result");
     assert_eq!(result["outcome"], "success");
     assert!(
-        result["output_hash"].as_str().is_some_and(|h| !h.is_empty()),
+        result["output_hash"]
+            .as_str()
+            .is_some_and(|h| !h.is_empty()),
         "result record carries a Blake3 output_hash"
     );
     // Same invocation id correlates the pair.

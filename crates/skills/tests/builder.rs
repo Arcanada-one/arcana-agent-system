@@ -1,7 +1,12 @@
 //! P6 / V-AC-6 — `SkillBuilder::draft_stub` emits a schema-valid Draft/Template
 //! plan; once instantiated + promoted to Production it runs through the
 //! interpreter.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -50,6 +55,9 @@ async fn skill_builder_draft_stub() {
     assert_eq!(runnable.kind, PlanKind::Instance);
     assert_eq!(runnable.maturity, Maturity::Production);
     std::fs::write(&plan_path, serde_json::to_vec(&runnable).unwrap()).unwrap();
-    let out = interpreter.run(&plan_path, &ctx).await.expect("runnable ok");
+    let out = interpreter
+        .run(&plan_path, &ctx)
+        .await
+        .expect("runnable ok");
     assert_eq!(out.stages.len(), 1);
 }

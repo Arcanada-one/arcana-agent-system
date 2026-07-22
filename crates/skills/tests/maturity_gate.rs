@@ -1,6 +1,11 @@
 //! P7 / V-AC-7 — the run path refuses a template and a sub-production maturity
 //! with a typed error, and accepts an instantiated Production instance.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -75,7 +80,9 @@ async fn skill_maturity_and_template_gate() {
     );
 
     // An instantiated Production instance runs.
-    let out = run(plan("instance", "production")).await.expect("production runs");
+    let out = run(plan("instance", "production"))
+        .await
+        .expect("production runs");
     assert_eq!(out.stages.len(), 1);
     assert_eq!(out.stages[0].stage_id, "only");
 }

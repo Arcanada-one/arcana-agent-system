@@ -1,7 +1,12 @@
 //! P1 / V-AC-3 — plan schema carries every declared dimension and round-trips;
 //! malformed / unknown-schema-version plans are rejected with a typed error,
 //! never a panic.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 use arcana_skills::{
     Maturity, MetricSpec, ModelSpec, PlanDefaults, PlanKind, SkillPlan, Stage, StageAction,
@@ -69,7 +74,10 @@ fn skill_plan_schema_roundtrip() {
 
     // Dimensions: stages / models / agent-count / limits / tools / metrics.
     assert_eq!(back.stages.len(), 2);
-    assert_eq!(back.stages[0].model, ModelSpec::Literal("m-literal".to_owned()));
+    assert_eq!(
+        back.stages[0].model,
+        ModelSpec::Literal("m-literal".to_owned())
+    );
     assert_eq!(back.stages[1].model, ModelSpec::ByTaskType(TaskType::Code));
     assert_eq!(back.stages[0].agent_count, 2);
     assert_eq!(back.stages[0].limits.max_turns, 4);

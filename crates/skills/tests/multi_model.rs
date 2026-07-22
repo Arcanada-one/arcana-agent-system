@@ -1,6 +1,11 @@
 //! P4 / V-AC-5 — two stages declaring two distinct models each route through
 //! the `model_call` capability; the run records >= 2 distinct model ids.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::pedantic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -71,7 +76,10 @@ async fn skill_per_stage_multi_model() {
     assert_eq!(out.selected_models[0], "m-a");
     assert_eq!(out.selected_models[1], "arcana-code-strong");
     assert!(out.stages[0].output.content.contains("echo:m-a"));
-    assert!(out.stages[1].output.content.contains("echo:arcana-code-strong"));
+    assert!(out.stages[1]
+        .output
+        .content
+        .contains("echo:arcana-code-strong"));
 
     // >= 2 distinct model ids exercised in one run.
     let distinct: HashSet<&String> = out.selected_models.iter().collect();
