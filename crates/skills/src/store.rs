@@ -203,48 +203,87 @@ impl ModelAllowlist {
     }
 }
 
+/// The KB namespace a runnable skill document MUST be served from. Scrutator
+/// binds `trust_class == "skill"` to this namespace server-side (SRCH-0038 D5);
+/// the store checks both (defense in depth) in its pre-parse `trust_class`
+/// fence.
+pub const SKILLS_NAMESPACE: &str = "skills";
+
+/// The only `trust_class` a runnable skill document may carry (SRCH-0038 D5).
+/// A non-`skill` document is rejected before the blake3 keystone and parse.
+pub const SKILL_TRUST_CLASS: &str = "skill";
+
+/// The content bytes plus the server-derived KB trust metadata a
+/// [`ScrutatorStore`] needs to apply its pre-parse `trust_class` fence.
+///
+/// `trust_class` and `namespace` are Scrutator response-*envelope* fields
+/// derived server-side from the document's namespace — they are **never** the
+/// document body, so a plan whose body literally contains
+/// `"trust_class":"skill"` cannot forge them (SRCH-0038 S4).
+#[derive(Debug, Clone)]
+pub struct FetchedContent {
+    /// The exact document body bytes — the input to the blake3 keystone.
+    pub bytes: Vec<u8>,
+    /// The KB's non-authorizing trust classification (expected
+    /// [`SKILL_TRUST_CLASS`]).
+    pub trust_class: String,
+    /// The KB namespace the document was served from (expected
+    /// [`SKILLS_NAMESPACE`]).
+    pub namespace: String,
+}
+
 /// The single fetch primitive a [`ScrutatorStore`] needs.
 ///
 /// Kept minimal and crate-local so `arcana-skills` takes **no** dependency on
-/// `arcana-connectors`; the live adapter (a `ScrutatorClient` impl of this
-/// trait) is Phase-2 wiring gated on SRCH-0038. Tests inject fixture bytes.
+/// `arcana-connectors`; the direction of the edge is deliberately reversed —
+/// the live adapter (`impl FetchConn for arcana_connectors::ScrutatorClient`)
+/// lives in `arcana-connectors`, which depends on this crate. Tests inject
+/// fixture content.
 #[async_trait::async_trait]
 pub trait FetchConn: Send + Sync {
-    /// Fetch the full content bytes for an opaque `source_id`.
+    /// Fetch the full content and trust metadata for an opaque `source_id`.
     ///
     /// # Errors
     ///
     /// Returns [`FetchUnavailable`] on any transport/status failure — the store
     /// maps this to [`SkillError::StoreUnavailable`] (never a silent fallback).
-    async fn fetch_bytes(&self, source_id: &str) -> Result<Vec<u8>, FetchUnavailable>;
+    async fn fetch(&self, source_id: &str) -> Result<FetchedContent, FetchUnavailable>;
 }
 
-/// Marker error: a [`FetchConn`] could not produce bytes (network down, non-2xx,
-/// timeout, decode failure). Carries a human-readable reason for the typed
-/// [`SkillError::StoreUnavailable`].
+/// Marker error: a [`FetchConn`] could not produce content (network down,
+/// non-2xx, timeout, decode failure). Carries a human-readable reason for the
+/// typed [`SkillError::StoreUnavailable`].
 #[derive(Debug, Clone)]
 pub struct FetchUnavailable(pub String);
 
 /// The untrusted KB-backed store.
 ///
-/// Bytes returned by the injected [`FetchConn`] are verified against the
-/// config-pinned full blake3 **before** any parse (the trust keystone,
-/// V-AC-3). A fetch failure with no verified cache entry fails closed to
-/// [`SkillError::StoreUnavailable`] — the store never falls back to a
-/// different or stale skill (V-AC-6). The optional blake3-content-addressed
+/// Content returned by the injected [`FetchConn`] passes, in order, a pre-parse
+/// `trust_class` fence (only a `skill`-class document in the skills namespace is
+/// admitted — V-AC-12) and then a local full-blake3 verify **before** any parse
+/// (the trust keystone, V-AC-3). A fetch failure with no verified cache entry
+/// fails closed to [`SkillError::StoreUnavailable`] — the store never falls back
+/// to a different or stale skill (V-AC-6). The optional blake3-content-addressed
 /// [`BlakeCache`] (wired via [`ScrutatorStore::with_cache`]) short-circuits the
-/// network on a hit (V-AC-7).
+/// network on a hit (V-AC-7); a cache entry was `trust_class`-fenced and
+/// blake3-verified at write time, so the hit path re-runs only the blake3 check.
 pub struct ScrutatorStore<C: FetchConn> {
     conn: Arc<C>,
     cache: Option<BlakeCache>,
+    expected_namespace: String,
 }
 
 impl<C: FetchConn> ScrutatorStore<C> {
     /// Build a store over an injected fetch connector, with no cache (every
-    /// load fetches).
+    /// load fetches). The `trust_class` fence expects the default
+    /// [`SKILLS_NAMESPACE`].
     #[must_use]
     pub fn new(conn: Arc<C>) -> Self {
-        Self { conn, cache: None }
+        Self {
+            conn,
+            cache: None,
+            expected_namespace: SKILLS_NAMESPACE.to_owned(),
+        }
     }
 
     /// Enable the blake3-content-addressed cache: a hit short-circuits the
@@ -252,6 +291,14 @@ impl<C: FetchConn> ScrutatorStore<C> {
     #[must_use]
     pub fn with_cache(mut self, cache: BlakeCache) -> Self {
         self.cache = Some(cache);
+        self
+    }
+
+    /// Override the expected skills namespace for the `trust_class` fence
+    /// (defaults to [`SKILLS_NAMESPACE`]).
+    #[must_use]
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.expected_namespace = namespace.into();
         self
     }
 }
@@ -346,14 +393,27 @@ impl<C: FetchConn> SkillStore for ScrutatorStore<C> {
         }
         // Miss: fetch. A store failure fails closed to StoreUnavailable — never
         // a silent fallback to a different or stale skill.
-        let bytes = self
-            .conn
-            .fetch_bytes(&pin.source_id)
-            .await
-            .map_err(|err| SkillError::StoreUnavailable {
+        let fetched =
+            self.conn
+                .fetch(&pin.source_id)
+                .await
+                .map_err(|err| SkillError::StoreUnavailable {
+                    source_id: pin.source_id.clone(),
+                    reason: err.0,
+                })?;
+        // GATE 0 — trust_class fence (V-AC-12). Only a `skill`-class document in
+        // the expected skills namespace is admitted, and this runs BEFORE the
+        // blake3 keystone and before parse. `trust_class`/`namespace` are
+        // server-derived envelope fields, so a plan body cannot forge them.
+        if fetched.trust_class != SKILL_TRUST_CLASS || fetched.namespace != self.expected_namespace
+        {
+            return Err(SkillError::WrongTrustClass {
                 source_id: pin.source_id.clone(),
-                reason: err.0,
-            })?;
+                trust_class: fetched.trust_class,
+                namespace: fetched.namespace,
+            });
+        }
+        let bytes = fetched.bytes;
         // GATE 1 — local full-blake3 verify BEFORE parse (trust keystone).
         verify_blake3(&bytes, &pin.blake3, &pin.source_id)?;
         // Cache the verified bytes (best-effort — a write failure must not

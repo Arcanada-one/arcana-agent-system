@@ -119,7 +119,9 @@ name = "arcana-connectors"
 version = "0.1.0"
 dependencies = [
  "arcana-core",
+ "arcana-skills",
  "async-trait",
+ "blake3",
  "reqwest 0.13.1",
  "rustix",
  "secrecy",

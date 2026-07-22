@@ -167,6 +167,8 @@ mod tests {
             namespace: None,
             project: None,
             metadata: None,
+            content_hash: String::new(),
+            source_id: String::new(),
         }
     }
 

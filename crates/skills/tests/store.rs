@@ -17,8 +17,9 @@ use std::sync::Arc;
 use arcana_core::dispatch::ModelPolicy;
 use arcana_core::tool::{Tool, ToolError, ToolInvocation, ToolOutput};
 use arcana_skills::{
-    BlakeCache, FetchConn, FetchUnavailable, FileStore, ModelAllowlist, ScrutatorStore, SkillError,
-    SkillInterpreter, SkillPin, SkillStore, ToolCeiling,
+    BlakeCache, FetchConn, FetchUnavailable, FetchedContent, FileStore, ModelAllowlist,
+    ScrutatorStore, SkillError, SkillInterpreter, SkillPin, SkillStore, ToolCeiling,
+    SKILLS_NAMESPACE, SKILL_TRUST_CLASS,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -30,8 +31,27 @@ struct DownConn;
 
 #[async_trait]
 impl FetchConn for DownConn {
-    async fn fetch_bytes(&self, _source_id: &str) -> Result<Vec<u8>, FetchUnavailable> {
+    async fn fetch(&self, _source_id: &str) -> Result<FetchedContent, FetchUnavailable> {
         Err(FetchUnavailable("connection refused".into()))
+    }
+}
+
+/// A `FetchConn` that returns the given bytes under an attacker-chosen
+/// `trust_class` / `namespace` — used to prove the store's pre-parse fence.
+struct TrustConn {
+    bytes: Vec<u8>,
+    trust_class: String,
+    namespace: String,
+}
+
+#[async_trait]
+impl FetchConn for TrustConn {
+    async fn fetch(&self, _source_id: &str) -> Result<FetchedContent, FetchUnavailable> {
+        Ok(FetchedContent {
+            bytes: self.bytes.clone(),
+            trust_class: self.trust_class.clone(),
+            namespace: self.namespace.clone(),
+        })
     }
 }
 
@@ -79,9 +99,13 @@ impl FixedConn {
 
 #[async_trait]
 impl FetchConn for FixedConn {
-    async fn fetch_bytes(&self, _source_id: &str) -> Result<Vec<u8>, FetchUnavailable> {
+    async fn fetch(&self, _source_id: &str) -> Result<FetchedContent, FetchUnavailable> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(self.bytes.clone())
+        Ok(FetchedContent {
+            bytes: self.bytes.clone(),
+            trust_class: SKILL_TRUST_CLASS.to_owned(),
+            namespace: SKILLS_NAMESPACE.to_owned(),
+        })
     }
 }
 
@@ -139,7 +163,11 @@ async fn run_wrapper_still_executes() {
     let audit = dir.path().join("audit");
     std::fs::create_dir(&audit).unwrap();
     let plan_path = dir.path().join("plan.json");
-    std::fs::write(&plan_path, serde_json::to_vec(&production_echo_plan()).unwrap()).unwrap();
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec(&production_echo_plan()).unwrap(),
+    )
+    .unwrap();
 
     let executor = executor_with(vec![Arc::new(EchoTool)], &audit);
     let interpreter = SkillInterpreter::new(executor, ModelPolicy::new());
@@ -161,10 +189,18 @@ async fn hash_pin_rejects_before_parse() {
     // A pin for some *other* (legitimate) content — its blake3 will not match
     // the tampered bytes.
     let legit = serde_json::to_vec(&production_echo_plan()).unwrap();
-    let pin = SkillPin::new("codegen-review", 3, blake3_hex(&legit), "kb:skill:codegen-review:3");
+    let pin = SkillPin::new(
+        "codegen-review",
+        3,
+        blake3_hex(&legit),
+        "kb:skill:codegen-review:3",
+    );
 
     let store = ScrutatorStore::new(Arc::new(FixedConn::new(tampered)));
-    let err = store.load(&pin).await.expect_err("tampered bytes must be rejected");
+    let err = store
+        .load(&pin)
+        .await
+        .expect_err("tampered bytes must be rejected");
 
     match err {
         SkillError::HashMismatch { source_id } => {
@@ -182,7 +218,12 @@ async fn hash_pin_accepts_matching_bytes() {
     std::fs::create_dir(&audit).unwrap();
 
     let bytes = serde_json::to_vec(&production_echo_plan()).unwrap();
-    let pin = SkillPin::new("codegen-review", 3, blake3_hex(&bytes), "kb:skill:codegen-review:3");
+    let pin = SkillPin::new(
+        "codegen-review",
+        3,
+        blake3_hex(&bytes),
+        "kb:skill:codegen-review:3",
+    );
     let store = ScrutatorStore::new(Arc::new(FixedConn::new(bytes)));
 
     let executor = executor_with(vec![Arc::new(EchoTool)], &audit);
@@ -242,9 +283,13 @@ async fn tool_ceiling_cannot_widen() {
         .with_tool_ceiling(ToolCeiling::new(["echo", "read"]));
 
     // Outside the ceiling → rejected.
-    let err = run_local(&interpreter, plan_with(json!(["echo", "bash"]), "m-default"), dir.path())
-        .await
-        .expect_err("a tool outside the ceiling must be rejected");
+    let err = run_local(
+        &interpreter,
+        plan_with(json!(["echo", "bash"]), "m-default"),
+        dir.path(),
+    )
+    .await
+    .expect_err("a tool outside the ceiling must be rejected");
     match err {
         SkillError::ToolCeilingExceeded { stage_id, tool } => {
             assert_eq!(stage_id, "s1");
@@ -254,9 +299,13 @@ async fn tool_ceiling_cannot_widen() {
     }
 
     // Subset of the ceiling → runs.
-    let out = run_local(&interpreter, plan_with(json!(["echo"]), "m-default"), dir.path())
-        .await
-        .expect("a subset-of-ceiling plan must run");
+    let out = run_local(
+        &interpreter,
+        plan_with(json!(["echo"]), "m-default"),
+        dir.path(),
+    )
+    .await
+    .expect("a subset-of-ceiling plan must run");
     assert_eq!(out.stages.len(), 1);
 }
 
@@ -272,9 +321,13 @@ async fn model_spec_allowlist() {
         .with_model_allowlist(ModelAllowlist::new(["m-default", "m-review"]));
 
     // Off-list model → rejected before any stage executes.
-    let err = run_local(&interpreter, plan_with(json!(["echo"]), "m-exfiltrator"), dir.path())
-        .await
-        .expect_err("an off-allowlist model must be rejected");
+    let err = run_local(
+        &interpreter,
+        plan_with(json!(["echo"]), "m-exfiltrator"),
+        dir.path(),
+    )
+    .await
+    .expect_err("an off-allowlist model must be rejected");
     match err {
         SkillError::ModelNotAllowed { stage_id, model } => {
             assert_eq!(stage_id, "s1");
@@ -284,9 +337,13 @@ async fn model_spec_allowlist() {
     }
 
     // Allowed model → runs.
-    let out = run_local(&interpreter, plan_with(json!(["echo"]), "m-review"), dir.path())
-        .await
-        .expect("an allowlisted model must run");
+    let out = run_local(
+        &interpreter,
+        plan_with(json!(["echo"]), "m-review"),
+        dir.path(),
+    )
+    .await
+    .expect("an allowlisted model must run");
     assert_eq!(out.selected_models, vec!["m-review"]);
 }
 
@@ -302,11 +359,17 @@ async fn store_unavailable_never_falls_back() {
     std::fs::create_dir(&cache_dir).unwrap();
 
     let calls = Arc::new(AtomicUsize::new(0));
-    let executor = executor_with(vec![Arc::new(CountingEcho { calls: calls.clone() })], &audit);
+    let executor = executor_with(
+        vec![Arc::new(CountingEcho {
+            calls: calls.clone(),
+        })],
+        &audit,
+    );
     let interpreter = SkillInterpreter::new(executor, ModelPolicy::new());
 
     // Store down + empty cache → miss → StoreUnavailable.
-    let store = ScrutatorStore::new(Arc::new(DownConn)).with_cache(BlakeCache::with_root(cache_dir));
+    let store =
+        ScrutatorStore::new(Arc::new(DownConn)).with_cache(BlakeCache::with_root(cache_dir));
     let pin = SkillPin::new("codegen-review", 3, "00", "kb:skill:codegen-review:3");
 
     let err = interpreter
@@ -404,9 +467,126 @@ async fn candidate_cannot_construct_pin() {
 
     // A correctly config-authored pin (real blake3) loads — proving the pin
     // itself is the authorization boundary, not the candidate.
-    let real_pin = SkillPin::new("codegen-review", 3, blake3_hex(&bytes), "kb:skill:codegen-review:3");
+    let real_pin = SkillPin::new(
+        "codegen-review",
+        3,
+        blake3_hex(&bytes),
+        "kb:skill:codegen-review:3",
+    );
     ScrutatorStore::new(Arc::new(FixedConn::new(bytes)))
         .load(&real_pin)
         .await
         .expect("a config-authored pin loads");
+}
+
+/// V-AC-12 — an `evidence`-class document whose bytes would otherwise PASS the
+/// blake3 keystone is rejected by the trust_class fence **before** blake3 and
+/// before parse. The pin's blake3 matches the returned bytes exactly, so a
+/// `HashMismatch` here would prove the fence ran too late; the store must return
+/// `WrongTrustClass` instead.
+#[tokio::test]
+async fn wrong_trust_class_rejected_before_blake3() {
+    let bytes = serde_json::to_vec(&production_echo_plan()).unwrap();
+    // Pin matches the bytes byte-for-byte — the blake3 keystone WOULD accept.
+    let pin = SkillPin::new(
+        "codegen-review",
+        3,
+        blake3_hex(&bytes),
+        "kb:skill:codegen-review:3",
+    );
+    let conn = TrustConn {
+        bytes,
+        trust_class: "evidence".into(),
+        namespace: SKILLS_NAMESPACE.into(),
+    };
+    let store = ScrutatorStore::new(Arc::new(conn));
+
+    match store
+        .load(&pin)
+        .await
+        .expect_err("evidence class must be rejected")
+    {
+        SkillError::WrongTrustClass {
+            source_id,
+            trust_class,
+            namespace,
+        } => {
+            assert_eq!(source_id, "kb:skill:codegen-review:3");
+            assert_eq!(trust_class, "evidence");
+            assert_eq!(namespace, SKILLS_NAMESPACE);
+        }
+        other => panic!("expected WrongTrustClass (before blake3), got {other:?}"),
+    }
+}
+
+/// V-AC-12 — a `skill`-class document served from a namespace OTHER than the
+/// expected skills namespace is rejected (defense in depth: the store checks the
+/// namespace as well as the class, so a mislabelled/compromised feeder cannot
+/// smuggle a skill trust_class on a foreign namespace).
+#[tokio::test]
+async fn wrong_namespace_rejected() {
+    let bytes = serde_json::to_vec(&production_echo_plan()).unwrap();
+    let pin = SkillPin::new(
+        "codegen-review",
+        3,
+        blake3_hex(&bytes),
+        "kb:skill:codegen-review:3",
+    );
+    let conn = TrustConn {
+        bytes,
+        trust_class: SKILL_TRUST_CLASS.into(),
+        namespace: "evidence".into(),
+    };
+    let store = ScrutatorStore::new(Arc::new(conn));
+
+    match store
+        .load(&pin)
+        .await
+        .expect_err("foreign namespace must be rejected")
+    {
+        SkillError::WrongTrustClass { namespace, .. } => assert_eq!(namespace, "evidence"),
+        other => panic!("expected WrongTrustClass, got {other:?}"),
+    }
+}
+
+/// V-AC-12 — the trust_class fence is fail-closed end-to-end: a rejected
+/// document runs **zero** stages through the interpreter (no silent fallback).
+#[tokio::test]
+async fn wrong_trust_class_runs_zero_stages() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("audit");
+    std::fs::create_dir(&audit).unwrap();
+
+    let bytes = serde_json::to_vec(&production_echo_plan()).unwrap();
+    let pin = SkillPin::new(
+        "codegen-review",
+        3,
+        blake3_hex(&bytes),
+        "kb:skill:codegen-review:3",
+    );
+    let conn = TrustConn {
+        bytes,
+        trust_class: "evidence".into(),
+        namespace: SKILLS_NAMESPACE.into(),
+    };
+    let store = ScrutatorStore::new(Arc::new(conn));
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let executor = executor_with(
+        vec![Arc::new(CountingEcho {
+            calls: calls.clone(),
+        })],
+        &audit,
+    );
+    let interpreter = SkillInterpreter::new(executor, ModelPolicy::new());
+
+    interpreter
+        .run_pinned(&store, &pin, &hook_ctx())
+        .await
+        .expect_err("a wrong-trust-class document must not run");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "no stage may execute on a trust_class rejection"
+    );
 }

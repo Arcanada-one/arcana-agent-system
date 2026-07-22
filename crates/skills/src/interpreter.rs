@@ -8,12 +8,14 @@
 //! observed on the next run without a rebuild.
 //!
 //! **Gate order (fail-closed).** Every run path enforces, in this exact order:
-//! `blake3 hash → schema validate → maturity gate → tool-ceiling → model_spec
-//! allowlist`. The first two live in the store's [`SkillStore::load`] (hash is
-//! checked *before* parse — the trust keystone); the last three live in
-//! [`SkillInterpreter::execute`]. The interpreter opens no audit sink and no
-//! dispatch path of its own: the executor is the sole execution authority and
-//! the single Blake3 `AuditLog` owner.
+//! `trust_class fence → blake3 hash → schema validate → maturity gate →
+//! tool-ceiling → model_spec allowlist`. The first three live in the store's
+//! [`SkillStore::load`] (the `trust_class` fence and the blake3 keystone both
+//! run *before* parse — a `ScrutatorStore` admits only a `skill`-class document
+//! in the skills namespace, then verifies its bytes against the config-pinned
+//! blake3); the last three live in [`SkillInterpreter::execute`]. The
+//! interpreter opens no audit sink and no dispatch path of its own: the executor
+//! is the sole execution authority and the single Blake3 `AuditLog` owner.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -93,6 +95,21 @@ pub enum SkillError {
         source_id: String,
         /// The underlying reason (transport/status text).
         reason: String,
+    },
+    /// The fetched document's server-derived `trust_class`/`namespace` is not a
+    /// runnable skill (a `skill`-class document in the skills namespace).
+    /// Rejected **before** the blake3 keystone and before parse — the document
+    /// body cannot forge these Scrutator response-envelope fields.
+    #[error(
+        "source `{source_id}`: trust_class `{trust_class}` / namespace `{namespace}` is not a runnable skill"
+    )]
+    WrongTrustClass {
+        /// The `source_id` whose envelope failed the fence.
+        source_id: String,
+        /// The server-derived trust class returned (expected `skill`).
+        trust_class: String,
+        /// The namespace the document was served from (expected `skills`).
+        namespace: String,
     },
     /// A stage declared a tool outside the per-agent enforced ceiling.
     #[error("stage `{stage_id}`: tool `{tool}` exceeds the per-agent tool ceiling")]

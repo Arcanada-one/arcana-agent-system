@@ -166,6 +166,16 @@ pub struct FetchResponse {
     pub chunk_manifest: Vec<ChunkManifestEntry>,
     #[serde(default)]
     pub stale: bool,
+    /// SRCH-0038 1a: `true` when `content` is the EXACT stored source bytes
+    /// (skills namespace — `sha256(content) == content_hash` by construction at
+    /// `range="full"`); `false` when `content` is a best-effort, lossy
+    /// reassembly of embedding chunks (evidence namespace). Additive, defaulted
+    /// `false` (conservative: absent ⇒ best-effort) — non-breaking. The skills
+    /// run path does not gate on this: the store's config-pinned blake3 keystone
+    /// independently rejects any lossy body (a lossy reassembly cannot match the
+    /// pinned blake3), so `content_exact` is carried for observability only.
+    #[serde(default)]
+    pub content_exact: bool,
 }
 
 /// Every way a `/v1/search` call can fail.
@@ -360,6 +370,38 @@ impl ScrutatorClient {
     }
 }
 
+/// Live adapter: bridges the `arcana-skills` `FetchConn` seam to the real
+/// `POST /v1/fetch` endpoint (SRCH-0038). A `ScrutatorStore` wraps an
+/// `Arc<ScrutatorClient>` and drives the skill run path through this impl.
+///
+/// The adapter is a pure transport + shape mapping: it pins the opaque
+/// `source_id` for a whole-document fetch, forwards the exact `content` bytes
+/// (UTF-8) plus the server-derived `trust_class` / `namespace` envelope, and
+/// maps every [`ScrutatorError`] — transport, non-2xx (incl. a cross-namespace
+/// `403`), non-JSON — to a fail-closed `FetchUnavailable` (never a silent empty
+/// document — F5). All *policy* — the `trust_class` fence, the config-pinned
+/// blake3 keystone, parse — lives in the `ScrutatorStore`, never here. The
+/// SHA-256 `content_hash` in the response is deliberately NOT consulted as a
+/// trust anchor: it is an ingest-bound provenance/staleness signal of a
+/// different algorithm and role from the store's blake3 run-path anchor.
+#[async_trait::async_trait]
+impl arcana_skills::FetchConn for ScrutatorClient {
+    async fn fetch(
+        &self,
+        source_id: &str,
+    ) -> Result<arcana_skills::FetchedContent, arcana_skills::FetchUnavailable> {
+        let query = FetchQuery::by_source_id(source_id);
+        let resp = ScrutatorClient::fetch(self, &query)
+            .await
+            .map_err(|err| arcana_skills::FetchUnavailable(err.to_string()))?;
+        Ok(arcana_skills::FetchedContent {
+            bytes: resp.content.into_bytes(),
+            trust_class: resp.trust_class,
+            namespace: resp.namespace,
+        })
+    }
+}
+
 fn validate_base_url(base_url: &Url) -> Result<(), ScrutatorError> {
     let host = base_url
         .host_str()
@@ -472,7 +514,10 @@ mod tests {
         assert_eq!(json["by"], "source_id");
         assert_eq!(json["id"], "kb:skill:codegen-review:3:9f2c");
         assert_eq!(json["range"], "full");
-        assert_eq!(json["include"], serde_json::json!(["content", "provenance"]));
+        assert_eq!(
+            json["include"],
+            serde_json::json!(["content", "provenance"])
+        );
     }
 
     #[test]
