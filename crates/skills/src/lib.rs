@@ -17,10 +17,16 @@
 pub mod builder;
 pub mod interpreter;
 pub mod plan;
+pub mod store;
 
 pub use builder::SkillBuilder;
 pub use interpreter::{SkillError, SkillInterpreter, SkillRunOutput, StageResult};
 pub use plan::{
     Maturity, MetricSpec, ModelSpec, PlanDefaults, PlanKind, SkillPlan, SkillPlanError, Stage,
     StageAction, StageLimits, TaskType,
+};
+pub use store::{
+    BlakeCache, FetchConn, FetchUnavailable, FetchedContent, FileStore, ModelAllowlist,
+    ScrutatorStore, SkillCandidate, SkillPin, SkillStore, ToolCeiling, SKILLS_NAMESPACE,
+    SKILL_TRUST_CLASS,
 };

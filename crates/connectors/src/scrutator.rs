@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use secrecy::ExposeSecret;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -77,6 +78,15 @@ pub struct SearchHit {
     pub project: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
+    /// SRCH-0038: the KB's SHA-256 ingest-bound content digest. A cache /
+    /// staleness signal only — **never** a run-path trust anchor. Additive with
+    /// `#[serde(default)]` for back-compat with pre-SRCH-0038 responses.
+    #[serde(default)]
+    pub content_hash: String,
+    /// SRCH-0038: the opaque `source_id` a caller can later pin and re-fetch
+    /// via `POST /v1/fetch`. Additive with `#[serde(default)]`.
+    #[serde(default)]
+    pub source_id: String,
 }
 
 /// `POST /v1/search` response envelope.
@@ -84,6 +94,88 @@ pub struct SearchHit {
 pub struct SearchResponse {
     #[serde(default)]
     pub results: Vec<SearchHit>,
+}
+
+/// Request body for `POST /v1/fetch` (SRCH-0038). Fetches an exact document by
+/// an opaque key (`source_id` / `document_id` / `chunk_id`) — never a path-like
+/// id (SRCH-0038 § S3). Field names mirror the SRCH-0038 endpoint spec.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FetchQuery {
+    /// The key kind: `"source_id"`, `"document_id"`, or `"chunk_id"`.
+    pub by: String,
+    /// The opaque id to fetch.
+    pub id: String,
+    /// The byte range: `"full"` (whole doc) or a chunk range.
+    pub range: String,
+    /// Which sections to include (e.g. `["content", "provenance"]`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+}
+
+impl FetchQuery {
+    /// A whole-document fetch by pinned `source_id`, including content and
+    /// provenance (the run-path shape).
+    #[must_use]
+    pub fn by_source_id(id: impl Into<String>) -> Self {
+        Self {
+            by: "source_id".to_owned(),
+            id: id.into(),
+            range: "full".to_owned(),
+            include: vec!["content".to_owned(), "provenance".to_owned()],
+        }
+    }
+}
+
+/// One entry of a `POST /v1/fetch` chunk manifest.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ChunkManifestEntry {
+    pub chunk_id: String,
+    pub offset_start: u64,
+    pub offset_end: u64,
+}
+
+/// `POST /v1/fetch` response envelope (SRCH-0038). All fields beyond
+/// `source_id` are `#[serde(default)]` so the shape tolerates a partial
+/// `include`. In Phase 1 the type only **deserialises** `trust_class` — the
+/// pre-parse `trust_class` fence (`WrongTrustClass`, V-AC-12) is Phase-2 scope.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct FetchResponse {
+    pub source_id: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub content_len_tokens: u64,
+    /// KB SHA-256 ingest digest — cache/staleness signal, not a trust anchor.
+    #[serde(default)]
+    pub content_hash: String,
+    #[serde(default)]
+    pub index_snapshot_id: String,
+    #[serde(default)]
+    pub indexed_at: String,
+    #[serde(default)]
+    pub embedding_model_id: String,
+    #[serde(default)]
+    pub namespace: String,
+    /// The KB's trust classification (`"skill"`, `"evidence"`, …). Deserialised
+    /// only this cycle; the run-path fence is Phase 2.
+    #[serde(default)]
+    pub trust_class: String,
+    #[serde(default)]
+    pub chunk_manifest: Vec<ChunkManifestEntry>,
+    #[serde(default)]
+    pub stale: bool,
+    /// SRCH-0038 1a: `true` when `content` is the EXACT stored source bytes
+    /// (skills namespace — `sha256(content) == content_hash` by construction at
+    /// `range="full"`); `false` when `content` is a best-effort, lossy
+    /// reassembly of embedding chunks (evidence namespace). Additive, defaulted
+    /// `false` (conservative: absent ⇒ best-effort) — non-breaking. The skills
+    /// run path does not gate on this: the store's config-pinned blake3 keystone
+    /// independently rejects any lossy body (a lossy reassembly cannot match the
+    /// pinned blake3), so `content_exact` is carried for observability only.
+    #[serde(default)]
+    pub content_exact: bool,
 }
 
 /// Every way a `/v1/search` call can fail.
@@ -182,11 +274,19 @@ impl ScrutatorClient {
     }
 
     fn search_url(&self) -> Result<Url, ScrutatorError> {
+        self.endpoint_url("search")
+    }
+
+    fn fetch_url(&self) -> Result<Url, ScrutatorError> {
+        self.endpoint_url("fetch")
+    }
+
+    fn endpoint_url(&self, endpoint: &str) -> Result<Url, ScrutatorError> {
         let mut url = self.base_url.clone();
         url.path_segments_mut()
             .map_err(|()| ScrutatorError::Transport("base URL cannot be a base".into()))?
             .push("v1")
-            .push("search");
+            .push(endpoint);
         Ok(url)
     }
 
@@ -196,7 +296,30 @@ impl ScrutatorClient {
     /// Transport, HTTP-status, and decode failures map to
     /// [`ScrutatorError`].
     pub async fn search(&self, query: &SearchQuery) -> Result<SearchResponse, ScrutatorError> {
-        let url = self.search_url()?;
+        self.post_json(self.search_url()?, query).await
+    }
+
+    /// Fetch one exact document by opaque id against `POST /v1/fetch`
+    /// (SRCH-0038). The run-path shape pins `source_id` and requests the whole
+    /// document; the returned `content` bytes are the input to the interpreter's
+    /// local blake3 verify-before-parse keystone (in `arcana-skills`).
+    ///
+    /// # Errors
+    /// Transport, HTTP-status, and decode failures map to [`ScrutatorError`]
+    /// (e.g. a cross-namespace `403` surfaces as [`ScrutatorError::Http`], never
+    /// a silent empty document — F5).
+    pub async fn fetch(&self, query: &FetchQuery) -> Result<FetchResponse, ScrutatorError> {
+        self.post_json(self.fetch_url()?, query).await
+    }
+
+    /// Shared `POST`-JSON transport: bearer auth with a single 401-triggered
+    /// token refresh, no redirects, typed success/error decode. Used verbatim
+    /// by both `search` and `fetch` so their wire semantics stay identical.
+    async fn post_json<B, R>(&self, url: Url, body: &B) -> Result<R, ScrutatorError>
+    where
+        B: Serialize + ?Sized,
+        R: DeserializeOwned,
+    {
         let mut refreshed = false;
         let resp = loop {
             let token = self.token_provider.bearer_token().await?;
@@ -205,7 +328,7 @@ impl ScrutatorClient {
                 .post(url.clone())
                 .header(reqwest::header::ACCEPT, "application/json")
                 .bearer_auth(token.expose_secret())
-                .json(query)
+                .json(body)
                 .send()
                 .await
                 .map_err(|err| ScrutatorError::Transport(format!("POST {url}: {err}")))?;
@@ -243,6 +366,38 @@ impl ScrutatorClient {
         Err(ScrutatorError::Http {
             status: status.as_u16(),
             message,
+        })
+    }
+}
+
+/// Live adapter: bridges the `arcana-skills` `FetchConn` seam to the real
+/// `POST /v1/fetch` endpoint (SRCH-0038). A `ScrutatorStore` wraps an
+/// `Arc<ScrutatorClient>` and drives the skill run path through this impl.
+///
+/// The adapter is a pure transport + shape mapping: it pins the opaque
+/// `source_id` for a whole-document fetch, forwards the exact `content` bytes
+/// (UTF-8) plus the server-derived `trust_class` / `namespace` envelope, and
+/// maps every [`ScrutatorError`] — transport, non-2xx (incl. a cross-namespace
+/// `403`), non-JSON — to a fail-closed `FetchUnavailable` (never a silent empty
+/// document — F5). All *policy* — the `trust_class` fence, the config-pinned
+/// blake3 keystone, parse — lives in the `ScrutatorStore`, never here. The
+/// SHA-256 `content_hash` in the response is deliberately NOT consulted as a
+/// trust anchor: it is an ingest-bound provenance/staleness signal of a
+/// different algorithm and role from the store's blake3 run-path anchor.
+#[async_trait::async_trait]
+impl arcana_skills::FetchConn for ScrutatorClient {
+    async fn fetch(
+        &self,
+        source_id: &str,
+    ) -> Result<arcana_skills::FetchedContent, arcana_skills::FetchUnavailable> {
+        let query = FetchQuery::by_source_id(source_id);
+        let resp = ScrutatorClient::fetch(self, &query)
+            .await
+            .map_err(|err| arcana_skills::FetchUnavailable(err.to_string()))?;
+        Ok(arcana_skills::FetchedContent {
+            bytes: resp.content.into_bytes(),
+            trust_class: resp.trust_class,
+            namespace: resp.namespace,
         })
     }
 }
@@ -336,6 +491,32 @@ mod tests {
         assert_eq!(
             client.search_url().unwrap().as_str(),
             "http://100.70.137.104:8310/v1/search"
+        );
+    }
+
+    #[test]
+    fn fetch_url_appends_v1_fetch_on_the_approved_mesh_host() {
+        let client = ScrutatorClient::new(
+            Url::parse("http://100.70.137.104:8310").unwrap(),
+            test_provider(),
+        )
+        .expect("client builds");
+        assert_eq!(
+            client.fetch_url().unwrap().as_str(),
+            "http://100.70.137.104:8310/v1/fetch"
+        );
+    }
+
+    #[test]
+    fn fetch_query_by_source_id_matches_f1_shape() {
+        let query = FetchQuery::by_source_id("kb:skill:codegen-review:3:9f2c");
+        let json = serde_json::to_value(&query).expect("serialize");
+        assert_eq!(json["by"], "source_id");
+        assert_eq!(json["id"], "kb:skill:codegen-review:3:9f2c");
+        assert_eq!(json["range"], "full");
+        assert_eq!(
+            json["include"],
+            serde_json::json!(["content", "provenance"])
         );
     }
 

@@ -10,6 +10,11 @@ description = "Ecosystem connectors: HTTP bridges to Arcanada services (Model Co
 
 [dependencies]
 arcana-core = { path = "../core" }
+# The skills-store fetch seam (`FetchConn`) lives in `arcana-skills`; this crate
+# provides the live adapter (`impl FetchConn for ScrutatorClient`). The edge is
+# one-directional — `arcana-skills` never depends on `arcana-connectors` — so
+# there is no cycle.
+arcana-skills = { path = "../skills" }
 async-trait = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
 secrecy = "0.10"
@@ -21,6 +26,7 @@ tracing = "0.1"
 url = "2"
 
 [dev-dependencies]
+blake3 = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
