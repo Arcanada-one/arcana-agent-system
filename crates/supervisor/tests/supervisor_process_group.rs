@@ -1,7 +1,12 @@
 //! V-AC-1 (D-REQ-01): a spawned child owns its own process group.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used, clippy::pedantic)]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::pedantic
+)]
 
 mod common;
 

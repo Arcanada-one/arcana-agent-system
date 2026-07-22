@@ -1,7 +1,12 @@
 //! V-AC-6 (D-REQ-06): concurrency semaphore + aggregate-cost breaker.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used, clippy::pedantic)]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::pedantic
+)]
 
 mod common;
 

@@ -318,10 +318,11 @@ impl SuperviseTask {
 
     /// Record a lifecycle event; log (do not silently drop) on a write failure.
     fn emit(&self, kind: &str, child_id: u64) {
-        if let Err(err) =
-            self.audit
-                .record_event(&self.config.correlation_id, kind, &json!({ "child_id": child_id }))
-        {
+        if let Err(err) = self.audit.record_event(
+            &self.config.correlation_id,
+            kind,
+            &json!({ "child_id": child_id }),
+        ) {
             tracing::error!(error = %err, kind, "supervisor audit write failed");
         }
     }

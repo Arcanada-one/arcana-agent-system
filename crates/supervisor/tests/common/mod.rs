@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use arcana_core::hooks::audit::AuditLog;
 use arcana_supervisor::ChildSpec;
 use nix::errno::Errno;
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -57,6 +57,26 @@ pub async fn wait_until_gone(pid: Pid, budget: Duration) -> bool {
         }
         if Instant::now() >= deadline {
             return kill(pid, None::<Signal>) == Err(Errno::ESRCH);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Poll until the whole process group `pgid` is gone (a signal-0 group probe
+/// returns `ESRCH`) or `budget` elapses. Returns whether the group is confirmed
+/// empty.
+///
+/// Unlike [`wait_until_gone`], this observes *any* surviving group member — e.g.
+/// a grandchild that the direct child's tokio `kill_on_drop` never reaches — so
+/// it isolates the explicit group `SIGKILL` escalation from ambient reaping.
+pub async fn wait_until_group_gone(pgid: Pid, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        if killpg(pgid, None::<Signal>) == Err(Errno::ESRCH) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return killpg(pgid, None::<Signal>) == Err(Errno::ESRCH);
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }

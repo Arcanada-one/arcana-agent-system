@@ -33,7 +33,9 @@ pub mod supervisor;
 pub mod terminate;
 
 pub use error::SupervisorError;
-pub use policy::{ChildSpec, RestartPolicy, SupervisionOutcome, SupervisorConfig, TerminationCause};
+pub use policy::{
+    ChildSpec, RestartPolicy, SupervisionOutcome, SupervisorConfig, TerminationCause,
+};
 pub use spawn::{spawn_process_group, SpawnedChild};
 pub use supervisor::{ChildHandle, Supervisor};
 pub use terminate::terminate_group;

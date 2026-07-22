@@ -44,6 +44,10 @@ pub async fn terminate_group(
         let _ = child.child_mut().wait().await;
     }
 
-    audit.record_event(correlation_id, "terminate", &json!({ "child_id": child_id }))?;
+    audit.record_event(
+        correlation_id,
+        "terminate",
+        &json!({ "child_id": child_id }),
+    )?;
     Ok(())
 }

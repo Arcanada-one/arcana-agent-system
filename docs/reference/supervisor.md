@@ -98,4 +98,7 @@ services) used by the chaos/watchdog tests. It emits the heartbeat protocol,
 reader pipe so terminability is exercised via signals only. Flags: `--interval`,
 `--heartbeats`, `--exit-code`, `--stop-heartbeat-after`, `--ignore-term` (blocks
 `SIGTERM` via safe `sigprocmask`, never an `unsafe` disposition install), and
-`--spawn-grandchild`.
+`--spawn-grandchild` (forks a second, silent `heartbeat-child --ignore-term` into
+the same process group; it survives `SIGTERM` and the parent's `kill_on_drop`, so
+only the explicit group `SIGKILL` reaches it — the discriminator behind the
+V-AC-2 and V-AC-9 group-`ESRCH` assertions).

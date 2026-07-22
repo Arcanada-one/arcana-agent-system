@@ -18,7 +18,7 @@
 #![cfg(unix)]
 
 use std::io::{self, Write};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -52,7 +52,23 @@ fn run() -> io::Result<()> {
     emit(&mut out, "READY")?;
 
     if opts.spawn_grandchild {
-        let grandchild = Command::new("sleep").arg("3600").spawn()?;
+        // A grandchild that stays in *this* process group and also blocks
+        // `SIGTERM` (a fresh `heartbeat-child --ignore-term`, silent). It can
+        // therefore be reaped ONLY by the group `SIGKILL` escalation — not by
+        // `SIGTERM`, and not by the parent's tokio `kill_on_drop`, which reaps
+        // the direct-child pid alone. A group-level `ESRCH` probe against such a
+        // grandchild isolates the budgeted group SIGKILL (V-AC-2 / V-AC-9).
+        let exe = std::env::current_exe()?;
+        let grandchild = Command::new(exe)
+            .arg("--ignore-term")
+            .arg("--stop-heartbeat-after")
+            .arg("0")
+            .arg("--interval")
+            .arg("3600000")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
         emit(&mut out, &format!("STATUS grandchild={}", grandchild.id()))?;
     }
 

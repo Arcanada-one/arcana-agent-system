@@ -1,7 +1,12 @@
 //! V-AC-4 (D-REQ-02): the wall-clock deadline fires independently of liveness.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used, clippy::pedantic)]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -9,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arcana_core::cost::CostTracker;
-use arcana_supervisor::{Supervisor, SupervisionOutcome, SupervisorConfig};
+use arcana_supervisor::{SupervisionOutcome, Supervisor, SupervisorConfig};
 use tempfile::TempDir;
 
 use common::{audit_log, child_spec, records, wait_until_gone};

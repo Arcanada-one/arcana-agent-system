@@ -1,7 +1,12 @@
 //! V-AC-2 (D-REQ-04): SIGTERM-ignoring child + grandchild are SIGKILLed by group.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used, clippy::pedantic)]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -32,9 +37,15 @@ async fn supervisor_sigterm_then_sigkill() {
         .expect("grandchild pid line");
 
     // SIGTERM is blocked by the child; the group SIGKILL must still reap both.
-    terminate_group(pgid, Duration::from_millis(150), &mut child, &audit, "corr-term")
-        .await
-        .expect("terminate");
+    terminate_group(
+        pgid,
+        Duration::from_millis(150),
+        &mut child,
+        &audit,
+        "corr-term",
+    )
+    .await
+    .expect("terminate");
 
     assert!(
         wait_until_gone(pid, Duration::from_secs(2)).await,

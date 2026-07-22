@@ -1,7 +1,12 @@
 //! V-AC-5 (D-REQ-05): bounded restarts then terminal escalation.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used, clippy::pedantic)]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::pedantic
+)]
 
 mod common;
 
@@ -9,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arcana_core::cost::CostTracker;
-use arcana_supervisor::{RestartPolicy, Supervisor, SupervisionOutcome, SupervisorConfig};
+use arcana_supervisor::{RestartPolicy, SupervisionOutcome, Supervisor, SupervisorConfig};
 use tempfile::TempDir;
 
 use common::{audit_log, child_spec, count_kind, records};
@@ -49,8 +54,16 @@ async fn supervisor_restart_escalation() {
     );
 
     let recs = records(&dir);
-    assert_eq!(count_kind(&recs, "restart"), 2, "exactly 2 restarts: {recs:?}");
-    assert_eq!(count_kind(&recs, "escalate"), 1, "exactly 1 escalate: {recs:?}");
+    assert_eq!(
+        count_kind(&recs, "restart"),
+        2,
+        "exactly 2 restarts: {recs:?}"
+    );
+    assert_eq!(
+        count_kind(&recs, "escalate"),
+        1,
+        "exactly 1 escalate: {recs:?}"
+    );
     // Escalation is a returned signal + audit event — no hard-gated action:
     // the crate has no network/deploy surface, so none is structurally possible.
     assert!(recs.iter().all(|r| r["correlation_id"] == "corr-restart"));
