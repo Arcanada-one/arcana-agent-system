@@ -12,6 +12,7 @@ pub mod arcana_search;
 pub mod bash;
 pub mod edit;
 pub mod grep;
+pub mod model_call;
 pub mod path_guard;
 pub mod read;
 pub mod webfetch;
