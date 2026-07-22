@@ -8,9 +8,16 @@ repository.workspace = true
 authors.workspace = true
 description = "MCP server adapter exposing the arcana capability core over loopback"
 
+[features]
+# Optional loopback HTTP transport for `arcana mcp serve --bind`. Stdio needs
+# no feature. Enabling this pulls the rmcp streamable-HTTP server transport.
+http = ["rmcp/transport-streamable-http-server", "dep:hyper", "dep:hyper-util"]
+
 [dependencies]
 arcana-core = { path = "../core" }
 async-trait = "0.1"
+hyper = { version = "1", features = ["server", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio", "service"], optional = true }
 rmcp = { version = "2.2.0", default-features = false, features = ["server", "transport-io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -18,10 +25,12 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
 tokio-util = { version = "0.7", default-features = false }
 uuid = { version = "1", features = ["v4"] }
+xdg = "2.5"
 
 [dev-dependencies]
 rmcp = { version = "2.2.0", default-features = false, features = ["server", "transport-io", "client"] }
 serde_json = "1"
+tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "time"] }
 
 [lints]
