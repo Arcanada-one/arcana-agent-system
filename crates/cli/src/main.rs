@@ -48,6 +48,24 @@ enum Cmd {
         #[arg(required = true, num_args = 1..)]
         query: Vec<String>,
     },
+    /// Expose the capability core as an MCP server (Tier-1 loopback).
+    Mcp {
+        #[command(subcommand)]
+        command: McpCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Serve the capability core over MCP. Defaults to stdio; `--bind`
+    /// starts a loopback-only HTTP listener (non-loopback addresses are
+    /// rejected before any socket is created).
+    Serve {
+        /// Optional loopback bind address (e.g. `127.0.0.1:7300`). Omit for
+        /// stdio transport.
+        #[arg(long)]
+        bind: Option<String>,
+    },
 }
 
 fn main() {
@@ -76,6 +94,11 @@ fn main() {
         }
         Some(Cmd::KbRead { query }) => {
             std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));
+        }
+        Some(Cmd::Mcp {
+            command: McpCmd::Serve { bind },
+        }) => {
+            std::process::exit(arcana_mcp::run_mcp_serve(bind));
         }
         None => {
             println!("arcana {VERSION} (REPL stub — interactive mode coming soon)");
