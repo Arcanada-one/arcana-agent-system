@@ -17,3 +17,8 @@
 pub mod builder;
 pub mod interpreter;
 pub mod plan;
+
+pub use plan::{
+    Maturity, MetricSpec, ModelSpec, PlanDefaults, PlanKind, SkillPlan, SkillPlanError, Stage,
+    StageAction, StageLimits, TaskType,
+};
