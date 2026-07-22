@@ -13,6 +13,8 @@ use url::Url;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn config(server: &MockServer, secret_file: std::path::PathBuf) -> ClientCredentialsConfig {
     ClientCredentialsConfig {
         token_url: Url::parse(&format!("{}/oidc/token", server.uri())).unwrap(),
@@ -117,4 +119,52 @@ async fn endpoint_failure_never_echoes_client_secret() {
     let rendered = provider.bearer_token().await.unwrap_err().to_string();
     assert!(!rendered.contains("must-not-appear-in-errors"));
     assert!(rendered.contains("HTTP 401"));
+}
+
+#[tokio::test]
+async fn token_mint_does_not_follow_redirects() {
+    let source = MockServer::start().await;
+    let target = MockServer::start().await;
+    let (_dir, secret_file) = secure_secret_file("never-forward-me");
+    Mock::given(method("POST"))
+        .and(path("/oidc/token"))
+        .respond_with(
+            ResponseTemplate::new(307)
+                .insert_header("location", format!("{}/oidc/token", target.uri())),
+        )
+        .mount(&source)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oidc/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "redirected-token",
+            "token_type": "Bearer",
+            "expires_in": 300
+        })))
+        .mount(&target)
+        .await;
+    let provider = ClientCredentialsTokenProvider::new(config(&source, secret_file)).unwrap();
+
+    assert!(matches!(
+        provider.bearer_token().await,
+        Err(AuthTokenError::EndpointStatus(307))
+    ));
+    assert!(target.received_requests().await.unwrap().is_empty());
+}
+
+#[test]
+fn production_config_rejects_unapproved_https_token_endpoint() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var(
+        "ARCANA_AUTH_TOKEN_URL",
+        "https://other.example.test/oidc/token",
+    );
+    std::env::set_var("ARCANA_KB_CLIENT_SECRET_FILE", "/tmp/unused-reader-secret");
+    let result = ClientCredentialsConfig::from_env();
+    std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
+    std::env::remove_var("ARCANA_KB_CLIENT_SECRET_FILE");
+    assert!(
+        result.is_err(),
+        "production config accepted an arbitrary HTTPS endpoint"
+    );
 }

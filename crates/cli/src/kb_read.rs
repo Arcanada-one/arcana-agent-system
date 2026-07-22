@@ -34,6 +34,8 @@ enum KbReadError {
     Loop(TerminalReason),
     #[error("grounding proof requires exactly one successful search (observed {0})")]
     SearchCount(usize),
+    #[error("grounding proof requires exactly one search attempt (observed {0})")]
+    AttemptCount(usize),
     #[error("grounding proof requires nonzero grounded hits")]
     NoHits,
     #[error("grounding proof requires the final response to cite a returned source_path")]
@@ -43,6 +45,7 @@ enum KbReadError {
 #[derive(Debug)]
 struct KbReadReport {
     final_text: String,
+    attempts: usize,
     searches: usize,
     hits: u64,
     sources: Vec<String>,
@@ -50,6 +53,7 @@ struct KbReadReport {
 
 #[derive(Default)]
 struct Evidence {
+    attempts: usize,
     searches: usize,
     hits: u64,
     sources: Vec<String>,
@@ -68,6 +72,15 @@ impl ToolHook for GroundingEvidenceHook {
         _input: &Value,
     ) -> Result<HookResult, HookError> {
         if tool == "arcana_search" {
+            let mut evidence = self.evidence.lock().map_err(|_| {
+                HookError::ExecutionFailed("grounding evidence lock poisoned".into())
+            })?;
+            if evidence.attempts >= 1 {
+                return Ok(HookResult::StopExecution(
+                    "kb-read permits exactly one arcana_search attempt".into(),
+                ));
+            }
+            evidence.attempts = evidence.attempts.saturating_add(1);
             Ok(HookResult::Continue)
         } else {
             Ok(HookResult::StopExecution(
@@ -235,6 +248,9 @@ async fn run_kb_read_with(
     let evidence = evidence
         .lock()
         .map_err(|_| KbReadError::Composition("grounding evidence lock poisoned".into()))?;
+    if evidence.attempts != 1 {
+        return Err(KbReadError::AttemptCount(evidence.attempts));
+    }
     if evidence.searches != 1 {
         return Err(KbReadError::SearchCount(evidence.searches));
     }
@@ -250,6 +266,7 @@ async fn run_kb_read_with(
     }
     Ok(KbReadReport {
         final_text,
+        attempts: evidence.attempts,
         searches: evidence.searches,
         hits: evidence.hits,
         sources: evidence.sources.clone(),
@@ -296,7 +313,8 @@ pub fn run_kb_read(query: String) -> i32 {
             Ok(report) => {
                 println!("{}", report.final_text);
                 println!(
-                    "grounding: searches={} hits={} sources={}",
+                    "grounding: attempts={} searches={} hits={} sources={}",
+                    report.attempts,
                     report.searches,
                     report.hits,
                     report.sources.join(",")
@@ -470,6 +488,7 @@ mod tests {
         .expect("grounded loop succeeds");
 
         assert_eq!(report.searches, 1);
+        assert_eq!(report.attempts, 1);
         assert_eq!(report.hits, 1);
         assert_eq!(report.sources, ["wiki/services/scrutator.md"]);
         assert!(report.final_text.contains("wiki/services/scrutator.md"));
@@ -529,7 +548,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_more_than_one_successful_search() {
         let server = MockServer::start().await;
-        mount_hit(&server, "question", 2).await;
+        mount_hit(&server, "question", 1).await;
         let connector = ScriptedConnector::new(&[
             &tool_call("arcana_search", json!({ "query": "first" })),
             &tool_call("arcana_search", json!({ "query": "second" })),
@@ -541,7 +560,31 @@ mod tests {
             .await
             .expect_err("multiple searches must not report readiness");
 
-        assert!(error.to_string().contains("exactly one successful search"));
+        assert!(error.to_string().contains("AbortedByHook"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_first_search_still_consumes_the_only_attempt() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("unavailable"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let connector = ScriptedConnector::new(&[
+            &tool_call("arcana_search", json!({ "query": "first" })),
+            &tool_call("arcana_search", json!({ "query": "retry" })),
+        ]);
+        let audit = tempdir().expect("audit dir");
+
+        let error = run_kb_read_with("question", &connector, search_tool(&server), audit.path())
+            .await
+            .expect_err("second attempt after failure must be denied");
+
+        assert!(error.to_string().contains("AbortedByHook"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

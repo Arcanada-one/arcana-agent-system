@@ -88,9 +88,17 @@ impl ClientCredentialsConfig {
                 PathBuf::from(directory).join(DEFAULT_CREDENTIAL_NAME)
             }
         };
+        let token_url = Url::parse(&token_url)
+            .map_err(|_| AuthTokenError::Configuration("token URL is malformed".into()))?;
+        let approved = Url::parse(DEFAULT_TOKEN_URL)
+            .map_err(|_| AuthTokenError::Configuration("approved token URL is invalid".into()))?;
+        if token_url != approved {
+            return Err(AuthTokenError::Configuration(
+                "production token URL is not approved".into(),
+            ));
+        }
         Ok(Self {
-            token_url: Url::parse(&token_url)
-                .map_err(|_| AuthTokenError::Configuration("token URL is malformed".into()))?,
+            token_url,
             client_id: KB_READER_CLIENT_ID.into(),
             secret_file,
             resource: SCRUTATOR_LTM_RESOURCE.into(),
@@ -158,6 +166,7 @@ impl ClientCredentialsTokenProvider {
     pub fn new(config: ClientCredentialsConfig) -> Result<Self, AuthTokenError> {
         config.validate()?;
         let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))

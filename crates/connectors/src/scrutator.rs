@@ -146,6 +146,13 @@ impl ScrutatorClient {
         };
         let base_url =
             Url::parse(&raw).map_err(|err| ScrutatorError::Transport(err.to_string()))?;
+        let approved = Url::parse(DEFAULT_BASE_URL)
+            .map_err(|err| ScrutatorError::Transport(err.to_string()))?;
+        if base_url != approved {
+            return Err(ScrutatorError::Transport(
+                "production Scrutator base URL is not approved".into(),
+            ));
+        }
         Ok(base_url)
     }
 
@@ -161,6 +168,7 @@ impl ScrutatorClient {
     ) -> Result<Self, ScrutatorError> {
         validate_base_url(&base_url)?;
         let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))
@@ -292,6 +300,8 @@ impl ErrorEnvelope {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct TestToken;
 
     #[async_trait::async_trait]
@@ -331,6 +341,7 @@ mod tests {
 
     #[test]
     fn try_from_env_falls_back_to_default_mesh_url_when_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: single-threaded within this test's own assertions; the var
         // is scoped to this crate's tests only (mirrors the existing
         // `model_connector` convention for env-based construction tests).
@@ -340,11 +351,12 @@ mod tests {
     }
 
     #[test]
-    fn try_from_env_honors_override() {
-        std::env::set_var(ENV_BASE_URL, "http://localhost:9999");
-        let base_url = ScrutatorClient::base_url_from_env().expect("override URL resolves");
+    fn try_from_env_rejects_nonproduction_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_BASE_URL, "https://other.example.test");
+        let result = ScrutatorClient::base_url_from_env();
         std::env::remove_var(ENV_BASE_URL);
-        assert_eq!(base_url.as_str(), "http://localhost:9999/");
+        assert!(result.is_err(), "production constructor accepted override");
     }
 
     #[test]

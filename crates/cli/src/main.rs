@@ -101,7 +101,7 @@ fn run_mc_ping() -> i32 {
     };
 
     runtime.block_on(async {
-        let client = match ModelConnectorClient::try_from_env() {
+        let client = match ModelConnectorClient::try_from_probe_env() {
             Ok(client) => client,
             Err(err) => {
                 eprintln!("arcana mc-ping: {err}");

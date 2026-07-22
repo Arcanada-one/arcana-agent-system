@@ -84,3 +84,51 @@ fn records(dir: &TempDir) -> Vec<Value> {
         .map(|line| serde_json::from_str(line).expect("json record"))
         .collect()
 }
+
+#[cfg(unix)]
+#[test]
+fn audit_path_is_private_regular_and_owned_by_the_caller() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let outer = TempDir::new().expect("tempdir");
+    let audit_dir = outer.path().join("audit");
+    let _audit = AuditLog::new(&audit_dir).expect("secure audit log");
+    let dir_metadata = std::fs::metadata(&audit_dir).expect("audit dir metadata");
+    let file_metadata = std::fs::metadata(audit_dir.join("audit.log")).expect("audit metadata");
+
+    assert_eq!(dir_metadata.permissions().mode() & 0o777, 0o700);
+    assert_eq!(file_metadata.permissions().mode() & 0o777, 0o600);
+    assert!(file_metadata.is_file());
+    assert_eq!(file_metadata.uid(), rustix::process::geteuid().as_raw());
+}
+
+#[cfg(unix)]
+#[test]
+fn audit_log_rejects_symlink_target() {
+    use std::os::unix::fs::symlink;
+
+    let outer = TempDir::new().expect("tempdir");
+    let audit_dir = outer.path().join("audit");
+    std::fs::create_dir(&audit_dir).expect("audit dir");
+    let victim = outer.path().join("victim");
+    std::fs::write(&victim, "unchanged").expect("victim");
+    symlink(&victim, audit_dir.join("audit.log")).expect("symlink");
+
+    assert!(AuditLog::new(&audit_dir).is_err());
+    assert_eq!(std::fs::read_to_string(victim).unwrap(), "unchanged");
+}
+
+#[cfg(unix)]
+#[test]
+fn audit_log_rejects_existing_insecure_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = TempDir::new().expect("tempdir");
+    let audit_dir = outer.path().join("audit");
+    std::fs::create_dir(&audit_dir).expect("audit dir");
+    let path = audit_dir.join("audit.log");
+    std::fs::write(&path, "prior\n").expect("audit file");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+    assert!(AuditLog::new(&audit_dir).is_err());
+}

@@ -131,6 +131,7 @@ dependencies = [
  "blake3",
  "jsonschema",
  "regex",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

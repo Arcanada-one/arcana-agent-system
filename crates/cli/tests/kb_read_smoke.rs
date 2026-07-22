@@ -24,3 +24,15 @@ fn kb_read_requires_a_query() {
         .failure()
         .stderr(predicate::str::contains("required"));
 }
+
+#[test]
+fn kb_read_rejects_model_connector_replay_override() {
+    let mut command = Command::cargo_bin("arcana").expect("arcana binary");
+    command
+        .env("ARCANA_MC_TOKEN", "staging")
+        .env("ARCANA_MC_BASE_URL", "http://127.0.0.1:9999")
+        .args(["kb-read", "What is Scrutator?"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Model Connector unavailable"));
+}

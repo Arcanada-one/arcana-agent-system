@@ -166,6 +166,31 @@ async fn search_rejects_unauthenticated_fallback_and_refreshes_once_on_401() {
 }
 
 #[tokio::test]
+async fn search_does_not_follow_redirects() {
+    let source = MockServer::start().await;
+    let target = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
+        .respond_with(
+            ResponseTemplate::new(307)
+                .insert_header("location", format!("{}/v1/search", target.uri())),
+        )
+        .mount(&source)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+        .mount(&target)
+        .await;
+
+    assert!(matches!(
+        client_for(&source).search(&SearchQuery::new("q")).await,
+        Err(ScrutatorError::Http { status: 307, .. })
+    ));
+    assert!(target.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn search_sends_only_query_when_optionals_unset() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
