@@ -109,6 +109,35 @@ impl AuditLog {
         self.record_result(invocation_id, tool, "decision_only", None)
     }
 
+    /// Record a supervisor lifecycle event into the shared `audit.log`.
+    ///
+    /// Lifecycle events (`spawn` / `heartbeat_timeout` / `wall_clock_timeout` /
+    /// `restart` / `escalate` / `terminate`) flow through the same fail-closed sink
+    /// as decision/result records, so supervision has no divergent audit
+    /// stream. Honouring the module's hashes-only invariant, the raw `fields`
+    /// object is never persisted — only its Blake3 `fields_hash` plus the
+    /// non-secret routing scalars `kind` and `correlation_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuditHookError`] if the record cannot be synchronously
+    /// written and flushed.
+    pub fn record_event(
+        &self,
+        correlation_id: &str,
+        kind: &str,
+        fields: &Value,
+    ) -> Result<(), AuditHookError> {
+        self.append(&serde_json::json!({
+            "version": AUDIT_VERSION,
+            "ts": now_rfc3339(),
+            "phase": "supervisor",
+            "kind": kind,
+            "correlation_id": correlation_id,
+            "fields_hash": hash_value(fields),
+        }))
+    }
+
     pub(crate) fn record_decision(
         &self,
         invocation_id: u64,

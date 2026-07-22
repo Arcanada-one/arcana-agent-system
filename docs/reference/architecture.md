@@ -7,6 +7,7 @@
 ```
 crates/cli       Binary `arcana` — args, REPL loop, slash dispatcher, terminal UI.
 crates/core      Library — agent loop, tool dispatcher, context manager, hooks, permissions.
+crates/supervisor Library — process-group-owning child supervisor: heartbeat/timeout watchdog, restart/escalation, concurrency + cost budgets.
 crates/connectors (planned) — Auth Arcana, Model Connector, Vault, Scrutator, LTM, Ops Bot, Coworker.
 crates/tools      (planned) — Read, Edit, Write, Bash, Grep, WebFetch.
 crates/mcp        Adapter — exposes the capability core as an MCP server (`arcana mcp serve`).
@@ -86,6 +87,32 @@ input and matches it against the active `ToolRuleSet` deny/allow paths. Matches
 block the call with `ToolError::PermissionDenied`.
 
 `Tool::default()` ships a permissive rule set so existing call sites are not regressed. Production rule loading — wiring a real `ToolRuleSet` derived from `permissions.toml` into the tool constructors — is the next step on the permission stack and lands in a follow-up CLI bootstrap task.
+
+## Supervisor (`crates/supervisor`)
+
+Supervises OS children — the mechanism by which the runtime keeps long-running
+work terminable (Supreme Directive law 4). Full API in
+`docs/reference/supervisor.md`. Summary:
+
+- **Process-group ownership** at spawn (`process_group(0)` — safe std/tokio API):
+  each child leads its own group, so a forked grandchild cannot escape shutdown.
+- **Terminate sequence** — `SIGTERM` → grace → `SIGKILL` to the whole group
+  (`nix::killpg`), then reap the direct child. `SIGKILL` is un-blockable, so a
+  child that blocks/ignores `SIGTERM` is still killed.
+- **Heartbeat watchdog** — a stdout line-protocol (`READY` / `HEARTBEAT <seq>` /
+  `STATUS`) republishes liveness; a silent child past `heartbeat_timeout` is
+  terminated. Per-child readers are **independent async tasks**, so a frozen
+  (`SIGSTOP`'d) child never starves its siblings.
+- **Wall-clock deadline** bounds runaway work independently of liveness.
+- **Budgets** — a `Semaphore` caps concurrency; the reused
+  `core::cost::CostTracker::check_budget` caps aggregate cost.
+- **Restart/escalation** — a bounded `RestartPolicy` restarts a crash-looping
+  child, then returns terminal `Escalated` (a signal + an audit event, never an
+  autonomous hard-gated action).
+- **Audit** — every lifecycle event routes through the additive
+  `core::hooks::audit::AuditLog::record_event` seam into the **same** Blake3
+  `audit.log`; only hashes are stored (`fields_hash`), never raw fields. No
+  second audit sink; Tier-0 (no network listener).
 
 ## Ecosystem boundaries (mandates apply)
 
