@@ -47,6 +47,12 @@ pub enum CapabilityError {
 pub struct CapabilityOutput {
     pub output: ToolOutput,
     pub injected: Vec<String>,
+    /// The exact input the tool executed on: the cascade-authorized value
+    /// after any `ReplaceInput` transform (equal to the raw input when no
+    /// layer transformed it). Read-only surfacing of the already-audited
+    /// `transformed_input` so an out-of-crate adapter (e.g. the MCP seam)
+    /// can report `effective_args` without re-running the cascade.
+    pub effective_input: Value,
 }
 
 /// The sole execution authority for registered tools.
@@ -182,6 +188,9 @@ impl CapabilityExecutor {
             "Allowed",
             "cascade",
         )?;
+        // Capture the cascade-authorized input before it is moved into the
+        // sealed invocation; this is the value the tool actually executes on.
+        let effective_input = prepared.input.clone();
         let output = match prepared
             .tool
             .execute(ToolInvocation::new(prepared.input))
@@ -201,7 +210,11 @@ impl CapabilityExecutor {
             }
         };
         self.audit_result(prepared.id, tool_name, "success", Some(&output))?;
-        Ok(CapabilityOutput { output, injected })
+        Ok(CapabilityOutput {
+            output,
+            injected,
+            effective_input,
+        })
     }
 
     fn deny<T>(
@@ -267,5 +280,86 @@ impl CapabilityExecutor {
                     source,
                 }
             })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::cost::CostTracker;
+    use crate::permission::{LayerDecision, PermissionCascade, PermissionLayer};
+
+    struct EchoTool;
+
+    #[async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "t"
+        }
+        fn description(&self) -> &'static str {
+            "echoes its input back as text"
+        }
+        fn input_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput {
+                content: invocation.into_input().to_string(),
+                metadata: None,
+            })
+        }
+    }
+
+    struct ReplaceLayer(Value);
+
+    #[async_trait]
+    impl PermissionLayer for ReplaceLayer {
+        fn name(&self) -> &'static str {
+            "replace"
+        }
+        async fn evaluate(&self, _tool: &str, _input: &Value) -> LayerDecision {
+            LayerDecision::ReplaceInput(self.0.clone())
+        }
+    }
+
+    struct AllowLayer;
+
+    #[async_trait]
+    impl PermissionLayer for AllowLayer {
+        fn name(&self) -> &'static str {
+            "allow"
+        }
+        async fn evaluate(&self, _tool: &str, _input: &Value) -> LayerDecision {
+            LayerDecision::Allow
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_surfaces_replaceinput_transformed_input() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut dispatcher = ToolDispatcher::new();
+        dispatcher.register(Arc::new(EchoTool)).unwrap();
+        let cascade = PermissionCascade::new(vec![
+            Arc::new(ReplaceLayer(json!({ "x": 2 }))),
+            Arc::new(AllowLayer),
+        ]);
+        let audit = AuditLog::new(tmp.path()).unwrap();
+        let executor = CapabilityExecutor::new(dispatcher, cascade, HookChain::new(), audit);
+        let ctx = HookContext::new(CancellationToken::new(), Arc::new(CostTracker::new()));
+
+        let out = executor
+            .execute(&ctx, "t", json!({ "x": 1 }))
+            .await
+            .unwrap();
+
+        assert_eq!(out.effective_input, json!({ "x": 2 }));
+        assert_ne!(out.effective_input, json!({ "x": 1 }));
     }
 }

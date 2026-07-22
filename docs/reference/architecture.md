@@ -9,7 +9,24 @@ crates/cli       Binary `arcana` — args, REPL loop, slash dispatcher, terminal
 crates/core      Library — agent loop, tool dispatcher, context manager, hooks, permissions.
 crates/connectors (planned) — Auth Arcana, Model Connector, Vault, Scrutator, LTM, Ops Bot, Coworker.
 crates/tools      (planned) — Read, Edit, Write, Bash, Grep, WebFetch.
+crates/mcp        Adapter — exposes the capability core as an MCP server (`arcana mcp serve`).
 ```
+
+## H-MCP-seam (`crates/mcp`)
+
+A **pure adapter** (no new permission/tool/hook/audit logic) that answers MCP
+`tools/list` / `tools/call` over a Tier-1 loopback transport (stdio, or an
+optional `--bind` loopback HTTP listener). Its response envelope extends vanilla
+MCP with `structured_content.arcana.effective_args` (the post-`ReplaceInput`
+input the tool executed on) and an `interaction_required` suspend/resume channel
+for `Defer` decisions (`oneshot` + `Mutex<HashMap>` in-process — no broker).
+`crates/cli` depends on `crates/mcp` for the `mcp serve` entrypoint; the
+dependency edge is one-way. See [`mcp-server.md`](mcp-server.md).
+
+The seam's only touch to `crates/core` is a read-only field,
+`CapabilityOutput.effective_input`: the cascade's already-audited
+`transformed_input`, surfaced (not recomputed) so the adapter can report
+`effective_args` without re-running the cascade or double-auditing.
 
 ## Architectural references
 

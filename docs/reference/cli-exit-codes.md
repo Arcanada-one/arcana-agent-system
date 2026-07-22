@@ -35,6 +35,20 @@ message instead:
 | `201 {"status":"error"}` | `upstream logical error [<kind>]: <message>` |
 | transport failure | `transport error: <detail>` (→ treat as unreachable) |
 
+### `mcp serve` exit codes
+
+`arcana mcp serve` uses the same namespace:
+
+| Code | Condition |
+|------|-----------|
+| `0` | The server ran (stdio or loopback HTTP) and shut down cleanly after the peer disconnected. |
+| `1` | Operational failure: async-runtime start, server assembly (audit dir / `permissions.toml`), or transport error. |
+| `2` | `--bind` rejected: the requested address is not loopback (Tier-1 loopback only). Emitted by the bind guard **before** any listener is created. |
+
+The loopback HTTP transport (`--bind`) requires the default `http` build
+feature; a build with `--no-default-features` serves stdio only and returns `1`
+with a clear message if `--bind` is requested.
+
 ## Connector environment overrides
 
 | Variable | Purpose | Default |
