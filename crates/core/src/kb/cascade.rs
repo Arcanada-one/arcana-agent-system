@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use super::cache::{CachedEvidence, SessionCache};
 use super::envelope::{Provenance, UntrustedEnvelope};
+use super::metrics::CascadeMetrics;
 use super::size_guard::{EvidenceBody, SizeGuard};
 use super::trust::{self, Dispatch, TrustError};
 
@@ -252,6 +253,11 @@ pub struct KbCascade<C: EvidenceFetch> {
     size_guard: SizeGuard,
     cache: SessionCache,
     thresholds: EscalationThresholds,
+    /// Additive instrumentation — the two decisive rates ARAS-0054 measures
+    /// (`source_fetch_trigger_rate`, `over_fetch_rate`). Never consulted by any
+    /// cascade decision; updated once per admit from signals `admit` already
+    /// produced.
+    metrics: CascadeMetrics,
 }
 
 impl<C: EvidenceFetch> KbCascade<C> {
@@ -263,6 +269,7 @@ impl<C: EvidenceFetch> KbCascade<C> {
             size_guard,
             cache: SessionCache::new(),
             thresholds: EscalationThresholds::default(),
+            metrics: CascadeMetrics::new(),
         }
     }
 
@@ -277,6 +284,13 @@ impl<C: EvidenceFetch> KbCascade<C> {
     #[must_use]
     pub fn cache(&self) -> &SessionCache {
         &self.cache
+    }
+
+    /// The additive cascade instrumentation (the two decisive ARAS-0054 rates).
+    /// Read-only — consulting it never changes cascade behaviour.
+    #[must_use]
+    pub fn metrics(&self) -> &CascadeMetrics {
+        &self.metrics
     }
 
     /// Decide the escalation level from the chunk's structural signals — pure,
@@ -342,7 +356,27 @@ impl<C: EvidenceFetch> KbCascade<C> {
         // 6. build the untrusted envelope — the ONLY injectable region.
         let envelope = UntrustedEnvelope::wrap(&guarded.text, provenance);
 
-        // 7. grounding hand-off — cite-or-abstain stays in Argana. The gate is
+        // 7bis. instrumentation (ARAS-0054) — purely additive: record one
+        //    observation from signals already computed above, then emit the
+        //    running snapshot through the crate's `tracing` idiom. No new I/O,
+        //    no branch consulted by any decision.
+        self.metrics.record(&outcome, from_cache, guarded.truncated);
+        let snap = self.metrics.snapshot();
+        tracing::debug!(
+            target: "kb.cascade",
+            source_id = %hit.source_id,
+            escalated = matches!(outcome, EscalationOutcome::Escalated(_)),
+            from_cache,
+            size_guarded = guarded.truncated,
+            source_fetch_trigger_rate = snap.source_fetch_trigger_rate,
+            over_fetch_rate = snap.over_fetch_rate,
+            total = snap.total,
+            fetches = snap.fetches,
+            over_fetches = snap.over_fetches,
+            "kb cascade admit",
+        );
+
+        // 8. grounding hand-off — cite-or-abstain stays in Argana. The gate is
         //    carried OUT-of-band.
         Ok(Admission {
             envelope,

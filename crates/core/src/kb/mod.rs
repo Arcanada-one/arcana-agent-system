@@ -34,6 +34,8 @@
 pub mod cache;
 pub mod cascade;
 pub mod envelope;
+pub mod eval;
+pub mod metrics;
 pub mod size_guard;
 pub mod trust;
 
@@ -44,6 +46,10 @@ pub use cascade::{
     RetrievedChunk,
 };
 pub use envelope::{datamark, Provenance, UntrustedEnvelope};
+pub use eval::{
+    evaluate, fixture_corpus, score_item, EvalReport, ItemScores, Judge, LexicalJudge, QaItem,
+};
+pub use metrics::{CascadeMetrics, MetricsSnapshot};
 pub use size_guard::{EvidenceBody, GuardedContent, SizeGuard};
 pub use trust::{
     admit_evidence, route, Dispatch, TrustClass, TrustError, EVIDENCE_TRUST_CLASS,
