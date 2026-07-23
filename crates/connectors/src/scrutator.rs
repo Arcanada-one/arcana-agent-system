@@ -127,6 +127,38 @@ pub struct SearchResponse {
     pub results: Vec<SearchHit>,
 }
 
+/// The `range` selector for `POST /v1/fetch` (SRCH-0038). Mirrors the upstream
+/// Pydantic union `Literal["full"] | ParentOfChunkRange`: serialises to either
+/// the bare string `"full"` (whole document) or the object
+/// `{"parent_of_chunk": "<chunk_uuid>"}` (the native server-side
+/// auto-merge-to-parent slice — ARAS-0052). `Serialize`-only, like [`FetchQuery`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchRangeSpec {
+    /// Whole document. Wire form: the string literal `"full"`.
+    Full,
+    /// The whole parent document of the chunk `chunk_id` (native
+    /// auto-merge-to-parent, ARAS-0052). Wire form:
+    /// `{"parent_of_chunk": "<chunk_uuid>"}`.
+    ParentOfChunk(String),
+}
+
+impl Serialize for FetchRangeSpec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            FetchRangeSpec::Full => serializer.serialize_str("full"),
+            FetchRangeSpec::ParentOfChunk(chunk_id) => {
+                use serde::ser::SerializeStruct;
+                let mut range = serializer.serialize_struct("ParentOfChunkRange", 1)?;
+                range.serialize_field("parent_of_chunk", chunk_id)?;
+                range.end()
+            }
+        }
+    }
+}
+
 /// Request body for `POST /v1/fetch` (SRCH-0038). Fetches an exact document by
 /// an opaque key (`source_id` / `document_id` / `chunk_id`) — never a path-like
 /// id (SRCH-0038 § S3). Field names mirror the SRCH-0038 endpoint spec.
@@ -136,8 +168,9 @@ pub struct FetchQuery {
     pub by: String,
     /// The opaque id to fetch.
     pub id: String,
-    /// The byte range: `"full"` (whole doc) or a chunk range.
-    pub range: String,
+    /// The range selector: `"full"` (whole doc) or a native `parent_of_chunk`
+    /// range.
+    pub range: FetchRangeSpec,
     /// Which sections to include (e.g. `["content", "provenance"]`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
@@ -151,7 +184,23 @@ impl FetchQuery {
         Self {
             by: "source_id".to_owned(),
             id: id.into(),
-            range: "full".to_owned(),
+            range: FetchRangeSpec::Full,
+            include: vec!["content".to_owned(), "provenance".to_owned()],
+        }
+    }
+
+    /// ARAS-0052: a NATIVE server-side parent-of-chunk fetch. Pins the opaque
+    /// `source_id` and requests the whole parent document of `chunk_id` via the
+    /// SRCH-0038 `range: {parent_of_chunk}` selector — instead of a whole-document
+    /// `range="full"` fetch windowed agent-side. The top-level `by`/`id` pin the
+    /// source; the server resolves the parent from the `parent_of_chunk` chunk id
+    /// (the selector is validated but the parent range overrides resolution).
+    #[must_use]
+    pub fn parent_of_chunk(source_id: impl Into<String>, chunk_id: impl Into<String>) -> Self {
+        Self {
+            by: "source_id".to_owned(),
+            id: source_id.into(),
+            range: FetchRangeSpec::ParentOfChunk(chunk_id.into()),
             include: vec!["content".to_owned(), "provenance".to_owned()],
         }
     }
@@ -445,13 +494,22 @@ impl arcana_skills::FetchConn for ScrutatorClient {
 /// never here) and maps every [`ScrutatorError`] to a fail-closed
 /// `FetchUnavailable`.
 ///
-/// **Thin v1 range mapping.** Both `FetchRange::Full` and
-/// `FetchRange::ParentOfChunk` issue a whole-document fetch (`by_source_id`,
-/// `range="full"`); the cascade's size-guard then windows to the parent section
-/// agent-side (least-context is the consumer's policy, not the KB's). For a
-/// chunk escalation the answer offset is recovered from the response
-/// `chunk_manifest`, so rerank-to-edge still targets the right span. A native
-/// server-side `parent_of_chunk` range is a deferred v2 optimisation.
+/// **Native parent-range mapping (ARAS-0052).** `FetchRange::Full` issues a
+/// whole-document fetch (`by_source_id`, `range="full"`); `FetchRange::ParentOfChunk`
+/// now issues the NATIVE server-side `range: {parent_of_chunk}` selector
+/// (SRCH-0038) so the KB — not the agent — scopes the parent, reducing over-fetch.
+/// For either range the answer offset is recovered from the response
+/// `chunk_manifest`, so rerank-to-edge still targets the right span within the
+/// returned body.
+///
+/// **Backward compatibility.** An older index that cannot satisfy the object-form
+/// range rejects it with `422 Unprocessable Entity`; on exactly that status this
+/// adapter falls back to the ARAS-0049 path — a whole-document fetch windowed
+/// agent-side via the size-guard. Every other failure — transport, `403`
+/// cross-namespace, `404`, `5xx` — fails closed to `FetchUnavailable` (never a
+/// silent empty document, never a fallback that masks a real error — F5). This is
+/// an additive change to WHAT is fetched; the `trust_class` fence and size-guard
+/// stay in the cascade, untouched here.
 #[async_trait::async_trait]
 impl arcana_core::kb::EvidenceFetch for ScrutatorClient {
     async fn fetch(
@@ -459,10 +517,35 @@ impl arcana_core::kb::EvidenceFetch for ScrutatorClient {
         source_id: &str,
         range: arcana_core::kb::FetchRange,
     ) -> Result<arcana_core::kb::FetchedEvidence, arcana_core::kb::FetchUnavailable> {
-        let query = FetchQuery::by_source_id(source_id);
-        let resp = ScrutatorClient::fetch(self, &query)
-            .await
-            .map_err(|err| arcana_core::kb::FetchUnavailable(err.to_string()))?;
+        let resp = match &range {
+            arcana_core::kb::FetchRange::Full => {
+                ScrutatorClient::fetch(self, &FetchQuery::by_source_id(source_id))
+                    .await
+                    .map_err(|err| arcana_core::kb::FetchUnavailable(err.to_string()))?
+            }
+            arcana_core::kb::FetchRange::ParentOfChunk(chunk_id) => {
+                // ARAS-0052: request the NATIVE server-side parent range first.
+                match ScrutatorClient::fetch(
+                    self,
+                    &FetchQuery::parent_of_chunk(source_id, chunk_id),
+                )
+                .await
+                {
+                    Ok(resp) => resp,
+                    // 422 = older index cannot satisfy the object-form range →
+                    // fall back to whole-doc + agent-side windowing (0049 path).
+                    Err(ScrutatorError::Http { status: 422, .. }) => {
+                        ScrutatorClient::fetch(self, &FetchQuery::by_source_id(source_id))
+                            .await
+                            .map_err(|err| arcana_core::kb::FetchUnavailable(err.to_string()))?
+                    }
+                    // Every other error fails closed as before (F5).
+                    Err(err) => {
+                        return Err(arcana_core::kb::FetchUnavailable(err.to_string()));
+                    }
+                }
+            }
+        };
         let answer_offset = match &range {
             arcana_core::kb::FetchRange::ParentOfChunk(chunk_id) => resp
                 .chunk_manifest
@@ -659,6 +742,33 @@ mod tests {
         assert_eq!(json["by"], "source_id");
         assert_eq!(json["id"], "kb:skill:codegen-review:3:9f2c");
         assert_eq!(json["range"], "full");
+        assert_eq!(
+            json["include"],
+            serde_json::json!(["content", "provenance"])
+        );
+    }
+
+    #[test]
+    fn fetch_query_parent_of_chunk_serialises_native_range_object() {
+        // ARAS-0052: the parent escalation emits the object-form range
+        // `{parent_of_chunk: <uuid>}`, NOT the `"full"` string — the wire shape
+        // that lets the server scope the parent instead of the agent windowing
+        // the whole doc.
+        let query = FetchQuery::parent_of_chunk(
+            "kb:evidence:runbook-x:5:1a2b",
+            "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        );
+        let json = serde_json::to_value(&query).expect("serialize");
+        assert_eq!(json["by"], "source_id");
+        assert_eq!(json["id"], "kb:evidence:runbook-x:5:1a2b");
+        assert_eq!(
+            json["range"]["parent_of_chunk"],
+            "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+        );
+        assert!(
+            json["range"].as_str().is_none(),
+            "parent range must be an object, never the \"full\" string"
+        );
         assert_eq!(
             json["include"],
             serde_json::json!(["content", "provenance"])
