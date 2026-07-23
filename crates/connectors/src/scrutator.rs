@@ -450,6 +450,56 @@ impl ScrutatorClient {
     }
 }
 
+/// Why a production skills-store could not be constructed at composition time
+/// (ARAS-0051). Distinct arms so the driver can tell an operator-config error
+/// (bad `ARCANA_SKILLS_SOURCE`) from a live-KB client build failure.
+#[derive(Debug, thiserror::Error)]
+pub enum SkillStoreInitError {
+    /// The `ARCANA_SKILLS_SOURCE` selector was set to an unrecognised value.
+    #[error(transparent)]
+    Selector(#[from] arcana_skills::UnknownSkillSource),
+    /// Production mode was selected but the live `ScrutatorClient` (base URL /
+    /// OAuth credentials) could not be built. Fails closed — the driver must NOT
+    /// silently degrade to the trusted `FileStore`.
+    #[error("production skills source selected but the Scrutator client is unavailable: {0}")]
+    Client(#[from] ScrutatorError),
+}
+
+/// ARAS-0051 production cutover: build the skills byte-acquisition
+/// [`arcana_skills::SkillStore`] the agent driver loads plans from, selected by
+/// the `ARCANA_SKILLS_SOURCE` environment variable (see
+/// [`arcana_skills::SkillSourceMode`]).
+///
+/// * **Production** (the fail-closed default — unset/blank selector): delegates
+///   to [`arcana_skills::select_skill_store`] with a real
+///   [`ScrutatorClient::try_from_env`], so every skill load runs the full 0047
+///   gate chain (`trust_class` fence → config-pinned blake3 keystone → parse →
+///   schema validate) over the untrusted KB. If the client cannot be built the
+///   call fails closed with [`SkillStoreInitError::Client`] — it never falls back
+///   to the trusted local [`arcana_skills::FileStore`].
+/// * **Bootstrap** (`ARCANA_SKILLS_SOURCE=bootstrap|file|offline`): returns the
+///   trusted `FileStore` for bundled/offline ids and constructs **no** network
+///   client (offline-safe — bootstrap must not require OAuth reachability).
+///
+/// # Errors
+///
+/// Returns [`SkillStoreInitError::Selector`] for an unrecognised selector, or
+/// [`SkillStoreInitError::Client`] if the production Scrutator client cannot be
+/// constructed.
+pub fn skill_store_from_env() -> Result<Box<dyn arcana_skills::SkillStore>, SkillStoreInitError> {
+    let mode = arcana_skills::SkillSourceMode::from_env()?;
+    match mode {
+        arcana_skills::SkillSourceMode::Production => {
+            let client = Arc::new(ScrutatorClient::try_from_env()?);
+            Ok(arcana_skills::select_skill_store(mode, client))
+        }
+        // Offline path: never build a network client. FileStore is the trust
+        // root for bundled ids; `select_skill_store` would ignore the connector
+        // in this arm anyway, so we short-circuit to keep bootstrap OAuth-free.
+        arcana_skills::SkillSourceMode::Bootstrap => Ok(Box::new(arcana_skills::FileStore)),
+    }
+}
+
 /// Live adapter: bridges the `arcana-skills` `FetchConn` seam to the real
 /// `POST /v1/fetch` endpoint (SRCH-0038). A `ScrutatorStore` wraps an
 /// `Arc<ScrutatorClient>` and drives the skill run path through this impl.
