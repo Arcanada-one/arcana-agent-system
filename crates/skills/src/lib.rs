@@ -26,7 +26,7 @@ pub use plan::{
     StageAction, StageLimits, TaskType,
 };
 pub use store::{
-    BlakeCache, FetchConn, FetchUnavailable, FetchedContent, FileStore, ModelAllowlist,
-    ScrutatorStore, SkillCandidate, SkillPin, SkillStore, ToolCeiling, SKILLS_NAMESPACE,
-    SKILL_TRUST_CLASS,
+    BlakeCache, DiscoverQuery, FetchConn, FetchUnavailable, FetchedContent, FileStore,
+    ModelAllowlist, ScrutatorStore, SearchUnavailable, SkillCandidate, SkillDiscovery, SkillHit,
+    SkillPin, SkillSearch, SkillStore, ToolCeiling, SKILLS_NAMESPACE, SKILL_TRUST_CLASS,
 };
