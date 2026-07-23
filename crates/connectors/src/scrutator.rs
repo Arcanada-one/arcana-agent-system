@@ -42,6 +42,13 @@ pub struct SearchQuery {
     pub min_score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_content: Option<bool>,
+    /// ARAS-0050: the **server-side** maturity floor (`"production"`) for skill
+    /// discovery. Additive with `skip_serializing_if` — omitted for every
+    /// pre-existing caller, so the wire shape is unchanged unless discovery sets
+    /// it. The server excludes any skill below this maturity before ranking, so
+    /// draft/validated plans are never returned (no client-side post-filter).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maturity: Option<String>,
 }
 
 impl SearchQuery {
@@ -58,6 +65,30 @@ impl SearchQuery {
             limit: None,
             min_score: None,
             include_content: None,
+            maturity: None,
+        }
+    }
+
+    /// ARAS-0050: the skill-discovery query shape — scoped to the skills
+    /// namespace with a **server-side** `maturity` floor, ranked metadata only
+    /// (no document bodies, since discovery only proposes). The returned hits'
+    /// `metadata` carries `{name, version, maturity}` and their `content_hash`
+    /// the SHA-256 staleness signal — never a run-path anchor.
+    #[must_use]
+    pub fn for_skill_discovery(
+        intent: impl Into<String>,
+        maturity_floor: impl Into<String>,
+        limit: u32,
+    ) -> Self {
+        Self {
+            query: intent.into(),
+            namespace: Some("skills".to_owned()),
+            project: None,
+            source_type: None,
+            limit: Some(limit),
+            min_score: None,
+            include_content: Some(false),
+            maturity: Some(maturity_floor.into()),
         }
     }
 }
@@ -453,6 +484,69 @@ impl arcana_core::kb::EvidenceFetch for ScrutatorClient {
     }
 }
 
+/// Live adapter: bridges the `arcana-skills` `SkillSearch` seam (ARAS-0050) to
+/// the real `POST /v1/search` endpoint. A `SkillDiscovery` wraps an
+/// `Arc<ScrutatorClient>` and drives semantic skill discovery through this impl.
+///
+/// The adapter is a pure transport + shape mapping: it issues a
+/// [`SearchQuery::for_skill_discovery`] carrying the skills namespace and the
+/// **server-side** `maturity` floor (so draft/validated plans are excluded by
+/// the service, never post-filtered here), and maps each ranked [`SearchHit`]'s
+/// `metadata` (`{name, version, maturity}`) + `content_hash` + `score` to a
+/// non-authorizing `SkillHit`. A hit whose metadata is missing/malformed is
+/// dropped (it cannot be proposed as a candidate). All *authorization* — the
+/// config-pinned blake3 keystone, the `trust_class` fence — lives on the
+/// run-path `ScrutatorStore`, never here: discovery only proposes. Every
+/// [`ScrutatorError`] maps to a fail-closed `SearchUnavailable` (never a silent
+/// empty proposal that hides a backend outage as "no matches").
+#[async_trait::async_trait]
+impl arcana_skills::SkillSearch for ScrutatorClient {
+    async fn search(
+        &self,
+        query: &arcana_skills::DiscoverQuery,
+    ) -> Result<Vec<arcana_skills::SkillHit>, arcana_skills::SearchUnavailable> {
+        let floor = maturity_wire(query.min_maturity);
+        let request = SearchQuery::for_skill_discovery(&query.intent, floor, query.limit);
+        let response = ScrutatorClient::search(self, &request)
+            .await
+            .map_err(|err| arcana_skills::SearchUnavailable(err.to_string()))?;
+        Ok(response
+            .results
+            .into_iter()
+            .filter_map(|hit| skill_hit_from(&hit))
+            .collect())
+    }
+}
+
+/// The lowercase wire token for a maturity floor (mirrors `Maturity`'s serde
+/// `rename_all = "lowercase"`).
+fn maturity_wire(maturity: arcana_skills::Maturity) -> &'static str {
+    match maturity {
+        arcana_skills::Maturity::Draft => "draft",
+        arcana_skills::Maturity::Validated => "validated",
+        arcana_skills::Maturity::Production => "production",
+    }
+}
+
+/// Map one `/v1/search` hit to a non-authorizing `SkillHit`, reading
+/// `{name, version, maturity}` from the hit's server-side `metadata` envelope.
+/// Returns `None` (dropping the hit) if the required proposal fields are absent
+/// or malformed — a candidate can only be proposed from complete metadata.
+fn skill_hit_from(hit: &SearchHit) -> Option<arcana_skills::SkillHit> {
+    let meta = hit.metadata.as_ref()?;
+    let name = meta.get("name")?.as_str()?.to_owned();
+    let version = u32::try_from(meta.get("version")?.as_u64()?).ok()?;
+    let maturity: arcana_skills::Maturity =
+        serde_json::from_value(meta.get("maturity")?.clone()).ok()?;
+    Some(arcana_skills::SkillHit {
+        name,
+        version,
+        content_hash: hit.content_hash.clone(),
+        maturity,
+        score: hit.score,
+    })
+}
+
 fn validate_base_url(base_url: &Url) -> Result<(), ScrutatorError> {
     let host = base_url
         .host_str()
@@ -596,5 +690,75 @@ mod tests {
         let empty: SearchResponse = serde_json::from_value(serde_json::json!({ "results": [] }))
             .expect("deserialize empty results");
         assert!(empty.results.is_empty());
+    }
+
+    #[test]
+    fn search_query_new_omits_maturity_on_the_wire() {
+        // ARAS-0050: the additive `maturity` field must not appear for the
+        // pre-existing minimal query — the wire shape is unchanged.
+        let query = SearchQuery::new("hello");
+        let json = serde_json::to_value(&query).expect("serialize");
+        assert!(json.get("maturity").is_none());
+    }
+
+    #[test]
+    fn for_skill_discovery_carries_namespace_and_production_floor() {
+        // The discovery request expresses the maturity floor SERVER-SIDE (a
+        // request field the service filters on) — not a client post-filter.
+        let query = SearchQuery::for_skill_discovery("review my pr diff", "production", 5);
+        let json = serde_json::to_value(&query).expect("serialize");
+        assert_eq!(json["query"], "review my pr diff");
+        assert_eq!(json["namespace"], "skills");
+        assert_eq!(json["maturity"], "production");
+        assert_eq!(json["limit"], 5);
+        assert_eq!(json["include_content"], false);
+    }
+
+    #[test]
+    fn skill_hit_from_maps_server_side_metadata() {
+        let hit = SearchHit {
+            chunk_id: "c1".into(),
+            content: String::new(),
+            source_path: "kb:skill:codegen-review:3".into(),
+            source_type: "skill".into(),
+            chunk_index: 0,
+            score: 0.91,
+            namespace: Some("skills".into()),
+            project: None,
+            metadata: Some(serde_json::json!({
+                "name": "codegen-review", "version": 3, "maturity": "production"
+            })),
+            content_hash: "sha256:deadbeef".into(),
+            source_id: "kb:skill:codegen-review:3".into(),
+        };
+        let mapped = skill_hit_from(&hit).expect("complete metadata maps");
+        assert_eq!(mapped.name, "codegen-review");
+        assert_eq!(mapped.version, 3);
+        assert_eq!(mapped.maturity, arcana_skills::Maturity::Production);
+        assert_eq!(mapped.content_hash, "sha256:deadbeef");
+        assert!((mapped.score - 0.91).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn skill_hit_from_drops_incomplete_metadata() {
+        // A hit missing the maturity field cannot be proposed as a candidate.
+        let hit = SearchHit {
+            chunk_id: "c1".into(),
+            content: String::new(),
+            source_path: "p".into(),
+            source_type: "skill".into(),
+            chunk_index: 0,
+            score: 0.5,
+            namespace: Some("skills".into()),
+            project: None,
+            metadata: Some(serde_json::json!({ "name": "x", "version": 1 })),
+            content_hash: "sha256:00".into(),
+            source_id: "s".into(),
+        };
+        assert!(skill_hit_from(&hit).is_none());
+        // …and a hit with no metadata at all.
+        let mut bare = hit;
+        bare.metadata = None;
+        assert!(skill_hit_from(&bare).is_none());
     }
 }

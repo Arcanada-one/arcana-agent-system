@@ -432,3 +432,175 @@ fn parse_and_validate(bytes: &[u8]) -> Result<SkillPlan, SkillError> {
     plan.validate()?;
     Ok(plan)
 }
+
+// ===========================================================================
+// ARAS-0050 — Phase-3 semantic skill DISCOVERY (the proposing half of the
+// two-phase firewall). Discovery ranks candidate skills over Scrutator's
+// `POST /v1/search` scoped to the skills namespace; it only *proposes* — it can
+// never construct a [`SkillPin`] or run anything. Admission to a run still
+// requires the full 0047 gate chain (config-authored pin → `trust_class` fence
+// → blake3 keystone → parse) on the run-path [`ScrutatorStore`].
+// ===========================================================================
+
+/// A semantic skill-discovery query issued by [`SkillDiscovery::discover`] to a
+/// [`SkillSearch`] backend.
+///
+/// Carries the skills-namespace scoping and the **server-side** maturity floor:
+/// the backend MUST exclude any hit below `min_maturity` *before* ranking, so
+/// draft/validated skills never cross the seam. Discovery therefore never
+/// post-filters candidates client-side — the floor is a property of the search
+/// service, not of this crate (defence-in-depth: Scrutator also binds a runnable
+/// skill's `trust_class`/`namespace` server-side, per SRCH-0038 D5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoverQuery {
+    /// The free-text intent to rank skills against.
+    pub intent: String,
+    /// The KB namespace to scope discovery to (always [`SKILLS_NAMESPACE`]).
+    pub namespace: String,
+    /// The **server-side** maturity floor. Discovery always pins
+    /// [`Maturity::Production`]; the backend excludes anything below it.
+    pub min_maturity: Maturity,
+    /// The maximum number of ranked hits to return.
+    pub limit: u32,
+}
+
+/// One raw ranked skill hit returned by a [`SkillSearch`] backend.
+///
+/// Mirrors the non-authorizing proposal fields; [`SkillDiscovery::discover`]
+/// maps it to a [`SkillCandidate`] verbatim — still no `blake3`, still no run
+/// authorization. `content_hash` is the KB's SHA-256 ingest digest (a cache /
+/// staleness signal), **never** a run-path trust anchor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillHit {
+    /// Proposed skill name.
+    pub name: String,
+    /// Proposed skill version.
+    pub version: u32,
+    /// SHA-256 ingest digest — a staleness signal, never a trust anchor.
+    pub content_hash: String,
+    /// The backend-reported maturity (expected [`Maturity::Production`] — the
+    /// backend filters server-side, so a lower maturity should never appear).
+    pub maturity: Maturity,
+    /// Relevance score from the backend's ranker (higher is better).
+    pub score: f64,
+}
+
+/// Marker error: a [`SkillSearch`] backend could not produce ranked hits
+/// (network down, non-2xx, decode failure). The store maps it to
+/// [`SkillError::StoreUnavailable`] — discovery fails closed, never fabricating
+/// candidates.
+#[derive(Debug, Clone)]
+pub struct SearchUnavailable(pub String);
+
+/// The single semantic-search primitive a [`SkillDiscovery`] needs.
+///
+/// Kept minimal and crate-local so `arcana-skills` takes **no** dependency on
+/// `arcana-connectors` — the edge is deliberately reversed, exactly like
+/// [`FetchConn`]: the live adapter (`impl SkillSearch for
+/// arcana_connectors::ScrutatorClient`, mapping to `POST /v1/search`) lives in
+/// `arcana-connectors`, which depends on this crate. Tests inject a fixture
+/// in-memory ranker.
+#[async_trait::async_trait]
+pub trait SkillSearch: Send + Sync {
+    /// Rank skills in the skills namespace against `query.intent`, applying the
+    /// `query.min_maturity` floor **server-side** (before ranking).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SearchUnavailable`] on any transport/status/decode failure —
+    /// [`SkillDiscovery::discover`] maps this to
+    /// [`SkillError::StoreUnavailable`] (never a silent empty proposal that
+    /// hides a backend outage as "no matches").
+    async fn search(&self, query: &DiscoverQuery) -> Result<Vec<SkillHit>, SearchUnavailable>;
+}
+
+/// The semantic **discovery** counterpart to [`ScrutatorStore`].
+///
+/// Deliberately a SEPARATE type from the run-path store. A discovery handle
+/// exposes only [`discover`](Self::discover) — which returns non-authorizing
+/// [`SkillCandidate`]s — and has **no** `load`/run method, so it *structurally*
+/// cannot execute a skill. Admission to a run still requires a config-authored
+/// [`SkillPin`] driven through a [`SkillStore`] (the blake3 keystone +
+/// `trust_class` fence). This is the two-phase firewall expressed at the type
+/// level: search proposes here, config authorizes there — there is no bridge and
+/// no `SkillCandidate → SkillPin` conversion (a `compile_fail` doctest on
+/// [`SkillCandidate`] proves the absence).
+pub struct SkillDiscovery<S: SkillSearch> {
+    search: Arc<S>,
+    namespace: String,
+}
+
+impl<S: SkillSearch> SkillDiscovery<S> {
+    /// Build a discovery handle over an injected search backend, scoped to the
+    /// default [`SKILLS_NAMESPACE`].
+    #[must_use]
+    pub fn new(search: Arc<S>) -> Self {
+        Self {
+            search,
+            namespace: SKILLS_NAMESPACE.to_owned(),
+        }
+    }
+
+    /// Override the discovery namespace (defaults to [`SKILLS_NAMESPACE`]).
+    #[must_use]
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = namespace.into();
+        self
+    }
+
+    /// Propose up to `limit` **production**-maturity skills semantically
+    /// relevant to `intent`, ranked best-first.
+    ///
+    /// The issued [`DiscoverQuery`] pins `namespace = skills` and
+    /// `min_maturity = Production`; the backend applies BOTH server-side, so
+    /// draft/validated skills never cross the seam and are never post-filtered
+    /// here. The returned [`SkillCandidate`]s only PROPOSE — none carries a
+    /// `blake3` anchor and none can authorize a run; a human/config author must
+    /// pin one before the run path will load it.
+    ///
+    /// Ranking is the backend's responsibility; this method applies a stable
+    /// `score`-desc, `name`-asc tie-break and truncates to `limit` (a
+    /// deterministic ordering, **not** a re-filter).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SkillError::StoreUnavailable`] if the backend cannot rank —
+    /// discovery fails closed rather than returning a misleading empty list.
+    pub async fn discover(
+        &self,
+        intent: &str,
+        limit: u32,
+    ) -> Result<Vec<SkillCandidate>, SkillError> {
+        let query = DiscoverQuery {
+            intent: intent.to_owned(),
+            namespace: self.namespace.clone(),
+            min_maturity: Maturity::Production,
+            limit,
+        };
+        let mut hits =
+            self.search
+                .search(&query)
+                .await
+                .map_err(|err| SkillError::StoreUnavailable {
+                    source_id: format!("search:{}", self.namespace),
+                    reason: err.0,
+                })?;
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        hits.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(hits
+            .into_iter()
+            .map(|hit| SkillCandidate {
+                name: hit.name,
+                version: hit.version,
+                content_hash: hit.content_hash,
+                maturity: hit.maturity,
+                score: hit.score,
+            })
+            .collect())
+    }
+}
