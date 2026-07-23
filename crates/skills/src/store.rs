@@ -115,6 +115,18 @@ pub struct SkillCandidate {
     pub score: f64,
 }
 
+/// Which concrete backend a [`SkillStore`] is, so the production cutover seam
+/// (`select_skill_store`) is directly assertable: production mode must resolve
+/// to [`StoreKind::Scrutator`] (the untrusted-KB path with the full gate chain),
+/// bootstrap mode to [`StoreKind::File`] (the trusted local path).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreKind {
+    /// The trusted local-filesystem [`FileStore`] (bundled / bootstrap ids).
+    File,
+    /// The untrusted KB-backed [`ScrutatorStore`] (the production source).
+    Scrutator,
+}
+
 /// A pluggable byte-acquisition backend for skill plans.
 #[async_trait::async_trait]
 pub trait SkillStore: Send + Sync {
@@ -125,6 +137,10 @@ pub trait SkillStore: Send + Sync {
     /// Returns [`SkillError`] on read/fetch failure, a blake3 mismatch (before
     /// parse), a parse failure, or intrinsic-validation failure.
     async fn load(&self, pin: &SkillPin) -> Result<SkillPlan, SkillError>;
+
+    /// The concrete backend kind — lets the cutover seam prove which store was
+    /// selected without downcasting a `dyn SkillStore`.
+    fn kind(&self) -> StoreKind;
 }
 
 /// The trusted local-filesystem store: reads and parses the plan file at
@@ -145,6 +161,10 @@ impl SkillStore for FileStore {
         let plan: SkillPlan = serde_json::from_slice(&bytes).map_err(SkillError::Parse)?;
         plan.validate()?;
         Ok(plan)
+    }
+
+    fn kind(&self) -> StoreKind {
+        StoreKind::File
     }
 }
 
@@ -423,6 +443,10 @@ impl<C: FetchConn> SkillStore for ScrutatorStore<C> {
         }
         // GATE 2 — parse, then intrinsic schema validation.
         parse_and_validate(&bytes)
+    }
+
+    fn kind(&self) -> StoreKind {
+        StoreKind::Scrutator
     }
 }
 

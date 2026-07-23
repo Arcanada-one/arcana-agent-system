@@ -17,6 +17,7 @@
 pub mod builder;
 pub mod interpreter;
 pub mod plan;
+pub mod source;
 pub mod store;
 
 pub use builder::SkillBuilder;
@@ -25,8 +26,9 @@ pub use plan::{
     Maturity, MetricSpec, ModelSpec, PlanDefaults, PlanKind, SkillPlan, SkillPlanError, Stage,
     StageAction, StageLimits, TaskType,
 };
+pub use source::{select_skill_store, SkillSourceMode, UnknownSkillSource, ENV_SKILL_SOURCE};
 pub use store::{
     BlakeCache, DiscoverQuery, FetchConn, FetchUnavailable, FetchedContent, FileStore,
     ModelAllowlist, ScrutatorStore, SearchUnavailable, SkillCandidate, SkillDiscovery, SkillHit,
-    SkillPin, SkillSearch, SkillStore, ToolCeiling, SKILLS_NAMESPACE, SKILL_TRUST_CLASS,
+    SkillPin, SkillSearch, SkillStore, StoreKind, ToolCeiling, SKILLS_NAMESPACE, SKILL_TRUST_CLASS,
 };
