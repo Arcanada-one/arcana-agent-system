@@ -1,17 +1,87 @@
 # arcana
 
-Interactive CLI agent built in Rust. Single static binary, deep integration with the Arcanada service mesh.
+`arcana` (Arcanada Agent System) is an interactive CLI agent written in Rust — a
+single static binary that integrates with the Arcanada service mesh. It ships the
+agent capability core as a Rust workspace: an agent loop with cost-tiered
+multi-model dispatch, a layered permission cascade backed by a durable audit log,
+a terminable cost-budget supervisor, a built-in tool standard with an MCP
+loopback adapter, and an evolutionary skills engine (a template → instance
+maturity ladder with a trust-fenced `SkillPin` interpreter) grounded by the
+Scrutator KB.
 
 ## Status
 
-Bootstrap. Project skeleton only — implementation tracked in `datarim/`.
+This is the initial public release (`0.1.0`). The capability core and its
+supporting subsystems ship in this release; the interactive REPL and the OIDC
+login flow are still stubs (see [Known limitations](#known-limitations) and the
+[CHANGELOG](CHANGELOG.md)).
 
-## Quick start (planned, post Phase 1 MVP)
+### Stability (0.x)
+
+`0.x` release — **the API may change between minor versions** ([SemVer](https://semver.org/spec/v2.0.0.html)
+permits breaking changes in `0.x` minors):
+
+- **Provisional (may change in any minor):** the skills schema
+  (`SkillPlan` / `SkillPin` / maturity ladder), the MCP tool surface, and the
+  connector-dispatch and configuration / environment-variable contracts.
+- **Hardening (changes avoided, not yet frozen):** the core CLI command surface.
+
+`1.0.0` is earned, not scheduled: two consecutive minor releases with no breaking
+change to the skills, MCP, configuration, or connector schemas. See the
+[CHANGELOG](CHANGELOG.md) for the full release notes.
+
+## Install
+
+Build and install from source (requires Rust `1.88+`):
 
 ```bash
-cargo run --bin arcana -- --help
+cargo install --path crates/cli
 ```
+
+This builds the `arcana` binary from the `arcana-agent-system` crate. A
+crates.io publish and a Homebrew tap are **not yet available** — install from
+source for now. See [docs/how-to/install.md](docs/how-to/install.md).
+
+## Usage
+
+```bash
+arcana version            # print version, embedded git SHA, and license
+arcana whoami             # permission-cascade + audit smoke check
+arcana demo [TASK]        # offline-deterministic driver + dispatch + tool +
+                          #   permission + audit loop (--live routes through the
+                          #   real Model Connector when ARCANA_MC_TOKEN is set)
+arcana kb-read <QUERY>    # one fail-closed agent loop grounded by the wiki KB
+arcana mcp serve [--bind 127.0.0.1:PORT]
+                          # expose the capability core as an MCP server
+                          #   (stdio by default; --bind starts a loopback-only
+                          #   HTTP listener — non-loopback binds are rejected)
+```
+
+Run `arcana --help` for the full command reference.
+
+## Known limitations
+
+- The interactive REPL is a stub — `arcana` with no subcommand prints a
+  placeholder.
+- `arcana login` (Auth Arcana OIDC device-code flow) is not yet implemented.
+- `mc-ping` is a hidden debug surface, not a supported command.
+
+## Documentation
+
+Documentation follows the [Diátaxis](https://diataxis.fr/) taxonomy under
+[`docs/`](docs/):
+
+- [Tutorials](docs/tutorials/) — learning-oriented walkthroughs.
+- [How-to guides](docs/how-to/) — install, permissions, deployment, testing.
+- [Reference](docs/reference/) — architecture, CLI exit codes, MCP server,
+  `permissions.toml`, supervisor.
+- [Explanation](docs/explanation/) — the capability-execution boundary.
 
 ## License
 
-TBD — operator decision before first public release.
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option (`MIT OR Apache-2.0`).
