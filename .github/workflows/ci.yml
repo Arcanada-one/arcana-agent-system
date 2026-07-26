@@ -34,3 +34,4 @@ jobs:
     uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@main
     with:
       compose_paths: ''
+      datarim_ref: '82311756b4dbfd16ddc96e098829bd9b0dea3626'
