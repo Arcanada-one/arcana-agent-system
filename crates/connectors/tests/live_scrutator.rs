@@ -254,8 +254,9 @@ async fn live_production_skill_discover_and_exact_fetch() {
         "search hit must be scoped to the skills namespace"
     );
     assert!(
-        !hit.content_hash.is_empty(),
-        "search hit must carry a SHA-256 content hash"
+        hit.content_hash.starts_with("sha256:"),
+        "search hit content_hash must use the sha256: prefix, got {:?}",
+        hit.content_hash
     );
 
     let search_source_id = hit.source_id.clone();
@@ -278,8 +279,13 @@ async fn live_production_skill_discover_and_exact_fetch() {
         "discovered candidate must be production maturity"
     );
     assert!(
-        !candidate.content_hash.is_empty(),
-        "discovered candidate must carry a SHA-256 content hash"
+        candidate.content_hash.starts_with("sha256:"),
+        "discovered candidate content_hash must use the sha256: prefix, got {:?}",
+        candidate.content_hash
+    );
+    assert_eq!(
+        candidate.content_hash, search_content_hash,
+        "discovered candidate content_hash must match the search hit's content_hash"
     );
     // The search-proposes/config-authorizes firewall: a SkillCandidate has no
     // blake3, source_id, or conversion to SkillPin — it can only propose.
@@ -303,8 +309,9 @@ async fn live_production_skill_discover_and_exact_fetch() {
         "fetched content must be byte-exact (skills namespace guarantee)"
     );
     assert!(
-        !doc.content_hash.is_empty(),
-        "fetched document must carry a SHA-256 content hash"
+        doc.content_hash.starts_with("sha256:"),
+        "fetched document content_hash must use the sha256: prefix, got {:?}",
+        doc.content_hash
     );
     assert_eq!(
         doc.content_hash, search_content_hash,
