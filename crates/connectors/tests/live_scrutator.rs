@@ -287,7 +287,13 @@ async fn live_production_skill_discover_and_exact_fetch() {
         .await
     {
         Ok(c) => c,
-        Err(err) => panic!("live discover: fail-closed typed error: {err}"),
+        Err(err) => {
+            let category = match &err {
+                arcana_skills::SkillError::StoreUnavailable { .. } => "StoreUnavailable",
+                _ => "SkillError",
+            };
+            panic!("live discover: fail-closed: {category}");
+        }
     };
 
     let candidate = candidates

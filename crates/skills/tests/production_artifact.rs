@@ -97,18 +97,16 @@ fn deserialises_and_validates_skills_kb_discovery_probe() {
 
     // --- arcana_search capability ---
     assert_eq!(stage.action.capability, "arcana_search");
-    let input = stage
-        .action
-        .input
-        .as_object()
-        .expect("input must be an object");
+    let expected_input = serde_json::json!({
+        "query": "production skill retrieval contract source-grounded-summary",
+        "namespace": "skills",
+        "limit": 1,
+        "include_content": false
+    });
     assert_eq!(
-        input["query"].as_str(),
-        Some("production skill retrieval contract source-grounded-summary")
+        stage.action.input, expected_input,
+        "action input must match the declared probe exactly — no undeclared or missing fields"
     );
-    assert_eq!(input["namespace"].as_str(), Some("skills"));
-    assert_eq!(input["limit"].as_u64(), Some(1));
-    assert_eq!(input["include_content"].as_bool(), Some(false));
 
     // --- defaults ---
     assert_eq!(
