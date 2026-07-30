@@ -129,6 +129,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 | `docs/how-to/gotchas.md` | Hard-won lessons |
 | `docs/reference/architecture.md` | System architecture, components, data flow |
 | `docs/explanation/` | Why Rust, design rationale, AAL plan |
+| `docs/origin/` | Preserved operator source material (Assembly corpus) — provenance, not contract |
 | `docs/ephemeral/plans/` | Implementation plans (transient) |
 | `docs/ephemeral/research/` | Research notes |
 | `docs/ephemeral/reviews/` | QA reports |
