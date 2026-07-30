@@ -170,3 +170,151 @@ async fn live_skills_discover_production_arm() {
         }
     }
 }
+
+/// ARAS-0057 — a single production skill through discovery → exact fetch,
+/// proving the bytes that the live KB holds match the committed artifact.
+///
+/// Fail-closed: the test uses [`ScrutatorClient::try_from_env`] (restrictive
+/// credential-file checks via [`ClientCredentialsTokenProvider`]) and **never**
+/// the permissive raw-bearer `live_client()`. It must fail — not skip — on
+/// missing credentials, 401/403, empty results, missing target, lossy content,
+/// hash mismatch, or byte mismatch. It must not print headers/tokens or dump
+/// the environment.
+///
+/// Run only when prerequisites are live and authorized:
+///
+/// ```text
+/// cargo test -p arcana-connectors --test live_scrutator \
+///   live_production_skill_discover_and_exact_fetch -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "live: requires configured OAuth credentials + running Scrutator + indexed artifact"]
+#[allow(clippy::too_many_lines)]
+async fn live_production_skill_discover_and_exact_fetch() {
+    const ARTIFACT_BYTES: &[u8] = include_bytes!("../../skills/data/source-grounded-summary.json");
+    const TARGET_NAME: &str = "source-grounded-summary";
+    const TARGET_VERSION: u32 = 1;
+
+    // ---- build client with restrictive credential-file checks ----
+    let client = Arc::new(
+        ScrutatorClient::try_from_env()
+            .expect("ScrutatorClient::try_from_env must succeed (credentials configured)"),
+    );
+
+    // ---- search arm: discover the production skill via /v1/search ----
+    let search_query = arcana_connectors::scrutator::SearchQuery::for_skill_discovery(
+        "source grounded summarization of cited evidence",
+        "production",
+        10,
+    );
+    let search_resp = client
+        .search(&search_query)
+        .await
+        .expect("live /v1/search must succeed for the authorized caller");
+
+    assert!(
+        !search_resp.results.is_empty(),
+        "search must return at least one hit for the skills namespace"
+    );
+
+    let hit = search_resp
+        .results
+        .iter()
+        .find(|h| {
+            let meta = h.metadata.as_ref();
+            meta.and_then(|m| m.get("name")?.as_str()) == Some(TARGET_NAME)
+                && meta.and_then(|m| m.get("version")?.as_u64()) == Some(u64::from(TARGET_VERSION))
+        })
+        .expect("search results must contain source-grounded-summary v1");
+
+    // Require complete top-level proposal metadata.
+    let meta = hit
+        .metadata
+        .as_ref()
+        .expect("search hit must carry metadata");
+    assert_eq!(meta.get("name").and_then(|v| v.as_str()), Some(TARGET_NAME));
+    assert_eq!(
+        meta.get("version").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        meta.get("schema_version")
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(meta.get("kind").and_then(|v| v.as_str()), Some("instance"));
+    assert_eq!(
+        meta.get("maturity").and_then(|v| v.as_str()),
+        Some("production")
+    );
+    assert!(!hit.source_id.is_empty(), "search hit must carry source_id");
+    assert_eq!(
+        hit.namespace.as_deref(),
+        Some("skills"),
+        "search hit must be scoped to the skills namespace"
+    );
+    assert!(
+        !hit.content_hash.is_empty(),
+        "search hit must carry a SHA-256 content hash"
+    );
+
+    let search_source_id = hit.source_id.clone();
+    let search_content_hash = hit.content_hash.clone();
+
+    // ---- discovery arm: independent SkillDiscovery::discover path ----
+    let discovery = SkillDiscovery::new(Arc::clone(&client));
+    let candidates = discovery
+        .discover("source grounded summarization of cited evidence", 10)
+        .await
+        .expect("SkillDiscovery::discover must succeed for the authorized caller");
+
+    let candidate = candidates
+        .iter()
+        .find(|c| c.name == TARGET_NAME && c.version == TARGET_VERSION)
+        .expect("discover must yield the same source-grounded-summary v1 candidate");
+    assert_eq!(
+        candidate.maturity,
+        arcana_skills::Maturity::Production,
+        "discovered candidate must be production maturity"
+    );
+    assert!(
+        !candidate.content_hash.is_empty(),
+        "discovered candidate must carry a SHA-256 content hash"
+    );
+    // The search-proposes/config-authorizes firewall: a SkillCandidate has no
+    // blake3, source_id, or conversion to SkillPin — it can only propose.
+
+    // ---- fetch arm: exact byte retrieval by opaque source_id ----
+    let fetch_query = arcana_connectors::scrutator::FetchQuery::by_source_id(&search_source_id);
+    let doc = client
+        .fetch(&fetch_query)
+        .await
+        .expect("live /v1/fetch by source_id must succeed");
+    assert_eq!(
+        doc.namespace, "skills",
+        "fetched document must be in the skills namespace"
+    );
+    assert_eq!(
+        doc.trust_class, "skill",
+        "fetched document must carry trust_class=skill"
+    );
+    assert!(
+        doc.content_exact,
+        "fetched content must be byte-exact (skills namespace guarantee)"
+    );
+    assert!(
+        !doc.content_hash.is_empty(),
+        "fetched document must carry a SHA-256 content hash"
+    );
+    assert_eq!(
+        doc.content_hash, search_content_hash,
+        "fetch content_hash must match the search hit's content_hash"
+    );
+
+    // Byte-exact comparison against the committed artifact.
+    assert_eq!(
+        doc.content.as_bytes(),
+        ARTIFACT_BYTES,
+        "fetched bytes must be byte-identical to the committed source-grounded-summary.json"
+    );
+}
