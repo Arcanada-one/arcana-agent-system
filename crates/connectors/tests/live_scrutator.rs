@@ -21,10 +21,12 @@
 use std::sync::Arc;
 
 use arcana_connectors::auth_arcana::{AuthTokenError, BearerTokenProvider};
+use arcana_connectors::scrutator::ScrutatorError;
 use arcana_connectors::ScrutatorClient;
 use arcana_skills::SkillDiscovery;
 use async_trait::async_trait;
 use secrecy::SecretString;
+use sha2::{Digest, Sha256};
 use url::Url;
 
 /// A fixed bearer read from the environment. The value is never logged.
@@ -178,8 +180,8 @@ async fn live_skills_discover_production_arm() {
 /// credential-file checks via [`ClientCredentialsTokenProvider`]) and **never**
 /// the permissive raw-bearer `live_client()`. It must fail — not skip — on
 /// missing credentials, 401/403, empty results, missing target, lossy content,
-/// hash mismatch, or byte mismatch. It must not print headers/tokens or dump
-/// the environment.
+/// hash mismatch, or byte mismatch. Every Scrutator failure is mapped to a
+/// safe category/status diagnostic so response bodies cannot print.
 ///
 /// Run only when prerequisites are live and authorized:
 ///
@@ -191,9 +193,16 @@ async fn live_skills_discover_production_arm() {
 #[ignore = "live: requires configured OAuth credentials + running Scrutator + indexed artifact"]
 #[allow(clippy::too_many_lines)]
 async fn live_production_skill_discover_and_exact_fetch() {
-    const ARTIFACT_BYTES: &[u8] = include_bytes!("../../skills/data/source-grounded-summary.json");
-    const TARGET_NAME: &str = "source-grounded-summary";
+    const ARTIFACT_BYTES: &[u8] =
+        include_bytes!("../../skills/data/skills-kb-discovery-probe.json");
+    const TARGET_NAME: &str = "skills-kb-discovery-probe";
     const TARGET_VERSION: u32 = 1;
+
+    // ---- locally computed SHA-256 trust anchor ----
+    let expected_hash = {
+        let digest = Sha256::digest(ARTIFACT_BYTES);
+        format!("sha256:{digest:x}")
+    };
 
     // ---- build client with restrictive credential-file checks ----
     let client = Arc::new(
@@ -203,14 +212,19 @@ async fn live_production_skill_discover_and_exact_fetch() {
 
     // ---- search arm: discover the production skill via /v1/search ----
     let search_query = arcana_connectors::scrutator::SearchQuery::for_skill_discovery(
-        "source grounded summarization of cited evidence",
+        "production skill retrieval contract discovery probe",
         "production",
         10,
     );
-    let search_resp = client
-        .search(&search_query)
-        .await
-        .expect("live /v1/search must succeed for the authorized caller");
+    let search_resp = match client.search(&search_query).await {
+        Ok(r) => r,
+        Err(ScrutatorError::Authentication(e)) => {
+            panic!("live search: authentication failed: {e}")
+        }
+        Err(ScrutatorError::Transport(e)) => panic!("live search: transport error: {e}"),
+        Err(ScrutatorError::Http { status, .. }) => panic!("live search: HTTP {status}"),
+        Err(ScrutatorError::UpstreamNonJson { .. }) => panic!("live search: non-JSON response"),
+    };
 
     assert!(
         !search_resp.results.is_empty(),
@@ -225,7 +239,7 @@ async fn live_production_skill_discover_and_exact_fetch() {
             meta.and_then(|m| m.get("name")?.as_str()) == Some(TARGET_NAME)
                 && meta.and_then(|m| m.get("version")?.as_u64()) == Some(u64::from(TARGET_VERSION))
         })
-        .expect("search results must contain source-grounded-summary v1");
+        .expect("search results must contain skills-kb-discovery-probe v1");
 
     // Require complete top-level proposal metadata.
     let meta = hit
@@ -258,21 +272,28 @@ async fn live_production_skill_discover_and_exact_fetch() {
         "search hit content_hash must use the sha256: prefix, got {:?}",
         hit.content_hash
     );
+    assert_eq!(
+        hit.content_hash, expected_hash,
+        "search hit content_hash must match locally computed sha256 of the committed artifact"
+    );
 
     let search_source_id = hit.source_id.clone();
     let search_content_hash = hit.content_hash.clone();
 
     // ---- discovery arm: independent SkillDiscovery::discover path ----
     let discovery = SkillDiscovery::new(Arc::clone(&client));
-    let candidates = discovery
-        .discover("source grounded summarization of cited evidence", 10)
+    let candidates = match discovery
+        .discover("production skill retrieval contract discovery probe", 10)
         .await
-        .expect("SkillDiscovery::discover must succeed for the authorized caller");
+    {
+        Ok(c) => c,
+        Err(err) => panic!("live discover: fail-closed typed error: {err}"),
+    };
 
     let candidate = candidates
         .iter()
         .find(|c| c.name == TARGET_NAME && c.version == TARGET_VERSION)
-        .expect("discover must yield the same source-grounded-summary v1 candidate");
+        .expect("discover must yield the same skills-kb-discovery-probe v1 candidate");
     assert_eq!(
         candidate.maturity,
         arcana_skills::Maturity::Production,
@@ -284,6 +305,10 @@ async fn live_production_skill_discover_and_exact_fetch() {
         candidate.content_hash
     );
     assert_eq!(
+        candidate.content_hash, expected_hash,
+        "discovered candidate content_hash must match locally computed sha256"
+    );
+    assert_eq!(
         candidate.content_hash, search_content_hash,
         "discovered candidate content_hash must match the search hit's content_hash"
     );
@@ -292,10 +317,19 @@ async fn live_production_skill_discover_and_exact_fetch() {
 
     // ---- fetch arm: exact byte retrieval by opaque source_id ----
     let fetch_query = arcana_connectors::scrutator::FetchQuery::by_source_id(&search_source_id);
-    let doc = client
-        .fetch(&fetch_query)
-        .await
-        .expect("live /v1/fetch by source_id must succeed");
+    let doc = match client.fetch(&fetch_query).await {
+        Ok(d) => d,
+        Err(ScrutatorError::Authentication(e)) => {
+            panic!("live fetch: authentication failed: {e}")
+        }
+        Err(ScrutatorError::Transport(e)) => panic!("live fetch: transport error: {e}"),
+        Err(ScrutatorError::Http { status, .. }) => panic!("live fetch: HTTP {status}"),
+        Err(ScrutatorError::UpstreamNonJson { .. }) => panic!("live fetch: non-JSON response"),
+    };
+    assert_eq!(
+        doc.source_id, search_source_id,
+        "fetched source_id must match the search hit's source_id"
+    );
     assert_eq!(
         doc.namespace, "skills",
         "fetched document must be in the skills namespace"
@@ -314,14 +348,26 @@ async fn live_production_skill_discover_and_exact_fetch() {
         doc.content_hash
     );
     assert_eq!(
+        doc.content_hash, expected_hash,
+        "fetched document content_hash must match locally computed sha256"
+    );
+    assert_eq!(
         doc.content_hash, search_content_hash,
         "fetch content_hash must match the search hit's content_hash"
     );
 
-    // Byte-exact comparison against the committed artifact.
+    // Boolean + length diagnostic only — response body must not appear in
+    // panic output.
+    let artifact_str =
+        core::str::from_utf8(ARTIFACT_BYTES).expect("committed artifact is valid UTF-8");
+    assert!(!doc.content.is_empty(), "fetched content must not be empty");
     assert_eq!(
-        doc.content.as_bytes(),
-        ARTIFACT_BYTES,
-        "fetched bytes must be byte-identical to the committed source-grounded-summary.json"
+        doc.content.len(),
+        artifact_str.len(),
+        "fetched content length must match the committed artifact"
+    );
+    assert!(
+        doc.content.as_bytes() == ARTIFACT_BYTES,
+        "fetched bytes differ from the committed artifact at identical length"
     );
 }
