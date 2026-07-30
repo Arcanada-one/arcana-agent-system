@@ -139,16 +139,19 @@ async fn captured_execution_dispatches_exact_arcana_search_input() {
     let stage_result = &out.stages[0];
     assert_eq!(stage_result.stage_id, "probe");
 
-    // The echoed input must contain the exact probe fields.
+    // The echoed input must match the declared probe shape exactly.
     let echoed: serde_json::Value =
         serde_json::from_str(&stage_result.output.content).expect("echoed content must be JSON");
+    let expected_input = serde_json::json!({
+        "query": "production skill retrieval contract source-grounded-summary",
+        "namespace": "skills",
+        "limit": 1,
+        "include_content": false
+    });
     assert_eq!(
-        echoed["query"],
-        "production skill retrieval contract source-grounded-summary"
+        echoed, expected_input,
+        "dispatched input must match the declared probe exactly — no undeclared or missing fields"
     );
-    assert_eq!(echoed["namespace"], "skills");
-    assert_eq!(echoed["limit"], 1);
-    assert_eq!(echoed["include_content"], false);
 
     // Resolved model: ByTaskType(Default) → the default policy arm.
     assert_eq!(stage_result.selected_model, "arcana-default");
