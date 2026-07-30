@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "skills-kb-discovery-probe",
+  "version": 1,
+  "kind": "instance",
+  "maturity": "production",
+  "stages": [{
+    "id": "probe",
+    "model": {"by_task_type": "default"},
+    "agent_count": 1,
+    "limits": {
+      "max_turns": 1,
+      "max_cost_usd": 0.0,
+      "context_budget_chars": 4096
+    },
+    "tools": ["arcana_search"],
+    "metrics": [],
+    "action": {
+      "capability": "arcana_search",
+      "input": {
+        "query": "production skill retrieval contract source-grounded-summary",
+        "namespace": "skills",
+        "limit": 1,
+        "include_content": false
+      }
+    }
+  }],
+  "defaults": {"model": {"by_task_type": "default"}}
+}
