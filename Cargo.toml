@@ -4,6 +4,7 @@ members = [
     "crates/cli",
     "crates/connectors",
     "crates/core",
+    "crates/execution-boundary",
     "crates/mcp",
     "crates/skills",
     "crates/supervisor",
