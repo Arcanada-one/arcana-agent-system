@@ -4,6 +4,7 @@ members = [
     "crates/cli",
     "crates/connectors",
     "crates/core",
+    "crates/credential-broker",
     "crates/execution-boundary",
     "crates/mcp",
     "crates/skills",

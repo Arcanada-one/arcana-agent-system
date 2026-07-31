@@ -1,0 +1,54 @@
+# Arcana credential broker — example capability policy.
+#
+# This file contains NO credential and never will. It names *who may ask for
+# what*; the secret it gates is read only by the broker, from a mode-0600 file
+# owned by the broker identity (Linux) or a protected Keychain item (macOS).
+#
+# A shipped policy that contained a credential would defeat the entire design,
+# so `packaging.rs` asserts mechanically that no credential-shaped value appears
+# in this file.
+
+# Monotonic generation. Bump on every policy or broker change: a request minted
+# against a different generation fails closed, so a restart invalidates
+# in-flight authority instead of silently honouring it.
+generation = 1
+
+# The single uid permitted to call the broker.
+executor_uid = 1000
+
+# Total quota units for this generation. Exhaustion is a refusal, not a warning.
+quota_limit = 1000
+
+# Exact executable paths permitted to call the broker. Path identity is checked
+# against the peer's resolved executable, not against an argv[0] the caller
+# controls.
+executables = [
+    "/opt/arcana/bin/arcana",
+]
+
+# Executor profiles permitted to call the broker.
+profiles = [
+    "supervised-executor",
+]
+
+# Sessions or cgroups permitted to call the broker.
+sessions = [
+    "arcana-supervised",
+]
+
+# --- providers -------------------------------------------------------------
+#
+# One block per provider. Every field is an exact value: there is no wildcard
+# syntax, and a literal "*" is rejected as malformed rather than honoured as a
+# broad grant.
+#
+# NOTE on least privilege: some providers issue only account-scoped keys with no
+# per-key model/operation scope, spend cap or expiry. For those, THIS is where
+# least privilege is enforced — the upstream key is unscoped, and the broker is
+# the only thing constraining what may be asked of it. See
+# docs/explanation/provider-capability-gap-deepseek.md.
+
+[providers.mockprovider]
+upstream = "https://api.example-provider.test/v1"
+models = ["model-small"]
+operations = ["completion"]

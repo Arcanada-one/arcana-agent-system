@@ -1,18 +1,23 @@
 //! Structural spawn gate (V-AC-1).
 //!
-//! Every shipped-runtime subprocess must cross the typed execution boundary.
-//! This test pins the exact inventory of raw `Command::new` sites so that:
+//! Every shipped-runtime subprocess must eventually cross the typed execution
+//! boundary. This test pins the exact inventory of raw process-spawn sites so a
+//! newly introduced one fails CI, and so the pinned list can only shrink.
 //!
-//! 1. a **newly introduced** raw spawn fails CI immediately, and
-//! 2. the pinned shipped-runtime list shrinks to empty as each site migrates.
+//! REGRESSION: the previous version of this file was ineffective in three ways
+//! that the independent review confirmed by defeating it —
 //!
-//! The three shipped-runtime entries below are the SEC-0030 migration targets.
-//! They are recorded, not excused: this test fails if the list grows, and the
-//! list is expected to reach zero before the credentialed path is enabled.
+//! 1. `pending_migration_list_does_not_grow` compared a filtered subset of
+//!    `PENDING_MIGRATION` against `PENDING_MIGRATION.len()`, which is true for
+//!    every possible input. The test could not fail.
+//! 2. The scan matched only the literal `Command::new`, so `use
+//!    std::process::Command as Cmd;` or a line break defeated it.
+//! 3. It scanned only `crates/` and stopped at the first hit per file, so
+//!    additional spawn sites in an already-pinned file were invisible.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Build-time only; never part of the shipped runtime.
@@ -21,16 +26,20 @@ const BUILD_TIME_ALLOWLIST: &[&str] = &["crates/cli/build.rs"];
 /// Documented test fixtures.
 const TEST_FIXTURE_ALLOWLIST: &[&str] = &["crates/supervisor/src/bin/heartbeat-child.rs"];
 
-/// Shipped-runtime spawn sites still awaiting migration behind the boundary.
-/// This list MUST NOT grow. It reaches empty when Phase 2 migration completes.
-const PENDING_MIGRATION: &[&str] = &[
-    "crates/connectors/src/coworker.rs",
-    "crates/supervisor/src/spawn.rs",
-    "crates/tools/src/bash.rs",
+/// The execution boundary itself is the sanctioned owner of process spawning —
+/// migrating the sites below *into* this crate is the goal, not a violation.
+/// Everything here is reviewed as part of the boundary's own contract.
+const BOUNDARY_ALLOWLIST: &[&str] = &["crates/execution-boundary/src/env_policy.rs"];
+
+/// Shipped-runtime spawn sites still awaiting migration, with their exact
+/// current site count. Both the set and the counts may only shrink.
+const PENDING_MIGRATION: &[(&str, usize)] = &[
+    ("crates/connectors/src/coworker.rs", 1),
+    ("crates/supervisor/src/spawn.rs", 1),
+    ("crates/tools/src/bash.rs", 1),
 ];
 
 fn workspace_root() -> PathBuf {
-    // crates/execution-boundary -> workspace root
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -45,7 +54,13 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.file_name().is_some_and(|n| n == "target") {
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            // Build output and VCS internals only.
+            if name == "target" || name == ".git" {
                 continue;
             }
             walk(&path, out);
@@ -55,69 +70,157 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Files containing a real (non-comment) `Command::new` call.
-fn raw_spawn_sites() -> BTreeSet<String> {
+/// Spawn-API spellings. The point is to catch renames and alternate APIs, not
+/// only the one idiom the codebase happens to use today.
+fn spawn_markers(text: &str) -> Vec<&'static str> {
+    let mut markers = vec![
+        "Command::new",
+        "process::Command",
+        "posix_spawn",
+        "execve",
+        "execvp",
+        "execv(",
+        "CommandExt::exec",
+        ".exec()",
+    ];
+    // An aliased import: `use std::process::Command as Cmd;` then `Cmd::new`.
+    if let Some(idx) = text.find("process::Command as ") {
+        let alias: String = text[idx + "process::Command as ".len()..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !alias.is_empty() {
+            // Leak is bounded: one alias per file, test-scoped process.
+            markers.push(Box::leak(format!("{alias}::new").into_boxed_str()));
+        }
+    }
+    markers
+}
+
+/// Count real (non-comment) spawn sites per file, across the whole repository.
+fn raw_spawn_sites() -> BTreeMap<String, usize> {
     let root = workspace_root();
     let mut files = Vec::new();
-    walk(&root.join("crates"), &mut files);
+    walk(&root, &mut files);
 
-    let mut hits = BTreeSet::new();
+    let mut hits: BTreeMap<String, usize> = BTreeMap::new();
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
-        let is_test_path = file.components().any(|c| c.as_os_str() == "tests");
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        // Test-only spawning is out of the shipped runtime, but must still be a
+        // path *component* match — not any file whose name contains "tests".
+        let is_test_path = Path::new(&rel)
+            .components()
+            .any(|c| c.as_os_str() == "tests");
+        if is_test_path {
+            continue;
+        }
+        let markers = spawn_markers(&text);
+        let mut count = 0usize;
         for line in text.lines() {
             let trimmed = line.trim_start();
-            // Doc and line comments describe the pattern without invoking it.
-            if trimmed.starts_with("//") || trimmed.starts_with('*') {
+            if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("#[") {
                 continue;
             }
-            if trimmed.contains("Command::new") {
-                if is_test_path {
-                    continue; // test-only spawning is out of the shipped runtime
-                }
-                let rel = file
-                    .strip_prefix(&root)
-                    .unwrap_or(&file)
-                    .display()
-                    .to_string();
-                hits.insert(rel);
-                break;
+            // An import is not a spawn. It still forces the file to be
+            // classified (the file appears in `hits` via its real call site),
+            // but counting it would let a new spawn hide behind a dropped
+            // `use` line while the total stayed flat.
+            if trimmed.starts_with("use ") {
+                continue;
             }
+            if markers.iter().any(|m| trimmed.contains(m)) {
+                count += 1;
+            }
+        }
+        if count > 0 {
+            hits.insert(rel, count);
         }
     }
     hits
 }
 
+/// The inventory must match the pinned classification exactly — no new file,
+/// and no new site inside an already-pinned file.
 #[test]
-fn no_unaccounted_raw_spawn_site_exists() {
+fn spawn_inventory_matches_the_pinned_classification() {
     let found = raw_spawn_sites();
-    let accounted: BTreeSet<String> = BUILD_TIME_ALLOWLIST
+
+    let mut accounted: BTreeMap<&str, Option<usize>> = BTreeMap::new();
+    for f in BUILD_TIME_ALLOWLIST
         .iter()
         .chain(TEST_FIXTURE_ALLOWLIST)
-        .chain(PENDING_MIGRATION)
-        .map(|s| (*s).to_owned())
-        .collect();
+        .chain(BOUNDARY_ALLOWLIST)
+    {
+        accounted.insert(f, None); // count not pinned for non-runtime files
+    }
+    for (f, n) in PENDING_MIGRATION {
+        accounted.insert(f, Some(*n));
+    }
 
-    let unaccounted: Vec<&String> = found.difference(&accounted).collect();
+    let unaccounted: Vec<&String> = found
+        .keys()
+        .filter(|f| !accounted.contains_key(f.as_str()))
+        .collect();
     assert!(
         unaccounted.is_empty(),
-        "new raw process-spawn site(s) introduced outside the execution boundary: {unaccounted:?}"
+        "new raw process-spawn site(s) outside the execution boundary: {unaccounted:?}"
+    );
+
+    for (file, pinned) in &accounted {
+        let Some(pinned) = pinned else { continue };
+        let actual = found.get(*file).copied().unwrap_or(0);
+        assert!(
+            actual <= *pinned,
+            "`{file}` gained spawn sites: pinned {pinned}, found {actual}. \
+             The shipped-runtime inventory may only shrink."
+        );
+    }
+}
+
+/// This is the assertion the old tautology was trying to make: the migration
+/// set may lose members, never gain them.
+#[test]
+fn migration_set_does_not_gain_members() {
+    let found = raw_spawn_sites();
+    let runtime_files: Vec<&String> = found
+        .keys()
+        .filter(|f| {
+            !BUILD_TIME_ALLOWLIST.contains(&f.as_str())
+                && !TEST_FIXTURE_ALLOWLIST.contains(&f.as_str())
+                && !BOUNDARY_ALLOWLIST.contains(&f.as_str())
+        })
+        .collect();
+    assert!(
+        runtime_files.len() <= PENDING_MIGRATION.len(),
+        "shipped-runtime spawn inventory grew to {runtime_files:?}"
     );
 }
 
-/// The migration list must shrink, never grow.
+/// Meta-test: the gate must actually detect an aliased import and a bare
+/// `Command::new`, otherwise a green result means nothing.
 #[test]
-fn pending_migration_list_does_not_grow() {
-    let found = raw_spawn_sites();
-    let still_pending: Vec<&&str> = PENDING_MIGRATION
-        .iter()
-        .filter(|p| found.contains(**p))
-        .collect();
+fn gate_detects_aliased_and_plain_spawn_forms() {
+    let aliased = "use std::process::Command as Cmd;\nfn a() { Cmd::new(\"/bin/sh\"); }\n";
+    let markers = spawn_markers(aliased);
     assert!(
-        still_pending.len() <= PENDING_MIGRATION.len(),
-        "shipped-runtime spawn inventory grew: {still_pending:?}"
+        markers.iter().any(|m| aliased.contains(m)),
+        "gate must detect an aliased spawn"
+    );
+
+    let plain = "fn a() { let _ = Command::new(\"/bin/sh\"); }";
+    assert!(spawn_markers(plain).iter().any(|m| plain.contains(m)));
+
+    let benign = "fn a() { let _ = compute(); }";
+    assert!(
+        !spawn_markers(benign).iter().any(|m| benign.contains(m)),
+        "gate must not fire on benign code"
     );
 }
 
@@ -129,9 +232,8 @@ fn api_route_cannot_spawn() {
         provider: "mock".to_owned(),
     };
     assert!(!api.may_spawn(), "API mode must never be able to shell out");
-
-    let cli = Route::SupervisedCli {
+    assert!(Route::SupervisedCli {
         adapter: PathBuf::from("/opt/arcana/libexec/declared-adapter"),
-    };
-    assert!(cli.may_spawn());
+    }
+    .may_spawn());
 }

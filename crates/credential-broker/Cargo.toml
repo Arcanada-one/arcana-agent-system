@@ -1,0 +1,26 @@
+[package]
+name = "arcana-credential-broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Privilege-separated local credential broker: the sole holder of provider credentials."
+
+# The library is protocol, policy, ledger and audit only. It contains no
+# secret-loading code: that lives exclusively in the binary, so nothing that
+# links the library can acquire provider authority.
+[lib]
+name = "arcana_credential_broker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "arcana-credential-broker"
+path = "src/bin/arcana-credential-broker.rs"
+
+[dependencies]
+thiserror = "2"
+
+[lints]
+workspace = true

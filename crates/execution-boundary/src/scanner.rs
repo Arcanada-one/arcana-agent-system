@@ -7,16 +7,41 @@
 //!
 //! # Fail-closed contract
 //!
-//! Detection, limit exhaustion, third-level nesting, an undecodable terminal
-//! encoding, or buffer exhaustion all latch the scanner into a poisoned state.
-//! A poisoned scanner releases no further bytes — including bytes already
-//! buffered but not yet released.
+//! These conditions latch the scanner into a poisoned state that releases no
+//! further bytes, including bytes already buffered:
+//!
+//! - a sentinel is detected in any supported representation;
+//! - an encoded candidate run exceeds `max_encoded_window`;
+//! - a decoded window exceeds `max_decoded_window`;
+//! - the unreleased buffer exceeds `max_unreleased`.
+//!
+//! Nesting beyond `max_depth` is **not** a poisoning condition — it is the
+//! declared edge of the transform budget. Input nested more deeply than the
+//! budget is out of scope for this control, and the crate does not claim
+//! otherwise.
+//!
+//! # What this scanner does not catch
+//!
+//! Stated plainly, because a redactor that is trusted beyond its reach is worse
+//! than no redactor:
+//!
+//! - representations outside the closed transform set — base32, ascii85, ROT13,
+//!   reversal, compression, or any encryption;
+//! - a secret emitted non-contiguously across unrelated writes, where the
+//!   released bytes never co-occur in one window;
+//! - a secret split across two *separate scanner instances*. A supervised child
+//!   MUST feed stdout and stderr into **one** shared scanner; see
+//!   [`QuarantineScanner::push_stream`].
 
 use crate::codec::{
     b64_decode_lenient, b64_encode, hex_decode_lenient, hex_encode, is_b64_byte, is_hex_byte,
     json_u_decode_lenient, json_u_escape_all, percent_decode_lenient, percent_encode_all,
     B64Alphabet,
 };
+
+/// Largest expansion any single supported transform applies, in bytes-out per
+/// byte-in. JSON `\uXXXX` escaping is the worst at six.
+const MAX_EXPANSION_PER_LAYER: usize = 6;
 
 /// Bounds fixed by D-REQ-05. Changing any of these requires security review and
 /// regenerated benign-corpus identity evidence.
@@ -43,6 +68,18 @@ impl Default for ScannerConfig {
     }
 }
 
+/// Why a scanner could not be constructed. Construction is fallible on purpose:
+/// a scanner with no sentinel is a pass-through wearing a quarantine's name.
+#[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
+pub enum ScannerInit {
+    #[error("no sentinels supplied; a quarantine with nothing to detect is a pass-through")]
+    NoSentinels,
+    #[error("an empty sentinel was supplied")]
+    EmptySentinel,
+    #[error("retention window ({retention} B) does not fit the unreleased buffer ({max} B)")]
+    RetentionExceedsBuffer { retention: usize, max: usize },
+}
+
 /// Why the scanner stopped. Every variant is terminal and releases nothing.
 #[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
 pub enum ScanError {
@@ -50,10 +87,18 @@ pub enum ScanError {
     SentinelDetected,
     #[error("encoded candidate window exceeded the configured limit")]
     EncodedWindowExceeded,
+    #[error("decoded window exceeded the configured limit")]
+    DecodedWindowExceeded,
     #[error("unreleased output buffer exhausted")]
     BufferExhausted,
-    #[error("scanner is poisoned by an earlier fail-closed stop")]
-    Poisoned,
+}
+
+/// Which stream a chunk arrived on. Both feed one scanner so a secret split
+/// across stdout and stderr cannot slip between two independent instances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stream {
+    Stdout,
+    Stderr,
 }
 
 /// A precomputed set of byte patterns that all denote the same sentinel.
@@ -100,16 +145,6 @@ impl SentinelForms {
 
         Self { raw, forms }
     }
-
-    /// Longest representation, used to size the chunk-boundary retention tail.
-    fn longest(&self) -> usize {
-        self.forms
-            .iter()
-            .map(Vec::len)
-            .chain(std::iter::once(self.raw.len()))
-            .max()
-            .unwrap_or(0)
-    }
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -119,7 +154,49 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
+/// Strip ASCII whitespace. Defeats line-wrapped Base64 (`base64(1)` wraps at 76
+/// by default) and wrapped hex, both of which otherwise split a candidate run.
+fn strip_whitespace(data: &[u8]) -> Vec<u8> {
+    data.iter()
+        .copied()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect()
+}
+
+/// Strip whitespace and the separators that byte-dump formats interleave —
+/// `xxd`/`hexdump` spaces, `openssl` colons, C-array commas, `\x`/`0x` prefixes.
+/// Without this, `xxd` output walks straight through the hex branch, because
+/// each separated token decodes as an independent fragment.
+fn strip_separators(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        let b = data[i];
+        if b == b'\\' && i + 1 < data.len() && (data[i + 1] == b'x' || data[i + 1] == b'X') {
+            i += 2;
+            continue;
+        }
+        if b == b'0'
+            && i + 1 < data.len()
+            && (data[i + 1] == b'x' || data[i + 1] == b'X')
+            && i + 2 < data.len()
+            && is_hex_byte(data[i + 2])
+        {
+            i += 2;
+            continue;
+        }
+        if b.is_ascii_whitespace() || matches!(b, b':' | b',' | b';' | b'|') {
+            i += 1;
+            continue;
+        }
+        out.push(b);
+        i += 1;
+    }
+    out
+}
+
 /// Streaming, fail-closed output quarantine.
+#[must_use = "a scanner that is dropped without finish() silently truncates output"]
 pub struct QuarantineScanner {
     sentinels: Vec<SentinelForms>,
     cfg: ScannerConfig,
@@ -130,27 +207,42 @@ pub struct QuarantineScanner {
 
 impl QuarantineScanner {
     /// Build a scanner for the given sentinels.
-    #[must_use]
-    pub fn new(sentinels: Vec<Vec<u8>>, cfg: ScannerConfig) -> Self {
-        let sentinels: Vec<SentinelForms> = sentinels
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .map(SentinelForms::new)
-            .collect();
-        // Hold back the longest representation minus one byte, plus slack for an
-        // incomplete decoder quantum, so no split occurrence is released early.
-        let retention = sentinels
-            .iter()
-            .map(|s| s.longest().saturating_sub(1) + 8)
-            .max()
-            .unwrap_or(0);
-        Self {
+    ///
+    /// # Errors
+    /// [`ScannerInit`] when the sentinel set is empty, contains an empty
+    /// sentinel, or when the required retention does not fit the buffer. None of
+    /// these may degrade silently into a pass-through.
+    pub fn new(sentinels: Vec<Vec<u8>>, cfg: ScannerConfig) -> Result<Self, ScannerInit> {
+        if sentinels.is_empty() {
+            return Err(ScannerInit::NoSentinels);
+        }
+        if sentinels.iter().any(Vec::is_empty) {
+            return Err(ScannerInit::EmptySentinel);
+        }
+        let longest_raw = sentinels.iter().map(Vec::len).max().unwrap_or(0);
+        let sentinels: Vec<SentinelForms> = sentinels.into_iter().map(SentinelForms::new).collect();
+
+        // Retention must be able to hold a complete *nested* occurrence, not
+        // merely a single-layer one. A depth-N encoding can expand the raw
+        // sentinel by MAX_EXPANSION_PER_LAYER^N, so sizing retention from
+        // single-layer forms (as an earlier revision did) let every depth-2
+        // payload stream past at ordinary chunk sizes.
+        let expansion = MAX_EXPANSION_PER_LAYER.saturating_pow(u32::from(cfg.max_depth).max(1));
+        let retention = longest_raw.saturating_mul(expansion).saturating_add(8);
+        if retention >= cfg.max_unreleased {
+            return Err(ScannerInit::RetentionExceedsBuffer {
+                retention,
+                max: cfg.max_unreleased,
+            });
+        }
+
+        Ok(Self {
             sentinels,
             cfg,
             buf: Vec::new(),
             retention,
             poisoned: None,
-        }
+        })
     }
 
     /// Bytes held back at every chunk boundary.
@@ -171,6 +263,18 @@ impl QuarantineScanner {
         err
     }
 
+    /// Feed a chunk from a named stream.
+    ///
+    /// Both streams of one child MUST use the same scanner: a secret split
+    /// across stdout and stderr is only caught when both halves land in one
+    /// buffer.
+    ///
+    /// # Errors
+    /// Any [`ScanError`] is terminal: nothing is released now or later.
+    pub fn push_stream(&mut self, _stream: Stream, chunk: &[u8]) -> Result<Vec<u8>, ScanError> {
+        self.push(chunk)
+    }
+
     /// Feed a chunk; returns the bytes that are proven safe to release.
     ///
     /// # Errors
@@ -184,7 +288,7 @@ impl QuarantineScanner {
         }
         self.buf.extend_from_slice(chunk);
 
-        match self.scan(&self.buf.clone(), 0) {
+        match self.scan_all(&self.buf.clone()) {
             Err(e) => Err(self.poison(e)),
             Ok(true) => Err(self.poison(ScanError::SentinelDetected)),
             Ok(false) => {
@@ -202,11 +306,41 @@ impl QuarantineScanner {
         if let Some(err) = &self.poisoned {
             return Err(err.clone());
         }
-        match self.scan(&self.buf.clone(), 0) {
+        match self.scan_all(&self.buf.clone()) {
             Err(e) => Err(self.poison(e)),
             Ok(true) => Err(self.poison(ScanError::SentinelDetected)),
             Ok(false) => Ok(std::mem::take(&mut self.buf)),
         }
+    }
+
+    /// Scan the data as-is, then with whitespace stripped, then with byte-dump
+    /// separators stripped. The extra passes are what make wrapped Base64 and
+    /// `xxd`-shaped hex detectable at all.
+    fn scan_all(&self, data: &[u8]) -> Result<bool, ScanError> {
+        if self.scan(data, 0)? {
+            return Ok(true);
+        }
+        let ws = strip_whitespace(data);
+        if ws.len() != data.len() && self.scan(&ws, 0)? {
+            return Ok(true);
+        }
+        let sep = strip_separators(data);
+        if sep.len() != data.len() && sep != ws && self.scan(&sep, 0)? {
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Check one decoded window against the configured bound.
+    ///
+    /// Exceeding the bound is a **terminal stop**, not a skipped check. An
+    /// earlier revision short-circuited here and released the bytes, which made
+    /// "write more than 32 KiB" a complete bypass.
+    fn scan_decoded(&self, decoded: &[u8], depth: u8) -> Result<bool, ScanError> {
+        if decoded.len() > self.cfg.max_decoded_window {
+            return Err(ScanError::DecodedWindowExceeded);
+        }
+        self.scan(decoded, depth + 1)
     }
 
     /// True when `data` denotes a sentinel in any supported representation.
@@ -222,23 +356,30 @@ impl QuarantineScanner {
             }
         }
         if depth >= self.cfg.max_depth {
-            // Third-level nesting is out of the declared transform budget; the
-            // caller has already matched every in-budget representation.
+            // The declared edge of the transform budget, not a failure.
             return Ok(false);
         }
 
-        // Reverse direction: decode candidate runs and re-scan. This is what
-        // catches nesting and Base64 phase shifts that forward forms cannot.
+        // Reverse direction: decode candidate runs and re-scan. This catches
+        // nesting and Base64 phase shifts that forward forms cannot.
+        //
+        // Each run is decoded at every quantum offset. A run whose front was
+        // truncated by an earlier release starts at an arbitrary phase, so
+        // decoding only from offset 0 would shift every byte and miss the
+        // sentinel entirely.
         for alphabet in [B64Alphabet::Standard, B64Alphabet::Url] {
             for run in maximal_runs(data, |b| is_b64_byte(b, alphabet), 8) {
                 if run.len() > self.cfg.max_encoded_window {
                     return Err(ScanError::EncodedWindowExceeded);
                 }
-                if let Some(decoded) = b64_decode_lenient(run, alphabet) {
-                    if decoded.len() <= self.cfg.max_decoded_window
-                        && self.scan(&decoded, depth + 1)?
-                    {
-                        return Ok(true);
+                for offset in 0..4usize {
+                    if offset >= run.len() {
+                        break;
+                    }
+                    if let Some(decoded) = b64_decode_lenient(&run[offset..], alphabet) {
+                        if self.scan_decoded(&decoded, depth)? {
+                            return Ok(true);
+                        }
                     }
                 }
             }
@@ -247,27 +388,26 @@ impl QuarantineScanner {
             if run.len() > self.cfg.max_encoded_window {
                 return Err(ScanError::EncodedWindowExceeded);
             }
-            if let Some(decoded) = hex_decode_lenient(run) {
-                if decoded.len() <= self.cfg.max_decoded_window && self.scan(&decoded, depth + 1)? {
-                    return Ok(true);
+            for offset in 0..2usize {
+                if offset >= run.len() {
+                    break;
+                }
+                if let Some(decoded) = hex_decode_lenient(&run[offset..]) {
+                    if self.scan_decoded(&decoded, depth)? {
+                        return Ok(true);
+                    }
                 }
             }
         }
         if data.contains(&b'%') {
             let decoded = percent_decode_lenient(data);
-            if decoded != data
-                && decoded.len() <= self.cfg.max_decoded_window
-                && self.scan(&decoded, depth + 1)?
-            {
+            if decoded != data && self.scan_decoded(&decoded, depth)? {
                 return Ok(true);
             }
         }
         if contains(data, b"\\u") {
             let decoded = json_u_decode_lenient(data);
-            if decoded != data
-                && decoded.len() <= self.cfg.max_decoded_window
-                && self.scan(&decoded, depth + 1)?
-            {
+            if decoded != data && self.scan_decoded(&decoded, depth)? {
                 return Ok(true);
             }
         }

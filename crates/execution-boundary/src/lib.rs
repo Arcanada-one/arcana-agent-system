@@ -1,35 +1,53 @@
 //! Typed, fail-closed execution boundary for Agent Arcana.
 //!
-//! Every shipped-runtime subprocess crosses this crate. The agent, its shell,
-//! the tmux server, the transcript writer and arbitrary descendants start from a
-//! reconstructed credential-free environment; provider authentication is the
-//! exclusive business of the separately-built credential broker.
+//! # Status — read this before trusting anything below
+//!
+//! This crate is a **library with no callers in the shipped runtime yet**. The
+//! three real spawn sites (`crates/supervisor/src/spawn.rs`,
+//! `crates/connectors/src/coworker.rs`, `crates/tools/src/bash.rs`) still
+//! inherit the full parent environment and are unchanged. Nothing here is
+//! enforced at runtime today; it is the mechanism that the migration will use.
+//!
+//! Saying this plainly matters more than it might seem: an earlier revision of
+//! this docstring claimed in the present tense that every shipped subprocess
+//! crossed this boundary, which was false and would have led an operator to
+//! believe the incident vector was closed.
+//!
+//! # What the pieces do
+//!
+//! - [`env_policy`] constructs a credential-free child environment from
+//!   constants and validated inputs. It inherits nothing — D-REQ-02 / V-AC-2.
+//! - [`scanner`] quarantines output until it is proven free of a sentinel in
+//!   the closed transform set — D-REQ-05 / V-AC-4. It is defence in depth, and
+//!   its limits are documented in the module docs; do not treat it as the
+//!   credential boundary.
+//! - [`Route`] separates API mode from supervised-CLI mode so that API mode
+//!   carries no program and structurally cannot spawn — D-REQ-04 / V-AC-1.
 //!
 //! # Phase gate-set
 //!
-//! Gates in force in this phase:
+//! Gates deferred to the next phase, and therefore *not* provided here:
 //!
-//! - clean-environment reconstruction ([`env_policy`]) — D-REQ-02 / V-AC-2;
-//! - streaming output quarantine ([`scanner`]) — D-REQ-05 / V-AC-4;
-//! - explicit API-versus-CLI routing ([`Route`]) — D-REQ-04 / V-AC-1.
-//!
-//! Gates deferred to the next phase:
-//!
-//! - the privilege-separated broker itself (`crates/credential-broker`),
-//!   its permissioned local IPC, peer/generation/quota/expiry validation
-//!   and metadata-only audit — D-REQ-03 / V-AC-3, V-AC-5;
-//! - Linux systemd and macOS launchd packaging — D-REQ-08 / V-AC-7.
+//! - the privilege-separated broker, its permissioned IPC, and
+//!   peer/generation/quota/expiry validation (`crates/credential-broker`);
+//! - close-on-exec descriptor sweeping, argv policy, cwd control and process
+//!   lifecycle/TTY parity — an inherited descriptor or an argv-borne secret
+//!   defeats the environment guarantee, and neither is addressed yet;
+//! - the restrictive transcript writer;
+//! - Linux systemd and macOS launchd packaging.
 //!
 //! Operator constraint: this crate MUST NOT be registered as the credentialed
-//! execution path until the broker layer exists. Until then it provides
-//! isolation and quarantine only, and no route may carry a provider credential.
+//! execution path until the broker exists and descendants run under a distinct
+//! uid. Same-uid descendants can read `/proc/<parent>/environ` and `ptrace`
+//! the parent, so environment reconstruction alone does not isolate a secret
+//! held by the supervisor.
 
 pub mod codec;
 pub mod env_policy;
 pub mod scanner;
 
-pub use env_policy::{CleanEnv, ALLOWLIST};
-pub use scanner::{QuarantineScanner, ScanError, ScannerConfig};
+pub use env_policy::{CleanEnv, EnvError, ALLOWED_TERMS, ALLOWLIST};
+pub use scanner::{QuarantineScanner, ScanError, ScannerConfig, ScannerInit, Stream};
 
 /// How an authorised operation reaches its provider.
 ///
