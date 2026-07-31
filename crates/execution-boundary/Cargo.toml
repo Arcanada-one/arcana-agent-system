@@ -1,0 +1,15 @@
+[package]
+name = "arcana-execution-boundary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Typed, fail-closed execution boundary for Agent Arcana: clean-environment launching and streaming output quarantine."
+
+[dependencies]
+thiserror = "2"
+
+[lints]
+workspace = true

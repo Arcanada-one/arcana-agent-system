@@ -160,6 +160,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcana-credential-broker"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "arcana-execution-boundary"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "arcana-mcp"
 version = "0.1.0"
 dependencies = [
