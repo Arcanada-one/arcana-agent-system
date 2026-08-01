@@ -75,6 +75,8 @@ quota_costs = {{ completion = 1, list_models = 1 }}
 }
 
 fn start_broker(dir: &TempDir) -> (BrokerGuard, PathBuf) {
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private broker socket directory");
     let policy = dir.path().join("policy.toml");
     let _ = write_policy(&policy);
     let socket = dir.path().join("broker.sock");
