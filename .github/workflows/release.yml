@@ -30,9 +30,11 @@ jobs:
       - name: Require successful protected checks for the exact tagged SHA
         shell: bash
         env:
-          # Fine-grained token with Administration write and Checks read.
-          # GitHub hides bypass actors from tokens lacking Administration write;
-          # this workflow still performs GET requests only.
+          # Dedicated, repository-only fine-grained token from an
+          # organization-managed machine account, expiring within 90 days.
+          # Permissions: Administration write; Actions, Checks, Contents, and
+          # Pull requests read. GitHub hides ruleset bypass actors from tokens
+          # lacking Administration write; this workflow performs GET requests only.
           GH_TOKEN: ${{ secrets.SEC0030_GOVERNANCE_TOKEN }}
           EXPECTED_REVIEWER: ${{ vars.SEC0030_RELEASE_REVIEWER }}
         run: |

@@ -12,6 +12,31 @@ environment receives its separate independent review.
 Follow [install.md](install.md) to verify a downloaded package before using its
 contents. Never deploy an archive that has only passed a checksum.
 
+## Provision the governance readback credential
+
+`SEC0030_GOVERNANCE_TOKEN` is a dedicated fine-grained token, not the default
+workflow token and not a developer's existing CLI token. Its owner is an
+organization-managed machine account; repository access is limited to this
+repository; expiry is at most 90 days. Grant only these repository permissions:
+
+- Administration: read and write. The workflow makes only `GET` requests, but
+  [GitHub omits ruleset bypass actors][github-rulesets] from the governance
+  response unless the caller has write access.
+- Actions, Checks, Contents, and Pull requests: read-only. Actions read access
+  is required for [environment][github-environments] and
+  [deployment-branch-policy][github-deployment-policies] readback.
+
+Store the value only as the repository Actions secret
+`SEC0030_GOVERNANCE_TOKEN`. Do not copy it into a checkout, workflow variable,
+command line, or release artifact. An absent or expired secret is deliberately
+fail-closed: release preflight stops before building or publishing anything.
+Rotate it before expiry and validate the replacement with a dry preflight that
+performs the same read-only API calls.
+
+[github-rulesets]: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset
+[github-environments]: https://docs.github.com/en/rest/deployments/environments
+[github-deployment-policies]: https://docs.github.com/en/rest/deployments/branch-policies#list-deployment-branch-policies
+
 ## Stage disabled
 
 Do not pass the root lifecycle helper a path from a user-writable checkout.

@@ -60,6 +60,8 @@ fn systemd_unit_declares_required_isolation() {
         "CapabilityBoundingSet=",
         // A core dump would contain the credential in plaintext.
         "LimitCORE=0",
+        // Unexpected files must default to broker-only access.
+        "UMask=0077",
         // Blocks /proc/<pid>/environ inspection of other processes.
         "ProtectProc=invisible",
         "ProcSubset=pid",
