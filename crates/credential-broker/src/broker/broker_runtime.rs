@@ -944,7 +944,9 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{validate_inherited_listener, WireResponse};
+    #[cfg(target_os = "linux")]
+    use super::validate_inherited_listener;
+    use super::WireResponse;
 
     #[test]
     fn post_provider_errors_retain_the_durable_outcome_identity() {
@@ -953,6 +955,7 @@ mod tests {
         assert!(!response.ok);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn inherited_listener_requires_exact_seqpacket_path() {
         let directory = tempfile::TempDir::new().expect("temporary directory");
