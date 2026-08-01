@@ -9,10 +9,10 @@
 //! 1. Pure `build_*_args` structural tests (no process spawn at all) —
 //!    these are the literal `DoD`: a `--spec`/`--question` value containing
 //!    `<<EOP ... EOP` survives as a single, byte-for-byte-unchanged argv
-//!    element (proving no shell ever gets a chance to interpret it).
+//!    element (proving the descriptor wrapper never interprets it as source).
 //! 2. An end-to-end spawn test substituting `/bin/echo` for the real binary
 //!    via `CoworkerClient::with_bin_path`, to exercise the actual
-//!    `tokio::process::Command` path without touching any real LLM
+//!    execution-boundary path without touching any real LLM
 //!    provider or costing money.
 //!
 //! An `#[ignore]`-gated smoke test against the real binary is included last;
@@ -31,7 +31,7 @@ fn write_args_dod_heredoc_spec_survives_as_single_unchanged_argv_element() {
     let args = build_write_args(HEREDOC_SPEC, None, None, &[], "out.md");
 
     // Structural proof #1: exactly one argv element contains the heredoc
-    // marker — it was never tokenized or split by a shell.
+    // marker — it was never tokenized or split as shell source.
     let matches: Vec<&String> = args.iter().filter(|a| a.contains("<<EOP")).collect();
     assert_eq!(
         matches.len(),
@@ -40,7 +40,7 @@ fn write_args_dod_heredoc_spec_survives_as_single_unchanged_argv_element() {
     );
 
     // Structural proof #2: that element is byte-for-byte identical to the
-    // input spec — no escaping, no truncation, no shell metachar mangling.
+    // input spec — no escaping, no truncation, no metacharacter mangling.
     assert_eq!(matches[0], HEREDOC_SPEC);
 
     // Structural proof #3: it sits immediately after a literal "--spec"
@@ -70,7 +70,7 @@ fn stats_args_are_structurally_flat_flag_value_pairs() {
 }
 
 #[tokio::test]
-async fn write_spawns_via_argv_no_shell_involved_echo_roundtrips_heredoc_spec() {
+async fn write_spawns_via_literal_argv_and_echo_roundtrips_heredoc_spec() {
     // Substitute /bin/echo for the real coworker binary. echo prints each
     // argv element separated by a single space, verbatim (including
     // embedded newlines) — if the heredoc text had been shell-interpreted

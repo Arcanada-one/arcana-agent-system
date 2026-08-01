@@ -14,8 +14,8 @@ jobs:
   lint-test:
     runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt,clippy
       - name: cargo fmt
@@ -25,8 +25,33 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+  platform-isolation:
+    name: platform-isolation / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+          - platform: macos
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: rustfmt,clippy
+      - name: Common contract and platform identity probes
+        run: cargo test --locked --workspace
+      - name: Build live broker executable
+        run: cargo build --locked --package arcana-credential-broker --bin arcana-credential-broker
+      - name: Rehearse live install, failed upgrade, and binary-plus-config rollback
+        run: bash packaging/tests/lifecycle-rehearsal.sh
+      - name: Validate lifecycle shell
+        run: bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
+
   security-audit:
-    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@main
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@4b8aa52370e0948d16db6d47a548083c97604f3f
     with:
       stack: rust_cargo
       # The default runner_labels (["self-hosted","linux"]) match any self-hosted
@@ -38,7 +63,7 @@ jobs:
       runner_labels: '["self-hosted","Linux","X64","ci-general"]'
 
   network-exposure-lint:
-    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@main
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@4b8aa52370e0948d16db6d47a548083c97604f3f
     with:
       compose_paths: ''
       datarim_ref: '82311756b4dbfd16ddc96e098829bd9b0dea3626'

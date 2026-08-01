@@ -1,9 +1,12 @@
 //! Process-group-owning spawn primitive.
 
-use std::process::Stdio;
+use std::path::Path;
 
+use arcana_execution_boundary::{
+    spawn_supervised, BoundaryChild, BoundaryError, CleanEnv, ProcessSpec, SAFE_SYSTEM_PATH,
+};
 use nix::unistd::{getpgid, Pid};
-use tokio::process::{ChildStdout, Command};
+use tokio::process::ChildStdout;
 
 use crate::error::SupervisorError;
 use crate::policy::ChildSpec;
@@ -18,7 +21,7 @@ pub struct SpawnedChild {
     id: u64,
     pid: Pid,
     pgid: Pid,
-    child: tokio::process::Child,
+    child: BoundaryChild,
     stdout: Option<ChildStdout>,
 }
 
@@ -48,7 +51,7 @@ impl SpawnedChild {
 
     /// Mutable access to the underlying tokio child (for wait/terminate).
     pub fn child_mut(&mut self) -> &mut tokio::process::Child {
-        &mut self.child
+        self.child.child_mut()
     }
 }
 
@@ -62,23 +65,18 @@ impl SpawnedChild {
 // intentional and clearer than an artificial rename.
 #[allow(clippy::similar_names)]
 pub fn spawn_process_group(id: u64, spec: &ChildSpec) -> Result<SpawnedChild, SupervisorError> {
-    let mut command = Command::new(spec.program());
-    command
-        .args(spec.args())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        // Own a fresh process group at exec (safe wrapper; setpgid(0,0)).
-        .process_group(0)
-        .kill_on_drop(true);
-
-    let mut child = command.spawn().map_err(SupervisorError::Spawn)?;
-    let raw_pid = child.id().ok_or_else(|| {
-        SupervisorError::Spawn(std::io::Error::other("child exited before pid capture"))
-    })?;
+    let env = CleanEnv::build(
+        Path::new("/tmp/arcana-runtime/supervisor"),
+        SAFE_SYSTEM_PATH,
+    )
+    .map_err(BoundaryError::from)?;
+    let boundary_spec =
+        ProcessSpec::new(Path::new(spec.program()), env).args(spec.args().iter().cloned());
+    let mut child = spawn_supervised(&boundary_spec)?;
+    let raw_pid = child.pid();
     let pid = Pid::from_raw(pid_to_raw(raw_pid));
     let pgid = getpgid(Some(pid)).map_err(SupervisorError::ProcessGroup)?;
-    let stdout = child.stdout.take();
+    let stdout = child.take_stdout();
 
     Ok(SpawnedChild {
         id,

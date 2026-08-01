@@ -21,10 +21,11 @@ use std::time::Duration;
 
 use arcana_core::permission::{LayerDecision, PermissionLayer, RuleLayer};
 use arcana_core::tool::{Tool, ToolError, ToolInvocation, ToolOutput};
+use arcana_execution_boundary::{CleanEnv, ProcessSpec, Termination, SAFE_SYSTEM_PATH};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
@@ -97,23 +98,35 @@ impl Tool for BashTool {
         let parsed: BashInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
         let timeout_secs = parsed.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS);
-
-        let mut cmd = Command::new("/bin/sh");
-        cmd.arg("-c").arg(&parsed.command);
-        for (key, value) in &parsed.env_vars {
-            cmd.env(key, value);
+        if !parsed.env_vars.is_empty() {
+            return Err(ToolError::InvalidInput(
+                "env_vars are disabled: subprocesses receive only the constructed clean environment"
+                    .to_owned(),
+            ));
         }
 
-        let exec = cmd.output();
-        let output = tokio::time::timeout(Duration::from_secs(timeout_secs), exec)
+        let env = CleanEnv::build(
+            std::path::Path::new("/tmp/arcana-runtime/bash"),
+            SAFE_SYSTEM_PATH,
+        )
+        .map_err(|err| ToolError::ExecutionFailed(format!("clean environment: {err}")))?;
+        let output = ProcessSpec::new(std::path::Path::new("/bin/sh"), env)
+            .args(["-c", parsed.command.as_str()])
+            .timeout(Duration::from_secs(timeout_secs))
+            .run(CancellationToken::new())
             .await
-            .map_err(|_| ToolError::ExecutionFailed(format!("timeout after {timeout_secs}s")))?
-            .map_err(|err| ToolError::ExecutionFailed(format!("spawn: {err}")))?;
+            .map_err(|err| ToolError::ExecutionFailed(format!("execution boundary: {err}")))?;
+
+        if output.termination == Termination::TimedOut {
+            return Err(ToolError::ExecutionFailed(format!(
+                "timeout after {timeout_secs}s"
+            )));
+        }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        let exit_code = output.status.code().unwrap_or(-1);
-        let success = output.status.success();
+        let exit_code = output.exit_code.unwrap_or(-1);
+        let success = output.success;
 
         let metadata = json!({
             "exit_code": exit_code,

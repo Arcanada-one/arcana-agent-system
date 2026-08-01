@@ -14,9 +14,7 @@
 //! provider authority, so co-location in one repository does not merge the
 //! process or identity boundaries.
 //!
-//! # Phase gate-set
-//!
-//! Gates in force in this phase:
+//! # Enforced gates
 //!
 //! - closed protocol types with no wildcard or free-form escape
 //!   ([`protocol`]) — D-REQ-03;
@@ -24,18 +22,10 @@
 //!   operation / upstream / expiry validation ([`policy`]) — D-REQ-03 / V-AC-3;
 //! - quota, duplicate and replay enforcement ([`ledger`]) — D-REQ-03 / V-AC-3;
 //! - structurally secret-free metadata audit ([`audit`]) — D-REQ-06 / V-AC-5.
-//!
-//! Gates deferred to the next phase:
-//!
-//! - the permissioned local IPC transport and its kernel peer-credential
-//!   attestation (`SO_PEERCRED` / `LOCAL_PEERCRED`) — D-REQ-03 / V-AC-7;
-//! - the provider-neutral scoped upstream adapter and live provider calls;
-//! - fail-closed health and backpressure signalling — D-REQ-11 / V-AC-10.
-//!
-//! Operator constraint: this crate MUST NOT be granted a real credential source
-//! until the IPC transport attests peer identity from kernel-supplied socket
-//! credentials. Until then it authorises against caller-supplied identity, which
-//! is sound for tests and unsound for production.
+//! - permissioned local IPC with kernel-supplied peer identity, implemented by
+//!   the broker binary — D-REQ-03 / V-AC-7;
+//! - a bounded provider adapter that holds the credential only in the broker
+//!   process and quarantines provider output before IPC release — D-REQ-11.
 
 pub mod audit;
 pub mod ledger;

@@ -4,15 +4,14 @@
 //!
 //! # Shell-free by construction (`feedback_coworker_spec_no_heredoc`)
 //!
-//! Every argument this module sends to the `coworker` binary is passed as a
-//! distinct [`tokio::process::Command::arg`] element — the OS `exec` family
-//! receives each one as a separate argv entry and **no shell is ever
-//! invoked**. This is deliberate: free-text fields such as `--spec` may
+//! Every argument this module sends to the `coworker` binary remains a distinct
+//! argv element through the execution boundary. The boundary uses a constant
+//! descriptor-sweep shell wrapper, but invokes the target only as `exec "$@"`:
+//! caller text is never parsed as shell source. This is deliberate: free-text fields such as `--spec` may
 //! legitimately contain heredoc-looking sequences (`<<EOP ... EOP`) supplied
 //! by an upstream caller, and those bytes must never pass through anything
 //! that could interpret them as shell syntax. Do **not** "simplify" this by
-//! routing through `Command::new("sh").arg("-c").arg(format!(...))` or any
-//! other string-concatenation-then-shell-interpret path — that is exactly
+//! routing caller text through string concatenation and shell interpretation — that is exactly
 //! the construction that would let a `--spec` value smuggle a heredoc.
 //!
 //! Argv construction is split into pure, unit-testable `build_*_args`
@@ -31,7 +30,8 @@
 
 use std::path::{Path, PathBuf};
 
-use tokio::process::Command;
+use arcana_execution_boundary::{CleanEnv, ProcessSpec, SAFE_SYSTEM_PATH};
+use tokio_util::sync::CancellationToken;
 
 /// Env var that overrides the resolved `coworker` binary path. Takes
 /// precedence over the `~/.local/bin/coworker` default.
@@ -93,12 +93,12 @@ pub fn build_ask_args(
 /// Build the argv for `coworker write --provider <p> --profile <pr> --spec
 /// "<what>" --context <ref1> ... --target <out>`.
 ///
-/// Pure and side-effect-free: no process is spawned, no shell is involved.
+/// Pure and side-effect-free: no process is spawned or shell-parsed.
 /// `spec` is appended as a single trailing-flag element exactly as given —
 /// this is the literal `DoD` surface for `feedback_coworker_spec_no_heredoc`:
 /// a `spec` containing `<<EOP ... EOP` survives as one unchanged
 /// `Vec<String>` element, never split or shell-interpreted, because there is
-/// no shell anywhere in this function or in the caller
+/// no caller-controlled shell source anywhere in this function or in the caller
 /// ([`CoworkerClient::write`]) that consumes its output.
 #[must_use]
 pub fn build_write_args(
@@ -221,13 +221,12 @@ impl CoworkerClient {
     /// Run `coworker write --provider <p> --profile <pr> --spec "<what>"
     /// --context <ref1> ... --target <out>`.
     ///
-    /// `spec` is passed through [`tokio::process::Command::arg`] as a single
-    /// literal `OsString` argv element — never interpolated into a shell
-    /// string. This is the load-bearing invariant behind
+    /// `spec` is passed through [`ProcessSpec::arg`] as a single literal
+    /// `OsString` argv element — never interpolated into shell source. This is the load-bearing invariant behind
     /// `feedback_coworker_spec_no_heredoc`: a `spec` value containing
-    /// `<<EOP ... EOP` cannot be misread as a shell heredoc because no shell
-    /// is ever spawned on this path. Do not refactor this method to build a
-    /// shell command string.
+    /// `<<EOP ... EOP` cannot be misread as a shell heredoc because the
+    /// boundary's constant wrapper uses only `exec "$@"`. Do not refactor this
+    /// method to build a shell command string.
     ///
     /// # Errors
     /// Returns [`CoworkerError::Spawn`] if the OS fails to launch the
@@ -265,21 +264,25 @@ impl CoworkerClient {
     }
 
     /// Spawn `self.bin_path` with `args` and capture stdout/stderr/exit
-    /// code. No shell is ever involved: `args` are passed via
-    /// [`tokio::process::Command::args`], each element becoming one argv
-    /// entry.
+    /// code. The constant descriptor-sweep wrapper preserves `args` as literal
+    /// argv entries and never evaluates them as shell source.
     async fn run(&self, args: &[String]) -> Result<CoworkerOutput, CoworkerError> {
-        let output = Command::new(&self.bin_path)
-            .args(args)
-            .output()
+        let env = CleanEnv::build(Path::new("/tmp/arcana-runtime/coworker"), SAFE_SYSTEM_PATH)
+            .map_err(|err| CoworkerError::Spawn {
+                bin: self.bin_path.display().to_string(),
+                reason: err.to_string(),
+            })?;
+        let output = ProcessSpec::new(&self.bin_path, env)
+            .args(args.iter().cloned())
+            .run(CancellationToken::new())
             .await
             .map_err(|err| CoworkerError::Spawn {
                 bin: self.bin_path.display().to_string(),
                 reason: err.to_string(),
             })?;
         Ok(CoworkerOutput {
-            success: output.status.success(),
-            exit_code: output.status.code(),
+            success: output.success,
+            exit_code: output.exit_code,
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })

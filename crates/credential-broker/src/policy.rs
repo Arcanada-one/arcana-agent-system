@@ -9,8 +9,11 @@ use crate::protocol::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use serde::Deserialize;
+
 /// What a single provider permits.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderRule {
     /// Exact model identifiers this provider may be asked for.
     pub models: ExactSet,
@@ -21,7 +24,8 @@ pub struct ProviderRule {
 }
 
 /// The complete capability policy in force for a broker generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityPolicy {
     /// Generation this policy belongs to.
     pub generation: Generation,

@@ -8,28 +8,35 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// Monotonic broker generation. A request minted against an older generation is
 /// stale and fails closed — this is what makes a restart invalidate in-flight
 /// authority rather than silently honouring it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct Generation(pub u64);
 
 /// Opaque session or cgroup identifier for the calling executor.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct SessionId(pub String);
 
 /// Idempotency key. Two requests carrying the same key denote the *same*
 /// operation, never two.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct IdempotencyKey(pub String);
 
 /// The named executor profile a request claims to run under.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct ExecutorProfile(pub String);
 
 /// What the caller wants to do. A closed set: adding an operation is a policy
 /// change that must pass review, not a string a caller can invent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Operation {
     /// A single model completion.
     Completion,

@@ -10,6 +10,7 @@ description = "Ecosystem connectors: HTTP bridges to Arcanada services (Model Co
 
 [dependencies]
 arcana-core = { path = "../core" }
+arcana-execution-boundary = { path = "../execution-boundary" }
 # The skills-store fetch seam (`FetchConn`) lives in `arcana-skills`; this crate
 # provides the live adapter (`impl FetchConn for ScrutatorClient`). The edge is
 # one-directional — `arcana-skills` never depends on `arcana-connectors` — so
@@ -22,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "process"] }
+tokio-util = { version = "0.7", default-features = false }
 tracing = "0.1"
 url = "2"
 

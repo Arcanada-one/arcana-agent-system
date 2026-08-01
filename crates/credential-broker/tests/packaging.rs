@@ -54,6 +54,7 @@ fn policy_example_contains_no_credential() {
 fn systemd_unit_declares_required_isolation() {
     let unit = read("linux/arcana-credential-broker.service");
     for directive in [
+        "Type=simple",
         "User=arcana-broker",
         "NoNewPrivileges=yes",
         "CapabilityBoundingSet=",
@@ -163,7 +164,7 @@ fn both_platform_assets_exist() {
 #[test]
 fn lifecycle_script_covers_install_verify_disable_rollback() {
     let script = read("broker-lifecycle.sh");
-    for verb in ["install", "verify", "disable", "rollback"] {
+    for verb in ["install", "activate", "verify", "disable", "rollback"] {
         assert!(
             script.contains(&format!("{verb})")),
             "lifecycle script does not handle `{verb}`"
@@ -173,5 +174,10 @@ fn lifecycle_script_covers_install_verify_disable_rollback() {
     assert!(
         script.contains("set -euo pipefail"),
         "lifecycle script must fail closed"
+    );
+    assert!(
+        script.contains("generation_policy")
+            && script.contains("install -m 0644 \"$policy\" \"$POLICY_FILE\""),
+        "rollback must version and restore deploy-time policy as well as the binary"
     );
 }

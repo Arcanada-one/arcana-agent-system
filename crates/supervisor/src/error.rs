@@ -1,11 +1,15 @@
 //! Error surface for the supervisor crate.
 
 use arcana_core::hooks::audit::AuditHookError;
+use arcana_execution_boundary::BoundaryError;
 use thiserror::Error;
 
 /// Failure modes surfaced by [`crate::Supervisor`] and its primitives.
 #[derive(Debug, Error)]
 pub enum SupervisorError {
+    /// The central execution boundary rejected or failed the spawn.
+    #[error("execution boundary rejected child process: {0}")]
+    Boundary(#[from] BoundaryError),
     /// The child process could not be spawned.
     #[error("failed to spawn child process: {0}")]
     Spawn(#[source] std::io::Error),

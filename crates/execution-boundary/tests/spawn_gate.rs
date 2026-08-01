@@ -29,15 +29,14 @@ const TEST_FIXTURE_ALLOWLIST: &[&str] = &["crates/supervisor/src/bin/heartbeat-c
 /// The execution boundary itself is the sanctioned owner of process spawning —
 /// migrating the sites below *into* this crate is the goal, not a violation.
 /// Everything here is reviewed as part of the boundary's own contract.
-const BOUNDARY_ALLOWLIST: &[&str] = &["crates/execution-boundary/src/env_policy.rs"];
+const BOUNDARY_ALLOWLIST: &[&str] = &[
+    "crates/execution-boundary/src/env_policy.rs",
+    "crates/execution-boundary/src/process.rs",
+];
 
 /// Shipped-runtime spawn sites still awaiting migration, with their exact
 /// current site count. Both the set and the counts may only shrink.
-const PENDING_MIGRATION: &[(&str, usize)] = &[
-    ("crates/connectors/src/coworker.rs", 1),
-    ("crates/supervisor/src/spawn.rs", 1),
-    ("crates/tools/src/bash.rs", 1),
-];
+const PENDING_MIGRATION: &[(&str, usize)] = &[];
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -10,15 +10,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-sign-attest:
-    name: Build, sign, and stage release
-    runs-on: [self-hosted, Linux, X64]
+  build:
+    name: Build / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            package_dir: linux
+          - platform: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            package_dir: macos
+    runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
     env:
-      TARGET: x86_64-unknown-linux-gnu
+      TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.platform }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -28,49 +39,93 @@ jobs:
         with:
           targets: ${{ env.TARGET }}
 
-      - name: Build release binary
-        run: cargo build --locked --release --package arcana-agent-system --bin arcana --target "$TARGET"
+      - name: Build compatible runtime and broker binaries
+        run: |
+          cargo build --locked --release --package arcana-agent-system --bin arcana --target "$TARGET"
+          cargo build --locked --release --package arcana-credential-broker --bin arcana-credential-broker --target "$TARGET"
 
-      - name: Prepare release assets
-        id: assets
+      - name: Generate pinned CycloneDX SBOMs
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          cargo cyclonedx --manifest-path crates/cli/Cargo.toml --format json \
+            --describe binaries --spec-version 1.5 --target "$TARGET" --target-in-filename
+          cargo cyclonedx --manifest-path crates/credential-broker/Cargo.toml --format json \
+            --describe binaries --spec-version 1.5 --target "$TARGET" --target-in-filename
+
+      - name: Prepare platform package, SBOMs, and hashes
         shell: bash
         run: |
           set -euo pipefail
-          asset="arcana-${GITHUB_REF_NAME}-${TARGET}"
-          mkdir -p dist
-          install -m 0755 "target/${TARGET}/release/arcana" "dist/${asset}"
-          (
-            cd dist
-            sha256sum "${asset}" > "${asset}.sha256"
-          )
-          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+          name="arcana-${GITHUB_REF_NAME}-${PLATFORM}"
+          stage="dist/${name}"
+          mkdir -p "$stage/bin" "$stage/packaging"
+          install -m 0755 "target/${TARGET}/release/arcana" "$stage/bin/arcana"
+          install -m 0755 "target/${TARGET}/release/arcana-credential-broker" \
+            "$stage/bin/arcana-credential-broker"
+          install -m 0755 packaging/broker-lifecycle.sh "$stage/packaging/broker-lifecycle.sh"
+          cp -R "packaging/${{ matrix.package_dir }}" "$stage/packaging/"
+          cp -R packaging/policy "$stage/packaging/"
+          for sbom in crates/cli/*_"${TARGET}".cdx.json crates/credential-broker/*_"${TARGET}".cdx.json; do
+            [ -f "$sbom" ] || { printf 'missing SBOM: %s\n' "$sbom" >&2; exit 1; }
+            install -m 0644 "$sbom" "dist/${name}-$(basename "$sbom")"
+          done
+          tar -C dist -czf "dist/${name}.tar.gz" "$name"
+          rm -rf -- "$stage"
+          for artifact in dist/*.tar.gz dist/*.cdx.json; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              (cd dist && sha256sum "$(basename "$artifact")" > "$(basename "$artifact").sha256")
+            else
+              (cd dist && shasum -a 256 "$(basename "$artifact")" > "$(basename "$artifact").sha256")
+            fi
+          done
+
+      - name: Upload unsigned platform payloads
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 2
+
+  sign-attest-release:
+    name: Sign, attest, and stage release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download exact platform payloads
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Sign binary with GitHub OIDC
-        env:
-          ASSET: ${{ steps.assets.outputs.asset }}
-        run: |
-          cosign sign-blob --yes \
-            --bundle "dist/${ASSET}.cosign.bundle" \
-            "dist/${ASSET}"
-          jq -er '.messageSignature.signature' \
-            "dist/${ASSET}.cosign.bundle" > "dist/${ASSET}.sig"
 
-      - name: Verify keyless signature round-trip
-        env:
-          ASSET: ${{ steps.assets.outputs.asset }}
+      - name: Sign and verify every binary package and SBOM
+        shell: bash
         run: |
-          cosign verify-blob \
-            --bundle "dist/${ASSET}.cosign.bundle" \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "dist/${ASSET}"
+          set -euo pipefail
+          find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.cdx.json' \) -print0 |
+            while IFS= read -r -d '' artifact; do
+              cosign sign-blob --yes --bundle "${artifact}.cosign.bundle" "$artifact"
+              cosign verify-blob \
+                --bundle "${artifact}.cosign.bundle" \
+                --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                "$artifact"
+            done
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+      - name: Attest build provenance for packages and SBOMs
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: dist/${{ steps.assets.outputs.asset }}
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.cdx.json
 
       - name: Stage draft GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -78,8 +133,4 @@ jobs:
           draft: true
           fail_on_unmatched_files: true
           generate_release_notes: true
-          files: |
-            dist/${{ steps.assets.outputs.asset }}
-            dist/${{ steps.assets.outputs.asset }}.sha256
-            dist/${{ steps.assets.outputs.asset }}.sig
-            dist/${{ steps.assets.outputs.asset }}.cosign.bundle
+          files: dist/*
