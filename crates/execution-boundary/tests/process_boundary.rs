@@ -190,8 +190,9 @@ async fn quarantine_is_independent_of_cross_stream_scheduler_order() {
 #[tokio::test]
 async fn process_boundary_persists_only_through_restrictive_transcript_writer() {
     let dir = TempDir::new().expect("tempdir");
+    let canonical_root = std::fs::canonicalize(dir.path()).expect("canonical temporary root");
     let writer = TranscriptWriter::new(TranscriptPolicy {
-        directory: dir.path().join("transcripts"),
+        directory: canonical_root.join("transcripts"),
         sentinels: vec![b"never-present-sentinel".to_vec()],
         max_files: 2,
         max_age: Duration::from_secs(60),

@@ -4,6 +4,7 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use arcana_execution_boundary::{
@@ -12,6 +13,10 @@ use arcana_execution_boundary::{
 use tempfile::TempDir;
 
 const SENTINEL: &[u8] = b"transcript-credential-sentinel";
+
+fn canonical_temp_root(dir: &TempDir) -> PathBuf {
+    std::fs::canonicalize(dir.path()).expect("canonical temporary root")
+}
 
 fn writer(root: &std::path::Path, max_files: usize) -> TranscriptWriter {
     TranscriptWriter::new(TranscriptPolicy {
@@ -27,7 +32,7 @@ fn writer(root: &std::path::Path, max_files: usize) -> TranscriptWriter {
 #[test]
 fn writes_only_after_quarantine_with_restrictive_owner_only_modes() {
     let dir = TempDir::new().expect("tempdir");
-    let writer = writer(&dir.path().join("transcripts"), 4);
+    let writer = writer(&canonical_temp_root(&dir).join("transcripts"), 4);
     let artifact = writer
         .write(
             "task-1",
@@ -62,7 +67,7 @@ fn writes_only_after_quarantine_with_restrictive_owner_only_modes() {
 #[test]
 fn sentinel_or_encoded_sentinel_creates_no_transcript() {
     let dir = TempDir::new().expect("tempdir");
-    let writer = writer(&dir.path().join("transcripts"), 4);
+    let writer = writer(&canonical_temp_root(&dir).join("transcripts"), 4);
     let error = writer
         .write(
             "blocked",
@@ -79,9 +84,10 @@ fn sentinel_or_encoded_sentinel_creates_no_transcript() {
 #[test]
 fn root_and_destination_symlinks_are_rejected() {
     let dir = TempDir::new().expect("tempdir");
-    let real = dir.path().join("real");
+    let root = canonical_temp_root(&dir);
+    let real = root.join("real");
     std::fs::create_dir(&real).expect("mkdir");
-    let linked = dir.path().join("linked");
+    let linked = root.join("linked");
     symlink(&real, &linked).expect("symlink");
     assert!(matches!(
         TranscriptWriter::new(TranscriptPolicy {
@@ -94,7 +100,7 @@ fn root_and_destination_symlinks_are_rejected() {
         Err(TranscriptError::SymlinkRejected { .. })
     ));
 
-    let writer = writer(&dir.path().join("transcripts"), 2);
+    let writer = writer(&root.join("transcripts"), 2);
     symlink(&real, writer.directory().join("collision.log")).expect("file symlink");
     assert!(matches!(
         writer.write(
@@ -108,7 +114,8 @@ fn root_and_destination_symlinks_are_rejected() {
 #[test]
 fn preexisting_no_sync_markers_require_regular_files_and_exact_content() {
     let dir = TempDir::new().expect("tempdir");
-    let root = dir.path().join("wrong-content");
+    let base = canonical_temp_root(&dir);
+    let root = base.join("wrong-content");
     std::fs::create_dir(&root).expect("mkdir");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("root mode");
     let marker = root.join(".stignore");
@@ -125,7 +132,7 @@ fn preexisting_no_sync_markers_require_regular_files_and_exact_content() {
         Err(TranscriptError::MarkerMismatch { .. })
     ));
 
-    let root = dir.path().join("wrong-type");
+    let root = base.join("wrong-type");
     std::fs::create_dir(&root).expect("mkdir");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("root mode");
     std::fs::create_dir(root.join(".nosync")).expect("marker directory");
@@ -144,15 +151,16 @@ fn preexisting_no_sync_markers_require_regular_files_and_exact_content() {
 #[test]
 fn ancestor_replacement_cannot_redirect_creation_or_pruning() {
     let dir = TempDir::new().expect("tempdir");
-    let original = dir.path().join("transcripts");
+    let root = canonical_temp_root(&dir);
+    let original = root.join("transcripts");
     let writer = writer(&original, 1);
     let artifact = writer
         .write("one", &[TranscriptChunk::new(Stream::Stdout, b"one")])
         .expect("first write");
 
-    let held = dir.path().join("held");
+    let held = root.join("held");
     std::fs::rename(&original, &held).expect("rename held directory");
-    let outside = dir.path().join("outside");
+    let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("outside directory");
     std::fs::write(outside.join("outside.log"), b"must survive").expect("outside file");
     symlink(&outside, &original).expect("replace pathname with symlink");
@@ -177,7 +185,7 @@ fn ancestor_replacement_cannot_redirect_creation_or_pruning() {
 #[test]
 fn distributed_cross_stream_sentinel_creates_no_transcript() {
     let dir = TempDir::new().expect("tempdir");
-    let writer = writer(&dir.path().join("transcripts"), 4);
+    let writer = writer(&canonical_temp_root(&dir).join("transcripts"), 4);
     let error = writer
         .write(
             "distributed",
@@ -194,7 +202,7 @@ fn distributed_cross_stream_sentinel_creates_no_transcript() {
 #[test]
 fn retention_keeps_only_the_newest_bounded_set() {
     let dir = TempDir::new().expect("tempdir");
-    let writer = writer(&dir.path().join("transcripts"), 2);
+    let writer = writer(&canonical_temp_root(&dir).join("transcripts"), 2);
     for id in ["one", "two", "three"] {
         writer
             .write(id, &[TranscriptChunk::new(Stream::Stdout, id.as_bytes())])
@@ -215,7 +223,7 @@ fn invalid_identifier_and_zero_retention_fail_closed() {
     let dir = TempDir::new().expect("tempdir");
     assert!(matches!(
         TranscriptWriter::new(TranscriptPolicy {
-            directory: dir.path().join("zero"),
+            directory: canonical_temp_root(&dir).join("zero"),
             sentinels: vec![SENTINEL.to_vec()],
             max_files: 0,
             max_age: Duration::from_secs(60),
@@ -223,7 +231,7 @@ fn invalid_identifier_and_zero_retention_fail_closed() {
         }),
         Err(TranscriptError::InvalidRetention)
     ));
-    let writer = writer(&dir.path().join("transcripts"), 2);
+    let writer = writer(&canonical_temp_root(&dir).join("transcripts"), 2);
     assert!(matches!(
         writer.write(
             "../escape",
@@ -237,7 +245,7 @@ fn invalid_identifier_and_zero_retention_fail_closed() {
 fn byte_limit_is_checked_before_destination_creation() {
     let dir = TempDir::new().expect("tempdir");
     let writer = TranscriptWriter::new(TranscriptPolicy {
-        directory: dir.path().join("bounded"),
+        directory: canonical_temp_root(&dir).join("bounded"),
         sentinels: vec![SENTINEL.to_vec()],
         max_files: 2,
         max_age: Duration::from_secs(60),
