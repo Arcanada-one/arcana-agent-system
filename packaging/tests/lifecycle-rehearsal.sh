@@ -152,10 +152,11 @@ run_lifecycle rollback two
 run_lifecycle verify
 
 # Every mutating command shares one cross-process lock. Hold it in one
-# rehearsal process and prove a second mutation cannot publish its pending
-# generation until the first process releases the lock.
+# rehearsal process, force a waiter to miss the released lock, then let a
+# third process acquire it before the waiter rechecks. The waiter must treat
+# both owner transitions as transient and publish only after both release.
 ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
-  LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS=0.5 \
+  LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS=0.2 \
   bash "$lifecycle" disable >/dev/null &
 lock_holder=$!
 attempts=0
@@ -164,12 +165,34 @@ while [ ! -f "$control_root/lifecycle.lock" ] && [ "$attempts" -lt 100 ]; do
   attempts=$((attempts + 1))
 done
 [ -f "$control_root/lifecycle.lock" ]
-run_lifecycle install eight "$broker" "$policy_two" &
+ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
+  LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS=0.3 \
+  LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS=0.4 \
+  bash "$lifecycle" install eight "$broker" "$policy_two" &
 lock_waiter=$!
-sleep 0.1
+observation_marker="$control_root/rehearsal-observation-link-failed"
+attempts=0
+while [ ! -f "$observation_marker" ] && [ "$attempts" -lt 100 ]; do
+  sleep 0.01
+  attempts=$((attempts + 1))
+done
+[ -f "$observation_marker" ]
+wait "$lock_holder"
+ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
+  LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS=0.6 \
+  bash "$lifecycle" disable >/dev/null &
+replacement_holder=$!
+attempts=0
+while [ "$attempts" -lt 100 ]; do
+  replacement_owner=$(sed -n '1p' "$control_root/lifecycle.lock" 2>/dev/null || true)
+  case "$replacement_owner" in "$replacement_holder:"*) break ;; esac
+  sleep 0.01
+  attempts=$((attempts + 1))
+done
+case "$replacement_owner" in "$replacement_holder:"*) ;; *) exit 1 ;; esac
 kill -0 "$lock_waiter" 2>/dev/null
 [ ! -s "$control_root/pending-generation" ]
-wait "$lock_holder"
+wait "$replacement_holder"
 wait "$lock_waiter"
 [ "$(sed -n '1p' "$control_root/pending-generation")" = eight ]
 run_lifecycle rollback two

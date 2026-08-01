@@ -76,6 +76,8 @@ RUNTIME_STATE="${RUNTIME_STATE:-$STATE_DIR/broker-state.json}"
 LOCK_OWNER_PID=''
 LOCK_OWNER_TOKEN=''
 LOCK_CANDIDATE=''
+LOCK_OBSERVATION=''
+OBSERVED_LOCK_OWNER=''
 
 validate_generation() {
   case "$1" in ''|*[!A-Za-z0-9._-]*) die "generation must be a non-empty filename token" ;; esac
@@ -121,6 +123,7 @@ release_lifecycle_lock() {
   [ -n "$LOCK_OWNER_PID" ] || return
   [ "${BASH_SUBSHELL:-0}" = 0 ] || return
   [ "$$" = "$LOCK_OWNER_PID" ] || return
+  if [ -n "$LOCK_OBSERVATION" ]; then rm -f -- "$LOCK_OBSERVATION"; fi
   if [ -n "$LOCK_CANDIDATE" ]; then rm -f -- "$LOCK_CANDIDATE"; fi
   if [ -n "$LOCK_OWNER_TOKEN" ] && [ -f "$LIFECYCLE_LOCK_FILE" ] && \
     [ ! -L "$LIFECYCLE_LOCK_FILE" ] && \
@@ -130,10 +133,50 @@ release_lifecycle_lock() {
   LOCK_OWNER_PID=''
   LOCK_OWNER_TOKEN=''
   LOCK_CANDIDATE=''
+  LOCK_OBSERVATION=''
+  OBSERVED_LOCK_OWNER=''
+}
+
+observe_lifecycle_lock() {
+  local observed=''
+  OBSERVED_LOCK_OWNER=''
+  LOCK_OBSERVATION="${LOCK_CANDIDATE}.observed"
+  rm -f -- "$LOCK_OBSERVATION"
+
+  [ ! -L "$LIFECYCLE_LOCK_FILE" ] || return 2
+  if ! ln -P -- "$LIFECYCLE_LOCK_FILE" "$LOCK_OBSERVATION" 2>/dev/null; then
+    if [ "$SERVICE_MODE" = rehearsal ] && \
+      [ -n "${LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS:-}" ]; then
+      case "$LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS" in
+        *[!0-9.]*|*.*.*|'') die "invalid rehearsal observation-failure delay" ;;
+      esac
+      : > "$CONTROL_DIR/rehearsal-observation-link-failed"
+      sleep "$LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS"
+    fi
+    LOCK_OBSERVATION=''
+    [ ! -L "$LIFECYCLE_LOCK_FILE" ] || return 2
+    # Absence, or a regular owner that appeared after link(2) failed, is a
+    # transient generation transition. The bounded acquisition loop retries.
+    return 1
+  fi
+
+  # The hard-link snapshot remains a stable inode even when its owner releases
+  # the authoritative lock path while this process validates and reads it.
+  [ ! -L "$LOCK_OBSERVATION" ] && [ -f "$LOCK_OBSERVATION" ] || return 2
+  if [ "$SERVICE_MODE" != rehearsal ]; then
+    [ "$(file_owner "$LOCK_OBSERVATION")" = root ] || return 2
+    [ "$(file_mode "$LOCK_OBSERVATION")" = 600 ] || return 2
+    verify_no_extended_acl "$LOCK_OBSERVATION"
+  fi
+  IFS= read -r observed < "$LOCK_OBSERVATION" || return 2
+  rm -f -- "$LOCK_OBSERVATION"
+  LOCK_OBSERVATION=''
+  OBSERVED_LOCK_OWNER="$observed"
+  return 0
 }
 
 acquire_lifecycle_lock() {
-  local attempts=0 owner='' owner_pid=''
+  local attempts=0 owner='' owner_pid='' current_owner='' observation_status=0
   if [ "$SERVICE_MODE" = rehearsal ]; then
     install -d -m 0700 "$CONTROL_DIR"
   else
@@ -159,21 +202,50 @@ acquire_lifecycle_lock() {
   # link(2) publishes the already-complete owner record and acquires the lock
   # in one atomic operation. No peer can observe an ownerless live lock.
   while ! ln -- "$LOCK_CANDIDATE" "$LIFECYCLE_LOCK_FILE" 2>/dev/null; do
-    [ ! -L "$LIFECYCLE_LOCK_FILE" ] && [ -f "$LIFECYCLE_LOCK_FILE" ] || \
-      die "lifecycle lock is not a trusted regular file"
-    if [ "$SERVICE_MODE" != rehearsal ]; then
-      [ "$(file_owner "$LIFECYCLE_LOCK_FILE")" = root ] || die "lifecycle lock is not root-owned"
-      [ "$(file_mode "$LIFECYCLE_LOCK_FILE")" = 600 ] || die "lifecycle lock mode is not 0600"
-      verify_no_extended_acl "$LIFECYCLE_LOCK_FILE"
+    if [ "$SERVICE_MODE" = rehearsal ] && \
+      [ -n "${LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS:-}" ]; then
+      case "$LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS" in
+        *[!0-9.]*|*.*.*|'') die "invalid rehearsal owner-read delay" ;;
+      esac
+      sleep "$LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS"
     fi
-    owner=$(sed -n '1p' "$LIFECYCLE_LOCK_FILE")
+    if observe_lifecycle_lock; then
+      owner="$OBSERVED_LOCK_OWNER"
+    else
+      observation_status=$?
+      if [ "$observation_status" = 1 ]; then
+        attempts=$((attempts + 1))
+        [ "$attempts" -lt 500 ] || die "timed out observing a stable lifecycle lock"
+        sleep 0.02
+        continue
+      fi
+      die "lifecycle lock is not a trusted regular file"
+    fi
     case "$owner" in
       [0-9]*:[0-9]*) owner_pid=${owner%%:*} ;;
       *) die "lifecycle lock owner record is invalid; manual root recovery required" ;;
     esac
     case "$owner_pid" in ''|*[!0-9]*) die "lifecycle lock owner pid is invalid" ;; esac
-    kill -0 "$owner_pid" 2>/dev/null || \
-      die "stale lifecycle lock for pid $owner_pid requires explicit root recovery"
+    if ! kill -0 "$owner_pid" 2>/dev/null; then
+      # The observed owner may have released after the read. Only diagnose a
+      # stale lock when the same token is still present; absence or a new owner
+      # means another acquisition attempt is safe.
+      if observe_lifecycle_lock; then
+        current_owner="$OBSERVED_LOCK_OWNER"
+      else
+        observation_status=$?
+        if [ "$observation_status" = 1 ]; then
+          attempts=$((attempts + 1))
+          [ "$attempts" -lt 500 ] || die "timed out observing a stable lifecycle lock"
+          sleep 0.02
+          continue
+        fi
+        die "lifecycle lock is not a trusted regular file"
+      fi
+      [ "$current_owner" != "$owner" ] || \
+        die "stale lifecycle lock for pid $owner_pid requires explicit root recovery"
+      continue
+    fi
     attempts=$((attempts + 1))
     [ "$attempts" -lt 500 ] || die "timed out waiting for lifecycle lock held by pid $owner_pid"
     sleep 0.02
