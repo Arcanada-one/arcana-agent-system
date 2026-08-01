@@ -19,9 +19,9 @@ executor_uid = 1000
 # Total quota units for this generation. Exhaustion is a refusal, not a warning.
 quota_limit = 1000
 
-# Exact executable paths permitted to call the broker. Path identity is checked
-# against the peer's resolved executable, not against an argv[0] the caller
-# controls.
+# Exact executable paths used by the mock/rehearsal attestor. Production
+# credentialed mode does not trust sampled paths and remains disabled until its
+# platform per-message attestation backend is available.
 executables = [
     "/opt/arcana/bin/arcana",
 ]
@@ -52,3 +52,4 @@ sessions = [
 upstream = "https://api.example-provider.test/v1"
 models = ["model-small"]
 operations = ["completion"]
+quota_costs = { completion = 1 }

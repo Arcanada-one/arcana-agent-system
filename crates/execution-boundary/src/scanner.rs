@@ -30,8 +30,8 @@
 //! - a secret emitted non-contiguously across unrelated writes, where the
 //!   released bytes never co-occur in one window;
 //! - a secret split across two *separate scanner instances*. A supervised child
-//!   MUST feed stdout and stderr into **one** shared scanner; see
-//!   [`QuarantineScanner::push_stream`].
+//!   MUST feed stdout and stderr into **one** shared scanner and call
+//!   [`QuarantineScanner::check_distributed`] before release.
 
 use crate::codec::{
     b64_decode_lenient, b64_encode, hex_decode_lenient, hex_encode, is_b64_byte, is_hex_byte,
@@ -108,29 +108,30 @@ struct SentinelForms {
 }
 
 impl SentinelForms {
-    fn new(raw: Vec<u8>) -> Self {
-        let mut forms: Vec<Vec<u8>> = Vec::new();
+    fn direct_forms(raw: &[u8]) -> Vec<Vec<u8>> {
+        let mut forms = Vec::new();
         let push = |forms: &mut Vec<Vec<u8>>, s: String| {
             if !s.is_empty() {
                 forms.push(s.into_bytes());
             }
         };
 
-        push(&mut forms, hex_encode(&raw, false));
-        push(&mut forms, hex_encode(&raw, true));
-        push(&mut forms, percent_encode_all(&raw, false));
-        push(&mut forms, percent_encode_all(&raw, true));
-        push(&mut forms, json_u_escape_all(&raw, false));
-        push(&mut forms, json_u_escape_all(&raw, true));
+        push(&mut forms, hex_encode(raw, false));
+        push(&mut forms, hex_encode(raw, true));
+        push(&mut forms, percent_encode_all(raw, false));
+        push(&mut forms, percent_encode_all(raw, true));
+        push(&mut forms, json_u_escape_all(raw, false));
+        push(&mut forms, json_u_escape_all(raw, true));
 
         // Base64 is alignment-sensitive: a sentinel embedded mid-stream is
         // encoded against a phase this sentinel alone does not determine. Emit
         // the alignment-invariant core for each of the three phases so an
         // embedded occurrence still matches verbatim.
         for alphabet in [B64Alphabet::Standard, B64Alphabet::Url] {
+            push(&mut forms, b64_encode(raw, alphabet, false));
             for phase in 0usize..3 {
                 let mut data = vec![0u8; phase];
-                data.extend_from_slice(&raw);
+                data.extend_from_slice(raw);
                 let encoded = b64_encode(&data, alphabet, false);
                 let lead = (phase * 8).div_ceil(6);
                 let drop_tail = usize::from(!(phase + raw.len()).is_multiple_of(3));
@@ -143,6 +144,30 @@ impl SentinelForms {
             }
         }
 
+        forms.sort();
+        forms.dedup();
+        forms
+    }
+
+    fn new(raw: Vec<u8>, max_depth: u8, max_form_bytes: usize) -> Self {
+        let mut forms = Vec::new();
+        let mut frontier = vec![raw.clone()];
+        for _ in 0..max_depth {
+            let mut next = Vec::new();
+            for form in &frontier {
+                next.extend(
+                    Self::direct_forms(form)
+                        .into_iter()
+                        .filter(|candidate| candidate.len() <= max_form_bytes),
+                );
+            }
+            next.sort();
+            next.dedup();
+            forms.extend(next.iter().cloned());
+            frontier = next;
+        }
+        forms.sort();
+        forms.dedup();
         Self { raw, forms }
     }
 }
@@ -220,7 +245,10 @@ impl QuarantineScanner {
             return Err(ScannerInit::EmptySentinel);
         }
         let longest_raw = sentinels.iter().map(Vec::len).max().unwrap_or(0);
-        let sentinels: Vec<SentinelForms> = sentinels.into_iter().map(SentinelForms::new).collect();
+        let sentinels: Vec<SentinelForms> = sentinels
+            .into_iter()
+            .map(|sentinel| SentinelForms::new(sentinel, cfg.max_depth, cfg.max_unreleased))
+            .collect();
 
         // Retention must be able to hold a complete *nested* occurrence, not
         // merely a single-layer one. A depth-N encoding can expand the raw
@@ -273,6 +301,34 @@ impl QuarantineScanner {
     /// Any [`ScanError`] is terminal: nothing is released now or later.
     pub fn push_stream(&mut self, _stream: Stream, chunk: &[u8]) -> Result<Vec<u8>, ScanError> {
         self.push(chunk)
+    }
+
+    /// Conservatively reject a sentinel that can be reconstructed by
+    /// interleaving bytes from stdout and stderr in either scheduler order.
+    ///
+    /// Pipe readers cannot establish a trustworthy total order between two
+    /// kernel streams. Treating channel-arrival order as evidence lets an
+    /// attacker send the suffix first and the prefix second. This check ignores
+    /// unrelated bytes and accepts every order that preserves each individual
+    /// stream's byte order; high-entropy sentinels make the conservative match
+    /// useful without weakening the fail-closed property.
+    ///
+    /// # Errors
+    /// A distributed occurrence poisons the scanner and releases nothing.
+    pub fn check_distributed(&mut self, stdout: &[u8], stderr: &[u8]) -> Result<(), ScanError> {
+        if let Some(error) = &self.poisoned {
+            return Err(error.clone());
+        }
+        let detected = self.sentinels.iter().any(|sentinel| {
+            std::iter::once(&sentinel.raw)
+                .chain(sentinel.forms.iter())
+                .any(|pattern| distributed_interleaving(pattern, stdout, stderr))
+        });
+        if detected {
+            Err(self.poison(ScanError::SentinelDetected))
+        } else {
+            Ok(())
+        }
     }
 
     /// Feed a chunk; returns the bytes that are proven safe to release.
@@ -413,6 +469,40 @@ impl QuarantineScanner {
         }
         Ok(false)
     }
+}
+
+fn distributed_interleaving(pattern: &[u8], stdout: &[u8], stderr: &[u8]) -> bool {
+    if pattern.len() < 2 || stdout.is_empty() || stderr.is_empty() {
+        return false;
+    }
+    let mut states = vec![(0usize, 0usize, 0u8)];
+    for &byte in pattern {
+        let mut next = Vec::new();
+        for &(stdout_at, stderr_at, used) in &states {
+            if let Some(position) = stdout[stdout_at..].iter().position(|value| *value == byte) {
+                insert_nondominated(&mut next, (stdout_at + position + 1, stderr_at, used | 1));
+            }
+            if let Some(position) = stderr[stderr_at..].iter().position(|value| *value == byte) {
+                insert_nondominated(&mut next, (stdout_at, stderr_at + position + 1, used | 2));
+            }
+        }
+        if next.is_empty() {
+            return false;
+        }
+        states = next;
+    }
+    states.iter().any(|state| state.2 == 3)
+}
+
+fn insert_nondominated(states: &mut Vec<(usize, usize, u8)>, candidate: (usize, usize, u8)) {
+    if states
+        .iter()
+        .any(|state| state.2 == candidate.2 && state.0 <= candidate.0 && state.1 <= candidate.1)
+    {
+        return;
+    }
+    states.retain(|state| state.2 != candidate.2 || state.0 < candidate.0 || state.1 < candidate.1);
+    states.push(candidate);
 }
 
 /// Maximal runs of bytes satisfying `pred`, at least `min_len` long.

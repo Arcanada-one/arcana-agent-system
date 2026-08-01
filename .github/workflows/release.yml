@@ -9,9 +9,118 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
+  preflight:
+    name: Protected tag preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out full tagged history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Require the released commit on origin/main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+      - name: Require successful protected checks for the exact tagged SHA
+        shell: bash
+        env:
+          # Fine-grained token with Administration write and Checks read.
+          # GitHub hides bypass actors from tokens lacking Administration write;
+          # this workflow still performs GET requests only.
+          GH_TOKEN: ${{ secrets.SEC0030_GOVERNANCE_TOKEN }}
+          EXPECTED_REVIEWER: ${{ vars.SEC0030_RELEASE_REVIEWER }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          test -n "$EXPECTED_REVIEWER"
+          protection=$(gh api "repos/${GITHUB_REPOSITORY}/branches/main/protection")
+          jq -e '
+            .required_status_checks.strict == true and
+            ([.required_status_checks.checks[].context] | sort) == ([
+              "lint-test",
+              "network-exposure-lint / network-exposure-lint",
+              "platform-contract-mock / linux",
+              "platform-contract-mock / macos",
+              "security-audit / security-audit (rust_cargo)"
+            ] | sort) and
+            all(.required_status_checks.checks[]; .app_id == 15368) and
+            .required_pull_request_reviews.dismiss_stale_reviews == true and
+            .required_pull_request_reviews.require_code_owner_reviews == true and
+            .required_pull_request_reviews.require_last_push_approval == true and
+            .required_pull_request_reviews.required_approving_review_count == 1 and
+            ((.required_pull_request_reviews.bypass_pull_request_allowances.users // []) | length) == 0 and
+            ((.required_pull_request_reviews.bypass_pull_request_allowances.teams // []) | length) == 0 and
+            ((.required_pull_request_reviews.bypass_pull_request_allowances.apps // []) | length) == 0 and
+            .enforce_admins.enabled == true and
+            .required_linear_history.enabled == true and
+            .allow_force_pushes.enabled == false and
+            .allow_deletions.enabled == false and
+            .restrictions == null
+          ' <<<"$protection" >/dev/null
+          checks=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100")
+          while IFS=$'\t' read -r name app_id; do
+            jq -e --arg name "$name" --arg sha "$GITHUB_SHA" --argjson app_id "$app_id" \
+              '.check_runs | any(
+                .name == $name and
+                .head_sha == $sha and
+                .app.id == $app_id and
+                .status == "completed" and
+                .conclusion == "success"
+              )' \
+              <<<"$checks" >/dev/null
+          done < <(jq -r '.required_status_checks.checks[] | [.context, (.app_id | tostring)] | @tsv' <<<"$protection")
+          pull_requests=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls")
+          jq -e --arg sha "$GITHUB_SHA" '
+            [.[] | select(
+              .state == "closed" and
+              .merged_at != null and
+              .base.ref == "main" and
+              .merge_commit_sha == $sha
+            )] | length == 1
+          ' <<<"$pull_requests" >/dev/null
+          pull_number=$(jq -r --arg sha "$GITHUB_SHA" '.[] | select(.state == "closed" and .merged_at != null and .base.ref == "main" and .merge_commit_sha == $sha) | .number' <<<"$pull_requests")
+          pull_head=$(jq -r --arg sha "$GITHUB_SHA" '.[] | select(.state == "closed" and .merged_at != null and .base.ref == "main" and .merge_commit_sha == $sha) | .head.sha' <<<"$pull_requests")
+          reviews=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}/reviews?per_page=100")
+          jq -e --arg reviewer "$EXPECTED_REVIEWER" --arg head "$pull_head" '
+            any(.[];
+              .user.login == $reviewer and
+              .state == "APPROVED" and
+              .commit_id == $head
+            )
+          ' <<<"$reviews" >/dev/null
+          grep -Eq "(^|[[:space:]])@${EXPECTED_REVIEWER}([[:space:]]|$)" .github/CODEOWNERS
+      - name: Read back active no-bypass version-tag protection
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SEC0030_GOVERNANCE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          ruleset_id=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" \
+            --jq '.[] | select(.name == "Protect version tags" and .enforcement == "active") | .id' | head -n 1)
+          test -n "$ruleset_id"
+          ruleset=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets/${ruleset_id}")
+          jq -e '
+            .target == "tag" and
+            (.bypass_actors | type) == "array" and
+            (.bypass_actors | length) == 0 and
+            .conditions.ref_name.include == ["refs/tags/v*"] and
+            .conditions.ref_name.exclude == [] and
+            ([.rules[].type] | index("deletion")) != null and
+            ([.rules[].type] | index("update")) != null and
+            ([.rules[].type] | index("non_fast_forward")) != null and
+            ([.rules[].type] | index("required_signatures")) != null
+          ' <<<"$ruleset" >/dev/null
+
   build:
     name: Build / ${{ matrix.platform }}
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +150,7 @@ jobs:
 
       - name: Build compatible runtime and broker binaries
         run: |
+          cargo test --locked --workspace
           cargo build --locked --release --package arcana-agent-system --bin arcana --target "$TARGET"
           cargo build --locked --release --package arcana-credential-broker --bin arcana-credential-broker --target "$TARGET"
 
@@ -91,11 +201,35 @@ jobs:
     name: Sign, attest, and stage release
     needs: build
     runs-on: ubuntu-24.04
+    environment: sec0030-protected-release
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
+      - name: Read back protected release-environment reviewers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SEC0030_GOVERNANCE_TOKEN }}
+          EXPECTED_REVIEWER: ${{ vars.SEC0030_RELEASE_REVIEWER }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          test -n "$EXPECTED_REVIEWER"
+          reviewer_id=$(gh api "users/${EXPECTED_REVIEWER}" --jq '.id')
+          environment=$(gh api "repos/${GITHUB_REPOSITORY}/environments/sec0030-protected-release")
+          jq -e --arg login "$EXPECTED_REVIEWER" --argjson reviewer_id "$reviewer_id" '
+            .protection_rules[] |
+            select(.type == "required_reviewers") |
+            .prevent_self_review == true and
+            (.reviewers | any(
+              .reviewer.id == $reviewer_id and
+              .reviewer.login == $login
+            ))
+          ' <<<"$environment" >/dev/null
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/environments/sec0030-protected-release/deployment-branch-policies" \
+            --jq 'any(.branch_policies[]; .name == "v*" and .type == "tag")' | grep -qx true
       - name: Download exact platform payloads
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -110,7 +244,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.cdx.json' \) -print0 |
+          find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.cdx.json' -o -name '*.sha256' \) -print0 |
             while IFS= read -r -d '' artifact; do
               cosign sign-blob --yes --bundle "${artifact}.cosign.bundle" "$artifact"
               cosign verify-blob \
@@ -126,11 +260,12 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.cdx.json
+            dist/*.sha256
 
-      - name: Stage draft GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          draft: true
+          draft: false
           fail_on_unmatched_files: true
           generate_release_notes: true
           files: dist/*

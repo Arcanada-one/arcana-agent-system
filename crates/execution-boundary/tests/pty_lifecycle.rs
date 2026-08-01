@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use arcana_execution_boundary::{spawn_pty, CleanEnv, ProcessSpec, TerminalSize, SAFE_SYSTEM_PATH};
+use arcana_execution_boundary::{
+    spawn_pty, BoundaryError, CleanEnv, OutputPolicy, ProcessSpec, TerminalSize, SAFE_SYSTEM_PATH,
+};
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -38,4 +40,18 @@ async fn child_has_a_real_tty_and_observes_resize() {
         Some("41 111".to_owned())
     );
     assert!(child.wait().await.expect("wait").success());
+}
+
+#[test]
+fn pty_refuses_output_policy_it_cannot_enforce() {
+    let dir = TempDir::new().expect("tempdir");
+    let env = CleanEnv::build(&dir.path().join("home"), SAFE_SYSTEM_PATH).expect("env");
+    let spec =
+        ProcessSpec::new(Path::new("/bin/echo"), env).output_policy(OutputPolicy::Quarantine {
+            sentinels: vec![b"sentinel".to_vec()],
+        });
+    assert!(matches!(
+        spawn_pty(&spec, TerminalSize::new(24, 80)),
+        Err(BoundaryError::PtyOutputPolicyUnsupported)
+    ));
 }

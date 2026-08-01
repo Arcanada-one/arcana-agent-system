@@ -331,6 +331,18 @@ fn split_across_stdout_and_stderr_is_blocked() {
 }
 
 #[test]
+fn nested_form_split_across_streams_is_blocked_independent_of_schedule() {
+    let inner = hex_encode(SENTINEL.as_bytes(), false);
+    let nested = b64_encode(inner.as_bytes(), B64Alphabet::Standard, false);
+    let (prefix, suffix) = nested.as_bytes().split_at(nested.len() / 2);
+    let mut s = scanner();
+    assert_eq!(
+        s.check_distributed(prefix, suffix).err(),
+        Some(ScanError::SentinelDetected)
+    );
+}
+
+#[test]
 fn poisoned_scanner_latches() {
     let mut s = scanner();
     assert!(s.push(SENTINEL.as_bytes()).is_err());

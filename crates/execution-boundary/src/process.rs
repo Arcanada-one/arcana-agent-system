@@ -21,17 +21,21 @@ use nix::errno::Errno;
 use nix::pty::{openpty, Winsize as NixWinsize};
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStdout, Command};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::{CleanEnv, EnvError, QuarantineScanner, ScanError, ScannerConfig, Stream};
+use crate::{
+    CleanEnv, EnvError, QuarantineScanner, ScanError, ScannerConfig, Stream, TranscriptChunk,
+    TranscriptError, TranscriptWriter,
+};
 
 /// Deterministic executable search path used by shipped callers.
 ///
 /// Executables themselves must still be supplied as absolute paths. `PATH` is
 /// retained for declared helpers that those executables may invoke.
-pub const SAFE_SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+pub const SAFE_SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_GRACE: Duration = Duration::from_secs(2);
@@ -74,6 +78,7 @@ pub struct ProcessSpec {
     termination_grace: Duration,
     output_limit: usize,
     output_policy: OutputPolicy,
+    transcript: Option<(TranscriptWriter, String)>,
 }
 
 impl ProcessSpec {
@@ -89,6 +94,7 @@ impl ProcessSpec {
             termination_grace: DEFAULT_GRACE,
             output_limit: DEFAULT_OUTPUT_LIMIT,
             output_policy: OutputPolicy::Capture,
+            transcript: None,
         }
     }
 
@@ -145,6 +151,14 @@ impl ProcessSpec {
         self
     }
 
+    /// Persist observation-ordered output through the restrictive transcript
+    /// writer after quarantine succeeds.
+    #[must_use]
+    pub fn transcript(mut self, writer: TranscriptWriter, identifier: impl Into<String>) -> Self {
+        self.transcript = Some((writer, identifier.into()));
+        self
+    }
+
     /// Execute with bounded lifecycle ownership.
     ///
     /// # Errors
@@ -164,59 +178,92 @@ impl ProcessSpec {
             phase: "capture stderr",
             reason: "stderr pipe absent".to_owned(),
         })?;
-        let read_limit = u64::try_from(self.output_limit.saturating_add(1)).unwrap_or(u64::MAX);
-        let stdout_task = tokio::spawn(async move {
-            let mut data = Vec::new();
-            stdout
-                .take(read_limit)
-                .read_to_end(&mut data)
-                .await
-                .map(|_| data)
-        });
-        let stderr_task = tokio::spawn(async move {
-            let mut data = Vec::new();
-            stderr
-                .take(read_limit)
-                .read_to_end(&mut data)
-                .await
-                .map(|_| data)
-        });
+        let (sender, receiver) = mpsc::channel(16);
+        let stdout_task = spawn_output_reader(stdout, Stream::Stdout, sender.clone());
+        let stderr_task = spawn_output_reader(stderr, Stream::Stderr, sender);
+        let internal_cancel = CancellationToken::new();
+        let collector_cancel = internal_cancel.clone();
+        let collector = collect_output(
+            receiver,
+            self.output_limit,
+            self.output_policy.clone(),
+            collector_cancel,
+        );
 
         let deadline = tokio::time::sleep(self.timeout);
         tokio::pin!(deadline);
-        let (status, forced) = tokio::select! {
-            result = child.child_mut().wait() => {
-                (result.map_err(|err| BoundaryError::Io {
-                    phase: "wait",
-                    reason: err.to_string(),
-                })?, None)
-            }
-            () = cancellation.cancelled() => {
-                let status = terminate_group(&mut child, self.termination_grace).await?;
-                (status, Some(Termination::Cancelled))
-            }
-            () = &mut deadline => {
-                let status = terminate_group(&mut child, self.termination_grace).await?;
-                (status, Some(Termination::TimedOut))
+        let lifecycle = async {
+            tokio::select! {
+                result = wait_and_close_group(&mut child) => {
+                    Ok::<_, BoundaryError>((result?, None))
+                }
+                () = cancellation.cancelled() => {
+                    let status = terminate_group(&mut child, self.termination_grace).await?;
+                    Ok::<_, BoundaryError>((status, Some(Termination::Cancelled)))
+                }
+                () = internal_cancel.cancelled() => {
+                    let status = terminate_group(&mut child, self.termination_grace).await?;
+                    Ok::<_, BoundaryError>((status, Some(Termination::Cancelled)))
+                }
+                () = &mut deadline => {
+                    let status = terminate_group(&mut child, self.termination_grace).await?;
+                    Ok::<_, BoundaryError>((status, Some(Termination::TimedOut)))
+                }
             }
         };
-
-        let stdout = join_reader(stdout_task, "read stdout").await?;
-        let stderr = join_reader(stderr_task, "read stderr").await?;
-        if stdout.len().saturating_add(stderr.len()) > self.output_limit {
-            return Err(BoundaryError::OutputLimitExceeded {
-                limit: self.output_limit,
+        let total_deadline = self
+            .timeout
+            .saturating_add(self.termination_grace)
+            .saturating_add(Duration::from_millis(250));
+        let joined =
+            tokio::time::timeout(total_deadline, async { tokio::join!(lifecycle, collector) })
+                .await;
+        let Ok((lifecycle_result, collected_result)) = joined else {
+            internal_cancel.cancel();
+            let pgid = Pid::from_raw(i32::try_from(child.pid).unwrap_or(i32::MAX));
+            let _ = send_group_signal(pgid, Signal::SIGKILL);
+            stdout_task.abort();
+            stderr_task.abort();
+            return Err(BoundaryError::Io {
+                phase: "drain child output",
+                reason: "output streams remained open beyond the lifecycle deadline".to_owned(),
             });
-        }
-        scan_before_release(&self.output_policy, &stdout, &stderr)?;
+        };
+        stdout_task.abort();
+        stderr_task.abort();
+        let collected = collected_result?;
+        let (status, forced) = lifecycle_result?;
+
+        let transcript_artifact = if let Some((writer, identifier)) = &self.transcript {
+            let writer = writer.clone();
+            let identifier = identifier.clone();
+            let chunks = collected.ordered.clone();
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    let borrowed: Vec<_> = chunks
+                        .iter()
+                        .map(|chunk| TranscriptChunk::new(chunk.stream, &chunk.bytes))
+                        .collect();
+                    writer.write(&identifier, &borrowed)
+                })
+                .await
+                .map_err(|error| BoundaryError::Io {
+                    phase: "join transcript writer",
+                    reason: error.to_string(),
+                })??,
+            )
+        } else {
+            None
+        };
 
         let termination = forced.unwrap_or_else(|| termination_from_status(status));
         Ok(BoundaryOutput {
             success: status.success() && matches!(termination, Termination::Exited(0)),
             exit_code: status.code(),
-            stdout,
-            stderr,
+            stdout: collected.stdout,
+            stderr: collected.stderr,
             termination,
+            transcript_artifact,
         })
     }
 }
@@ -229,6 +276,9 @@ pub struct BoundaryOutput {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub termination: Termination,
+    /// Opaque identifier retrievable only through the originating
+    /// [`TranscriptWriter`] capability; it is not a filesystem pathname.
+    pub transcript_artifact: Option<String>,
 }
 
 /// Unambiguous terminal cause.
@@ -255,6 +305,8 @@ pub enum BoundaryError {
     CwdInvalid,
     #[error("terminal rows and columns must both be non-zero")]
     InvalidTerminalSize,
+    #[error("PTY output cannot bypass quarantine or transcript policy")]
+    PtyOutputPolicyUnsupported,
     #[error("sandbox home is a symbolic link")]
     HomeIsSymlink,
     #[error("sandbox home path is not owned by the executor identity")]
@@ -265,6 +317,8 @@ pub enum BoundaryError {
     OutputLimitExceeded { limit: usize },
     #[error("process output quarantined: {0}")]
     OutputQuarantined(#[from] ScanError),
+    #[error("transcript persistence failed: {0}")]
+    Transcript(#[from] TranscriptError),
     #[error("failed to initialise output quarantine: {0}")]
     QuarantineInit(String),
     #[error("{phase} failed: {reason}")]
@@ -276,6 +330,7 @@ pub enum BoundaryError {
 pub struct BoundaryChild {
     pid: u32,
     child: Child,
+    group_closed: bool,
 }
 
 /// A validated terminal size.
@@ -346,14 +401,17 @@ impl PtyChild {
     /// # Errors
     /// Returns a boundary error when the OS wait operation fails.
     pub async fn wait(&mut self) -> Result<ExitStatus, BoundaryError> {
-        self.child
+        let status = self
+            .child
             .child_mut()
             .wait()
             .await
             .map_err(|error| BoundaryError::Io {
                 phase: "wait for pseudo-terminal child",
                 reason: error.to_string(),
-            })
+            })?;
+        self.child.kill_process_group()?;
+        Ok(status)
     }
 
     /// Terminate the PTY child's complete process group.
@@ -382,6 +440,38 @@ impl BoundaryChild {
     pub fn child_mut(&mut self) -> &mut Child {
         &mut self.child
     }
+
+    /// Kill every remaining member of the process group owned by this child.
+    ///
+    /// # Errors
+    /// Returns an I/O error when the kernel refuses group signalling. `ESRCH`
+    /// is treated as success because it proves the group is already empty.
+    pub fn kill_process_group(&mut self) -> Result<(), BoundaryError> {
+        if self.group_closed {
+            return Ok(());
+        }
+        let pgid = Pid::from_raw(i32::try_from(self.pid).unwrap_or(i32::MAX));
+        send_group_signal(pgid, Signal::SIGKILL)?;
+        self.group_closed = true;
+        Ok(())
+    }
+}
+
+impl Drop for BoundaryChild {
+    fn drop(&mut self) {
+        // `tokio::process::Child::kill_on_drop` covers the leader. Explicitly
+        // signal the owned process group as well so dropping a future cannot
+        // strand ordinary descendants merely because async cleanup was not
+        // polled to completion.
+        if !self.group_closed {
+            let pgid = Pid::from_raw(i32::try_from(self.pid).unwrap_or(i32::MAX));
+            let _ = killpg(pgid, Signal::SIGKILL);
+            self.group_closed = true;
+        }
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.start_kill();
+        }
+    }
 }
 
 /// Spawn a clean-environment process-group leader with captured output.
@@ -402,6 +492,9 @@ pub fn spawn_piped(spec: &ProcessSpec) -> Result<BoundaryChild, BoundaryError> {
 /// or spawn failure.
 pub fn spawn_pty(spec: &ProcessSpec, size: TerminalSize) -> Result<PtyChild, BoundaryError> {
     validate(spec)?;
+    if matches!(spec.output_policy, OutputPolicy::Quarantine { .. }) || spec.transcript.is_some() {
+        return Err(BoundaryError::PtyOutputPolicyUnsupported);
+    }
     validate_terminal_size(size)?;
     let home = spec.env.home();
     prepare_home(&home)?;
@@ -456,7 +549,11 @@ pub fn spawn_pty(spec: &ProcessSpec, size: TerminalSize) -> Result<PtyChild, Bou
         reason: "child exited before pid capture".to_owned(),
     })?;
     Ok(PtyChild {
-        child: BoundaryChild { pid, child },
+        child: BoundaryChild {
+            pid,
+            child,
+            group_closed: false,
+        },
         control,
         output: Some(tokio::fs::File::from_std(output_file)),
     })
@@ -507,7 +604,11 @@ fn spawn_with_stderr(
         phase: "capture pid",
         reason: "child exited before pid capture".to_owned(),
     })?;
-    Ok(BoundaryChild { pid, child })
+    Ok(BoundaryChild {
+        pid,
+        child,
+        group_closed: false,
+    })
 }
 
 fn validate(spec: &ProcessSpec) -> Result<(), BoundaryError> {
@@ -608,13 +709,13 @@ async fn terminate_group(
 ) -> Result<ExitStatus, BoundaryError> {
     let pid = Pid::from_raw(i32::try_from(child.pid).unwrap_or(i32::MAX));
     send_group_signal(pid, Signal::SIGTERM)?;
-    if let Ok(result) = tokio::time::timeout(grace, child.child_mut().wait()).await {
+    let status = if let Ok(result) = tokio::time::timeout(grace, child.child_mut().wait()).await {
         result.map_err(|err| BoundaryError::Io {
             phase: "wait after SIGTERM",
             reason: err.to_string(),
-        })
+        })?
     } else {
-        send_group_signal(pid, Signal::SIGKILL)?;
+        child.kill_process_group()?;
         child
             .child_mut()
             .wait()
@@ -622,8 +723,23 @@ async fn terminate_group(
             .map_err(|err| BoundaryError::Io {
                 phase: "wait after SIGKILL",
                 reason: err.to_string(),
-            })
-    }
+            })?
+    };
+    child.kill_process_group()?;
+    Ok(status)
+}
+
+async fn wait_and_close_group(child: &mut BoundaryChild) -> Result<ExitStatus, BoundaryError> {
+    let status = child
+        .child_mut()
+        .wait()
+        .await
+        .map_err(|error| BoundaryError::Io {
+            phase: "wait",
+            reason: error.to_string(),
+        })?;
+    child.kill_process_group()?;
+    Ok(status)
 }
 
 fn send_group_signal(pgid: Pid, signal: Signal) -> Result<(), BoundaryError> {
@@ -636,35 +752,136 @@ fn send_group_signal(pgid: Pid, signal: Signal) -> Result<(), BoundaryError> {
     }
 }
 
-async fn join_reader(
-    task: tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
-    phase: &'static str,
-) -> Result<Vec<u8>, BoundaryError> {
-    task.await
-        .map_err(|err| BoundaryError::Io {
-            phase,
-            reason: err.to_string(),
-        })?
-        .map_err(|err| BoundaryError::Io {
-            phase,
-            reason: err.to_string(),
-        })
+#[derive(Clone)]
+struct ObservedChunk {
+    stream: Stream,
+    bytes: Vec<u8>,
 }
 
-fn scan_before_release(
-    policy: &OutputPolicy,
-    stdout: &[u8],
-    stderr: &[u8],
-) -> Result<(), BoundaryError> {
-    let OutputPolicy::Quarantine { sentinels } = policy else {
-        return Ok(());
+struct CollectedOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    ordered: Vec<ObservedChunk>,
+}
+
+enum OutputEvent {
+    Chunk(ObservedChunk),
+    Done(Result<(), String>),
+}
+
+fn spawn_output_reader<R>(
+    mut reader: R,
+    stream: Stream,
+    sender: mpsc::Sender<OutputEvent>,
+) -> tokio::task::JoinHandle<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer).await {
+                Ok(0) => {
+                    let _ = sender.send(OutputEvent::Done(Ok(()))).await;
+                    break;
+                }
+                Ok(count) => {
+                    if sender
+                        .send(OutputEvent::Chunk(ObservedChunk {
+                            stream,
+                            bytes: buffer[..count].to_vec(),
+                        }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(OutputEvent::Done(Err(error.to_string()))).await;
+                    break;
+                }
+            }
+        }
+    })
+}
+
+async fn collect_output(
+    mut receiver: mpsc::Receiver<OutputEvent>,
+    limit: usize,
+    policy: OutputPolicy,
+    cancellation: CancellationToken,
+) -> Result<CollectedOutput, BoundaryError> {
+    let mut scanner = match policy {
+        OutputPolicy::Capture => None,
+        OutputPolicy::Quarantine { sentinels } => Some(
+            QuarantineScanner::new(sentinels, ScannerConfig::default())
+                .map_err(|error| BoundaryError::QuarantineInit(error.to_string()))?,
+        ),
     };
-    let mut scanner = QuarantineScanner::new(sentinels.clone(), ScannerConfig::default())
-        .map_err(|err| BoundaryError::QuarantineInit(err.to_string()))?;
-    let _ = scanner.push_stream(Stream::Stdout, stdout)?;
-    let _ = scanner.push_stream(Stream::Stderr, stderr)?;
-    let _ = scanner.finish()?;
-    Ok(())
+    let mut collected = CollectedOutput {
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        ordered: Vec::new(),
+    };
+    let mut total = 0usize;
+    let mut completed = 0usize;
+    while let Some(event) = receiver.recv().await {
+        match event {
+            OutputEvent::Chunk(chunk) => {
+                total = total.checked_add(chunk.bytes.len()).ok_or_else(|| {
+                    cancellation.cancel();
+                    BoundaryError::OutputLimitExceeded { limit }
+                })?;
+                if total > limit {
+                    cancellation.cancel();
+                    return Err(BoundaryError::OutputLimitExceeded { limit });
+                }
+                if let Some(scanner) = &mut scanner {
+                    if let Err(error) = scanner.push_stream(chunk.stream, &chunk.bytes) {
+                        cancellation.cancel();
+                        return Err(BoundaryError::OutputQuarantined(error));
+                    }
+                }
+                match chunk.stream {
+                    Stream::Stdout => collected.stdout.extend_from_slice(&chunk.bytes),
+                    Stream::Stderr => collected.stderr.extend_from_slice(&chunk.bytes),
+                }
+                collected.ordered.push(chunk);
+            }
+            OutputEvent::Done(result) => {
+                if let Err(reason) = result {
+                    cancellation.cancel();
+                    return Err(BoundaryError::Io {
+                        phase: "read child output",
+                        reason,
+                    });
+                }
+                completed += 1;
+                if completed == 2 {
+                    break;
+                }
+            }
+        }
+    }
+    if completed != 2 {
+        cancellation.cancel();
+        return Err(BoundaryError::Io {
+            phase: "read child output",
+            reason: "output channels closed before both streams completed".to_owned(),
+        });
+    }
+    if let Some(scanner) = &mut scanner {
+        if let Err(error) = scanner.check_distributed(&collected.stdout, &collected.stderr) {
+            cancellation.cancel();
+            return Err(BoundaryError::OutputQuarantined(error));
+        }
+        if let Err(error) = scanner.finish() {
+            cancellation.cancel();
+            return Err(BoundaryError::OutputQuarantined(error));
+        }
+    }
+    Ok(collected)
 }
 
 fn termination_from_status(status: ExitStatus) -> Termination {

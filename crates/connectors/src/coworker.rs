@@ -39,7 +39,7 @@ const ENV_BIN_OVERRIDE: &str = "ARCANA_COWORKER_BIN";
 
 /// Relative fallback used only when `$HOME` cannot be resolved at all (should
 /// not happen on any supported deployment target, but avoids a panic).
-const DEFAULT_BIN_RELATIVE: &str = ".local/bin/coworker";
+const DEFAULT_BIN_ABSOLUTE: &str = "/usr/local/bin/coworker";
 
 /// Captured result of one `coworker` subprocess invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,7 +147,7 @@ fn push_option_flag(args: &mut Vec<String>, flag: &str, value: Option<&str>) {
 /// unit-testable without mutating process-global env state.
 ///
 /// Precedence: non-blank `override_bin` wins; otherwise `$HOME/.local/bin/coworker`;
-/// otherwise the bare relative fallback `.local/bin/coworker`.
+/// otherwise the conventional absolute fallback `/usr/local/bin/coworker`.
 #[must_use]
 fn resolve_bin_path(override_bin: Option<&str>, home: Option<&str>) -> PathBuf {
     if let Some(over) = override_bin.map(str::trim).filter(|s| !s.is_empty()) {
@@ -158,7 +158,7 @@ fn resolve_bin_path(override_bin: Option<&str>, home: Option<&str>) -> PathBuf {
             .join(".local")
             .join("bin")
             .join("coworker"),
-        None => PathBuf::from(DEFAULT_BIN_RELATIVE),
+        None => PathBuf::from(DEFAULT_BIN_ABSOLUTE),
     }
 }
 
@@ -267,17 +267,27 @@ impl CoworkerClient {
     /// code. The constant descriptor-sweep wrapper preserves `args` as literal
     /// argv entries and never evaluates them as shell source.
     async fn run(&self, args: &[String]) -> Result<CoworkerOutput, CoworkerError> {
+        let cwd = std::env::current_dir().map_err(|err| CoworkerError::Spawn {
+            bin: self.bin_path.display().to_string(),
+            reason: format!("resolve working directory: {err}"),
+        })?;
+        let bin_path = if self.bin_path.is_absolute() {
+            self.bin_path.clone()
+        } else {
+            cwd.join(&self.bin_path)
+        };
         let env = CleanEnv::build(Path::new("/tmp/arcana-runtime/coworker"), SAFE_SYSTEM_PATH)
             .map_err(|err| CoworkerError::Spawn {
-                bin: self.bin_path.display().to_string(),
+                bin: bin_path.display().to_string(),
                 reason: err.to_string(),
             })?;
-        let output = ProcessSpec::new(&self.bin_path, env)
+        let output = ProcessSpec::new(&bin_path, env)
             .args(args.iter().cloned())
+            .cwd(cwd)
             .run(CancellationToken::new())
             .await
             .map_err(|err| CoworkerError::Spawn {
-                bin: self.bin_path.display().to_string(),
+                bin: bin_path.display().to_string(),
                 reason: err.to_string(),
             })?;
         Ok(CoworkerOutput {
@@ -407,9 +417,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_bin_path_falls_back_to_relative_when_home_missing() {
+    fn resolve_bin_path_falls_back_to_absolute_when_home_missing() {
         let resolved = resolve_bin_path(None, None);
-        assert_eq!(resolved, PathBuf::from(DEFAULT_BIN_RELATIVE));
+        assert_eq!(resolved, PathBuf::from(DEFAULT_BIN_ABSOLUTE));
     }
 
     #[test]

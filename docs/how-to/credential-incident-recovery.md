@@ -39,6 +39,13 @@ Step 6 comes last because removing the distribution path before a replacement
 exists leaves the host with no credential path at all and no way to restore one.
 Step 3 does not have that problem, which is why it does not wait.
 
+Do not create a dummy value at the production destination merely to make the
+path “exist.” A placeholder creates a real secret version, can make consumers
+mistake path existence for credential readiness, and pollutes the audit/version
+history. It is safe to pre-stage policy or metadata only when data reads still
+report absent. The first data version at the destination must be the actual
+console-issued replacement, written with the store's create-only/CAS guard.
+
 ## Inventorying copies without leaking them
 
 Read the credential from the process environment inside your script — never pass

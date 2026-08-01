@@ -7,7 +7,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use arcana_credential_broker::audit::{AuditRecord, CausalIds, EventKind};
+use arcana_credential_broker::audit::{AuditRecord, AuditWriter, CausalIds, EventKind};
 use arcana_credential_broker::CapabilityPolicy;
 
 #[path = "../broker/broker_runtime.rs"]
@@ -29,6 +29,7 @@ enum StartupRefusal {
     SourceInvalidSize(PathBuf),
     RunningAsExecutorUid(u32),
     SourceEmpty(PathBuf),
+    UnsupportedCredentialAttestation(&'static str),
 }
 
 impl std::fmt::Display for StartupRefusal {
@@ -66,6 +67,10 @@ impl std::fmt::Display for StartupRefusal {
             Self::SourceEmpty(path) => {
                 write!(formatter, "credential source is empty: {}", path.display())
             }
+            Self::UnsupportedCredentialAttestation(platform) => write!(
+                formatter,
+                "credentialed broker mode is unsupported on {platform}: the required per-message attestation backend is not installed"
+            ),
         }
     }
 }
@@ -76,6 +81,8 @@ struct Args {
     credential_source: PathBuf,
     mock_provider: bool,
     max_connections: usize,
+    state_file: PathBuf,
+    audit_file: PathBuf,
 }
 
 fn parse_args() -> Result<Args, StartupRefusal> {
@@ -84,6 +91,8 @@ fn parse_args() -> Result<Args, StartupRefusal> {
     let mut credential_source = PathBuf::from("/etc/arcana/credential-broker/provider.key");
     let mut mock_provider = false;
     let mut max_connections = 32usize;
+    let mut state_file = PathBuf::from("/var/lib/arcana-credential-broker/broker-state.json");
+    let mut audit_file = PathBuf::from("/var/lib/arcana-credential-broker/audit.log");
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -112,6 +121,16 @@ fn parse_args() -> Result<Args, StartupRefusal> {
                         )
                     })?;
             }
+            "--state" => {
+                state_file = PathBuf::from(args.next().ok_or_else(|| {
+                    StartupRefusal::Arguments("--state requires a path".to_owned())
+                })?);
+            }
+            "--audit" => {
+                audit_file = PathBuf::from(args.next().ok_or_else(|| {
+                    StartupRefusal::Arguments("--audit requires a path".to_owned())
+                })?);
+            }
             "--mock-provider" => mock_provider = true,
             unknown => {
                 return Err(StartupRefusal::Arguments(format!(
@@ -126,11 +145,19 @@ fn parse_args() -> Result<Args, StartupRefusal> {
         credential_source,
         mock_provider,
         max_connections,
+        state_file,
+        audit_file,
     })
 }
 
 fn effective_uid() -> u32 {
     nix::unistd::geteuid().as_raw()
+}
+
+fn credential_attestation_ready() -> bool {
+    // Deliberately false until the platform-specific backends described at
+    // the call site exist and pass their live falsification suites.
+    false
 }
 
 fn load_credential(source: &Path, executor_uid: u32) -> Result<String, StartupRefusal> {
@@ -224,7 +251,10 @@ fn load_policy(path: &Path) -> Result<CapabilityPolicy, StartupRefusal> {
             "policy exceeds the size limit".to_owned(),
         ));
     }
-    toml::from_str(&body).map_err(|error| StartupRefusal::Policy(error.to_string()))
+    let policy: CapabilityPolicy =
+        toml::from_str(&body).map_err(|error| StartupRefusal::Policy(error.to_string()))?;
+    policy.validate().map_err(StartupRefusal::Policy)?;
+    Ok(policy)
 }
 
 fn now_unix() -> u64 {
@@ -242,6 +272,16 @@ async fn main() -> ExitCode {
         let adapter = if args.mock_provider {
             AdapterMode::Mock
         } else {
+            // A stream UDS plus sampled PID/path identity is insufficient: a
+            // connected descriptor can be handed off and `/proc`/proc_pidpath
+            // is mutable post-event state. Until Linux SCM_CREDENTIALS plus an
+            // enforcing per-message LSM label, or macOS XPC audit-token code
+            // validation, is implemented, secret-bearing mode must not start.
+            if !credential_attestation_ready() {
+                return Err(StartupRefusal::UnsupportedCredentialAttestation(
+                    std::env::consts::OS,
+                ));
+            }
             AdapterMode::Http(Credential::new(load_credential(
                 &args.credential_source,
                 policy.executor_uid,
@@ -253,12 +293,18 @@ async fn main() -> ExitCode {
             credential_id: (!args.mock_provider).then(|| "provider-primary".to_owned()),
             ..CausalIds::default()
         };
-        println!("{record}");
+        let mut audit = AuditWriter::open(&args.audit_file)
+            .map_err(|error| StartupRefusal::Arguments(error.to_string()))?;
+        audit
+            .append(&record)
+            .map_err(|error| StartupRefusal::Arguments(error.to_string()))?;
         broker_runtime::serve(ServerConfig {
             socket: args.socket,
             policy,
             adapter,
             max_connections: args.max_connections,
+            state_file: args.state_file,
+            audit,
         })
         .await
         .map_err(StartupRefusal::Arguments)

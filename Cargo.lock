@@ -170,8 +170,10 @@ dependencies = [
  "nix",
  "reqwest 0.13.1",
  "rustix",
+ "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
@@ -186,6 +188,7 @@ version = "0.1.0"
 dependencies = [
  "nix",
  "rustix",
+ "syn",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

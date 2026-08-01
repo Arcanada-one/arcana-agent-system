@@ -10,9 +10,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint-test:
-    runs-on: [self-hosted, Linux, X64, ci-general]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -26,7 +29,7 @@ jobs:
         run: cargo test --workspace
 
   platform-isolation:
-    name: platform-isolation / ${{ matrix.platform }}
+    name: platform-contract-mock / ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,13 +57,9 @@ jobs:
     uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@4b8aa52370e0948d16db6d47a548083c97604f3f
     with:
       stack: rust_cargo
-      # The default runner_labels (["self-hosted","linux"]) match any self-hosted
-      # Linux runner, including images with no C toolchain. `cargo install
-      # cargo-audit cargo-deny` then fails at link time with `linker \`cc\` not
-      # found`, which surfaces as a security-gate failure that has nothing to do
-      # with the code under test. Pin to the same runner as lint-test, which
-      # compiles this workspace and therefore provably has a working toolchain.
-      runner_labels: '["self-hosted","Linux","X64","ci-general"]'
+      # Public pull-request code must not execute on a persistent self-hosted
+      # runner. Use an ephemeral GitHub-hosted image.
+      runner_labels: '["ubuntu-24.04"]'
 
   network-exposure-lint:
     uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@4b8aa52370e0948d16db6d47a548083c97604f3f

@@ -19,6 +19,8 @@ pub struct ProviderRule {
     pub models: ExactSet,
     /// Operations permitted for this provider.
     pub operations: BTreeSet<Operation>,
+    /// Trusted per-operation quota costs. A caller cannot reduce these.
+    pub quota_costs: BTreeMap<Operation, u32>,
     /// The one upstream base URL this provider may talk to.
     pub upstream: String,
 }
@@ -44,6 +46,65 @@ pub struct CapabilityPolicy {
 }
 
 impl CapabilityPolicy {
+    /// Validate the closed policy before a broker begins serving.
+    ///
+    /// # Errors
+    /// Returns a status-only reason for empty scopes, wildcards, or incomplete
+    /// trusted quota costs.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.quota_limit == 0
+            || self.executables.is_empty()
+            || self.profiles.is_empty()
+            || self.sessions.is_empty()
+            || self.providers.is_empty()
+        {
+            return Err("policy contains an empty required scope or zero quota".to_owned());
+        }
+        for executable in &self.executables {
+            if !executable.is_absolute() {
+                return Err("policy executable paths must be absolute".to_owned());
+            }
+        }
+        if self.profiles.iter().any(|profile| !is_exact(&profile.0))
+            || self.sessions.iter().any(|session| !is_exact(session))
+        {
+            return Err("policy profile/session values must be exact".to_owned());
+        }
+        for (provider, rule) in &self.providers {
+            if !is_exact(provider)
+                || !is_exact(&rule.upstream)
+                || rule.models.is_empty()
+                || rule.operations.is_empty()
+                || rule.models.iter().any(|model| !is_exact(model))
+            {
+                return Err("provider policy contains an empty or wildcard scope".to_owned());
+            }
+            let upstream = url::Url::parse(&rule.upstream)
+                .map_err(|_| "provider upstream must be a valid URL".to_owned())?;
+            if upstream.scheme() != "https"
+                || upstream.host_str().is_none()
+                || !upstream.username().is_empty()
+                || upstream.password().is_some()
+                || upstream.query().is_some()
+                || upstream.fragment().is_some()
+            {
+                return Err("provider upstream must be credential-free absolute HTTPS".to_owned());
+            }
+            if rule.quota_costs.len() != rule.operations.len()
+                || rule
+                    .operations
+                    .iter()
+                    .any(|operation| rule.quota_costs.get(operation).copied().unwrap_or(0) == 0)
+            {
+                return Err(
+                    "every allowed operation must have exactly one positive trusted quota cost"
+                        .to_owned(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Validate a request against policy, independent of quota and replay.
     ///
     /// Ordering is deliberate: identity first, then generation, then scope, then
@@ -63,6 +124,15 @@ impl CapabilityPolicy {
         }
         if req.idempotency.0.trim().is_empty() {
             return Err(Denial::MissingIdempotencyKey);
+        }
+        if req.idempotency.0.len() > 128
+            || !req
+                .idempotency
+                .0
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(Denial::InvalidIdempotencyKey);
         }
 
         // Identity, from kernel-attested peer credentials.
@@ -93,6 +163,11 @@ impl CapabilityPolicy {
         if !rule.operations.contains(&req.operation) {
             return Err(Denial::OperationNotAllowed);
         }
+        if rule.quota_costs.get(&req.operation).copied() != Some(req.quota_units)
+            || req.quota_units == 0
+        {
+            return Err(Denial::InvalidQuotaCost);
+        }
         if req.upstream != rule.upstream {
             return Err(Denial::Upstream);
         }
@@ -110,5 +185,15 @@ impl CapabilityPolicy {
     #[must_use]
     pub fn provider_names(&self) -> Vec<&str> {
         self.providers.keys().map(String::as_str).collect()
+    }
+
+    /// Resolve a caller-independent quota cost from policy.
+    #[must_use]
+    pub fn quota_cost(&self, provider: &str, operation: Operation) -> Option<u32> {
+        self.providers
+            .get(provider)
+            .and_then(|rule| rule.quota_costs.get(&operation))
+            .copied()
+            .filter(|cost| *cost > 0)
     }
 }

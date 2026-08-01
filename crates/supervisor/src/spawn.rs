@@ -53,6 +53,14 @@ impl SpawnedChild {
     pub fn child_mut(&mut self) -> &mut tokio::process::Child {
         self.child.child_mut()
     }
+
+    /// Kill every process that remains in the owned process group.
+    ///
+    /// # Errors
+    /// Propagates execution-boundary signal-delivery failure.
+    pub fn kill_process_group(&mut self) -> Result<(), SupervisorError> {
+        self.child.kill_process_group().map_err(Into::into)
+    }
 }
 
 /// Spawn `spec` as a new process-group leader with piped stdout.
@@ -70,8 +78,13 @@ pub fn spawn_process_group(id: u64, spec: &ChildSpec) -> Result<SpawnedChild, Su
         SAFE_SYSTEM_PATH,
     )
     .map_err(BoundaryError::from)?;
-    let boundary_spec =
-        ProcessSpec::new(Path::new(spec.program()), env).args(spec.args().iter().cloned());
+    let cwd = std::env::current_dir().map_err(|error| BoundaryError::Io {
+        phase: "resolve supervisor working directory",
+        reason: error.to_string(),
+    })?;
+    let boundary_spec = ProcessSpec::new(Path::new(spec.program()), env)
+        .args(spec.args().iter().cloned())
+        .cwd(cwd);
     let mut child = spawn_supervised(&boundary_spec)?;
     let raw_pid = child.pid();
     let pid = Pid::from_raw(pid_to_raw(raw_pid));

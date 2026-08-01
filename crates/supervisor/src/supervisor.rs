@@ -210,9 +210,23 @@ impl SuperviseTask {
                     };
                 }
                 Step::Exited { success: true } => {
+                    if self.child.kill_process_group().is_err() {
+                        self.emit("escalate", child_id);
+                        return SupervisionOutcome::Escalated {
+                            child_id,
+                            reason: "process_group_cleanup_failed".to_string(),
+                        };
+                    }
                     return SupervisionOutcome::Completed { child_id };
                 }
                 Step::Exited { success: false } => {
+                    if self.child.kill_process_group().is_err() {
+                        self.emit("escalate", child_id);
+                        return SupervisionOutcome::Escalated {
+                            child_id,
+                            reason: "process_group_cleanup_failed".to_string(),
+                        };
+                    }
                     if let Some(outcome) = self
                         .handle_failure(child_id, &mut restarts, &mut window_start, &mut deadline)
                         .await

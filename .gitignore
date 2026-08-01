@@ -16,6 +16,7 @@ Cargo.lock.bak
 
 # Ephemeral docs (transient working material)
 /docs/ephemeral/
+/.mandate.md
 
 # Build / dist artefacts
 /dist/

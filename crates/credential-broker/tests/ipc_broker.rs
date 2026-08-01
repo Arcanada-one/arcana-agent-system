@@ -65,6 +65,7 @@ sessions = [{session:?}]
 upstream = "https://api.example-provider.test/v1"
 models = ["model-small"]
 operations = ["completion", "list_models"]
+quota_costs = {{ completion = 1, list_models = 1 }}
 "#,
         executable = executable.display(),
     );
@@ -77,6 +78,11 @@ fn start_broker(dir: &TempDir) -> (BrokerGuard, PathBuf) {
     let policy = dir.path().join("policy.toml");
     let _ = write_policy(&policy);
     let socket = dir.path().join("broker.sock");
+    if socket.exists() {
+        std::fs::remove_file(&socket).expect("remove stale test socket");
+    }
+    let state = dir.path().join("state/broker-state.json");
+    let audit = dir.path().join("state/audit.log");
     let mut child = Command::new(env!("CARGO_BIN_EXE_arcana-credential-broker"))
         .args([
             "--mock-provider",
@@ -84,6 +90,10 @@ fn start_broker(dir: &TempDir) -> (BrokerGuard, PathBuf) {
             policy.to_str().expect("policy path"),
             "--socket",
             socket.to_str().expect("socket path"),
+            "--state",
+            state.to_str().expect("state path"),
+            "--audit",
+            audit.to_str().expect("audit path"),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -123,7 +133,6 @@ fn valid_request(idempotency: &str) -> Value {
         "model": "model-small",
         "operation": "completion",
         "upstream": "https://api.example-provider.test/v1",
-        "quota_units": 1,
         "expires_at": now + 60,
         "idempotency": idempotency,
         "payload": {"messages": [{"role": "user", "content": "hello"}]}
@@ -133,26 +142,184 @@ fn valid_request(idempotency: &str) -> Value {
 #[test]
 fn permissioned_ipc_attests_peer_and_replays_without_second_provider_call() {
     let dir = TempDir::new().expect("tempdir");
-    let (_broker, socket) = start_broker(&dir);
+    let (broker, socket) = start_broker(&dir);
+    let expected_mode = if cfg!(target_os = "macos") {
+        0o666
+    } else {
+        0o660
+    };
     assert_eq!(
         std::fs::metadata(&socket)
             .expect("socket metadata")
             .permissions()
             .mode()
             & 0o777,
-        0o660
+        expected_mode
     );
 
-    let first = request(&socket, &valid_request("ipc-idem-1"));
+    let retry_request = valid_request("ipc-idem-1");
+    let first = request(&socket, &retry_request);
     assert_eq!(first["ok"], true);
     assert_eq!(first["replayed"], false);
     assert_eq!(first["body"]["provider_calls"], 1);
 
-    let replay = request(&socket, &valid_request("ipc-idem-1"));
+    let replay = request(&socket, &retry_request);
     assert_eq!(replay["ok"], true);
     assert_eq!(replay["replayed"], true);
     assert_eq!(replay["body"]["provider_calls"], 1);
     assert_eq!(replay["outcome_id"], first["outcome_id"]);
+    drop(broker);
+    let audit =
+        std::fs::read_to_string(dir.path().join("state/audit.log")).expect("read terminal audit");
+    assert!(audit.contains("event=provider_response_success"));
+    assert!(audit.contains("status=200"));
+    assert!(audit.contains("event=replay_served"));
+    assert!(!audit.contains("event=replay_pending"));
+}
+
+#[test]
+fn idempotent_response_survives_broker_restart_without_second_provider_call() {
+    let dir = TempDir::new().expect("tempdir");
+    let (broker, socket) = start_broker(&dir);
+    let retry_request = valid_request("restart-idem-1");
+    let first = request(&socket, &retry_request);
+    assert_eq!(first["body"]["provider_calls"], 1);
+    drop(broker);
+
+    let (_restarted, socket) = start_broker(&dir);
+    let replay = request(&socket, &retry_request);
+    assert_eq!(replay["ok"], true);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["body"]["provider_calls"], 1);
+    assert_eq!(replay["outcome_id"], first["outcome_id"]);
+}
+
+#[test]
+fn committed_reservation_without_cached_outcome_audits_replay_pending() {
+    let dir = TempDir::new().expect("tempdir");
+    let (broker, socket) = start_broker(&dir);
+    let retry_request = valid_request("pending-idem-1");
+    assert_eq!(request(&socket, &retry_request)["ok"], true);
+    drop(broker);
+
+    let state = dir.path().join("state/broker-state.json");
+    let mut encoded: Value =
+        serde_json::from_slice(&std::fs::read(&state).expect("read durable state"))
+            .expect("parse durable state");
+    encoded["cached"] = serde_json::json!({});
+    std::fs::write(
+        &state,
+        serde_json::to_vec(&encoded).expect("serialize pending state"),
+    )
+    .expect("write pending state");
+
+    let (_restarted, socket) = start_broker(&dir);
+    let pending = request(&socket, &retry_request);
+    assert_eq!(pending["ok"], false);
+    assert_eq!(pending["code"], "in_progress");
+    assert!(pending["outcome_id"].is_string());
+    let audit =
+        std::fs::read_to_string(dir.path().join("state/audit.log")).expect("read terminal audit");
+    assert!(audit.contains("event=replay_pending"));
+}
+
+#[test]
+fn committed_cache_without_matching_outcome_id_fails_closed_on_restart() {
+    let dir = TempDir::new().expect("tempdir");
+    let (broker, socket) = start_broker(&dir);
+    let first = request(&socket, &valid_request("corrupt-outcome-1"));
+    assert_eq!(first["ok"], true);
+    drop(broker);
+
+    let state = dir.path().join("state/broker-state.json");
+    let mut encoded: Value =
+        serde_json::from_slice(&std::fs::read(&state).expect("read durable state"))
+            .expect("parse durable state");
+    let cached = encoded["cached"]
+        .as_object_mut()
+        .and_then(|entries| entries.values_mut().next())
+        .expect("cached response");
+    cached["outcome_id"] = Value::Null;
+    std::fs::write(
+        &state,
+        serde_json::to_vec(&encoded).expect("serialize corrupted state"),
+    )
+    .expect("write corrupted state");
+
+    let policy = dir.path().join("policy.toml");
+    let socket = dir.path().join("broker.sock");
+    if socket.exists() {
+        std::fs::remove_file(&socket).expect("remove stale socket");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_arcana-credential-broker"))
+        .args([
+            "--mock-provider",
+            "--policy",
+            policy.to_str().expect("policy path"),
+            "--socket",
+            socket.to_str().expect("socket path"),
+            "--state",
+            state.to_str().expect("state path"),
+            "--audit",
+            dir.path()
+                .join("state/audit.log")
+                .to_str()
+                .expect("audit path"),
+        ])
+        .output()
+        .expect("restart broker");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("durable response cache is inconsistent with the ledger"));
+}
+
+#[test]
+fn reused_idempotency_key_with_changed_payload_is_denied() {
+    let dir = TempDir::new().expect("tempdir");
+    let (_broker, socket) = start_broker(&dir);
+    let original = valid_request("conflict-idem-1");
+    let first = request(&socket, &original);
+    assert_eq!(first["ok"], true);
+
+    let mut changed = original;
+    changed["payload"]["messages"][0]["content"] = json!("different");
+    let conflict = request(&socket, &changed);
+    assert_eq!(conflict["ok"], false);
+    assert_eq!(conflict["code"], "denied");
+    assert!(conflict["reason"]
+        .as_str()
+        .is_some_and(|reason| reason.contains("different request")));
+}
+
+#[test]
+fn credentialed_mode_refuses_sampled_stream_identity_before_reading_a_secret() {
+    let dir = TempDir::new().expect("tempdir");
+    let policy = dir.path().join("policy.toml");
+    let _ = write_policy(&policy);
+    let socket = dir.path().join("credentialed.sock");
+    let credential = dir.path().join("must-not-be-read");
+    let state = dir.path().join("state/broker-state.json");
+    let audit = dir.path().join("state/audit.log");
+    let output = Command::new(env!("CARGO_BIN_EXE_arcana-credential-broker"))
+        .args([
+            "--policy",
+            policy.to_str().expect("policy path"),
+            "--socket",
+            socket.to_str().expect("socket path"),
+            "--credential-source",
+            credential.to_str().expect("credential path"),
+            "--state",
+            state.to_str().expect("state path"),
+            "--audit",
+            audit.to_str().expect("audit path"),
+        ])
+        .output()
+        .expect("run broker");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("per-message attestation backend is not installed"));
+    assert!(!stderr.contains("credential source is absent"));
+    assert!(!socket.exists());
 }
 
 #[test]

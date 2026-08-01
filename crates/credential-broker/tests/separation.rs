@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use arcana_credential_broker::audit::{AuditRecord, CausalIds, EventKind};
+use arcana_credential_broker::audit::{AuditError, AuditRecord, AuditWriter, CausalIds, EventKind};
 use arcana_credential_broker::protocol::{Generation, Operation};
 use std::path::{Path, PathBuf};
 
@@ -119,6 +119,26 @@ fn audit_record_has_no_free_form_payload() {
     }
 }
 
+#[test]
+fn provider_failures_have_distinct_terminal_audit_kinds() {
+    assert_eq!(
+        EventKind::ProviderRequestRejected.as_str(),
+        "provider_request_rejected"
+    );
+    assert_eq!(
+        EventKind::ProviderOutcomeUnknown.as_str(),
+        "provider_outcome_unknown"
+    );
+    assert_eq!(
+        EventKind::ProviderResponseSuccess.as_str(),
+        "provider_response_success"
+    );
+    assert_eq!(
+        EventKind::ProviderResponseError.as_str(),
+        "provider_response_error"
+    );
+}
+
 /// A fully-populated record renders every required causal ID and no content.
 #[test]
 fn audit_record_renders_required_causal_ids() {
@@ -171,6 +191,33 @@ fn audit_record_renders_required_causal_ids() {
     }
     // The credential *identifier* appears; no credential value can.
     assert!(line.contains("credential_id=provider-primary"));
+}
+
+#[test]
+fn audit_writer_is_owner_only_and_rejects_forged_labels() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let path = dir.path().join("audit-state/audit.log");
+    let mut writer = AuditWriter::open(&path).expect("audit writer");
+    let mut safe = AuditRecord::new(1_700_000_000, EventKind::BrokerStart);
+    safe.ids.generation = Some(Generation(7));
+    writer.append(&safe).expect("append");
+    assert_eq!(
+        std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+
+    let mut forged = AuditRecord::new(1_700_000_001, EventKind::PolicyDeny);
+    forged.ids.execution = Some("forged\nevent=policy_allow".to_owned());
+    assert!(matches!(
+        writer.append(&forged),
+        Err(AuditError::InvalidIdentifier)
+    ));
 }
 
 /// The broker binary must never render the credential it loads.

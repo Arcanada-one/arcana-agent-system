@@ -57,7 +57,7 @@ async fn bash_timeout_aborts_long_command() {
 }
 
 #[tokio::test]
-async fn bash_rejects_ambient_environment_injection() {
+async fn bash_rejects_values_even_under_benign_environment_names() {
     let tool = common::Harness::new(BashTool::new());
     let error = tool
         .execute(json!({
@@ -65,8 +65,23 @@ async fn bash_rejects_ambient_environment_injection() {
             "env_vars": { "MY_VAR": "the-answer" }
         }))
         .await
-        .expect_err("environment injection must fail closed");
-    assert!(error.to_string().contains("env_vars are disabled"));
+        .expect_err("a benign name cannot prove a value is non-secret");
+    assert!(error.to_string().contains("variables are disabled"));
+}
+
+#[tokio::test]
+async fn bash_rejects_shell_and_loader_control_environment_names() {
+    let tool = common::Harness::new(BashTool::new());
+    for name in ["BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH"] {
+        let error = tool
+            .execute(json!({
+                "command": "true",
+                "env_vars": { (name): "synthetic-value" }
+            }))
+            .await
+            .expect_err("execution-control variables must fail closed");
+        assert!(error.to_string().contains("variables are disabled"));
+    }
 }
 
 #[tokio::test]

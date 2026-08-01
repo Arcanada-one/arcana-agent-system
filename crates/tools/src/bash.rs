@@ -98,20 +98,18 @@ impl Tool for BashTool {
         let parsed: BashInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
         let timeout_secs = parsed.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS);
-        if !parsed.env_vars.is_empty() {
-            return Err(ToolError::InvalidInput(
-                "env_vars are disabled: subprocesses receive only the constructed clean environment"
-                    .to_owned(),
-            ));
-        }
-
         let env = CleanEnv::build(
             std::path::Path::new("/tmp/arcana-runtime/bash"),
             SAFE_SYSTEM_PATH,
         )
+        .and_then(|env| env.with_declared_vars(&parsed.env_vars))
         .map_err(|err| ToolError::ExecutionFailed(format!("clean environment: {err}")))?;
+        let cwd = std::env::current_dir().map_err(|err| {
+            ToolError::ExecutionFailed(format!("resolve working directory: {err}"))
+        })?;
         let output = ProcessSpec::new(std::path::Path::new("/bin/sh"), env)
             .args(["-c", parsed.command.as_str()])
+            .cwd(cwd)
             .timeout(Duration::from_secs(timeout_secs))
             .run(CancellationToken::new())
             .await
@@ -140,8 +138,12 @@ impl Tool for BashTool {
                 metadata: Some(metadata),
             })
         } else {
+            let cause = match output.termination {
+                Termination::Signal(signal) => format!("signal {signal}"),
+                _ => format!("exit {exit_code}"),
+            };
             Err(ToolError::ExecutionFailed(format!(
-                "exit {exit_code}: {}",
+                "{cause}: {}",
                 stderr.trim()
             )))
         }

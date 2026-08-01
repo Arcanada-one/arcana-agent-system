@@ -68,7 +68,7 @@ fn systemd_unit_declares_required_isolation() {
         "MemoryDenyWriteExecute=yes",
         "RestrictSUIDSGID=yes",
         "ProtectSystem=strict",
-        "RuntimeDirectory=arcana-credential-broker",
+        "StateDirectory=arcana-credential-broker",
     ] {
         assert!(
             unit.contains(directive),
@@ -104,12 +104,20 @@ fn systemd_socket_is_group_scoped_not_world() {
         "socket must never be world-accessible"
     );
     // A unix socket, not a TCP port: no network exposure surface.
-    assert!(sock.contains("ListenStream=/run/"));
+    assert!(sock.contains("ListenSequentialPacket=/run/"));
+    assert!(
+        !sock.contains("ListenStream="),
+        "credentialed transport must not fall back to connection-cached stream identity"
+    );
 }
 
 #[test]
 fn tmpfiles_requires_restrictive_credential_source() {
     let tf = read("linux/arcana-credential-broker.tmpfiles.conf");
+    assert!(
+        tf.contains("/run/arcana-credential-broker 0750 arcana-broker arcana-executor"),
+        "socket directory must be traversable by the executor group"
+    );
     assert!(
         tf.contains("/etc/arcana/credential-broker 0700"),
         "credential source directory must be 0700"
@@ -129,6 +137,10 @@ fn launchd_plist_is_separately_accounted_and_env_free() {
     assert!(
         plist.contains("_arcanabroker"),
         "launchd service must run as its own account"
+    );
+    assert!(
+        plist.contains("<key>GroupName</key>\n    <string>_arcanabroker</string>"),
+        "launchd broker must not use the executor group as its primary group"
     );
     // Match the actual plist element, not a prose mention of it: the asset's
     // own explanatory comment legitimately names the key it refuses to set.
@@ -177,7 +189,28 @@ fn lifecycle_script_covers_install_verify_disable_rollback() {
     );
     assert!(
         script.contains("generation_policy")
-            && script.contains("install -m 0644 \"$policy\" \"$POLICY_FILE\""),
+            && script.contains("\"$target_policy\" \"$POLICY_FILE\""),
         "rollback must version and restore deploy-time policy as well as the binary"
     );
+    assert!(
+        script.contains("validate_trusted_install_source \"$binary\"")
+            && script.contains("validate_trusted_install_source \"$policy\""),
+        "privileged install sources must be frozen under a root-owned path"
+    );
+    assert!(
+        script.contains("STATE_GENERATION_FILE") && script.contains("restore_generation_state"),
+        "rollback must track durable state independently from the binary generation"
+    );
+    for socket_contract in [
+        "(SequentialPacket)",
+        "SocketUser=$BROKER_USER",
+        "SocketGroup=$EXECUTOR_GROUP",
+        "SocketMode=0660",
+        "socket has unverified drop-in configuration",
+    ] {
+        assert!(
+            script.contains(socket_contract),
+            "live verification is missing socket contract `{socket_contract}`"
+        );
+    }
 }

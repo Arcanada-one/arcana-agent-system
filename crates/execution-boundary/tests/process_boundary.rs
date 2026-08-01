@@ -8,7 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use arcana_execution_boundary::{
-    BoundaryError, CleanEnv, OutputPolicy, ProcessSpec, Termination, SAFE_SYSTEM_PATH,
+    BoundaryError, CleanEnv, OutputPolicy, ProcessSpec, Termination, TranscriptPolicy,
+    TranscriptWriter, SAFE_SYSTEM_PATH,
 };
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -154,4 +155,136 @@ async fn quarantine_blocks_a_sentinel_before_output_release() {
         spec.run(CancellationToken::new()).await,
         Err(BoundaryError::OutputQuarantined(_))
     ));
+}
+
+#[tokio::test]
+async fn quarantine_preserves_observation_order_across_streams() {
+    let dir = TempDir::new().expect("tempdir");
+    let sentinel = b"cross-stream-secret".to_vec();
+    let spec = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+        .args(["-c", "printf cross-stream-; sleep 0.05; printf secret >&2"])
+        .output_policy(OutputPolicy::Quarantine {
+            sentinels: vec![sentinel],
+        });
+    assert!(matches!(
+        spec.run(CancellationToken::new()).await,
+        Err(BoundaryError::OutputQuarantined(_))
+    ));
+}
+
+#[tokio::test]
+async fn quarantine_is_independent_of_cross_stream_scheduler_order() {
+    let dir = TempDir::new().expect("tempdir");
+    let sentinel = b"cross-stream-secret".to_vec();
+    let spec = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+        .args(["-c", "printf secret >&2; printf cross-stream-"])
+        .output_policy(OutputPolicy::Quarantine {
+            sentinels: vec![sentinel],
+        });
+    assert!(matches!(
+        spec.run(CancellationToken::new()).await,
+        Err(BoundaryError::OutputQuarantined(_))
+    ));
+}
+
+#[tokio::test]
+async fn process_boundary_persists_only_through_restrictive_transcript_writer() {
+    let dir = TempDir::new().expect("tempdir");
+    let writer = TranscriptWriter::new(TranscriptPolicy {
+        directory: dir.path().join("transcripts"),
+        sentinels: vec![b"never-present-sentinel".to_vec()],
+        max_files: 2,
+        max_age: Duration::from_secs(60),
+        max_bytes: 1024,
+    })
+    .expect("writer");
+    let reader = writer.clone();
+    let output = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+        .args(["-c", "printf output; printf warning >&2"])
+        .transcript(writer, "execution-1")
+        .run(CancellationToken::new())
+        .await
+        .expect("run");
+    let artifact = output
+        .transcript_artifact
+        .expect("transcript artifact identifier");
+    let body = reader.read_artifact(&artifact).expect("read transcript");
+    assert!(body.starts_with(b"ARCANA-TRANSCRIPT-V1\0"));
+    assert!(body.windows(6).any(|bytes| bytes == b"output"));
+    assert!(body.windows(7).any(|bytes| bytes == b"warning"));
+}
+
+#[tokio::test]
+async fn dropping_execution_future_kills_the_owned_process_group() {
+    let dir = TempDir::new().expect("tempdir");
+    let pid_file = dir.path().join("grandchild.pid");
+    let command = format!(
+        "sleep 30 & child=$!; printf %s \"$child\" > {}; wait",
+        pid_file.display()
+    );
+    let spec =
+        ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir)).args(["-c".to_owned(), command]);
+    let task = tokio::spawn(async move { spec.run(CancellationToken::new()).await });
+    for _ in 0..100 {
+        if pid_file.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let grandchild: i32 = std::fs::read_to_string(&pid_file)
+        .expect("pid file")
+        .parse()
+        .expect("pid");
+    task.abort();
+    let _ = task.await;
+    for _ in 0..100 {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None).is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("dropping the execution future stranded the process group");
+}
+
+#[tokio::test]
+async fn exited_leader_cannot_hold_the_boundary_open_via_background_pipe() {
+    let dir = TempDir::new().expect("tempdir");
+    let spec = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+        .args(["-c", "sleep 30 &"])
+        .timeout(Duration::from_millis(100))
+        .termination_grace(Duration::from_millis(25));
+    let started = std::time::Instant::now();
+    let result = spec.run(CancellationToken::new()).await;
+    assert!(result.is_ok(), "leader exit should close its owned group");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "open descendant pipes must remain bounded"
+    );
+}
+
+#[tokio::test]
+async fn successful_leader_exit_kills_a_pipe_closing_background_descendant() {
+    let dir = TempDir::new().expect("tempdir");
+    let pid_file = dir.path().join("detached.pid");
+    let command = format!(
+        "sleep 30 </dev/null >/dev/null 2>&1 & child=$!; printf %s \"$child\" > {}",
+        pid_file.display()
+    );
+    let output = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+        .args(["-c".to_owned(), command])
+        .run(CancellationToken::new())
+        .await
+        .expect("run");
+    assert!(output.success);
+    let descendant: i32 = std::fs::read_to_string(&pid_file)
+        .expect("pid file")
+        .parse()
+        .expect("pid");
+    for _ in 0..100 {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(descendant), None).is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("successful leader exit stranded a pipe-closing descendant");
 }

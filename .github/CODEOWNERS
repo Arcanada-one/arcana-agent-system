@@ -1,18 +1,18 @@
 # Security-sensitive execution and credential boundary.
-/crates/execution-boundary/ @Arcanada-one/security-reviewers
-/crates/credential-broker/ @Arcanada-one/security-reviewers
-/crates/supervisor/src/spawn.rs @Arcanada-one/security-reviewers
-/crates/connectors/src/coworker.rs @Arcanada-one/security-reviewers
-/crates/tools/src/bash.rs @Arcanada-one/security-reviewers
+/crates/execution-boundary/ @Arcanada-one/security-reviewers @PavelValentov
+/crates/credential-broker/ @Arcanada-one/security-reviewers @PavelValentov
+/crates/supervisor/src/spawn.rs @Arcanada-one/security-reviewers @PavelValentov
+/crates/connectors/src/coworker.rs @Arcanada-one/security-reviewers @PavelValentov
+/crates/tools/src/bash.rs @Arcanada-one/security-reviewers @PavelValentov
 
 # Platform identity, policy, lifecycle, CI, and release controls.
-/packaging/ @Arcanada-one/security-reviewers
-/.github/workflows/ @Arcanada-one/security-reviewers
-/.github/CODEOWNERS @Arcanada-one/security-reviewers
+/packaging/ @Arcanada-one/security-reviewers @PavelValentov
+/.github/workflows/ @Arcanada-one/security-reviewers @PavelValentov
+/.github/CODEOWNERS @Arcanada-one/security-reviewers @PavelValentov
 
 # Incident and operator security documentation.
-/docs/reference/execution-boundary.md @Arcanada-one/security-reviewers
-/docs/explanation/capability-execution-boundary.md @Arcanada-one/security-reviewers
-/docs/explanation/provider-capability-gap-deepseek.md @Arcanada-one/security-reviewers
-/docs/how-to/credential-incident-recovery.md @Arcanada-one/security-reviewers
-/datarim/insights/SEC-0030-* @Arcanada-one/security-reviewers
+/docs/reference/execution-boundary.md @Arcanada-one/security-reviewers @PavelValentov
+/docs/explanation/capability-execution-boundary.md @Arcanada-one/security-reviewers @PavelValentov
+/docs/explanation/provider-capability-gap-deepseek.md @Arcanada-one/security-reviewers @PavelValentov
+/docs/how-to/credential-incident-recovery.md @Arcanada-one/security-reviewers @PavelValentov
+/datarim/insights/SEC-0030-* @Arcanada-one/security-reviewers @PavelValentov

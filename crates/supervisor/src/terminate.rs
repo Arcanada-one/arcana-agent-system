@@ -37,9 +37,13 @@ pub async fn terminate_group(
         .await
         .is_ok();
 
-    if !exited_gracefully {
+    if exited_gracefully {
+        // The leader exiting does not prove its group is empty. A descendant
+        // may ignore SIGTERM after redirecting every inherited pipe.
+        child.kill_process_group()?;
+    } else {
         // SIGKILL cannot be blocked, ignored, or caught — law-4 guarantee.
-        let _ = killpg(pgid, Signal::SIGKILL);
+        child.kill_process_group()?;
         // Reap the direct child so its pid stops answering signal probes.
         let _ = child.child_mut().wait().await;
     }

@@ -36,7 +36,7 @@ pub use ledger::Ledger;
 pub use policy::{CapabilityPolicy, ProviderRule};
 pub use protocol::{
     CapabilityRequest, Denial, ExecutorProfile, Generation, IdempotencyKey, Lease, Operation,
-    PeerIdentity, SessionId,
+    PeerIdentity, RequestFingerprint, SessionId,
 };
 
 /// Authorise and commit a request in one fail-closed step.
