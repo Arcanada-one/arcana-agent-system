@@ -7,7 +7,9 @@ set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 broker="$repo/target/debug/arcana-credential-broker"
 lifecycle="$repo/packaging/broker-lifecycle.sh"
+false_binary=$(type -P false)
 [ -x "$broker" ] || { printf 'broker binary missing: run cargo build first\n' >&2; exit 1; }
+[ -x "$false_binary" ] || { printf 'external false executable missing\n' >&2; exit 1; }
 
 if [ "$(uname -s)" = Darwin ]; then
   # macOS AF_UNIX paths are much shorter than Linux paths, while the default
@@ -73,7 +75,7 @@ run_lifecycle verify
 
 # A generation name is an immutable binary+policy identity. Reusing it with a
 # different artifact must fail without replacing the known-good generation.
-if run_lifecycle install two /bin/false "$policy_two"; then
+if run_lifecycle install two "$false_binary" "$policy_two"; then
   printf 'mutable generation name unexpectedly accepted\n' >&2
   exit 1
 fi
@@ -83,7 +85,7 @@ run_lifecycle rollback two
 run_lifecycle verify
 
 # Install a bad third image, then prove rollback restores both binary and config.
-run_lifecycle install three /bin/false "$policy_two"
+run_lifecycle install three "$false_binary" "$policy_two"
 if run_lifecycle activate; then
   printf 'bad generation unexpectedly activated\n' >&2
   exit 1
