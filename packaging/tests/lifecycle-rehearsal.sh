@@ -9,14 +9,18 @@ broker="$repo/target/debug/arcana-credential-broker"
 lifecycle="$repo/packaging/broker-lifecycle.sh"
 [ -x "$broker" ] || { printf 'broker binary missing: run cargo build first\n' >&2; exit 1; }
 
-scratch=$(mktemp -d)
 if [ "$(uname -s)" = Darwin ]; then
+  # macOS AF_UNIX paths are much shorter than Linux paths, while the default
+  # TMPDIR lives under a long /var/folders hierarchy. Keep the live socket
+  # fixture below the portable path-length ceiling.
+  scratch=$(mktemp -d /tmp/arcana-sec0030.XXXXXX)
   state_root="$scratch/root/var/db/arcana-credential-broker"
   control_root="$scratch/root/var/db/arcana-credential-broker-control"
   generation_root="$scratch/root/var/db/arcana-credential-broker-generations"
   installed_binary_root="$scratch/root/usr/local/libexec/arcana"
   socket_path="$scratch/root/var/run/arcana-credential-broker/broker.sock"
 else
+  scratch=$(mktemp -d)
   state_root="$scratch/root/var/lib/arcana-credential-broker"
   control_root="$scratch/root/var/lib/arcana-credential-broker-control"
   generation_root="$scratch/root/var/lib/arcana-credential-broker-generations"

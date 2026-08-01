@@ -744,7 +744,14 @@ activate_broker() {
       sleep 0.02
       attempts=$((attempts + 1))
     done
-    kill -0 "$pid" 2>/dev/null || die "rehearsal broker exited during activation"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      # Rehearsal always uses the mock provider and starts before any request,
+      # so bounded startup diagnostics cannot contain credential material.
+      if [ -f "$STATE_DIR/rehearsal.log" ]; then
+        sed -n '1,20p' "$STATE_DIR/rehearsal.log" >&2
+      fi
+      die "rehearsal broker exited during activation"
+    fi
     [ -S "$SOCKET_PATH" ] || { disable_broker >/dev/null; die "rehearsal socket did not appear"; }
   elif [ "$(platform)" = linux ]; then
     systemctl enable --now "$UNIT.socket"
