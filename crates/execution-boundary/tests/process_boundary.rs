@@ -40,6 +40,24 @@ async fn child_receives_only_the_constructed_environment() {
     assert_eq!(names, vec!["HOME", "LANG", "LC_ALL", "PATH", "TERM", "TZ"]);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shared_exit_observer_handles_bounded_mass_concurrency() {
+    let mut tasks = tokio::task::JoinSet::new();
+    for iteration in 0..64 {
+        let dir = TempDir::new().expect("tempdir");
+        let spec = ProcessSpec::new(Path::new("/bin/true"), clean_env(&dir));
+        tasks.spawn(async move {
+            let _dir = dir;
+            spec.run(CancellationToken::new())
+                .await
+                .unwrap_or_else(|error| panic!("iteration {iteration} failed: {error}"))
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        assert!(result.expect("observer task").success);
+    }
+}
+
 #[tokio::test]
 async fn child_cannot_inherit_a_descriptor_even_when_cloexec_was_cleared() {
     let dir = TempDir::new().expect("tempdir");

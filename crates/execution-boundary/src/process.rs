@@ -359,6 +359,8 @@ pub struct BoundaryChild {
     anchor: Option<Child>,
     exit_observer: Option<watch::Receiver<ExitObservation>>,
     exit_observed: bool,
+    final_signal: Option<Result<(), Errno>>,
+    cleanup_complete: bool,
 }
 
 /// A validated terminal size.
@@ -524,9 +526,10 @@ impl BoundaryChild {
 
 impl Drop for BoundaryChild {
     fn drop(&mut self) {
+        if self.cleanup_complete {
+            return;
+        }
         let child_pid = self.pid;
-        let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
-        let final_signal = killpg(owned_group, Signal::SIGKILL);
         let (mut child, mut anchor) = match (self.child.take(), self.anchor.take()) {
             (Some(child), Some(anchor)) => (child, anchor),
             (Some(mut child), None) => {
@@ -539,11 +542,12 @@ impl Drop for BoundaryChild {
             }
             (None, None) => return,
         };
+        let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
+        let final_signal = issue_final_group_signal(&mut self.final_signal, owned_group);
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 let _ =
-                    finalize_owned_group(&mut child, &mut anchor, child_pid, Some(final_signal))
-                        .await;
+                    finalize_owned_group(&mut child, &mut anchor, child_pid, final_signal).await;
             });
             return;
         }
@@ -728,6 +732,8 @@ fn arm_owned_process_group(mut child: Child, pid: u32) -> Result<BoundaryChild, 
         anchor: Some(anchor),
         exit_observer: Some(observer),
         exit_observed: false,
+        final_signal: None,
+        cleanup_complete: false,
     })
 }
 
@@ -1005,7 +1011,17 @@ fn spawn_exit_observer(pid: u32) -> Result<watch::Receiver<ExitObservation>, Bou
     Ok(receiver)
 }
 
-type ExitSubscribers = Arc<Mutex<HashMap<u32, watch::Sender<ExitObservation>>>>;
+const MAX_ACTIVE_EXIT_OBSERVERS: usize = 256;
+#[cfg(not(target_os = "macos"))]
+const EXIT_OBSERVER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+#[derive(Default)]
+struct ExitSubscriberState {
+    senders: HashMap<u32, watch::Sender<ExitObservation>>,
+    fatal: Option<String>,
+}
+
+type ExitSubscribers = Arc<Mutex<ExitSubscriberState>>;
 
 static EXIT_OBSERVER_SERVICE: OnceLock<Result<ExitObserverService, String>> = OnceLock::new();
 
@@ -1019,7 +1035,7 @@ struct ExitObserverService {
 impl ExitObserverService {
     fn start() -> Result<Self, String> {
         let queue = Arc::new(Kqueue::new().map_err(|error| error.to_string())?);
-        let subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let subscribers = Arc::new(Mutex::new(ExitSubscriberState::default()));
         let worker_queue = queue.clone();
         let worker_subscribers = subscribers.clone();
         std::thread::Builder::new()
@@ -1044,7 +1060,9 @@ impl ExitObserverService {
             0,
         );
         if let Err(error) = self.queue.kevent(&[change], &mut [], None) {
-            lock_exit_subscribers(&self.subscribers).remove(&pid);
+            lock_exit_subscribers(&self.subscribers)
+                .senders
+                .remove(&pid);
             return Err(BoundaryError::Io {
                 phase: "register Darwin process-exit observer",
                 reason: error.to_string(),
@@ -1105,7 +1123,7 @@ struct ExitObserverService {
 #[cfg(not(target_os = "macos"))]
 impl ExitObserverService {
     fn start() -> Result<Self, String> {
-        let subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let subscribers = Arc::new(Mutex::new(ExitSubscriberState::default()));
         let wake = Arc::new(Condvar::new());
         let worker_subscribers = subscribers.clone();
         let worker_wake = wake.clone();
@@ -1133,36 +1151,51 @@ fn insert_exit_subscriber(
     sender: watch::Sender<ExitObservation>,
 ) -> Result<(), BoundaryError> {
     let mut subscribers = lock_exit_subscribers(subscribers);
-    if subscribers.contains_key(&pid) {
+    if let Some(reason) = &subscribers.fatal {
+        return Err(BoundaryError::Io {
+            phase: "register child exit observer",
+            reason: format!("observer service is unavailable: {reason}"),
+        });
+    }
+    if subscribers.senders.len() >= MAX_ACTIVE_EXIT_OBSERVERS {
+        return Err(BoundaryError::Io {
+            phase: "register child exit observer",
+            reason: format!(
+                "observer capacity of {MAX_ACTIVE_EXIT_OBSERVERS} active children is exhausted"
+            ),
+        });
+    }
+    if subscribers.senders.contains_key(&pid) {
         return Err(BoundaryError::Io {
             phase: "register child exit observer",
             reason: "process identifier already has an active observer".to_owned(),
         });
     }
-    subscribers.insert(pid, sender);
+    subscribers.senders.insert(pid, sender);
     Ok(())
 }
 
 fn lock_exit_subscribers(
     subscribers: &ExitSubscribers,
-) -> std::sync::MutexGuard<'_, HashMap<u32, watch::Sender<ExitObservation>>> {
+) -> std::sync::MutexGuard<'_, ExitSubscriberState> {
     subscribers
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn send_exit_observation(subscribers: &ExitSubscribers, pid: u32, state: ExitObservation) {
-    if let Some(sender) = lock_exit_subscribers(subscribers).remove(&pid) {
+    if let Some(sender) = lock_exit_subscribers(subscribers).senders.remove(&pid) {
         let _ = sender.send(state);
     }
 }
 
 #[cfg(target_os = "macos")]
 fn fail_all_exit_subscribers(subscribers: &ExitSubscribers, reason: &str) {
-    let senders: Vec<_> = lock_exit_subscribers(subscribers)
-        .drain()
-        .map(|(_, sender)| sender)
-        .collect();
+    let senders: Vec<_> = {
+        let mut state = lock_exit_subscribers(subscribers);
+        state.fatal = Some(reason.to_owned());
+        state.senders.drain().map(|(_, sender)| sender).collect()
+    };
     for sender in senders {
         let _ = sender.send(ExitObservation::Failed(reason.to_owned()));
     }
@@ -1173,12 +1206,12 @@ fn polling_exit_observer_loop(subscribers: &ExitSubscribers, wake: &Condvar) {
     loop {
         let pids = {
             let mut active = lock_exit_subscribers(subscribers);
-            while active.is_empty() {
+            while active.senders.is_empty() {
                 active = wake
                     .wait(active)
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
-            active.keys().copied().collect::<Vec<_>>()
+            active.senders.keys().copied().collect::<Vec<_>>()
         };
         for pid in pids {
             if let Some(state) = poll_exit_without_reaping(pid) {
@@ -1187,7 +1220,7 @@ fn polling_exit_observer_loop(subscribers: &ExitSubscribers, wake: &Condvar) {
         }
         let active = lock_exit_subscribers(subscribers);
         let (active, _) = wake
-            .wait_timeout(active, Duration::from_millis(1))
+            .wait_timeout(active, EXIT_OBSERVER_POLL_INTERVAL)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         drop(active);
     }
@@ -1216,6 +1249,8 @@ fn poll_exit_without_reaping(pid: u32) -> Option<ExitObservation> {
 async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus, BoundaryError> {
     child.exit_observer.take();
     let pid = child.pid;
+    let owned_group = Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX));
+    let final_signal = issue_final_group_signal(&mut child.final_signal, owned_group);
     let owned_child = child.child.as_mut().ok_or_else(|| BoundaryError::Io {
         phase: "finalize process group",
         reason: "child ownership is unavailable".to_owned(),
@@ -1225,20 +1260,23 @@ async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus
         reason: "group anchor ownership is unavailable".to_owned(),
     })?;
 
-    // The destructive group signal is issued synchronously inside this call
-    // before its first await. If the caller is cancelled during a reap, the
-    // BoundaryChild still owns both handles and Drop repeats the group signal.
-    finalize_owned_group(owned_child, owned_anchor, pid, None).await
+    // The destructive group signal is issued and cached before the first
+    // await. Cleanup retries reuse that exact result; they never signal a
+    // numeric PGID after either direct child may have been reaped.
+    let result = finalize_owned_group(owned_child, owned_anchor, pid, final_signal).await;
+    if result.is_ok() {
+        child.cleanup_complete = true;
+    }
+    result
 }
 
 async fn finalize_owned_group(
     child: &mut Child,
     anchor: &mut Child,
     child_pid: u32,
-    pre_delivered_signal: Option<Result<(), Errno>>,
+    final_signal: Result<(), Errno>,
 ) -> Result<ExitStatus, BoundaryError> {
     let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
-    let final_signal = pre_delivered_signal.unwrap_or_else(|| killpg(owned_group, Signal::SIGKILL));
     let mut failures = Vec::new();
     if let Err(error) = validate_final_signal(final_signal) {
         failures.push(error);
@@ -1313,6 +1351,18 @@ async fn finalize_owned_group(
     })
 }
 
+fn issue_final_group_signal(
+    final_signal: &mut Option<Result<(), Errno>>,
+    owned_group: Pid,
+) -> Result<(), Errno> {
+    if let Some(result) = *final_signal {
+        return result;
+    }
+    let result = killpg(owned_group, Signal::SIGKILL);
+    *final_signal = Some(result);
+    result
+}
+
 fn validate_final_signal(final_signal: Result<(), Errno>) -> Result<(), BoundaryError> {
     match final_signal {
         Ok(()) | Err(Errno::ESRCH) => Ok(()),
@@ -1349,8 +1399,15 @@ async fn require_group_disappeared(pgid: Pid) -> Result<(), BoundaryError> {
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use super::{validate_final_signal, BoundaryError};
+    use std::sync::{Arc, Mutex};
+
+    use super::{
+        insert_exit_subscriber, issue_final_group_signal, validate_final_signal, BoundaryError,
+        ExitObservation, ExitSubscriberState, MAX_ACTIVE_EXIT_OBSERVERS,
+    };
     use nix::errno::Errno;
+    use nix::unistd::Pid;
+    use tokio::sync::watch;
 
     #[test]
     fn refused_final_signal_never_promotes_to_success() {
@@ -1366,6 +1423,55 @@ mod lifecycle_tests {
     #[test]
     fn absent_group_is_safe_only_after_disappearance_proof() {
         assert!(validate_final_signal(Err(Errno::ESRCH)).is_ok());
+    }
+
+    #[test]
+    fn cached_final_signal_is_never_reissued_against_a_numeric_pgid() {
+        let mut cached = Some(Err(Errno::EPERM));
+        assert_eq!(
+            issue_final_group_signal(&mut cached, Pid::from_raw(i32::MAX)),
+            Err(Errno::EPERM)
+        );
+        assert_eq!(cached, Some(Err(Errno::EPERM)));
+    }
+
+    #[test]
+    fn observer_capacity_and_fatal_state_fail_closed() {
+        let subscribers = Arc::new(Mutex::new(ExitSubscriberState::default()));
+        let mut receivers = Vec::new();
+        let capacity = u32::try_from(MAX_ACTIVE_EXIT_OBSERVERS).unwrap_or(u32::MAX);
+        for pid in 1..=capacity {
+            let (sender, receiver) = watch::channel(ExitObservation::Waiting);
+            assert!(insert_exit_subscriber(&subscribers, pid, sender).is_ok());
+            receivers.push(receiver);
+        }
+        let (overflow, _) = watch::channel(ExitObservation::Waiting);
+        assert!(matches!(
+            insert_exit_subscriber(&subscribers, u32::MAX, overflow),
+            Err(BoundaryError::Io {
+                phase: "register child exit observer",
+                ..
+            })
+        ));
+
+        subscribers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .fatal = Some("native observer stopped".to_owned());
+        subscribers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .senders
+            .clear();
+        let (after_fatal, _) = watch::channel(ExitObservation::Waiting);
+        assert!(matches!(
+            insert_exit_subscriber(&subscribers, 1, after_fatal),
+            Err(BoundaryError::Io {
+                phase: "register child exit observer",
+                ..
+            })
+        ));
+        drop(receivers);
     }
 }
 
