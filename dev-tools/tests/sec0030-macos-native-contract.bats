@@ -24,6 +24,7 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     grep -Fq 'codesign --verify --strict' "$PROBE"
     grep -Fq 'security add-trusted-cert -d -r trustRoot -p codeSign' "$PROBE"
     grep -Fq 'security delete-certificate -Z' "$PROBE"
+    grep -Fq 'security list-keychains -d user -s' "$PROBE"
 }
 
 @test "macOS entitlement control uses sandbox inheritance with paired positive controls" {

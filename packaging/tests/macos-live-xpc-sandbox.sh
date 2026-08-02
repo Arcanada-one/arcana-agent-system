@@ -37,6 +37,12 @@ bootstrapped=0
 keychain_created=0
 trusted_cert_added=0
 certificate_sha=''
+search_list_changed=0
+original_keychains=()
+while IFS= read -r original_keychain; do
+  original_keychains+=("$original_keychain")
+done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+(( ${#original_keychains[@]} > 0 )) || fail 'user keychain search list is empty'
 
 cleanup() {
   local cleanup_status=0
@@ -44,6 +50,13 @@ cleanup() {
     launchctl bootout "$domain" "$launch_plist" >/dev/null 2>&1 || cleanup_status=1
     if launchctl print "$domain/$service" >/dev/null 2>&1; then
       printf 'SEC0030_MACOS_NATIVE_FAIL: launchd cleanup did not remove exact service\n' >&2
+      cleanup_status=1
+    fi
+  fi
+  if (( search_list_changed == 1 )); then
+    run_bounded 15 security list-keychains -d user -s "${original_keychains[@]}" \
+      >/dev/null 2>&1 || cleanup_status=1
+    if run_bounded 15 security list-keychains -d user 2>/dev/null | grep -Fq "$keychain"; then
       cleanup_status=1
     fi
   fi
@@ -66,7 +79,7 @@ cleanup() {
     printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_FAIL' >&2
     return 1
   fi
-  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent trusted_certificate=absent keychain=absent scratch=absent'
+  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent search_list=restored trusted_certificate=absent keychain=absent scratch=absent'
 }
 on_exit() {
   local status=$?
@@ -106,6 +119,8 @@ keychain_created=1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE keychain-created'
 security unlock-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 900 "$keychain"
+security list-keychains -d user -s "$keychain" "${original_keychains[@]}"
+search_list_changed=1
 security import "$scratch/codesign.p12" \
   -k "$keychain" -P "$keychain_password" -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple: -s \
@@ -124,7 +139,7 @@ printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-derived'
 
 sign_binary() {
   local identifier="$1" entitlements="$2" target="$3"
-  codesign --force --keychain "$keychain" --sign 'SEC0030 Ephemeral Code Signing' \
+  codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
     --identifier "$identifier" --entitlements "$entitlements" "$target" >/dev/null
   codesign --verify --strict "$target"
 }
@@ -140,7 +155,7 @@ sign_binary one.arcanada.sec0030.wrong "$fixture_dir/sec0030-trusted.entitlement
 codesign --force --sign - --identifier one.arcanada.sec0030.trusted \
   --entitlements "$fixture_dir/sec0030-trusted.entitlements" "$scratch/wrong-signer-client" >/dev/null
 codesign --verify --strict "$scratch/wrong-signer-client"
-codesign --force --keychain "$keychain" --sign 'SEC0030 Ephemeral Code Signing' \
+codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
   --identifier one.arcanada.sec0030.trusted "$scratch/missing-entitlement-client" >/dev/null
 codesign --verify --strict "$scratch/missing-entitlement-client"
 sign_binary one.arcanada.sec0030.server "$fixture_dir/sec0030-trusted.entitlements" "$scratch/xpc-server"
@@ -238,7 +253,7 @@ sign_binary one.arcanada.sec0030.sandbox-child "$fixture_dir/sec0030-sandbox-chi
   "$app/Contents/Helpers/SEC0030SandboxChild"
 sign_binary one.arcanada.sec0030.sandbox "$fixture_dir/sec0030-sandbox-parent.entitlements" \
   "$app/Contents/MacOS/SEC0030Sandbox"
-codesign --force --keychain "$keychain" --sign 'SEC0030 Ephemeral Code Signing' \
+codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
   --identifier one.arcanada.sec0030.sandbox \
   --entitlements "$fixture_dir/sec0030-sandbox-parent.entitlements" "$app" >/dev/null
 codesign --verify --strict --deep "$app"
