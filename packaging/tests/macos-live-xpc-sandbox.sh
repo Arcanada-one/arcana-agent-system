@@ -11,7 +11,7 @@ fail() {
 }
 
 [[ "$(uname -s)" == Darwin ]] || fail 'macOS host required'
-for tool in clang codesign launchctl log openssl perl plutil security sudo; do
+for tool in awk clang codesign launchctl log openssl perl plutil security sudo; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool unavailable: $tool"
 done
 sudo -n true >/dev/null 2>&1 || fail 'non-interactive ephemeral trust authority required'
@@ -205,7 +205,7 @@ fi
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-pass messages=2'
 "$scratch/trusted-client-copy" "$service" 1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-copy-pass messages=1'
-before_negative=$(wc -l < "$counter")
+before_negative=$(awk 'END {print NR}' "$counter")
 [[ "$before_negative" == 3 ]] || fail 'trusted XPC messages did not reach the accepted handler'
 if "$scratch/wrong-identifier-client" "$service" 1; then
   fail 'wrong code identity was accepted'
@@ -213,7 +213,7 @@ fi
 if "$scratch/wrong-signer-client" "$service" 1; then
   fail 'wrong code identity was accepted'
 fi
-after_negative=$(wc -l < "$counter")
+after_negative=$(awk 'END {print NR}' "$counter")
 [[ "$after_negative" == "$before_negative" ]] || fail 'wrong code identity reached the accepted handler'
 
 # Pair every App Sandbox denial with an unsandboxed positive control while the
