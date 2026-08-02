@@ -293,6 +293,9 @@ codesign -d --entitlements :- "$app/Contents/MacOS/SEC0030Sandbox" \
   > "$scratch/parent-entitlements.plist" 2>/dev/null
 codesign -d --entitlements :- "$app/Contents/Helpers/SEC0030SandboxChild" \
   > "$scratch/child-entitlements.plist" 2>/dev/null
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE sandbox-entitlements-extracted'
+plutil -p "$scratch/parent-entitlements.plist"
+plutil -p "$scratch/child-entitlements.plist"
 plutil -extract com.apple.security.app-sandbox raw "$scratch/parent-entitlements.plist" | grep -qx true
 plutil -extract com.apple.security.app-sandbox raw "$scratch/child-entitlements.plist" | grep -qx true
 plutil -extract com.apple.security.inherit raw "$scratch/child-entitlements.plist" | grep -qx true
