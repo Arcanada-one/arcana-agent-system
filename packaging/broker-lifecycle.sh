@@ -145,13 +145,27 @@ release_lifecycle_lock() {
 }
 
 observe_lifecycle_lock() {
-  local observed=''
+  local observed='' observation_failure_attempts=0
   OBSERVED_LOCK_OWNER=''
   LOCK_OBSERVATION="${LOCK_CANDIDATE}.observed"
   rm -f -- "$LOCK_OBSERVATION"
 
   [ ! -L "$LIFECYCLE_LOCK_FILE" ] || return 2
   if ! ln -P -- "$LIFECYCLE_LOCK_FILE" "$LOCK_OBSERVATION" 2>/dev/null; then
+    if [ "$SERVICE_MODE" = rehearsal ] && \
+      [ -n "${LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_UNTIL_FILE:-}" ]; then
+      case "$LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_UNTIL_FILE" in
+        "$CONTROL_DIR"/*) ;;
+        *) die "rehearsal observation-failure release file must be inside the control directory" ;;
+      esac
+      : > "$CONTROL_DIR/rehearsal-observation-link-failed"
+      while [ ! -f "$LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_UNTIL_FILE" ]; do
+        observation_failure_attempts=$((observation_failure_attempts + 1))
+        [ "$observation_failure_attempts" -lt 500 ] || \
+          die "timed out waiting for rehearsal observation-failure release"
+        sleep 0.02
+      done
+    fi
     LOCK_OBSERVATION=''
     [ ! -L "$LIFECYCLE_LOCK_FILE" ] || return 2
     # Absence, or a regular owner that appeared after link(2) failed, is a

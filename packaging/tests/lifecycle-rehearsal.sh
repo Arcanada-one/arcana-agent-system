@@ -31,11 +31,36 @@ else
 fi
 first_release=''
 replacement_release=''
-waiter_resume=''
+waiter_owner_read_resume=''
+waiter_observation_resume=''
+lock_holder=''
+lock_waiter=''
+replacement_holder=''
 cleanup() {
   if [ -n "$first_release" ]; then : > "$first_release"; fi
   if [ -n "$replacement_release" ]; then : > "$replacement_release"; fi
-  if [ -n "$waiter_resume" ]; then : > "$waiter_resume"; fi
+  if [ -n "$waiter_owner_read_resume" ]; then : > "$waiter_owner_read_resume"; fi
+  if [ -n "$waiter_observation_resume" ]; then : > "$waiter_observation_resume"; fi
+  for child in "$lock_holder" "$lock_waiter" "$replacement_holder"; do
+    [ -n "$child" ] || continue
+    kill -TERM "$child" 2>/dev/null || true
+  done
+  cleanup_attempts=0
+  while [ "$cleanup_attempts" -lt 500 ]; do
+    child_running=0
+    for child in "$lock_holder" "$lock_waiter" "$replacement_holder"; do
+      [ -n "$child" ] || continue
+      if kill -0 "$child" 2>/dev/null; then child_running=1; fi
+    done
+    [ "$child_running" = 1 ] || break
+    sleep 0.02
+    cleanup_attempts=$((cleanup_attempts + 1))
+  done
+  for child in "$lock_holder" "$lock_waiter" "$replacement_holder"; do
+    [ -n "$child" ] || continue
+    if kill -0 "$child" 2>/dev/null; then kill -KILL "$child" 2>/dev/null || true; fi
+    wait "$child" 2>/dev/null || true
+  done
   ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
     bash "$lifecycle" disable >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
@@ -167,47 +192,58 @@ ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
   bash "$lifecycle" disable >/dev/null &
 lock_holder=$!
 attempts=0
-while [ ! -f "$control_root/lifecycle.lock" ] && [ "$attempts" -lt 100 ]; do
-  sleep 0.01
+while [ ! -f "$control_root/lifecycle.lock" ] && [ "$attempts" -lt 500 ]; do
+  sleep 0.02
   attempts=$((attempts + 1))
 done
 [ -f "$control_root/lifecycle.lock" ]
-waiter_resume="$control_root/resume-waiter-owner-read"
+waiter_owner_read_resume="$control_root/resume-waiter-owner-read"
+waiter_observation_resume="$control_root/resume-waiter-after-observation-failure"
 waiter_observed="$control_root/waiter-observed-owner"
 ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
-  LIFECYCLE_REHEARSAL_PRE_OWNER_READ_UNTIL_FILE="$waiter_resume" \
+  LIFECYCLE_REHEARSAL_PRE_OWNER_READ_UNTIL_FILE="$waiter_owner_read_resume" \
+  LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_UNTIL_FILE="$waiter_observation_resume" \
   LIFECYCLE_REHEARSAL_OBSERVED_OWNER_FILE="$waiter_observed" \
   bash "$lifecycle" install eight "$broker" "$policy_two" &
 lock_waiter=$!
 owner_read_ready="$control_root/rehearsal-pre-owner-read-ready"
 attempts=0
-while [ ! -f "$owner_read_ready" ] && [ "$attempts" -lt 100 ]; do
-  sleep 0.01
+while [ ! -f "$owner_read_ready" ] && [ "$attempts" -lt 500 ]; do
+  sleep 0.02
   attempts=$((attempts + 1))
 done
 [ -f "$owner_read_ready" ] || { printf 'waiter did not reach owner-read barrier\n' >&2; exit 1; }
+: > "$first_release"
+wait "$lock_holder"
+lock_holder=''
+: > "$waiter_owner_read_resume"
+observation_failed="$control_root/rehearsal-observation-link-failed"
+attempts=0
+while [ ! -f "$observation_failed" ] && [ "$attempts" -lt 500 ]; do
+  sleep 0.02
+  attempts=$((attempts + 1))
+done
+[ -f "$observation_failed" ] || { printf 'waiter did not reach observation-failure barrier\n' >&2; exit 1; }
 replacement_release="$control_root/release-replacement-holder"
 ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
   LIFECYCLE_REHEARSAL_HOLD_LOCK_UNTIL_FILE="$replacement_release" \
   bash "$lifecycle" disable >/dev/null &
 replacement_holder=$!
-: > "$first_release"
-wait "$lock_holder"
 attempts=0
-while [ "$attempts" -lt 100 ]; do
+while [ "$attempts" -lt 500 ]; do
   replacement_owner=$(sed -n '1p' "$control_root/lifecycle.lock" 2>/dev/null || true)
   case "$replacement_owner" in "$replacement_holder:"*) break ;; esac
-  sleep 0.01
+  sleep 0.02
   attempts=$((attempts + 1))
 done
 case "$replacement_owner" in
   "$replacement_holder:"*) ;;
   *) printf 'replacement holder did not acquire lifecycle lock\n' >&2; exit 1 ;;
 esac
-: > "$waiter_resume"
+: > "$waiter_observation_resume"
 attempts=0
-while [ ! -f "$waiter_observed" ] && [ "$attempts" -lt 100 ]; do
-  sleep 0.01
+while [ ! -f "$waiter_observed" ] && [ "$attempts" -lt 500 ]; do
+  sleep 0.02
   attempts=$((attempts + 1))
 done
 [ -f "$waiter_observed" ] || { printf 'waiter did not record replacement owner\n' >&2; exit 1; }
@@ -219,7 +255,9 @@ kill -0 "$lock_waiter" 2>/dev/null
 [ ! -s "$control_root/pending-generation" ]
 : > "$replacement_release"
 wait "$replacement_holder"
+replacement_holder=''
 wait "$lock_waiter"
+lock_waiter=''
 [ "$(sed -n '1p' "$control_root/pending-generation")" = eight ]
 run_lifecycle rollback two
 run_lifecycle verify
