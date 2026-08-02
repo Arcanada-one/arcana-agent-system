@@ -11,7 +11,7 @@ fail() {
 }
 
 [[ "$(uname -s)" == Darwin ]] || fail 'macOS host required'
-for tool in awk clang codesign launchctl log openssl perl plutil security sudo; do
+for tool in awk clang codesign launchctl log openssl perl plutil python3 security sudo; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool unavailable: $tool"
 done
 sudo -n true >/dev/null 2>&1 || fail 'non-interactive ephemeral trust authority required'
@@ -296,9 +296,21 @@ codesign -d --entitlements :- "$app/Contents/Helpers/SEC0030SandboxChild" \
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE sandbox-entitlements-extracted'
 plutil -p "$scratch/parent-entitlements.plist"
 plutil -p "$scratch/child-entitlements.plist"
-plutil -extract com.apple.security.app-sandbox raw "$scratch/parent-entitlements.plist" | grep -qx true
-plutil -extract com.apple.security.app-sandbox raw "$scratch/child-entitlements.plist" | grep -qx true
-plutil -extract com.apple.security.inherit raw "$scratch/child-entitlements.plist" | grep -qx true
+python3 - "$scratch/parent-entitlements.plist" "$scratch/child-entitlements.plist" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    parent = plistlib.load(stream)
+with open(sys.argv[2], "rb") as stream:
+    child = plistlib.load(stream)
+if parent.get("com.apple.security.app-sandbox") is not True:
+    raise SystemExit("parent App Sandbox entitlement is not boolean true")
+if child.get("com.apple.security.app-sandbox") is not True:
+    raise SystemExit("child App Sandbox entitlement is not boolean true")
+if child.get("com.apple.security.inherit") is not True:
+    raise SystemExit("child sandbox inheritance entitlement is not boolean true")
+PY
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE sandbox-entitlements-verified'
 
 set +e
