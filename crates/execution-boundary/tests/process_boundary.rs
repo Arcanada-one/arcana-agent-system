@@ -86,23 +86,29 @@ async fn relative_programs_and_sentinel_bearing_argv_fail_closed() {
 
 #[tokio::test]
 async fn timeout_terminates_the_whole_process_group() {
-    let dir = TempDir::new().expect("tempdir");
-    let spec = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
-        .args(["-c", "sleep 30 & child=$!; echo $child; wait"])
-        .timeout(Duration::from_millis(100))
-        .termination_grace(Duration::from_millis(50));
-    let output = spec.run(CancellationToken::new()).await.expect("run");
-    assert_eq!(output.termination, Termination::TimedOut);
-    let grandchild: i32 = std::str::from_utf8(&output.stdout)
-        .expect("utf8")
-        .trim()
-        .parse()
-        .expect("pid");
-    tokio::time::sleep(Duration::from_millis(25)).await;
-    assert!(
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None).is_err(),
-        "the timeout must not leave the grandchild alive"
-    );
+    let iterations = if cfg!(target_os = "macos") { 20 } else { 3 };
+    for iteration in 0..iterations {
+        let dir = TempDir::new().expect("tempdir");
+        let spec = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+            .args(["-c", "sleep 30 & child=$!; echo $child; wait"])
+            .timeout(Duration::from_millis(100))
+            .termination_grace(Duration::from_millis(50));
+        let output = spec
+            .run(CancellationToken::new())
+            .await
+            .unwrap_or_else(|error| panic!("iteration {iteration} failed: {error}"));
+        assert_eq!(output.termination, Termination::TimedOut);
+        let grandchild: i32 = std::str::from_utf8(&output.stdout)
+            .expect("utf8")
+            .trim()
+            .parse()
+            .expect("pid");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None).is_err(),
+            "iteration {iteration} left the grandchild alive"
+        );
+    }
 }
 
 #[tokio::test]

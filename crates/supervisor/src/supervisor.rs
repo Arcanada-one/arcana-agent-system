@@ -185,8 +185,10 @@ enum Step {
     Poll,
     /// The child must be force-terminated for the given cause.
     Terminate(TerminationCause),
-    /// The child exited on its own.
-    Exited { success: bool },
+    /// The child exited on its own but remains unreaped to pin PID=PGID.
+    Exited,
+    /// Exit observation failed before a trustworthy lifecycle result.
+    WaitFailed,
 }
 
 impl SuperviseTask {
@@ -221,23 +223,20 @@ impl SuperviseTask {
                         reason: cause.audit_kind().to_string(),
                     };
                 }
-                Step::Exited { success: true } => {
-                    if self.child.kill_process_group().is_err() {
-                        self.emit("escalate", child_id);
-                        return SupervisionOutcome::Escalated {
-                            child_id,
-                            reason: "process_group_cleanup_failed".to_string(),
-                        };
-                    }
-                    return SupervisionOutcome::Completed { child_id };
-                }
-                Step::Exited { success: false } => {
-                    if self.child.kill_process_group().is_err() {
-                        self.emit("escalate", child_id);
-                        return SupervisionOutcome::Escalated {
-                            child_id,
-                            reason: "process_group_cleanup_failed".to_string(),
-                        };
+                Step::Exited => {
+                    let status = match self.child.finalize_after_exit().await {
+                        Ok(status) => status,
+                        Err(error) => {
+                            tracing::error!(error = %error, "supervisor process-group finalization failed");
+                            self.emit("escalate", child_id);
+                            return SupervisionOutcome::Escalated {
+                                child_id,
+                                reason: "process_group_cleanup_failed".to_string(),
+                            };
+                        }
+                    };
+                    if status.success() {
+                        return SupervisionOutcome::Completed { child_id };
                     }
                     if let Some(outcome) = self
                         .handle_failure(child_id, &mut restarts, &mut window_start, &mut deadline)
@@ -245,6 +244,16 @@ impl SuperviseTask {
                     {
                         return outcome;
                     }
+                }
+                Step::WaitFailed => {
+                    if let Err(error) = self.terminate().await {
+                        tracing::error!(error = %error, "supervisor cleanup after exit-observation failure failed");
+                        self.emit("escalate", child_id);
+                    }
+                    return SupervisionOutcome::Escalated {
+                        child_id,
+                        reason: "child_wait_failed".to_string(),
+                    };
                 }
             }
         }
@@ -265,8 +274,8 @@ impl SuperviseTask {
             biased;
             () = self.cancel.cancelled() => Step::Terminate(TerminationCause::Cancelled),
             () = tokio::time::sleep_until(deadline) => Step::Terminate(TerminationCause::WallClockTimeout),
-            status = self.child.child_mut().wait() => {
-                Step::Exited { success: matches!(status, Ok(code) if code.success()) }
+            result = self.child.wait_for_exit() => {
+                if result.is_ok() { Step::Exited } else { Step::WaitFailed }
             }
             () = tokio::time::sleep(tick) => {
                 if hb_rx.borrow().elapsed() > hb_timeout {
