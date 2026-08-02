@@ -11,7 +11,7 @@ fail() {
 }
 
 [[ "$(uname -s)" == Darwin ]] || fail 'macOS host required'
-for tool in clang codesign launchctl openssl perl plutil security sudo; do
+for tool in clang codesign launchctl log openssl perl plutil security sudo; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool unavailable: $tool"
 done
 sudo -n true >/dev/null 2>&1 || fail 'non-interactive ephemeral trust authority required'
@@ -190,7 +190,17 @@ launchctl print "$domain/$service" >/dev/null 2>&1 || fail 'XPC launch agent did
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE xpc-service-ready'
 
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-start'
+set +e
 "$scratch/trusted-client" "$service" 2
+trusted_client_status=$?
+set -e
+if (( trusted_client_status != 0 )); then
+  printf 'SEC0030_MACOS_NATIVE_DIAGNOSTIC trusted_client_status=%s\n' "$trusted_client_status" >&2
+  log show --last 1m --style compact \
+    --predicate '(process == "trusted-client") OR (process == "taskgated-helper") OR (process == "amfid") OR (process == "syspolicyd") OR (subsystem == "com.apple.xpc")' \
+    | tail -n 80 >&2 || true
+  fail 'trusted XPC client did not complete'
+fi
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-pass messages=2'
 "$scratch/trusted-client-copy" "$service" 1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-copy-pass messages=1'
