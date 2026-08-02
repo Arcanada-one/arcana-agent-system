@@ -246,12 +246,26 @@ impl SuperviseTask {
                 Step::WaitFailed(wait_error) => {
                     tracing::error!(error = %wait_error, "supervisor child-exit observation failed");
                     self.emit("escalate", child_id);
-                    if let Err(error) = self.terminate().await {
-                        tracing::error!(error = %error, "supervisor cleanup after exit-observation failure failed");
+                    let termination_error = self.terminate().await.err();
+                    let reason =
+                        wait_failure_outcome_reason(&wait_error, termination_error.as_ref());
+                    match termination_error {
+                        None => tracing::info!(
+                            "supervisor termination path after exit-observation failure completed"
+                        ),
+                        Some(ref error) if reason == "child_wait_failed" => tracing::info!(
+                            error = %error,
+                            "supervisor cleanup completed and preserved the primary exit-observation failure"
+                        ),
+                        Some(ref error) => tracing::error!(
+                            error = %error,
+                            reason,
+                            "supervisor termination path after exit-observation failure failed"
+                        ),
                     }
                     return SupervisionOutcome::Escalated {
                         child_id,
-                        reason: "child_wait_failed".to_string(),
+                        reason: reason.to_string(),
                     };
                 }
             }
@@ -369,6 +383,18 @@ fn lifecycle_failure_reason(error: &SupervisorError) -> &'static str {
     }
 }
 
+fn wait_failure_outcome_reason(
+    wait_error: &SupervisorError,
+    termination_error: Option<&SupervisorError>,
+) -> &'static str {
+    match termination_error {
+        Some(error) if lifecycle_failure_reason(error) != "child_wait_failed" => {
+            lifecycle_failure_reason(error)
+        }
+        _ => lifecycle_failure_reason(wait_error),
+    }
+}
+
 fn boundary_lifecycle_failure_reason(error: &BoundaryError) -> &'static str {
     match error {
         BoundaryError::Io { phase, .. }
@@ -421,7 +447,8 @@ fn boundary_lifecycle_failure_reason(error: &BoundaryError) -> &'static str {
 
 #[cfg(test)]
 mod lifecycle_reason_tests {
-    use super::boundary_lifecycle_failure_reason;
+    use super::{boundary_lifecycle_failure_reason, wait_failure_outcome_reason};
+    use crate::error::SupervisorError;
     use arcana_execution_boundary::BoundaryError;
 
     fn phase(name: &'static str) -> BoundaryError {
@@ -444,6 +471,23 @@ mod lifecycle_reason_tests {
         assert_eq!(
             boundary_lifecycle_failure_reason(&phase("terminate after initial-signal failure")),
             "signal_failed"
+        );
+    }
+
+    #[test]
+    fn wait_failure_preserves_primary_only_when_cleanup_did_not_fail() {
+        let wait_error = SupervisorError::Boundary(phase("observe child exit without reaping"));
+        let preserved = SupervisorError::Boundary(phase("observe child exit without reaping"));
+        let cleanup_failed =
+            SupervisorError::Boundary(phase("terminate after exit-observation failure"));
+
+        assert_eq!(
+            wait_failure_outcome_reason(&wait_error, Some(&preserved)),
+            "child_wait_failed"
+        );
+        assert_eq!(
+            wait_failure_outcome_reason(&wait_error, Some(&cleanup_failed)),
+            "process_group_cleanup_failed"
         );
     }
 }

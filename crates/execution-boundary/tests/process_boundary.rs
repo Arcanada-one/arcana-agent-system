@@ -45,7 +45,7 @@ async fn shared_exit_observer_handles_bounded_mass_concurrency() {
     let mut tasks = tokio::task::JoinSet::new();
     for iteration in 0..64 {
         let dir = TempDir::new().expect("tempdir");
-        let spec = ProcessSpec::new(Path::new("/bin/true"), clean_env(&dir));
+        let spec = ProcessSpec::new(Path::new("/usr/bin/true"), clean_env(&dir));
         tasks.spawn(async move {
             let _dir = dir;
             spec.run(CancellationToken::new())
@@ -90,8 +90,11 @@ async fn target_and_group_anchor_close_every_ambient_descriptor() {
         .expect("clear writer cloexec");
     rustix::fs::fcntl_setfl(&read_end, rustix::fs::OFlags::NONBLOCK)
         .expect("make reader nonblocking");
-    let mut child = spawn_piped(&ProcessSpec::new(Path::new("/bin/true"), clean_env(&dir)))
-        .expect("spawn boundary child");
+    let mut child = spawn_piped(&ProcessSpec::new(
+        Path::new("/usr/bin/true"),
+        clean_env(&dir),
+    ))
+    .expect("spawn boundary child");
     drop(write_end);
 
     let mut observed_eof = false;
@@ -117,6 +120,29 @@ async fn target_and_group_anchor_close_every_ambient_descriptor() {
         observed_eof,
         "target or long-lived group anchor retained the ambient writer"
     );
+}
+
+#[tokio::test]
+async fn completed_cleanup_refuses_repeated_numeric_group_signals() {
+    let dir = TempDir::new().expect("tempdir");
+    let mut child = spawn_piped(&ProcessSpec::new(
+        Path::new("/usr/bin/true"),
+        clean_env(&dir),
+    ))
+    .expect("spawn boundary child");
+    child.wait_for_exit().await.expect("observe target exit");
+    child
+        .finalize_after_exit()
+        .await
+        .expect("finalize target and anchor");
+
+    assert!(matches!(
+        child.terminate(Duration::from_millis(1)).await,
+        Err(BoundaryError::Io {
+            phase: "terminate process group",
+            ..
+        })
+    ));
 }
 
 #[tokio::test]

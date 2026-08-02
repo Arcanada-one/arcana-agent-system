@@ -926,6 +926,20 @@ async fn terminate_group(
     child: &mut BoundaryChild,
     grace: Duration,
 ) -> Result<ExitStatus, BoundaryError> {
+    if child.cleanup_complete {
+        return Err(BoundaryError::Io {
+            phase: "terminate process group",
+            reason: "cleanup already completed; refusing to signal a released numeric process-group identifier"
+                .to_owned(),
+        });
+    }
+    if child.final_signal.is_some() {
+        // A previous finalization attempt crossed the last safe signalling
+        // point while PID=PGID was pinned. Resume cleanup with its cached
+        // result; never send a fresh signal to a numeric group that may have
+        // been released by a partially completed reap.
+        return finalize_group_and_reap(child).await;
+    }
     let pid = Pid::from_raw(i32::try_from(child.pid).unwrap_or(i32::MAX));
     let initial_signal_error = killpg(pid, Signal::SIGTERM).err();
     let cleanup = match tokio::time::timeout(grace, child.wait_for_exit()).await {
