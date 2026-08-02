@@ -68,8 +68,6 @@ security unlock-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 900 "$keychain"
 security import "$scratch/codesign.p12" \
   -k "$keychain" -P "$keychain_password" -T /usr/bin/codesign >/dev/null
-security set-key-partition-list -S apple-tool:,apple:,codesign: \
-  -s -k "$keychain_password" "$keychain" >/dev/null
 certificate_sha=$(security find-certificate -c 'SEC0030 Ephemeral Code Signing' -Z "$keychain" \
   | awk '/SHA-1 hash:/{print $3; exit}')
 [[ "$certificate_sha" =~ ^[0-9A-F]{40}$ ]] || fail 'ephemeral signing certificate unavailable'
