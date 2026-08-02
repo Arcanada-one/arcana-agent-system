@@ -8,6 +8,7 @@
 
 #![cfg(unix)]
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Write;
@@ -15,17 +16,21 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
+#[cfg(not(target_os = "macos"))]
+use std::sync::Condvar;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use nix::errno::Errno;
 use nix::pty::{openpty, Winsize as NixWinsize};
+#[cfg(target_os = "macos")]
+use nix::sys::event::{EventFilter, EventFlag, FilterFlag, KEvent, Kqueue};
 use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::{getpgid, Pid};
 use rustix::process::{waitid, Pid as RustixPid, WaitId, WaitIdOptions};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::{mpsc, watch};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -57,6 +62,23 @@ for arcana_fd_path in /proc/self/fd/* /dev/fd/*; do
   eval "exec ${arcana_fd}>&-"
 done
 exec /usr/bin/env -u PWD -u OLDPWD -u SHLVL "$@"
+"#;
+
+/// The group anchor follows the same close-from contract as the target. Its
+/// readiness stop happens only after SIGTERM is ignored and ambient
+/// descriptors are closed, so the parent never mistakes a half-armed anchor
+/// for a trusted group member.
+const GROUP_ANCHOR_SCRIPT: &str = r#"
+trap '' TERM
+for arcana_fd_path in /proc/self/fd/* /dev/fd/*; do
+  [ -e "$arcana_fd_path" ] || continue
+  arcana_fd=${arcana_fd_path##*/}
+  case "$arcana_fd" in ''|*[!0-9]*) continue ;; esac
+  [ "$arcana_fd" -le 2 ] && continue
+  eval "exec ${arcana_fd}>&-"
+done
+kill -STOP $$
+exec /bin/sleep 2147483647
 "#;
 
 /// Whether captured bytes need a credential-sentinel quarantine scan.
@@ -337,7 +359,6 @@ pub struct BoundaryChild {
     anchor: Option<Child>,
     exit_observer: Option<watch::Receiver<ExitObservation>>,
     exit_observed: bool,
-    finalizer: Option<JoinHandle<Result<ExitStatus, BoundaryError>>>,
 }
 
 /// A validated terminal size.
@@ -441,8 +462,8 @@ impl BoundaryChild {
     /// final destructive group signal, preventing numeric-PGID reuse.
     ///
     /// # Errors
-    /// Returns an I/O error when `waitid(WNOWAIT)` cannot observe the owned
-    /// direct child.
+    /// Returns an I/O error when the platform's non-reaping exit observer
+    /// cannot observe the owned direct child.
     pub async fn wait_for_exit(&mut self) -> Result<(), BoundaryError> {
         if self.exit_observed {
             return Ok(());
@@ -503,18 +524,21 @@ impl BoundaryChild {
 
 impl Drop for BoundaryChild {
     fn drop(&mut self) {
-        let Some(mut child) = self.child.take() else {
-            // An in-flight finalizer already owns the child and remains
-            // detached when its JoinHandle is dropped.
-            return;
-        };
-        let Some(mut anchor) = self.anchor.take() else {
-            let _ = child.start_kill();
-            return;
-        };
         let child_pid = self.pid;
         let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
         let final_signal = killpg(owned_group, Signal::SIGKILL);
+        let (mut child, mut anchor) = match (self.child.take(), self.anchor.take()) {
+            (Some(child), Some(anchor)) => (child, anchor),
+            (Some(mut child), None) => {
+                let _ = child.start_kill();
+                return;
+            }
+            (None, Some(mut anchor)) => {
+                let _ = anchor.start_kill();
+                return;
+            }
+            (None, None) => return,
+        };
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 let _ =
@@ -704,7 +728,6 @@ fn arm_owned_process_group(mut child: Child, pid: u32) -> Result<BoundaryChild, 
         anchor: Some(anchor),
         exit_observer: Some(observer),
         exit_observed: false,
-        finalizer: None,
     })
 }
 
@@ -750,7 +773,7 @@ fn spawn_group_anchor(owned_group: Pid) -> Result<Child, BoundaryError> {
     let mut command = Command::new("/bin/bash");
     command
         .arg("-c")
-        .arg("trap '' TERM; kill -STOP $$; exec /bin/sleep 2147483647")
+        .arg(GROUP_ANCHOR_SCRIPT)
         .env_clear()
         .current_dir("/")
         .stdin(Stdio::null())
@@ -967,74 +990,245 @@ enum ExitObservation {
 }
 
 fn spawn_exit_observer(pid: u32) -> Result<watch::Receiver<ExitObservation>, BoundaryError> {
-    // Darwin can block in waitid(WNOWAIT) for a stopped child even when
-    // WNOHANG is requested. A dedicated waiter preserves the zombie anchor
-    // without occupying either a Tokio async worker or its blocking pool.
+    // One process-wide native service owns all exit observations: Darwin uses
+    // EVFILT_PROC/NOTE_EXIT registered before SIGCONT, while other Unix hosts
+    // poll waitid(EXITED|WNOWAIT|WNOHANG). Neither path reaps the leader.
     let (sender, receiver) = watch::channel(ExitObservation::Waiting);
-    std::thread::Builder::new()
-        .name(format!("arcana-child-wait-{pid}"))
-        .spawn(move || {
-            let state = match observe_exit_without_reaping(pid) {
-                Ok(()) => ExitObservation::Exited,
-                Err(reason) => ExitObservation::Failed(reason),
-            };
-            let _ = sender.send(state);
-        })
-        .map_err(|error| BoundaryError::Io {
-            phase: "spawn child exit observer",
-            reason: error.to_string(),
+    let service = EXIT_OBSERVER_SERVICE
+        .get_or_init(ExitObserverService::start)
+        .as_ref()
+        .map_err(|reason| BoundaryError::Io {
+            phase: "start child exit observer service",
+            reason: reason.clone(),
         })?;
+    service.register(pid, sender)?;
     Ok(receiver)
 }
 
-fn observe_exit_without_reaping(pid: u32) -> Result<(), String> {
-    let raw_pid = i32::try_from(pid).unwrap_or(i32::MAX);
-    let wait_pid =
-        RustixPid::from_raw(raw_pid).ok_or_else(|| "child pid must be positive".to_owned())?;
+type ExitSubscribers = Arc<Mutex<HashMap<u32, watch::Sender<ExitObservation>>>>;
+
+static EXIT_OBSERVER_SERVICE: OnceLock<Result<ExitObserverService, String>> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+struct ExitObserverService {
+    queue: Arc<Kqueue>,
+    subscribers: ExitSubscribers,
+}
+
+#[cfg(target_os = "macos")]
+impl ExitObserverService {
+    fn start() -> Result<Self, String> {
+        let queue = Arc::new(Kqueue::new().map_err(|error| error.to_string())?);
+        let subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let worker_queue = queue.clone();
+        let worker_subscribers = subscribers.clone();
+        std::thread::Builder::new()
+            .name("arcana-child-exit-observer".to_owned())
+            .spawn(move || darwin_exit_observer_loop(&worker_queue, &worker_subscribers))
+            .map_err(|error| error.to_string())?;
+        Ok(Self { queue, subscribers })
+    }
+
+    fn register(
+        &self,
+        pid: u32,
+        sender: watch::Sender<ExitObservation>,
+    ) -> Result<(), BoundaryError> {
+        insert_exit_subscriber(&self.subscribers, pid, sender)?;
+        let change = KEvent::new(
+            pid as usize,
+            EventFilter::EVFILT_PROC,
+            EventFlag::EV_ADD | EventFlag::EV_ONESHOT,
+            FilterFlag::NOTE_EXIT,
+            0,
+            0,
+        );
+        if let Err(error) = self.queue.kevent(&[change], &mut [], None) {
+            lock_exit_subscribers(&self.subscribers).remove(&pid);
+            return Err(BoundaryError::Io {
+                phase: "register Darwin process-exit observer",
+                reason: error.to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn darwin_exit_observer_loop(queue: &Kqueue, subscribers: &ExitSubscribers) {
+    let placeholder = KEvent::new(
+        0,
+        EventFilter::EVFILT_PROC,
+        EventFlag::empty(),
+        FilterFlag::empty(),
+        0,
+        0,
+    );
+    let mut events = [placeholder; 64];
     loop {
-        match waitid(
-            WaitId::Pid(wait_pid),
-            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
-        ) {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) | Err(rustix::io::Errno::INTR) => {}
-            Err(error) => return Err(error.to_string()),
+        let count = match queue.kevent(&[], &mut events, None) {
+            Ok(count) => count,
+            Err(Errno::EINTR) => continue,
+            Err(error) => {
+                fail_all_exit_subscribers(subscribers, &error.to_string());
+                return;
+            }
+        };
+        for event in &events[..count] {
+            let Ok(pid) = u32::try_from(event.ident()) else {
+                fail_all_exit_subscribers(
+                    subscribers,
+                    "kqueue returned a process identifier outside u32",
+                );
+                return;
+            };
+            let state = if event.flags().contains(EventFlag::EV_ERROR) {
+                ExitObservation::Failed(format!("kqueue process-exit error: {}", event.data()))
+            } else if event.filter() == Ok(EventFilter::EVFILT_PROC)
+                && event.fflags().contains(FilterFlag::NOTE_EXIT)
+            {
+                ExitObservation::Exited
+            } else {
+                ExitObservation::Failed("kqueue returned an unexpected process event".to_owned())
+            };
+            send_exit_observation(subscribers, pid, state);
         }
     }
 }
 
-async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus, BoundaryError> {
-    if child.finalizer.is_none() {
-        let mut owned_child = child.child.take().ok_or_else(|| BoundaryError::Io {
-            phase: "start process-group finalizer",
-            reason: "child ownership is unavailable".to_owned(),
-        })?;
-        let mut owned_anchor = child.anchor.take().ok_or_else(|| BoundaryError::Io {
-            phase: "start process-group finalizer",
-            reason: "group anchor ownership is unavailable".to_owned(),
-        })?;
-        child.exit_observer.take();
-        let pid = child.pid;
-        child.finalizer = Some(tokio::spawn(async move {
-            finalize_owned_group(&mut owned_child, &mut owned_anchor, pid, None).await
-        }));
+#[cfg(not(target_os = "macos"))]
+struct ExitObserverService {
+    subscribers: ExitSubscribers,
+    wake: Arc<Condvar>,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl ExitObserverService {
+    fn start() -> Result<Self, String> {
+        let subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let wake = Arc::new(Condvar::new());
+        let worker_subscribers = subscribers.clone();
+        let worker_wake = wake.clone();
+        std::thread::Builder::new()
+            .name("arcana-child-exit-observer".to_owned())
+            .spawn(move || polling_exit_observer_loop(&worker_subscribers, &worker_wake))
+            .map_err(|error| error.to_string())?;
+        Ok(Self { subscribers, wake })
     }
 
-    let Some(finalizer) = child.finalizer.as_mut() else {
-        return Err(BoundaryError::Io {
-            phase: "join process-group finalizer",
-            reason: "finalizer handle is unavailable".to_owned(),
-        });
-    };
-    let joined = finalizer.await;
-    child.finalizer.take();
-    match joined {
-        Ok(result) => result,
-        Err(error) => Err(BoundaryError::Io {
-            phase: "join process-group finalizer",
-            reason: error.to_string(),
-        }),
+    fn register(
+        &self,
+        pid: u32,
+        sender: watch::Sender<ExitObservation>,
+    ) -> Result<(), BoundaryError> {
+        insert_exit_subscriber(&self.subscribers, pid, sender)?;
+        self.wake.notify_one();
+        Ok(())
     }
+}
+
+fn insert_exit_subscriber(
+    subscribers: &ExitSubscribers,
+    pid: u32,
+    sender: watch::Sender<ExitObservation>,
+) -> Result<(), BoundaryError> {
+    let mut subscribers = lock_exit_subscribers(subscribers);
+    if subscribers.contains_key(&pid) {
+        return Err(BoundaryError::Io {
+            phase: "register child exit observer",
+            reason: "process identifier already has an active observer".to_owned(),
+        });
+    }
+    subscribers.insert(pid, sender);
+    Ok(())
+}
+
+fn lock_exit_subscribers(
+    subscribers: &ExitSubscribers,
+) -> std::sync::MutexGuard<'_, HashMap<u32, watch::Sender<ExitObservation>>> {
+    subscribers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn send_exit_observation(subscribers: &ExitSubscribers, pid: u32, state: ExitObservation) {
+    if let Some(sender) = lock_exit_subscribers(subscribers).remove(&pid) {
+        let _ = sender.send(state);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn fail_all_exit_subscribers(subscribers: &ExitSubscribers, reason: &str) {
+    let senders: Vec<_> = lock_exit_subscribers(subscribers)
+        .drain()
+        .map(|(_, sender)| sender)
+        .collect();
+    for sender in senders {
+        let _ = sender.send(ExitObservation::Failed(reason.to_owned()));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn polling_exit_observer_loop(subscribers: &ExitSubscribers, wake: &Condvar) {
+    loop {
+        let pids = {
+            let mut active = lock_exit_subscribers(subscribers);
+            while active.is_empty() {
+                active = wake
+                    .wait(active)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+            active.keys().copied().collect::<Vec<_>>()
+        };
+        for pid in pids {
+            if let Some(state) = poll_exit_without_reaping(pid) {
+                send_exit_observation(subscribers, pid, state);
+            }
+        }
+        let active = lock_exit_subscribers(subscribers);
+        let (active, _) = wake
+            .wait_timeout(active, Duration::from_millis(1))
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(active);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn poll_exit_without_reaping(pid: u32) -> Option<ExitObservation> {
+    let raw_pid = i32::try_from(pid).unwrap_or(i32::MAX);
+    let Some(wait_pid) = RustixPid::from_raw(raw_pid) else {
+        return Some(ExitObservation::Failed(
+            "child pid must be positive".to_owned(),
+        ));
+    };
+    match waitid(
+        WaitId::Pid(wait_pid),
+        WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+    ) {
+        Ok(Some(status)) if status.exited() || status.killed() || status.dumped() => {
+            Some(ExitObservation::Exited)
+        }
+        Ok(Some(_) | None) | Err(rustix::io::Errno::INTR) => None,
+        Err(error) => Some(ExitObservation::Failed(error.to_string())),
+    }
+}
+
+async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus, BoundaryError> {
+    child.exit_observer.take();
+    let pid = child.pid;
+    let owned_child = child.child.as_mut().ok_or_else(|| BoundaryError::Io {
+        phase: "finalize process group",
+        reason: "child ownership is unavailable".to_owned(),
+    })?;
+    let owned_anchor = child.anchor.as_mut().ok_or_else(|| BoundaryError::Io {
+        phase: "finalize process group",
+        reason: "group anchor ownership is unavailable".to_owned(),
+    })?;
+
+    // The destructive group signal is issued synchronously inside this call
+    // before its first await. If the caller is cancelled during a reap, the
+    // BoundaryChild still owns both handles and Drop repeats the group signal.
+    finalize_owned_group(owned_child, owned_anchor, pid, None).await
 }
 
 async fn finalize_owned_group(
@@ -1045,50 +1239,78 @@ async fn finalize_owned_group(
 ) -> Result<ExitStatus, BoundaryError> {
     let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
     let final_signal = pre_delivered_signal.unwrap_or_else(|| killpg(owned_group, Signal::SIGKILL));
-    if let Err(error) = final_signal {
-        if !matches!(error, Errno::EPERM | Errno::ESRCH) {
-            return Err(BoundaryError::Io {
-                phase: "final signal process group before reap",
+    let mut failures = Vec::new();
+    if let Err(error) = validate_final_signal(final_signal) {
+        failures.push(error);
+        if let Err(error) = child.start_kill() {
+            failures.push(BoundaryError::Io {
+                phase: "fallback signal process-group leader",
+                reason: error.to_string(),
+            });
+        }
+        if let Err(error) = anchor.start_kill() {
+            failures.push(BoundaryError::Io {
+                phase: "fallback signal process-group anchor",
                 reason: error.to_string(),
             });
         }
     }
 
     let status = match tokio::time::timeout(POST_KILL_REAP_TIMEOUT, child.wait()).await {
-        Ok(Ok(status)) => status,
+        Ok(Ok(status)) => Some(status),
         Ok(Err(error)) => {
-            return Err(BoundaryError::Io {
+            failures.push(BoundaryError::Io {
                 phase: "reap process-group leader",
                 reason: error.to_string(),
             });
+            None
         }
         Err(_) => {
-            return Err(BoundaryError::Io {
+            failures.push(BoundaryError::Io {
                 phase: "reap process-group leader",
                 reason: "direct child remained unreaped beyond the bounded deadline".to_owned(),
             });
+            None
         }
     };
 
     match tokio::time::timeout(POST_KILL_REAP_TIMEOUT, anchor.wait()).await {
         Ok(Ok(_)) => {}
         Ok(Err(error)) => {
-            return Err(BoundaryError::Io {
+            failures.push(BoundaryError::Io {
                 phase: "reap process-group anchor",
                 reason: error.to_string(),
             });
         }
         Err(_) => {
-            return Err(BoundaryError::Io {
+            failures.push(BoundaryError::Io {
                 phase: "reap process-group anchor",
                 reason: "anchor remained unreaped beyond the bounded deadline".to_owned(),
             });
         }
     }
 
-    require_group_disappeared(owned_group).await?;
-    validate_final_signal(final_signal)?;
-    Ok(status)
+    if let Err(error) = require_group_disappeared(owned_group).await {
+        failures.push(error);
+    }
+
+    if failures.is_empty() {
+        return status.ok_or_else(|| BoundaryError::Io {
+            phase: "finalize owned process group",
+            reason: "leader status is unavailable after successful cleanup".to_owned(),
+        });
+    }
+    if failures.len() == 1 {
+        return Err(failures.remove(0));
+    }
+    Err(BoundaryError::Io {
+        phase: "finalize owned process group",
+        reason: failures
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; "),
+    })
 }
 
 fn validate_final_signal(final_signal: Result<(), Errno>) -> Result<(), BoundaryError> {

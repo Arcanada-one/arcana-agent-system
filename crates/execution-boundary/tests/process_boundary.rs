@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use arcana_execution_boundary::{
-    BoundaryError, CleanEnv, OutputPolicy, ProcessSpec, Termination, TranscriptPolicy,
+    spawn_piped, BoundaryError, CleanEnv, OutputPolicy, ProcessSpec, Termination, TranscriptPolicy,
     TranscriptWriter, SAFE_SYSTEM_PATH,
 };
 use nix::errno::Errno;
@@ -65,6 +65,43 @@ async fn child_cannot_inherit_a_descriptor_even_when_cloexec_was_cleared() {
 }
 
 #[tokio::test]
+async fn target_and_group_anchor_close_every_ambient_descriptor() {
+    let dir = TempDir::new().expect("tempdir");
+    let (read_end, write_end) = nix::unistd::pipe().expect("pipe");
+    rustix::io::fcntl_setfd(&write_end, rustix::io::FdFlags::empty())
+        .expect("clear writer cloexec");
+    rustix::fs::fcntl_setfl(&read_end, rustix::fs::OFlags::NONBLOCK)
+        .expect("make reader nonblocking");
+    let mut child = spawn_piped(&ProcessSpec::new(Path::new("/bin/true"), clean_env(&dir)))
+        .expect("spawn boundary child");
+    drop(write_end);
+
+    let mut observed_eof = false;
+    for _ in 0..100 {
+        match rustix::io::read(&read_end, &mut [0u8; 1]) {
+            Ok(0) => {
+                observed_eof = true;
+                break;
+            }
+            Err(rustix::io::Errno::AGAIN) => {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Ok(count) => panic!("ambient descriptor pipe produced {count} unexpected bytes"),
+            Err(error) => panic!("ambient descriptor pipe failed: {error}"),
+        }
+    }
+    child.wait_for_exit().await.expect("observe target exit");
+    child
+        .finalize_after_exit()
+        .await
+        .expect("finalize target and anchor");
+    assert!(
+        observed_eof,
+        "target or long-lived group anchor retained the ambient writer"
+    );
+}
+
+#[tokio::test]
 async fn relative_programs_and_sentinel_bearing_argv_fail_closed() {
     let dir = TempDir::new().expect("tempdir");
     let relative = ProcessSpec::new(Path::new("sh"), clean_env(&dir));
@@ -115,20 +152,27 @@ async fn timeout_terminates_the_whole_process_group() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn self_stopped_child_does_not_block_the_timeout_watchdog() {
-    let dir = TempDir::new().expect("tempdir");
-    let started = std::time::Instant::now();
-    let output = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
-        .args(["-c", "kill -STOP $$"])
-        .timeout(Duration::from_millis(100))
-        .termination_grace(Duration::from_millis(50))
-        .run(CancellationToken::new())
-        .await
-        .expect("stopped child must be contained");
-    assert_eq!(output.termination, Termination::TimedOut);
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "exit observation must not occupy the async watchdog worker"
-    );
+    let iterations = if cfg!(target_os = "macos") { 20 } else { 1 };
+    for iteration in 0..iterations {
+        let dir = TempDir::new().expect("tempdir");
+        let started = std::time::Instant::now();
+        let output = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+            .args(["-c", "kill -STOP $$"])
+            .timeout(Duration::from_millis(100))
+            .termination_grace(Duration::from_millis(50))
+            .run(CancellationToken::new())
+            .await
+            .unwrap_or_else(|error| panic!("iteration {iteration} failed: {error}"));
+        assert_eq!(
+            output.termination,
+            Termination::TimedOut,
+            "iteration {iteration} misclassified a stop as an exit"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "iteration {iteration} occupied the async watchdog worker"
+        );
+    }
 }
 
 #[tokio::test]
@@ -313,6 +357,45 @@ fn runtime_shutdown_still_signals_the_owned_process_group() {
         std::thread::sleep(Duration::from_millis(10));
     }
     panic!("runtime shutdown stranded the owned process group");
+}
+
+#[tokio::test]
+async fn cancelling_natural_exit_finalization_cannot_strand_a_descendant() {
+    let dir = TempDir::new().expect("tempdir");
+    let pid_file = dir.path().join("natural-exit-grandchild.pid");
+    let command = format!(
+        "sleep 30 & child=$!; printf %s \"$child\" > {}; exit 0",
+        pid_file.display()
+    );
+    let mut child = spawn_piped(
+        &ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir)).args(["-c".to_owned(), command]),
+    )
+    .expect("spawn boundary child");
+    for _ in 0..100 {
+        if pid_file.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let grandchild: i32 = std::fs::read_to_string(&pid_file)
+        .expect("pid file")
+        .parse()
+        .expect("pid");
+    child.wait_for_exit().await.expect("observe leader exit");
+
+    let finalizer = tokio::spawn(async move { child.finalize_after_exit().await });
+    tokio::task::yield_now().await;
+    finalizer.abort();
+    let _ = finalizer.await;
+
+    for _ in 0..100 {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None) == Err(Errno::ESRCH)
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("cancelling natural-exit finalization stranded a descendant");
 }
 
 #[tokio::test]

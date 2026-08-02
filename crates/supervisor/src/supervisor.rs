@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::audit::AuditLog;
+use arcana_execution_boundary::BoundaryError;
 use nix::unistd::Pid;
 use serde_json::json;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
@@ -223,11 +224,12 @@ impl SuperviseTask {
                     let status = match self.child.finalize_after_exit().await {
                         Ok(status) => status,
                         Err(error) => {
+                            let reason = lifecycle_failure_reason(&error);
                             tracing::error!(error = %error, "supervisor process-group finalization failed");
                             self.emit("escalate", child_id);
                             return SupervisionOutcome::Escalated {
                                 child_id,
-                                reason: "process_group_cleanup_failed".to_string(),
+                                reason: reason.to_string(),
                             };
                         }
                     };
@@ -362,36 +364,86 @@ impl SuperviseTask {
 
 fn lifecycle_failure_reason(error: &SupervisorError) -> &'static str {
     match error {
-        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
-            phase, ..
-        }) if matches!(
-            *phase,
-            "reap process-group leader" | "reap process-group anchor"
-        ) =>
+        SupervisorError::Boundary(error) => boundary_lifecycle_failure_reason(error),
+        _ => "termination_failed",
+    }
+}
+
+fn boundary_lifecycle_failure_reason(error: &BoundaryError) -> &'static str {
+    match error {
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "reap process-group leader" | "reap process-group anchor"
+            ) =>
         {
             "reap_failed"
         }
-        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
-            phase, ..
-        }) if *phase == "verify process-group disappearance" => "process_group_cleanup_failed",
-        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
-            phase, ..
-        }) if matches!(
-            *phase,
-            "observe child exit without reaping" | "spawn child exit observer"
-        ) =>
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "verify process-group disappearance"
+                    | "finalize process group"
+                    | "finalize owned process group"
+                    | "terminate after exit-observation failure"
+                    | "cleanup after child output deadline"
+            ) =>
+        {
+            "process_group_cleanup_failed"
+        }
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "observe child exit without reaping"
+                    | "spawn child exit observer"
+                    | "start child exit observer service"
+                    | "register child exit observer"
+                    | "register Darwin process-exit observer"
+            ) =>
         {
             "child_wait_failed"
         }
-        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
-            phase, ..
-        }) if matches!(
-            *phase,
-            "initial signal process group" | "final signal process group before reap"
-        ) =>
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "initial signal process group"
+                    | "final signal process group before reap"
+                    | "fallback signal process-group leader"
+                    | "fallback signal process-group anchor"
+                    | "terminate after initial-signal failure"
+            ) =>
         {
             "signal_failed"
         }
         _ => "termination_failed",
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_reason_tests {
+    use super::boundary_lifecycle_failure_reason;
+    use arcana_execution_boundary::BoundaryError;
+
+    fn phase(name: &'static str) -> BoundaryError {
+        BoundaryError::Io {
+            phase: name,
+            reason: "test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn classifies_normal_exit_and_composite_cleanup_phases() {
+        assert_eq!(
+            boundary_lifecycle_failure_reason(&phase("finalize owned process group")),
+            "process_group_cleanup_failed"
+        );
+        assert_eq!(
+            boundary_lifecycle_failure_reason(&phase("terminate after exit-observation failure")),
+            "process_group_cleanup_failed"
+        );
+        assert_eq!(
+            boundary_lifecycle_failure_reason(&phase("terminate after initial-signal failure")),
+            "signal_failed"
+        );
     }
 }
