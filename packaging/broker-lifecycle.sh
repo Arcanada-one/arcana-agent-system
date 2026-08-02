@@ -152,14 +152,6 @@ observe_lifecycle_lock() {
 
   [ ! -L "$LIFECYCLE_LOCK_FILE" ] || return 2
   if ! ln -P -- "$LIFECYCLE_LOCK_FILE" "$LOCK_OBSERVATION" 2>/dev/null; then
-    if [ "$SERVICE_MODE" = rehearsal ] && \
-      [ -n "${LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS:-}" ]; then
-      case "$LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS" in
-        *[!0-9.]*|*.*.*|'') die "invalid rehearsal observation-failure delay" ;;
-      esac
-      : > "$CONTROL_DIR/rehearsal-observation-link-failed"
-      sleep "$LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS"
-    fi
     LOCK_OBSERVATION=''
     [ ! -L "$LIFECYCLE_LOCK_FILE" ] || return 2
     # Absence, or a regular owner that appeared after link(2) failed, is a
@@ -210,11 +202,19 @@ acquire_lifecycle_lock() {
   # in one atomic operation. No peer can observe an ownerless live lock.
   while ! ln -- "$LOCK_CANDIDATE" "$LIFECYCLE_LOCK_FILE" 2>/dev/null; do
     if [ "$SERVICE_MODE" = rehearsal ] && \
-      [ -n "${LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS:-}" ]; then
-      case "$LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS" in
-        *[!0-9.]*|*.*.*|'') die "invalid rehearsal owner-read delay" ;;
+      [ -n "${LIFECYCLE_REHEARSAL_PRE_OWNER_READ_UNTIL_FILE:-}" ]; then
+      case "$LIFECYCLE_REHEARSAL_PRE_OWNER_READ_UNTIL_FILE" in
+        "$CONTROL_DIR"/*) ;;
+        *) die "rehearsal owner-read release file must be inside the control directory" ;;
       esac
-      sleep "$LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS"
+      : > "$CONTROL_DIR/rehearsal-pre-owner-read-ready"
+      local owner_read_attempts=0
+      while [ ! -f "$LIFECYCLE_REHEARSAL_PRE_OWNER_READ_UNTIL_FILE" ]; do
+        owner_read_attempts=$((owner_read_attempts + 1))
+        [ "$owner_read_attempts" -lt 500 ] || \
+          die "timed out waiting for rehearsal owner-read release"
+        sleep 0.02
+      done
     fi
     if observe_lifecycle_lock; then
       owner="$OBSERVED_LOCK_OWNER"
@@ -227,6 +227,14 @@ acquire_lifecycle_lock() {
         continue
       fi
       die "lifecycle lock is not a trusted regular file"
+    fi
+    if [ "$SERVICE_MODE" = rehearsal ] && \
+      [ -n "${LIFECYCLE_REHEARSAL_OBSERVED_OWNER_FILE:-}" ]; then
+      case "$LIFECYCLE_REHEARSAL_OBSERVED_OWNER_FILE" in
+        "$CONTROL_DIR"/*) ;;
+        *) die "rehearsal observed-owner file must be inside the control directory" ;;
+      esac
+      write_token_atomic "$owner" "$LIFECYCLE_REHEARSAL_OBSERVED_OWNER_FILE"
     fi
     case "$owner" in
       [0-9]*:[0-9]*) owner_pid=${owner%%:*} ;;
@@ -265,6 +273,21 @@ acquire_lifecycle_lock() {
       *[!0-9.]*|*.*.*|'') die "invalid rehearsal lock hold" ;;
     esac
     sleep "$LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS"
+  fi
+  if [ "$SERVICE_MODE" = rehearsal ] && \
+    [ -n "${LIFECYCLE_REHEARSAL_HOLD_LOCK_UNTIL_FILE:-}" ]; then
+    [ -z "${LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS:-}" ] || \
+      die "rehearsal lock hold modes are mutually exclusive"
+    case "$LIFECYCLE_REHEARSAL_HOLD_LOCK_UNTIL_FILE" in
+      "$CONTROL_DIR"/*) ;;
+      *) die "rehearsal lock release file must be inside the control directory" ;;
+    esac
+    local release_attempts=0
+    while [ ! -f "$LIFECYCLE_REHEARSAL_HOLD_LOCK_UNTIL_FILE" ]; do
+      release_attempts=$((release_attempts + 1))
+      [ "$release_attempts" -lt 500 ] || die "timed out waiting for rehearsal lock release"
+      sleep 0.02
+    done
   fi
 }
 

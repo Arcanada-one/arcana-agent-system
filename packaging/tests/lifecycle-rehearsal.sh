@@ -29,7 +29,13 @@ else
   installed_binary_root="$scratch/root/usr/libexec/arcana"
   socket_path="$scratch/root/run/arcana-credential-broker/broker.sock"
 fi
+first_release=''
+replacement_release=''
+waiter_resume=''
 cleanup() {
+  if [ -n "$first_release" ]; then : > "$first_release"; fi
+  if [ -n "$replacement_release" ]; then : > "$replacement_release"; fi
+  if [ -n "$waiter_resume" ]; then : > "$waiter_resume"; fi
   ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
     bash "$lifecycle" disable >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
@@ -155,8 +161,9 @@ run_lifecycle verify
 # rehearsal process, force a waiter to miss the released lock, then let a
 # third process acquire it before the waiter rechecks. The waiter must treat
 # both owner transitions as transient and publish only after both release.
+first_release="$control_root/release-first-holder"
 ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
-  LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS=0.2 \
+  LIFECYCLE_REHEARSAL_HOLD_LOCK_UNTIL_FILE="$first_release" \
   bash "$lifecycle" disable >/dev/null &
 lock_holder=$!
 attempts=0
@@ -165,23 +172,27 @@ while [ ! -f "$control_root/lifecycle.lock" ] && [ "$attempts" -lt 100 ]; do
   attempts=$((attempts + 1))
 done
 [ -f "$control_root/lifecycle.lock" ]
+waiter_resume="$control_root/resume-waiter-owner-read"
+waiter_observed="$control_root/waiter-observed-owner"
 ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
-  LIFECYCLE_REHEARSAL_PRE_OWNER_READ_SECONDS=0.3 \
-  LIFECYCLE_REHEARSAL_POST_OBSERVATION_FAILURE_SECONDS=0.4 \
+  LIFECYCLE_REHEARSAL_PRE_OWNER_READ_UNTIL_FILE="$waiter_resume" \
+  LIFECYCLE_REHEARSAL_OBSERVED_OWNER_FILE="$waiter_observed" \
   bash "$lifecycle" install eight "$broker" "$policy_two" &
 lock_waiter=$!
-observation_marker="$control_root/rehearsal-observation-link-failed"
+owner_read_ready="$control_root/rehearsal-pre-owner-read-ready"
 attempts=0
-while [ ! -f "$observation_marker" ] && [ "$attempts" -lt 100 ]; do
+while [ ! -f "$owner_read_ready" ] && [ "$attempts" -lt 100 ]; do
   sleep 0.01
   attempts=$((attempts + 1))
 done
-[ -f "$observation_marker" ]
-wait "$lock_holder"
+[ -f "$owner_read_ready" ] || { printf 'waiter did not reach owner-read barrier\n' >&2; exit 1; }
+replacement_release="$control_root/release-replacement-holder"
 ARCANA_ROOT="$scratch/root" SERVICE_MODE=rehearsal \
-  LIFECYCLE_REHEARSAL_HOLD_LOCK_SECONDS=0.6 \
+  LIFECYCLE_REHEARSAL_HOLD_LOCK_UNTIL_FILE="$replacement_release" \
   bash "$lifecycle" disable >/dev/null &
 replacement_holder=$!
+: > "$first_release"
+wait "$lock_holder"
 attempts=0
 while [ "$attempts" -lt 100 ]; do
   replacement_owner=$(sed -n '1p' "$control_root/lifecycle.lock" 2>/dev/null || true)
@@ -189,9 +200,24 @@ while [ "$attempts" -lt 100 ]; do
   sleep 0.01
   attempts=$((attempts + 1))
 done
-case "$replacement_owner" in "$replacement_holder:"*) ;; *) exit 1 ;; esac
+case "$replacement_owner" in
+  "$replacement_holder:"*) ;;
+  *) printf 'replacement holder did not acquire lifecycle lock\n' >&2; exit 1 ;;
+esac
+: > "$waiter_resume"
+attempts=0
+while [ ! -f "$waiter_observed" ] && [ "$attempts" -lt 100 ]; do
+  sleep 0.01
+  attempts=$((attempts + 1))
+done
+[ -f "$waiter_observed" ] || { printf 'waiter did not record replacement owner\n' >&2; exit 1; }
+[ "$(sed -n '1p' "$waiter_observed")" = "$replacement_owner" ] || {
+  printf 'waiter observed an unexpected lifecycle owner\n' >&2
+  exit 1
+}
 kill -0 "$lock_waiter" 2>/dev/null
 [ ! -s "$control_root/pending-generation" ]
+: > "$replacement_release"
 wait "$replacement_holder"
 wait "$lock_waiter"
 [ "$(sed -n '1p' "$control_root/pending-generation")" = eight ]
