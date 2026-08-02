@@ -1,0 +1,15 @@
+#include <tunables/global>
+
+profile @@TRUSTED_PROFILE@@ flags=(attach_disconnected) {
+  #include <abstractions/base>
+  @@HELPER@@ ix,
+  @@HELPER@@ mr,
+  unix (send) type=seqpacket,
+}
+
+profile @@DENIED_PROFILE@@ flags=(attach_disconnected) {
+  #include <abstractions/base>
+  @@HELPER@@ ix,
+  @@HELPER@@ mr,
+  deny unix (send) type=seqpacket,
+}

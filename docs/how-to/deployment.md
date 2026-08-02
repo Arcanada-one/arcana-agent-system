@@ -12,30 +12,42 @@ environment receives its separate independent review.
 Follow [install.md](install.md) to verify a downloaded package before using its
 contents. Never deploy an archive that has only passed a checksum.
 
-## Provision the governance readback credential
+## Capture the governance witness
 
-`SEC0030_GOVERNANCE_TOKEN` is a dedicated fine-grained token, not the default
-workflow token and not a developer's existing CLI token. Its owner is an
-organization-managed machine account; repository access is limited to this
-repository; expiry is at most 90 days. Grant only these repository permissions:
+Decision, 2026-08-02: the tag-triggered release path does not carry a GitHub
+governance credential. Reading hidden ruleset bypass actors requires a
+mutation-capable Administration token. Giving that long-lived authority to a
+tag workflow would let a compromised release job rewrite the governance it is
+supposed to verify. Public `updated_at` metadata was also rejected as a drift
+anchor: a live add/remove bypass-actor negative control did not change it.
 
-- Administration: read and write. The workflow makes only `GET` requests, but
-  [GitHub omits ruleset bypass actors][github-rulesets] from the governance
-  response unless the caller has write access.
-- Actions, Checks, Contents, and Pull requests: read-only. Actions read access
-  is required for [environment][github-environments] and
-  [deployment-branch-policy][github-deployment-policies] readback.
+Instead, a trusted operator host performs the privileged read immediately
+before creating the version tag. The capture helper requires:
 
-Store the value only as the repository Actions secret
-`SEC0030_GOVERNANCE_TOKEN`. Do not copy it into a checkout, workflow variable,
-command line, or release artifact. An absent or expired secret is deliberately
-fail-closed: release preflight stops before building or publishing anything.
-Rotate it before expiry and validate the replacement with a dry preflight that
-performs the same read-only API calls.
+- the `Arcanada` machine account's GitHub credential on a private file
+  descriptor, never in argv or the environment;
+- the SEC-0030 Ed25519 signing key on a second private file descriptor;
+- the exact merge SHA, merged PR number, repository, and independent reviewer.
+
+`dev-tools/sec0030-governance-witness-capture.sh` verifies that the GitHub
+identity has admin visibility, reads branch protection, the complete active tag
+ruleset including hidden bypass actors, and the protected environment, then
+signs a 120-second exact-SHA manifest. It posts only the manifest and signature
+as a machine-account PR comment. The release workflow has `checks`, `contents`,
+`issues`, and `pull-requests` read access, verifies the signature against
+`.github/sec0030-governance-witness.pub`, and rejects an expired, altered,
+wrong-author, wrong-repository, wrong-SHA, or bypass-bearing witness.
+
+The private signing key is stored only at Vault KV v2 path
+`arcanada/shared/tokens/sec0030-governance-witness`, with CAS required. Version
+1 was created on 2026-08-02, is limited by contract to signing these 120-second
+governance manifests, and must rotate by 2026-10-31 or immediately after any
+suspected disclosure. Rotation is a code-reviewed public-key change followed
+by revocation of the old Vault version. The signing key cannot mutate GitHub;
+the GitHub credential never enters Actions. An absent or invalid witness stops
+release before build or publication.
 
 [github-rulesets]: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset
-[github-environments]: https://docs.github.com/en/rest/deployments/environments
-[github-deployment-policies]: https://docs.github.com/en/rest/deployments/branch-policies#list-deployment-branch-policies
 
 ## Stage disabled
 

@@ -27,6 +27,14 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
         run: cargo test --workspace
+      - name: SEC-0030 governance and platform control contracts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+          bats dev-tools/tests
+          shellcheck -S warning \
+            dev-tools/*.sh \
+            packaging/tests/*.sh
 
   platform-isolation:
     name: platform-contract-mock / ${{ matrix.platform }}
@@ -66,3 +74,18 @@ jobs:
     with:
       compose_paths: ''
       datarim_ref: '82311756b4dbfd16ddc96e098829bd9b0dea3626'
+
+  platform-native-negative-controls:
+    name: platform-native-negative-controls / macos-xpc-sandbox
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prove XPC message identity and inherited App Sandbox denials
+        run: bash packaging/tests/macos-live-xpc-sandbox.sh
+      - name: Confirm exact launchd test resource cleanup
+        if: always()
+        run: |
+          if launchctl print "gui/$(id -u)" 2>/dev/null | grep -Fq one.arcanada.sec0030.; then
+            printf '%s\n' 'stale SEC-0030 launchd resource' >&2
+            exit 1
+          fi
