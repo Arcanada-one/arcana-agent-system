@@ -159,6 +159,7 @@ codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
   --identifier one.arcanada.sec0030.trusted "$scratch/missing-entitlement-client" >/dev/null
 codesign --verify --strict "$scratch/missing-entitlement-client"
 sign_binary one.arcanada.sec0030.server "$fixture_dir/sec0030-trusted.entitlements" "$scratch/xpc-server"
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE signatures-ready'
 
 requirement='certificate leaf = H"'"$certificate_sha"'" and identifier "one.arcanada.sec0030.trusted" and entitlement["one.arcanada.sec0030.executor"] = true'
 counter="$scratch/accepted-count"
@@ -169,6 +170,7 @@ sed \
   -e "s|@@COUNTER@@|$counter|g" \
   "$fixture_dir/sec0030-launch-agent.plist.in" > "$launch_plist"
 plutil -lint "$launch_plist" >/dev/null
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE launch-agent-prepared'
 uid=$(id -u)
 if launchctl print "gui/$uid" >/dev/null 2>&1; then
   domain="gui/$uid"
@@ -177,15 +179,21 @@ else
 fi
 launchctl bootstrap "$domain" "$launch_plist"
 bootstrapped=1
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE launch-agent-bootstrapped'
 launchctl kickstart -k "$domain/$service"
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE launch-agent-kickstarted'
 for _ in {1..100}; do
   launchctl print "$domain/$service" >/dev/null 2>&1 && break
   sleep 0.05
 done
 launchctl print "$domain/$service" >/dev/null 2>&1 || fail 'XPC launch agent did not start'
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE xpc-service-ready'
 
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-start'
 "$scratch/trusted-client" "$service" 2
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-pass messages=2'
 "$scratch/trusted-client-copy" "$service" 1
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-copy-pass messages=1'
 before_negative=$(wc -l < "$counter")
 [[ "$before_negative" == 3 ]] || fail 'trusted XPC messages did not reach the accepted handler'
 if "$scratch/wrong-identifier-client" "$service" 1; then
