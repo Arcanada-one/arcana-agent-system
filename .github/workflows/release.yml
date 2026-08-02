@@ -54,6 +54,7 @@ jobs:
           done < <(jq -nr '[
               "lint-test",
               "network-exposure-lint / network-exposure-lint",
+              "platform-native-negative-controls / macos-xpc-sandbox",
               "platform-contract-mock / linux",
               "platform-contract-mock / macos",
               "security-audit / security-audit (rust_cargo)"
@@ -92,7 +93,9 @@ jobs:
             --pull-number "$pull_number" \
             --pull-head-sha "$pull_head" \
             --reviewer "$EXPECTED_REVIEWER" \
-            --now "$(date +%s)"
+            --now "$(date +%s)" \
+            --key-not-before 1785628800 \
+            --key-not-after 1793491199
 
   build:
     name: Build / ${{ matrix.platform }}

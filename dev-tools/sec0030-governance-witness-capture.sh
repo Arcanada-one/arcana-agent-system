@@ -2,6 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 umask 077
+ulimit -c 0
 
 die() {
     printf 'SEC0030_GOVERNANCE_WITNESS_CAPTURE_FAIL: %s\n' "$1" >&2
@@ -12,7 +13,8 @@ usage() {
     printf '%s\n' \
         'usage: sec0030-governance-witness-capture.sh --github-token-fd FD' \
         '       --signing-key-fd FD --public-key FILE --repository OWNER/REPO' \
-        '       --sha SHA --pull-number NUMBER --reviewer LOGIN [--now EPOCH]' >&2
+        '       --sha SHA --pull-number NUMBER --reviewer LOGIN [--now EPOCH]' \
+        '       --key-not-before EPOCH --key-not-after EPOCH' >&2
     exit 2
 }
 
@@ -24,6 +26,8 @@ sha=''
 pull_number=''
 reviewer=''
 now=''
+key_not_before=''
+key_not_after=''
 
 while (( $# > 0 )); do
     case "$1" in
@@ -35,11 +39,13 @@ while (( $# > 0 )); do
         --pull-number) pull_number="${2:-}"; shift 2 ;;
         --reviewer) reviewer="${2:-}"; shift 2 ;;
         --now) now="${2:-}"; shift 2 ;;
+        --key-not-before) key_not_before="${2:-}"; shift 2 ;;
+        --key-not-after) key_not_after="${2:-}"; shift 2 ;;
         *) usage ;;
     esac
 done
 
-for tool in base64 curl jq mktemp ssh-keygen; do
+for tool in base64 curl jq mktemp python3 ssh-keygen; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool unavailable: $tool"
 done
 [[ "$github_token_fd" =~ ^[3-9][0-9]*$ ]] || die 'GitHub token must arrive on a non-standard file descriptor'
@@ -54,6 +60,9 @@ if [[ -z "$now" ]]; then
     now=$(date +%s)
 fi
 [[ "$now" =~ ^[0-9]+$ ]] || die 'invalid issuance time'
+[[ "$key_not_before" =~ ^[0-9]+$ ]] || die 'invalid signing-key not-before time'
+[[ "$key_not_after" =~ ^[0-9]+$ ]] || die 'invalid signing-key not-after time'
+(( key_not_before <= now && now <= key_not_after )) || die 'signing key is outside its approved lifetime'
 
 scratch=$(mktemp -d)
 cleanup() {
@@ -65,25 +74,19 @@ trap cleanup EXIT
 github_token=''
 IFS= read -r github_token <&"$github_token_fd" || [[ -n "$github_token" ]]
 [[ "$github_token" =~ ^[A-Za-z0-9_]+$ ]] || die 'invalid GitHub credential encoding'
-printf '%s\n' \
-    'silent' \
-    'show-error' \
-    'fail' \
-    'header = "Accept: application/vnd.github+json"' \
-    'header = "X-GitHub-Api-Version: 2022-11-28"' \
-    "header = \"Authorization: Bearer $github_token\"" > "$scratch/curl.conf"
-unset github_token
-
-dd status=none of="$scratch/signing-key" <&"$signing_key_fd"
-chmod 0600 "$scratch/signing-key"
-ssh-keygen -y -f "$scratch/signing-key" > "$scratch/derived-public-key" 2>/dev/null || die 'invalid signing key'
-expected_key=$(awk 'NF >= 2 {print $1 " " $2; exit}' "$public_key")
-derived_key=$(awk 'NF >= 2 {print $1 " " $2; exit}' "$scratch/derived-public-key")
-[[ -n "$expected_key" && "$derived_key" == "$expected_key" ]] || die 'signing key does not match the pinned public key'
+curl_config() {
+    printf '%s\n' \
+        'silent' \
+        'show-error' \
+        'fail' \
+        'header = "Accept: application/vnd.github+json"' \
+        'header = "X-GitHub-Api-Version: 2022-11-28"' \
+        "header = \"Authorization: Bearer $github_token\""
+}
 
 api_get() {
     local path="$1" target="$2"
-    curl --config "$scratch/curl.conf" "https://api.github.com/$path" > "$target"
+    curl_config | curl --config - "https://api.github.com/$path" > "$target"
     jq -e . "$target" >/dev/null 2>&1 || die "GitHub returned invalid JSON for $path"
 }
 
@@ -134,7 +137,6 @@ jq -nS \
     --argjson repository_id "$repository_id" \
     --argjson pull_number "$pull_number" \
     --argjson ruleset_id "$ruleset_id" \
-    --argjson reviewer_id "$reviewer_id" \
     --argjson issued_at "$now" \
     --argjson expires_at "$expires_at" \
     --slurpfile protection "$scratch/protection.json" \
@@ -186,15 +188,18 @@ jq -nS \
         $e.protection_rules[] |
         select(.type == "required_reviewers") |
         .reviewers[] |
-        select(.type == "User" and .reviewer.id == $reviewer_id) |
-        .reviewer.login
+        {type: .type, identity: (.reviewer.login // .reviewer.slug // "")}
       ],
       tag_policies: [$ep.branch_policies[] | select(.type == "tag") | .name]
     }
   }
 ' > "$scratch/manifest.json"
 
-ssh-keygen -q -Y sign -f "$scratch/signing-key" -n sec0030-governance "$scratch/manifest.json"
+script_dir=$(cd "$(dirname "$0")" && pwd)
+python3 "$script_dir/sec0030-ssh-sign-from-fd.py" \
+    --key-fd "$signing_key_fd" \
+    --public-key "$public_key" \
+    --manifest "$scratch/manifest.json"
 manifest_b64=$(base64 < "$scratch/manifest.json" | tr -d '\n')
 signature_b64=$(base64 < "$scratch/manifest.json.sig" | tr -d '\n')
 body=$(jq -cn \
@@ -202,9 +207,8 @@ body=$(jq -cn \
     --arg signature_b64 "$signature_b64" \
     '{type:"SEC0030_GOVERNANCE_WITNESS_V1",manifest_b64:$manifest_b64,signature_b64:$signature_b64}')
 unset manifest_b64 signature_b64
-jq -n --arg actor "$actor" --arg body "$body" '[{author:{login:$actor},body:$body}]' > "$scratch/comments.json"
+jq -n --arg actor "$actor" --arg body "$body" '[{user:{login:$actor},body:$body}]' > "$scratch/comments.json"
 
-script_dir=$(cd "$(dirname "$0")" && pwd)
 bash "$script_dir/sec0030-governance-witness-verify.sh" \
     --comments "$scratch/comments.json" \
     --public-key "$public_key" \
@@ -215,15 +219,19 @@ bash "$script_dir/sec0030-governance-witness-verify.sh" \
     --pull-number "$pull_number" \
     --pull-head-sha "$pull_head_sha" \
     --reviewer "$reviewer" \
-    --now "$now" >/dev/null || die 'captured governance does not satisfy the pinned release contract'
+    --now "$now" \
+    --key-not-before "$key_not_before" \
+    --key-not-after "$key_not_after" >/dev/null \
+    || die 'captured governance does not satisfy the pinned release contract'
 
 jq -n --arg body "$body" '{body:$body}' > "$scratch/post.json"
 unset body
-curl --config "$scratch/curl.conf" \
+curl_config | curl --config - \
     --request POST \
     --data-binary=@"$scratch/post.json" \
     "https://api.github.com/repos/$repository/issues/$pull_number/comments" > "$scratch/comment-response.json"
 comment_id=$(jq -r '.id // empty' "$scratch/comment-response.json")
 [[ "$comment_id" =~ ^[1-9][0-9]*$ ]] || die 'GitHub did not confirm the governance witness comment'
+unset github_token
 
 printf 'SEC0030_GOVERNANCE_WITNESS_CAPTURE_PASS comment_id=%s expires_at=%s\n' "$comment_id" "$expires_at"

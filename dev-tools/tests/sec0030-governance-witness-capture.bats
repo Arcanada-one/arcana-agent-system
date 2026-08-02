@@ -23,6 +23,7 @@ setup() {
       required_status_checks:{strict:true,checks:[
         {context:"lint-test",app_id:15368},
         {context:"network-exposure-lint / network-exposure-lint",app_id:15368},
+        {context:"platform-native-negative-controls / macos-xpc-sandbox",app_id:15368},
         {context:"platform-contract-mock / linux",app_id:15368},
         {context:"platform-contract-mock / macos",app_id:15368},
         {context:"security-audit / security-audit (rust_cargo)",app_id:15368}
@@ -56,6 +57,8 @@ setup() {
     cat > "$BATS_TEST_TMPDIR/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+config=$(cat)
+[[ "$config" == *'Authorization: Bearer github_pat_SYNTHETIC_DO_NOT_LOG'* ]]
 printf '%q ' "$@" >> "$CURL_LOG"
 printf '\n' >> "$CURL_LOG"
 url="${*: -1}"
@@ -92,11 +95,14 @@ run_capture() {
       --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
       --pull-number 43 \
       --reviewer PavelValentov \
-      --now 1000' _ \
+      --now 1000 \
+      --key-not-before 900 \
+      --key-not-after 2000' _ \
       "$BATS_TEST_TMPDIR/token" "$BATS_TEST_TMPDIR/key" "$CAPTURE_SCRIPT" "$BATS_TEST_TMPDIR/key.pub"
 }
 
 @test "captures, validates, signs, and posts an exact governance witness" {
+    set -e
     run_capture
 
     [ "$status" -eq 0 ]
@@ -110,14 +116,36 @@ run_capture() {
       .subject.pull_head_sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" and
       .issued_at == 1000 and .expires_at == 1120 and
       .version_tag_ruleset.bypass_actors == [] and
-      .release_environment.reviewers == ["PavelValentov"]
+      .release_environment.reviewers == [{type:"User",identity:"PavelValentov"}]
     ' "$BATS_TEST_TMPDIR/manifest.json" >/dev/null
     ! grep -Fq github_pat_SYNTHETIC_DO_NOT_LOG "$CURL_LOG"
+    ! find "$BATS_TEST_TMPDIR" -type f \
+      ! -path "$BATS_TEST_TMPDIR/token" \
+      ! -path "$BATS_TEST_TMPDIR/key" \
+      -exec grep -lF github_pat_SYNTHETIC_DO_NOT_LOG {} + | grep -q .
+    ! find "$BATS_TEST_TMPDIR" -type f \
+      ! -path "$BATS_TEST_TMPDIR/key" \
+      -exec grep -lF 'BEGIN OPENSSH PRIVATE KEY' {} + | grep -q .
+    ! grep -Fq '"$scratch/curl.conf"' "$CAPTURE_SCRIPT"
+    ! grep -Fq '"$scratch/signing-key"' "$CAPTURE_SCRIPT"
 }
 
 @test "refuses a hidden tag-ruleset bypass actor without posting" {
+    set -e
     jq '.bypass_actors = [{actor_type:"Team",actor_id:7}]' "$FIXTURES/ruleset.json" > "$BATS_TEST_TMPDIR/ruleset-bypass.json"
     mv "$BATS_TEST_TMPDIR/ruleset-bypass.json" "$FIXTURES/ruleset.json"
+
+    run_capture
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$CAPTURED_POST" ]
+}
+
+@test "refuses an additional protected-environment reviewer without posting" {
+    set -e
+    jq '.protection_rules[0].reviewers += [{type:"User",reviewer:{id:404,login:"Mallory"}}]' \
+      "$FIXTURES/environment.json" > "$BATS_TEST_TMPDIR/environment-extra.json"
+    mv "$BATS_TEST_TMPDIR/environment-extra.json" "$FIXTURES/environment.json"
 
     run_capture
 

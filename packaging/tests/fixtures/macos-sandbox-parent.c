@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,11 @@ int main(int argc, char **argv) {
         return 70;
     }
     char report[80] = {0};
+    struct pollfd ready = {.fd = channel[0], .events = POLLIN | POLLHUP};
+    if (poll(&ready, 1, 5000) <= 0) {
+        close(channel[0]);
+        return 75;
+    }
     ssize_t length = read(channel[0], report, sizeof(report) - 1);
     close(channel[0]);
     if (length <= 0) {

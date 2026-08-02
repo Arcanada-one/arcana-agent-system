@@ -8,7 +8,11 @@
 # Platform identity, policy, lifecycle, CI, and release controls.
 /packaging/ @Arcanada-one/security-reviewers @PavelValentov
 /.github/workflows/ @Arcanada-one/security-reviewers @PavelValentov
+/.github/sec0030-governance-witness.pub @Arcanada-one/security-reviewers @PavelValentov
 /.github/CODEOWNERS @Arcanada-one/security-reviewers @PavelValentov
+/dev-tools/sec0030-governance-witness-capture.sh @Arcanada-one/security-reviewers @PavelValentov
+/dev-tools/sec0030-governance-witness-verify.sh @Arcanada-one/security-reviewers @PavelValentov
+/dev-tools/sec0030-ssh-sign-from-fd.py @Arcanada-one/security-reviewers @PavelValentov
 
 # Incident and operator security documentation.
 /docs/reference/execution-boundary.md @Arcanada-one/security-reviewers @PavelValentov

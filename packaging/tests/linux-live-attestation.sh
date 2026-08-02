@@ -29,13 +29,29 @@ helper="$scratch/seqpacket-sender"
 profile_loaded=0
 
 cleanup() {
+  local cleanup_status=0
   if (( profile_loaded == 1 )); then
-    sudo -n apparmor_parser -R "$profile_file" >/dev/null 2>&1 || true
+    sudo -n apparmor_parser -R "$profile_file" >/dev/null 2>&1 || cleanup_status=1
+    if sudo -n grep -Eq "^(${trusted_profile}|${denied_profile}) \(" \
+      /sys/kernel/security/apparmor/profiles; then
+      cleanup_status=1
+    fi
   fi
-  find "$scratch" -depth -mindepth 1 -delete
-  rmdir "$scratch"
+  find "$scratch" -depth -mindepth 1 -delete || cleanup_status=1
+  rmdir "$scratch" || cleanup_status=1
+  if (( cleanup_status != 0 )); then
+    printf '%s\n' 'SEC0030_LINUX_ATTESTATION_CLEANUP_FAIL' >&2
+    return 1
+  fi
+  printf '%s\n' 'SEC0030_LINUX_ATTESTATION_CLEANUP_PASS profiles=absent scratch=absent'
 }
-trap cleanup EXIT
+on_exit() {
+  local status=$?
+  trap - EXIT
+  cleanup || status=1
+  exit "$status"
+}
+trap on_exit EXIT
 
 gcc -O2 -Wall -Wextra -Werror -o "$helper" "$fixture_dir/linux-seqpacket-sender.c"
 sed \

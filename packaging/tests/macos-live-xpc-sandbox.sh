@@ -29,19 +29,33 @@ bootstrapped=0
 keychain_created=0
 
 cleanup() {
+  local cleanup_status=0
   if (( bootstrapped == 1 )); then
-    launchctl bootout "$domain" "$launch_plist" >/dev/null 2>&1 || true
+    launchctl bootout "$domain" "$launch_plist" >/dev/null 2>&1 || cleanup_status=1
     if launchctl print "$domain/$service" >/dev/null 2>&1; then
       printf 'SEC0030_MACOS_NATIVE_FAIL: launchd cleanup did not remove exact service\n' >&2
+      cleanup_status=1
     fi
   fi
   if (( keychain_created == 1 )); then
-    security delete-keychain "$keychain" >/dev/null 2>&1 || true
+    security delete-keychain "$keychain" >/dev/null 2>&1 || cleanup_status=1
+    [[ ! -e "$keychain" ]] || cleanup_status=1
   fi
-  find "$scratch" -depth -mindepth 1 -delete
-  rmdir "$scratch"
+  find "$scratch" -depth -mindepth 1 -delete || cleanup_status=1
+  rmdir "$scratch" || cleanup_status=1
+  if (( cleanup_status != 0 )); then
+    printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_FAIL' >&2
+    return 1
+  fi
+  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent keychain=absent scratch=absent'
 }
-trap cleanup EXIT
+on_exit() {
+  local status=$?
+  trap - EXIT
+  cleanup || status=1
+  exit "$status"
+}
+trap on_exit EXIT
 
 clang -O2 -Wall -Wextra -Werror -fblocks \
   -framework CoreFoundation -framework Security \
@@ -58,19 +72,25 @@ openssl req -new -newkey rsa:2048 -nodes -x509 -days 1 \
   -out "$scratch/codesign.crt" \
   -config "$fixture_dir/sec0030-code-signing-openssl.cnf" >/dev/null 2>&1
 openssl pkcs12 -export \
+  -legacy \
   -inkey "$scratch/codesign.key" \
   -in "$scratch/codesign.crt" \
   -out "$scratch/codesign.p12" \
   -passout "pass:$keychain_password" >/dev/null 2>&1
 security create-keychain -p "$keychain_password" "$keychain"
 keychain_created=1
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE keychain-created'
 security unlock-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 900 "$keychain"
 security import "$scratch/codesign.p12" \
   -k "$keychain" -P "$keychain_password" -T /usr/bin/codesign >/dev/null
+security set-key-partition-list -S apple-tool:,apple: -s \
+  -k "$keychain_password" "$keychain" >/dev/null
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE identity-imported'
 certificate_sha=$(openssl x509 -in "$scratch/codesign.crt" -noout -fingerprint -sha1 \
   | sed 's/^.*=//; s/://g')
 [[ "$certificate_sha" =~ ^[0-9A-F]{40}$ ]] || fail 'ephemeral signing certificate unavailable'
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-derived'
 
 sign_binary() {
   local identifier="$1" entitlements="$2" target="$3"
@@ -82,10 +102,14 @@ sign_binary() {
 cp "$scratch/xpc-client" "$scratch/trusted-client"
 cp "$scratch/xpc-client" "$scratch/trusted-client-copy"
 cp "$scratch/xpc-client" "$scratch/wrong-identifier-client"
+cp "$scratch/xpc-client" "$scratch/wrong-signer-client"
 cp "$scratch/xpc-client" "$scratch/missing-entitlement-client"
 sign_binary one.arcanada.sec0030.trusted "$fixture_dir/sec0030-trusted.entitlements" "$scratch/trusted-client"
 sign_binary one.arcanada.sec0030.trusted "$fixture_dir/sec0030-trusted.entitlements" "$scratch/trusted-client-copy"
 sign_binary one.arcanada.sec0030.wrong "$fixture_dir/sec0030-trusted.entitlements" "$scratch/wrong-identifier-client"
+codesign --force --sign - --identifier one.arcanada.sec0030.trusted \
+  --entitlements "$fixture_dir/sec0030-trusted.entitlements" "$scratch/wrong-signer-client" >/dev/null
+codesign --verify --strict "$scratch/wrong-signer-client"
 codesign --force --keychain "$keychain" --sign "$certificate_sha" \
   --identifier one.arcanada.sec0030.trusted "$scratch/missing-entitlement-client" >/dev/null
 codesign --verify --strict "$scratch/missing-entitlement-client"
@@ -120,6 +144,9 @@ launchctl print "$domain/$service" >/dev/null 2>&1 || fail 'XPC launch agent did
 before_negative=$(wc -l < "$counter")
 [[ "$before_negative" == 3 ]] || fail 'trusted XPC messages did not reach the accepted handler'
 if "$scratch/wrong-identifier-client" "$service" 1; then
+  fail 'wrong signer or entitlement was accepted'
+fi
+if "$scratch/wrong-signer-client" "$service" 1; then
   fail 'wrong signer or entitlement was accepted'
 fi
 if "$scratch/missing-entitlement-client" "$service" 1; then

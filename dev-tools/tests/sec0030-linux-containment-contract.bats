@@ -4,6 +4,7 @@ REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 PROBE="$REPO_ROOT/packaging/tests/linux-live-containment.sh"
 
 @test "live containment probe uses a bounded nondelegated cgroup service" {
+    set -e
     [ -x "$PROBE" ]
     for contract in \
       'Type=exec' \
@@ -20,6 +21,7 @@ PROBE="$REPO_ROOT/packaging/tests/linux-live-containment.sh"
 }
 
 @test "probe contains a causal process-group escape and cgroup teardown check" {
+    set -e
     grep -Fq 'kill -- "-$leader_pid"' "$PROBE"
     grep -Fq 'marker advanced after process-group kill' "$PROBE"
     grep -Fq 'populated 0' "$PROBE"
@@ -28,7 +30,10 @@ PROBE="$REPO_ROOT/packaging/tests/linux-live-containment.sh"
 }
 
 @test "probe repeats and cleans only its uniquely named resources" {
+    set -e
     grep -Fq 'for iteration in 1 2 3 4 5' "$PROBE"
     grep -Fq 'sec0030-containment-' "$PROBE"
     grep -Fq 'sudo -n systemctl reset-failed "$unit"' "$PROBE"
+    grep -Fq 'cleanup || status=1' "$PROBE"
+    grep -Fq 'SEC0030_LINUX_CONTAINMENT_CLEANUP_PASS' "$PROBE"
 }

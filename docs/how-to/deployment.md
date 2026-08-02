@@ -38,14 +38,33 @@ as a machine-account PR comment. The release workflow has `checks`, `contents`,
 `.github/sec0030-governance-witness.pub`, and rejects an expired, altered,
 wrong-author, wrong-repository, wrong-SHA, or bypass-bearing witness.
 
-The private signing key is stored only at Vault KV v2 path
-`arcanada/shared/tokens/sec0030-governance-witness`, with CAS required. Version
-1 was created on 2026-08-02, is limited by contract to signing these 120-second
-governance manifests, and must rotate by 2026-10-31 or immediately after any
-suspected disclosure. Rotation is a code-reviewed public-key change followed
-by revocation of the old Vault version. The signing key cannot mutate GitHub;
-the GitHub credential never enters Actions. An absent or invalid witness stops
-release before build or publication.
+The private signing key is stored only in the operator-private Vault locator
+configured for this service, with CAS required. Version 1 was created on
+2026-08-02, is limited by contract to signing these short-lived governance
+manifests, and must rotate by 2026-10-31 or immediately after any suspected
+disclosure. Rotation is a code-reviewed public-key change followed by
+destruction of the old Vault version. The Linux-only capture helper consumes
+both authorities through inherited file descriptors: HTTP authorization is
+streamed to curl on standard input, while the private key is copied only into a
+sealed, non-dumpable memfd for signing. Neither authority is written to a
+pathname, argv, environment, checkout, or artifact. The signing key cannot
+mutate GitHub; the GitHub credential never enters Actions. An absent or invalid
+witness stops release before build or publication.
+
+The GitHub credential is an offline operator authority kept in private operator
+configuration. It is used only for this just-in-time read and comment post; it
+must never be copied into the repository, Actions, a workflow environment, or a
+release artifact. Because GitHub couples visibility of hidden bypass actors to
+mutation-capable Administration authority, the capture helper verifies that
+authority explicitly and confines it to the operator host rather than claiming
+that the credential is read-only.
+
+Create the tag immediately after capture. If the release preflight does not
+consume the witness within 120 seconds, capture a fresh witness for the same
+merge SHA and rerun the failed workflow. Do not extend the expiry or reuse an
+expired comment. Each rerun selects and verifies the newest exact-SHA witness,
+so recapture is fail-closed and does not require a workflow credential with
+Administration authority.
 
 [github-rulesets]: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset
 

@@ -26,16 +26,38 @@ run_id="sec0030-containment-$(date +%s)-$$"
 units=()
 
 cleanup() {
-  local unit
+  local unit cleanup_status=0 pid expected observed
   for unit in "${units[@]}"; do
     [[ "$unit" =~ ^sec0030-containment-[0-9]+-[0-9]+-[1-5]\.service$ ]] || continue
-    sudo -n systemctl stop "$unit" >/dev/null 2>&1 || true
+    if sudo -n systemctl is-active --quiet "$unit"; then
+      sudo -n systemctl stop "$unit" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if sudo -n systemctl is-active --quiet "$unit"; then
+      cleanup_status=1
+    fi
     sudo -n systemctl reset-failed "$unit" >/dev/null 2>&1 || true
   done
-  find "$scratch" -depth -mindepth 1 -delete
-  rmdir "$scratch"
+  while IFS=$'\t' read -r pid expected; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ && "$expected" =~ ^[1-9][0-9]*$ ]] || continue
+    observed=$(start_time "$pid" 2>/dev/null || true)
+    [[ -z "$observed" || "$observed" != "$expected" ]] || cleanup_status=1
+  done < <(find "$scratch" -type f \( -name leader.json -o -name descendant.json \) \
+    -exec jq -r '[.pid, .start_time] | @tsv' {} + 2>/dev/null || true)
+  find "$scratch" -depth -mindepth 1 -delete || cleanup_status=1
+  rmdir "$scratch" || cleanup_status=1
+  if (( cleanup_status != 0 )); then
+    printf '%s\n' 'SEC0030_LINUX_CONTAINMENT_CLEANUP_FAIL' >&2
+    return 1
+  fi
+  printf '%s\n' 'SEC0030_LINUX_CONTAINMENT_CLEANUP_PASS units=inactive pids=absent scratch=absent'
 }
-trap cleanup EXIT
+on_exit() {
+  local status=$?
+  trap - EXIT
+  cleanup || status=1
+  exit "$status"
+}
+trap on_exit EXIT
 
 wait_for_file() {
   local path="$1"

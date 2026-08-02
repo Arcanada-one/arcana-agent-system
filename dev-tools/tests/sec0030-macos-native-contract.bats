@@ -6,6 +6,7 @@ SERVER="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-server.c"
 CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
 
 @test "macOS proof uses message-bound XPC audit-token code validation" {
+    set -e
     [ -x "$PROBE" ]
     grep -Fq 'SecCodeCreateWithXPCMessage' "$SERVER"
     grep -Fq 'SecCodeCheckValidity' "$SERVER"
@@ -15,6 +16,7 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
 }
 
 @test "macOS XPC controls include exact signer identity and zero-handler negatives" {
+    set -e
     grep -Fq 'certificate leaf = H' "$PROBE"
     grep -Fq 'identifier "one.arcanada.sec0030.trusted"' "$PROBE"
     grep -Fq 'one.arcanada.sec0030.executor' "$PROBE"
@@ -23,9 +25,12 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
 }
 
 @test "macOS entitlement control uses sandbox inheritance with paired positive controls" {
+    set -e
     grep -Fq 'com.apple.security.app-sandbox' "$PROBE"
     grep -Fq 'com.apple.security.inherit' "$PROBE"
     grep -Fq 'sandbox positive control failed' "$PROBE"
     grep -Fq 'sandboxed descendant escaped' "$PROBE"
     grep -Fq 'launchctl bootout "$domain" "$launch_plist"' "$PROBE"
+    grep -Fq 'cleanup || status=1' "$PROBE"
+    grep -Fq 'SEC0030_MACOS_NATIVE_CLEANUP_PASS' "$PROBE"
 }

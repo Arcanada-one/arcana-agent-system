@@ -78,6 +78,7 @@ jobs:
   platform-native-negative-controls:
     name: platform-native-negative-controls / macos-xpc-sandbox
     runs-on: macos-14
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Prove XPC message identity and inherited App Sandbox denials
@@ -86,6 +87,10 @@ jobs:
         if: always()
         run: |
           if launchctl print "gui/$(id -u)" 2>/dev/null | grep -Fq one.arcanada.sec0030.; then
+            printf '%s\n' 'stale SEC-0030 launchd resource' >&2
+            exit 1
+          fi
+          if launchctl print "user/$(id -u)" 2>/dev/null | grep -Fq one.arcanada.sec0030.; then
             printf '%s\n' 'stale SEC-0030 launchd resource' >&2
             exit 1
           fi

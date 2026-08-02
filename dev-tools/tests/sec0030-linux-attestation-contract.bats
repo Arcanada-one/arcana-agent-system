@@ -6,6 +6,7 @@ HARNESS="$REPO_ROOT/packaging/tests/fixtures/linux-seqpacket-attestation.py"
 SENDER="$REPO_ROOT/packaging/tests/fixtures/linux-seqpacket-sender.c"
 
 @test "live attestation probe requires real seqpacket credentials and enforcing AppArmor" {
+    set -e
     [ -x "$PROBE" ]
     [ -f "$HARNESS" ]
     [ -f "$SENDER" ]
@@ -16,13 +17,17 @@ SENDER="$REPO_ROOT/packaging/tests/fixtures/linux-seqpacket-sender.c"
 }
 
 @test "fd-handoff negative control expects the actual sender and wrong-label denial" {
+    set -e
     grep -Fq 'credential_pid != trusted.pid' "$HARNESS"
     grep -Fq 'wrong-label sender unexpectedly delivered a packet' "$HARNESS"
     grep -Fq 'deny unix (send) type=seqpacket' "$REPO_ROOT/packaging/tests/fixtures/sec0030-apparmor.profile.in"
 }
 
 @test "probe reports ancillary security-label availability without substituting sampled identity" {
+    set -e
     grep -Fq 'credential_label_ancillary=' "$HARNESS"
     ! grep -Fq '/proc/' "$HARNESS"
     ! grep -Fq 'SO_PEERSEC' "$HARNESS"
+    grep -Fq 'cleanup || status=1' "$PROBE"
+    grep -Fq 'SEC0030_LINUX_ATTESTATION_CLEANUP_PASS' "$PROBE"
 }

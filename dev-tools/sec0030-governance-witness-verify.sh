@@ -11,7 +11,8 @@ usage() {
     printf '%s\n' \
         'usage: sec0030-governance-witness-verify.sh --comments FILE --public-key FILE' \
         '       --expected-author LOGIN --repository OWNER/REPO --repository-id ID' \
-        '       --sha SHA --pull-number NUMBER --pull-head-sha SHA --reviewer LOGIN --now EPOCH' >&2
+        '       --sha SHA --pull-number NUMBER --pull-head-sha SHA --reviewer LOGIN --now EPOCH' \
+        '       --key-not-before EPOCH --key-not-after EPOCH' >&2
     exit 2
 }
 
@@ -25,6 +26,8 @@ pull_number=''
 pull_head_sha=''
 reviewer=''
 now=''
+key_not_before=''
+key_not_after=''
 
 while (( $# > 0 )); do
     case "$1" in
@@ -38,6 +41,8 @@ while (( $# > 0 )); do
         --pull-head-sha) pull_head_sha="${2:-}"; shift 2 ;;
         --reviewer) reviewer="${2:-}"; shift 2 ;;
         --now) now="${2:-}"; shift 2 ;;
+        --key-not-before) key_not_before="${2:-}"; shift 2 ;;
+        --key-not-after) key_not_after="${2:-}"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -56,6 +61,9 @@ done
 [[ "$pull_head_sha" =~ ^[0-9a-f]{40}$ ]] || fail
 [[ "$reviewer" =~ ^[A-Za-z0-9-]{1,39}$ ]] || fail
 [[ "$now" =~ ^[0-9]+$ ]] || fail
+[[ "$key_not_before" =~ ^[0-9]+$ ]] || fail
+[[ "$key_not_after" =~ ^[0-9]+$ ]] || fail
+(( key_not_before <= now && now <= key_not_after )) || fail
 jq -e 'type == "array"' "$comments" >/dev/null 2>&1 || fail
 
 scratch=$(mktemp -d)
@@ -72,7 +80,7 @@ printf 'sec0030 %s\n' "$public_key_line" > "$scratch/allowed-signers"
 mapfile -t candidates < <(
     jq -rc --arg author "$expected_author" '
       .[] |
-      select(.author.login == $author) |
+      select(.user.login == $author) |
       .body as $body |
       try ($body | fromjson) catch empty |
       select(.type == "SEC0030_GOVERNANCE_WITNESS_V1") |
@@ -119,6 +127,7 @@ for candidate in "${candidates[@]}"; do
       ([.branch_protection.checks[]] | sort_by(.context)) == ([
         {context: "lint-test", app_id: 15368},
         {context: "network-exposure-lint / network-exposure-lint", app_id: 15368},
+        {context: "platform-native-negative-controls / macos-xpc-sandbox", app_id: 15368},
         {context: "platform-contract-mock / linux", app_id: 15368},
         {context: "platform-contract-mock / macos", app_id: 15368},
         {context: "security-audit / security-audit (rust_cargo)", app_id: 15368}
@@ -144,7 +153,7 @@ for candidate in "${candidates[@]}"; do
       ] | sort) and
       .release_environment.name == "sec0030-protected-release" and
       .release_environment.prevent_self_review == true and
-      .release_environment.reviewers == [$reviewer] and
+      .release_environment.reviewers == [{type: "User", identity: $reviewer}] and
       .release_environment.tag_policies == ["v*"]
     ' "$scratch/manifest" >/dev/null 2>&1; then
         printf '%s\n' 'SEC0030_GOVERNANCE_WITNESS_PASS'

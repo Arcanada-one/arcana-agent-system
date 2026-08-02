@@ -31,6 +31,7 @@ write_manifest() {
           checks: [
             {context: "lint-test", app_id: 15368},
             {context: "network-exposure-lint / network-exposure-lint", app_id: 15368},
+            {context: "platform-native-negative-controls / macos-xpc-sandbox", app_id: 15368},
             {context: "platform-contract-mock / linux", app_id: 15368},
             {context: "platform-contract-mock / macos", app_id: 15368},
             {context: "security-audit / security-audit (rust_cargo)", app_id: 15368}
@@ -59,7 +60,7 @@ write_manifest() {
         release_environment: {
           name: "sec0030-protected-release",
           prevent_self_review: true,
-          reviewers: ["PavelValentov"],
+          reviewers: [{type:"User",identity:"PavelValentov"}],
           tag_policies: ["v*"]
         }
       }
@@ -77,7 +78,7 @@ sign_comment() {
       --arg signature_b64 "$signature_b64" \
       '{type:"SEC0030_GOVERNANCE_WITNESS_V1",manifest_b64:$manifest_b64,signature_b64:$signature_b64}')
     jq -n --arg author "$author" --arg body "$body" \
-      '[{author:{login:$author},body:$body,created_at:"2026-08-02T00:00:00Z"}]' > "$comments"
+      '[{user:{login:$author},body:$body,created_at:"2026-08-02T00:00:00Z"}]' > "$comments"
 }
 
 run_verify() {
@@ -92,10 +93,13 @@ run_verify() {
       --pull-number 43 \
       --pull-head-sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
       --reviewer PavelValentov \
-      --now 1050
+      --now 1050 \
+      --key-not-before "${KEY_NOT_BEFORE:-900}" \
+      --key-not-after "${KEY_NOT_AFTER:-2000}"
 }
 
 @test "accepts an exact short-lived signed governance witness" {
+    set -e
     manifest="$BATS_TEST_TMPDIR/valid.json"
     comments="$BATS_TEST_TMPDIR/comments.json"
     write_manifest "$manifest"
@@ -108,6 +112,7 @@ run_verify() {
 }
 
 @test "rejects a witness whose manifest changed after signing" {
+    set -e
     manifest="$BATS_TEST_TMPDIR/tampered.json"
     comments="$BATS_TEST_TMPDIR/comments.json"
     write_manifest "$manifest"
@@ -123,6 +128,7 @@ run_verify() {
 }
 
 @test "rejects an expired signed witness" {
+    set -e
     manifest="$BATS_TEST_TMPDIR/expired.json"
     comments="$BATS_TEST_TMPDIR/comments.json"
     write_manifest "$manifest"
@@ -136,6 +142,7 @@ run_verify() {
 }
 
 @test "rejects a signed witness containing a tag-ruleset bypass actor" {
+    set -e
     manifest="$BATS_TEST_TMPDIR/bypass.json"
     comments="$BATS_TEST_TMPDIR/comments.json"
     write_manifest "$manifest"
@@ -149,6 +156,7 @@ run_verify() {
 }
 
 @test "rejects a correctly signed witness posted by the wrong account" {
+    set -e
     manifest="$BATS_TEST_TMPDIR/wrong-author.json"
     comments="$BATS_TEST_TMPDIR/comments.json"
     write_manifest "$manifest"
@@ -160,11 +168,39 @@ run_verify() {
 }
 
 @test "rejects a signed witness for a different repository" {
+    set -e
     manifest="$BATS_TEST_TMPDIR/wrong-repo.json"
     comments="$BATS_TEST_TMPDIR/comments.json"
     write_manifest "$manifest"
     jq '.repository.full_name = "example/other"' "$manifest" > "$BATS_TEST_TMPDIR/wrong-repo-signed.json"
     sign_comment "$BATS_TEST_TMPDIR/wrong-repo-signed.json" "$comments"
+
+    run_verify "$comments"
+
+    [ "$status" -ne 0 ]
+}
+
+@test "rejects a signed witness containing an additional environment reviewer" {
+    set -e
+    manifest="$BATS_TEST_TMPDIR/extra-reviewer.json"
+    comments="$BATS_TEST_TMPDIR/comments.json"
+    write_manifest "$manifest"
+    jq '.release_environment.reviewers += [{type:"User",identity:"Mallory"}]' \
+      "$manifest" > "$BATS_TEST_TMPDIR/extra-reviewer-signed.json"
+    sign_comment "$BATS_TEST_TMPDIR/extra-reviewer-signed.json" "$comments"
+
+    run_verify "$comments"
+
+    [ "$status" -ne 0 ]
+}
+
+@test "rejects a witness after the pinned signing key retirement" {
+    set -e
+    manifest="$BATS_TEST_TMPDIR/retired-key.json"
+    comments="$BATS_TEST_TMPDIR/comments.json"
+    write_manifest "$manifest"
+    sign_comment "$manifest" "$comments"
+    export KEY_NOT_AFTER=1049
 
     run_verify "$comments"
 

@@ -22,11 +22,27 @@ int main(int argc, char **argv) {
     for (long index = 0; index < message_count; index++) {
         xpc_object_t message = xpc_dictionary_create(NULL, NULL, 0);
         xpc_dictionary_set_uint64(message, "sequence", (uint64_t)index);
-        xpc_object_t reply = xpc_connection_send_message_with_reply_sync(connection, message);
+        __block xpc_object_t reply = NULL;
+        dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+        xpc_connection_send_message_with_reply(
+            connection,
+            message,
+            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0),
+            ^(xpc_object_t value) {
+              reply = xpc_retain(value);
+              dispatch_semaphore_signal(completed);
+            });
+        if (dispatch_semaphore_wait(
+                completed, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+            xpc_connection_cancel(connection);
+            return 75;
+        }
         if (xpc_get_type(reply) == XPC_TYPE_ERROR ||
             !xpc_dictionary_get_bool(reply, "allowed")) {
+            xpc_release(reply);
             return 77;
         }
+        xpc_release(reply);
     }
     return 0;
 }

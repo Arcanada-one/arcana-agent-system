@@ -45,6 +45,7 @@ def main() -> None:
     listener.listen(2)
 
     trusted_client, trusted_server = connect(listener, address)
+    trusted_server.settimeout(2)
     trusted = sender(args.trusted_profile, args.helper, trusted_client.fileno())
     trusted_client.close()
     data, ancillary, flags, _ = trusted_server.recvmsg(256, 1024)
@@ -105,10 +106,12 @@ def main() -> None:
     listener.close()
 
     print(
-        "SEC0030_LINUX_ATTESTATION_PASS "
+        "SEC0030_LINUX_ATTESTATION_BLOCKED "
         f"scm_credentials_pid={credential_pid} fd_handoff=actual_sender "
-        f"apparmor_wrong_label=denied credential_label_ancillary={ancillary_status}"
+        f"apparmor_wrong_label=denied credential_label_ancillary={ancillary_status} "
+        "receiver_label_authorization=unimplemented"
     )
+    raise SystemExit(78)
 
 
 if __name__ == "__main__":
