@@ -11,10 +11,17 @@ fail() {
 }
 
 [[ "$(uname -s)" == Darwin ]] || fail 'macOS host required'
-for tool in clang codesign launchctl openssl plutil security sudo; do
+for tool in clang codesign launchctl openssl perl plutil security sudo; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool unavailable: $tool"
 done
 sudo -n true >/dev/null 2>&1 || fail 'non-interactive ephemeral trust authority required'
+
+run_bounded() {
+  local seconds="$1"
+  shift
+  perl -e '$timeout = shift @ARGV; alarm $timeout; exec @ARGV; exit 127' \
+    "$seconds" "$@"
+}
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 fixture_dir="$script_dir/fixtures"
@@ -29,6 +36,7 @@ domain=''
 bootstrapped=0
 keychain_created=0
 trusted_cert_added=0
+certificate_sha=''
 
 cleanup() {
   local cleanup_status=0
@@ -40,8 +48,13 @@ cleanup() {
     fi
   fi
   if (( trusted_cert_added == 1 )); then
-    sudo -n security remove-trusted-cert -d "$scratch/codesign.crt" >/dev/null 2>&1 \
+    run_bounded 15 sudo -n security remove-trusted-cert -d \
+      "$scratch/codesign.crt" >/dev/null 2>&1 \
       || cleanup_status=1
+    if run_bounded 15 sudo -n security find-certificate -a -Z \
+      /Library/Keychains/System.keychain 2>/dev/null | grep -Fqi "$certificate_sha"; then
+      cleanup_status=1
+    fi
   fi
   if (( keychain_created == 1 )); then
     security delete-keychain "$keychain" >/dev/null 2>&1 || cleanup_status=1
@@ -98,14 +111,14 @@ security import "$scratch/codesign.p12" \
 security set-key-partition-list -S apple-tool:,apple: -s \
   -k "$keychain_password" "$keychain" >/dev/null
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE identity-imported'
-sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
-  -k "$keychain" "$scratch/codesign.crt"
+certificate_sha=$(openssl x509 -in "$scratch/codesign.crt" -noout -fingerprint -sha1 \
+  | sed 's/^.*=//; s/://g')
+[[ "$certificate_sha" =~ ^[0-9A-F]{40}$ ]] || fail 'ephemeral signing certificate unavailable'
+run_bounded 15 sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
+  -k /Library/Keychains/System.keychain "$scratch/codesign.crt"
 trusted_cert_added=1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trust-added'
-certificate_sha=$(security find-certificate -c 'SEC0030 Ephemeral Code Signing' \
-  -Z "$keychain" | awk '/SHA-1 hash:/ {print $3; exit}')
-[[ "$certificate_sha" =~ ^[0-9A-F]{40}$ ]] || fail 'ephemeral signing certificate unavailable'
-security find-identity -v -p codesigning "$keychain" | grep -Fqi "$certificate_sha" \
+run_bounded 15 security find-identity -v -p codesigning "$keychain" | grep -Fqi "$certificate_sha" \
   || fail 'ephemeral code-signing identity unavailable'
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-derived'
 
