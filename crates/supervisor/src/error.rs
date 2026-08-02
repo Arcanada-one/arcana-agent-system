@@ -25,6 +25,18 @@ pub enum SupervisorError {
     /// A signal could not be delivered to the child process group.
     #[error("signal delivery failed: {0}")]
     Signal(#[source] nix::errno::Errno),
+    /// Waiting for the direct child failed before a trustworthy reap result.
+    #[error("child wait failed during {phase}: {source}")]
+    ChildWait {
+        /// Termination phase in which the wait failed.
+        phase: &'static str,
+        /// Operating-system wait error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The direct child was still unreaped after the post-SIGKILL deadline.
+    #[error("child reap timed out after SIGKILL")]
+    ReapTimeout,
     /// The child's process-group id could not be resolved.
     #[error("process-group resolution failed: {0}")]
     ProcessGroup(#[source] nix::errno::Errno),

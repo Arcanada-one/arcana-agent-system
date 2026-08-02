@@ -25,3 +25,21 @@ RELEASE="$REPO_ROOT/.github/workflows/release.yml"
     grep -Fq 'pull-requests: read' "$RELEASE"
     grep -Fq 'environment: sec0030-protected-release' "$RELEASE"
 }
+
+@test "release rechecks current main and dereferenced tag after attestations and before publication" {
+    set -e
+    attest_line=$(grep -nF 'Attest build provenance for packages and SBOMs' "$RELEASE" | cut -d: -f1)
+    recheck_line=$(grep -nF 'Recheck current main and tag immediately before publication' "$RELEASE" | cut -d: -f1)
+    publish_line=$(grep -nF 'Publish GitHub Release' "$RELEASE" | cut -d: -f1)
+    [ -n "$attest_line" ]
+    [ -n "$recheck_line" ]
+    [ -n "$publish_line" ]
+    [ "$attest_line" -lt "$recheck_line" ]
+    [ "$recheck_line" -lt "$publish_line" ]
+    step=$(sed -n "${recheck_line},$((publish_line - 1))p" "$RELEASE")
+    grep -Fq 'repos/${GITHUB_REPOSITORY}/git/ref/heads/main' <<<"$step"
+    grep -Fq 'test "$GITHUB_SHA" = "$current_main"' <<<"$step"
+    grep -Fq 'repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}' <<<"$step"
+    grep -Fq 'repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}' <<<"$step"
+    grep -Fq 'test "$GITHUB_SHA" = "$tag_sha"' <<<"$step"
+}

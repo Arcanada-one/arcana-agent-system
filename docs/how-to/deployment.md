@@ -7,7 +7,10 @@ the exact current `main` commit, every app-bound protected check is successful,
 the active tag ruleset has no bypass actor, branch protection requires a fresh
 code-owner approval with no bypass, the merged PR has an exact-head approval
 from the configured independent code owner, and the protected release
-environment receives its separate independent review.
+environment receives its separate independent review with administrator bypass
+disabled and exactly one `v*` tag policy. Immediately before publication the
+workflow re-reads both `main` and the recursively dereferenced tag and requires
+both to resolve to the release SHA.
 
 Follow [install.md](install.md) to verify a downloaded package before using its
 contents. Never deploy an archive that has only passed a checksum.
@@ -31,8 +34,11 @@ before creating the version tag. The capture helper requires:
 
 `dev-tools/sec0030-governance-witness-capture.sh` verifies that the GitHub
 identity has admin visibility, reads branch protection, the complete active tag
-ruleset including hidden bypass actors, and the protected environment, then
-signs a 120-second exact-SHA manifest. It posts only the manifest and signature
+ruleset including hidden bypass actors, and every page of the protected
+environment's ref policies. It requires custom ref policies to be active,
+administrator bypass to be disabled, and the complete policy set to be exactly
+the `v*` tag policy, then signs a 120-second exact-SHA manifest. It posts only
+the manifest and signature
 as a machine-account PR comment. The release workflow has `checks`, `contents`,
 `issues`, and `pull-requests` read access, verifies the signature against
 `.github/sec0030-governance-witness.pub`, and rejects an expired, altered,
@@ -62,9 +68,12 @@ that the credential is read-only.
 Create the tag immediately after capture. If the release preflight does not
 consume the witness within 120 seconds, capture a fresh witness for the same
 merge SHA and rerun the failed workflow. Do not extend the expiry or reuse an
-expired comment. Each rerun selects and verifies the newest exact-SHA witness,
-so recapture is fail-closed and does not require a workflow credential with
-Administration authority.
+expired comment. Each rerun selects the newest machine-account witness comment
+by GitHub's server timestamp and immutable comment id, then validates only that
+comment's signature, freshness, and exact SHA. It never falls back to an older
+valid comment when the newest one is invalid. Recapture is therefore
+fail-closed and does not require a workflow credential with Administration
+authority.
 
 [github-rulesets]: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset
 

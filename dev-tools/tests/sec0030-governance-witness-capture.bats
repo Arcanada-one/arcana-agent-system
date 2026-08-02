@@ -48,11 +48,19 @@ setup() {
     }' > "$FIXTURES/ruleset.json"
     jq -n '{
       name:"sec0030-protected-release",
+      can_admins_bypass:false,
       protection_rules:[{type:"required_reviewers",prevent_self_review:true,reviewers:[{type:"User",reviewer:{id:303,login:"PavelValentov"}}]}],
       deployment_branch_policy:{protected_branches:false,custom_branch_policies:true}
     }' > "$FIXTURES/environment.json"
-    jq -n '{branch_policies:[{name:"v*",type:"tag"}]}' > "$FIXTURES/policies.json"
+    jq -n '{total_count:1,branch_policies:[{name:"v*",type:"tag"}]}' > "$FIXTURES/policies.json"
     jq -n '{id:303,login:"PavelValentov"}' > "$FIXTURES/reviewer.json"
+
+    cat > "$BATS_TEST_TMPDIR/bin/date" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" -eq 1 && "$1" == +%s ]]
+printf '%s\n' 1000
+SH
 
     cat > "$BATS_TEST_TMPDIR/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -70,35 +78,54 @@ case "$url" in
   */branches/main/protection) cat "$FIXTURES/protection.json" ;;
   */rulesets/202) cat "$FIXTURES/ruleset.json" ;;
   */rulesets) cat "$FIXTURES/rulesets.json" ;;
-  */deployment-branch-policies) cat "$FIXTURES/policies.json" ;;
+  */deployment-branch-policies\?per_page=100\&page=1) cat "$FIXTURES/policies.json" ;;
   */environments/sec0030-protected-release) cat "$FIXTURES/environment.json" ;;
   https://api.github.com/users/PavelValentov) cat "$FIXTURES/reviewer.json" ;;
   */issues/43/comments)
     for argument in "$@"; do
       case "$argument" in --data-binary=@*) cp "${argument#--data-binary=@}" "$CAPTURED_POST" ;; esac
     done
-    jq -n '{id:77}'
+    body=$(jq -r '.body' "$CAPTURED_POST")
+    jq -n --arg body "$body" '{
+      id:77,
+      user:{login:"Arcanada"},
+      created_at:"1970-01-01T00:16:40Z",
+      body:$body
+    }'
     ;;
   *) printf 'unexpected URL: %s\n' "$url" >&2; exit 22 ;;
 esac
 SH
-    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl" "$BATS_TEST_TMPDIR/bin/date"
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
 run_capture() {
-    run bash -c 'exec 3<"$1" 4<"$2"; exec bash "$3" \
+    run bash -c 'exec 3<"$1" 4<"$2"; script="$3"; public_key="$4"; shift 4; exec bash "$script" \
       --github-token-fd 3 \
       --signing-key-fd 4 \
-      --public-key "$4" \
+      --public-key "$public_key" \
       --repository Arcanada-one/arcana-agent-system \
       --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
       --pull-number 43 \
       --reviewer PavelValentov \
-      --now 1000 \
       --key-not-before 900 \
-      --key-not-after 2000' _ \
-      "$BATS_TEST_TMPDIR/token" "$BATS_TEST_TMPDIR/key" "$CAPTURE_SCRIPT" "$BATS_TEST_TMPDIR/key.pub"
+      --key-not-after 2000 "$@"' _ \
+      "$BATS_TEST_TMPDIR/token" "$BATS_TEST_TMPDIR/key" "$CAPTURE_SCRIPT" "$BATS_TEST_TMPDIR/key.pub" "$@"
+}
+
+run_capture_xtrace() {
+    run bash -c 'exec 3<"$1" 4<"$2"; script="$3"; public_key="$4"; shift 4; exec bash -x "$script" \
+      --github-token-fd 3 \
+      --signing-key-fd 4 \
+      --public-key "$public_key" \
+      --repository Arcanada-one/arcana-agent-system \
+      --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      --pull-number 43 \
+      --reviewer PavelValentov \
+      --key-not-before 900 \
+      --key-not-after 2000 "$@"' _ \
+      "$BATS_TEST_TMPDIR/token" "$BATS_TEST_TMPDIR/key" "$CAPTURE_SCRIPT" "$BATS_TEST_TMPDIR/key.pub" "$@"
 }
 
 @test "captures, validates, signs, and posts an exact governance witness" {
@@ -130,6 +157,58 @@ run_capture() {
     ! grep -Fq '"$scratch/signing-key"' "$CAPTURE_SCRIPT"
 }
 
+@test "disables inherited xtrace before reading or expanding credentials" {
+    set -e
+    run_capture_xtrace
+
+    [ "$status" -eq 0 ]
+    [[ "$output" != *github_pat_SYNTHETIC_DO_NOT_LOG* ]]
+    [[ "$output" != *'BEGIN OPENSSH PRIVATE KEY'* ]]
+}
+
+@test "disables operator curl configuration before injecting authorization" {
+    set -e
+    printf '%s\n' 'trace-ascii = "curlrc-exfiltration.log"' > "$HOME/.curlrc"
+
+    run_capture
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$HOME/curlrc-exfiltration.log" ]
+    awk '{ if ($1 != "-q") exit 1 }' "$CURL_LOG"
+    [ "$(grep -Fc -- '--proto =https' "$CURL_LOG")" -eq 11 ]
+    [ "$(grep -Fc -- '--noproxy \*' "$CURL_LOG")" -eq 11 ]
+    [[ "$output" != *github_pat_SYNTHETIC_DO_NOT_LOG* ]]
+}
+
+@test "refuses a caller-supplied future issuance time" {
+    set -e
+    run_capture --now 9999999999
+
+    [ "$status" -eq 2 ]
+    [ ! -e "$CAPTURED_POST" ]
+}
+
+@test "refuses to sign when bounded governance reads exhaust the witness lifetime" {
+    set -e
+    export DATE_CALLS="$BATS_TEST_TMPDIR/date-calls"
+    printf '%s\n' \
+      '#!/usr/bin/env bash' \
+      'set -euo pipefail' \
+      '[[ "$#" -eq 1 && "$1" == +%s ]]' \
+      'calls=$(cat "$DATE_CALLS" 2>/dev/null || printf 0)' \
+      'calls=$((calls + 1))' \
+      'printf "%s\n" "$calls" > "$DATE_CALLS"' \
+      'if (( calls == 1 )); then printf "%s\n" 1000; else printf "%s\n" 1120; fi' \
+      > "$BATS_TEST_TMPDIR/bin/date"
+    chmod +x "$BATS_TEST_TMPDIR/bin/date"
+
+    run_capture
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'governance witness expired before signing'* ]]
+    [ ! -e "$CAPTURED_POST" ]
+}
+
 @test "refuses a hidden tag-ruleset bypass actor without posting" {
     set -e
     jq '.bypass_actors = [{actor_type:"Team",actor_id:7}]' "$FIXTURES/ruleset.json" > "$BATS_TEST_TMPDIR/ruleset-bypass.json"
@@ -146,6 +225,41 @@ run_capture() {
     jq '.protection_rules[0].reviewers += [{type:"User",reviewer:{id:404,login:"Mallory"}}]' \
       "$FIXTURES/environment.json" > "$BATS_TEST_TMPDIR/environment-extra.json"
     mv "$BATS_TEST_TMPDIR/environment-extra.json" "$FIXTURES/environment.json"
+
+    run_capture
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$CAPTURED_POST" ]
+}
+
+@test "refuses an environment whose administrators can bypass review" {
+    set -e
+    jq '.can_admins_bypass = true' "$FIXTURES/environment.json" > "$BATS_TEST_TMPDIR/environment-bypass.json"
+    mv "$BATS_TEST_TMPDIR/environment-bypass.json" "$FIXTURES/environment.json"
+
+    run_capture
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$CAPTURED_POST" ]
+}
+
+@test "refuses an overflow deployment policy page" {
+    set -e
+    jq '.total_count = 101 | .branch_policies = [range(0;100) | {name:"v*",type:"tag"}]' \
+      "$FIXTURES/policies.json" > "$BATS_TEST_TMPDIR/policies-overflow.json"
+    mv "$BATS_TEST_TMPDIR/policies-overflow.json" "$FIXTURES/policies.json"
+
+    run_capture
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$CAPTURED_POST" ]
+}
+
+@test "refuses an additional branch deployment policy" {
+    set -e
+    jq '.total_count = 2 | .branch_policies += [{name:"main",type:"branch"}]' \
+      "$FIXTURES/policies.json" > "$BATS_TEST_TMPDIR/policies-branch.json"
+    mv "$BATS_TEST_TMPDIR/policies-branch.json" "$FIXTURES/policies.json"
 
     run_capture
 

@@ -26,14 +26,15 @@ trusted_profile="$run_id.trusted"
 denied_profile="$run_id.denied"
 profile_file="$scratch/apparmor.profile"
 helper="$scratch/seqpacket-sender"
-profile_loaded=0
 
 cleanup() {
-  local cleanup_status=0
-  if (( profile_loaded == 1 )); then
-    sudo -n apparmor_parser -R "$profile_file" >/dev/null 2>&1 || cleanup_status=1
-    if sudo -n grep -Eq "^(${trusted_profile}|${denied_profile}) \(" \
-      /sys/kernel/security/apparmor/profiles; then
+  local cleanup_status=0 profiles_after
+  if [[ -f "$profile_file" ]]; then
+    sudo -n apparmor_parser -R "$profile_file" >/dev/null 2>&1 || true
+    if ! profiles_after=$(sudo -n sed -n 's/ (.*)$//p' \
+      /sys/kernel/security/apparmor/profiles 2>/dev/null); then
+      cleanup_status=1
+    elif grep -Eq "^(${trusted_profile}|${denied_profile})$" <<<"$profiles_after"; then
       cleanup_status=1
     fi
   fi
@@ -60,7 +61,6 @@ sed \
   -e "s|@@HELPER@@|$helper|g" \
   "$fixture_dir/sec0030-apparmor.profile.in" > "$profile_file"
 sudo -n apparmor_parser -r "$profile_file"
-profile_loaded=1
 
 profiles=$(sudo -n sh -c 'exec sed -n "s/ (enforce)$//p" /sys/kernel/security/apparmor/profiles')
 grep -Fxq "$trusted_profile" <<<"$profiles" || fail 'trusted AppArmor profile is not loaded (enforce)'

@@ -89,6 +89,13 @@ generation_policy() { printf '%s/%s/capability-policy.toml\n' "$GENERATION_ROOT"
 generation_state() { printf '%s/%s-broker-state.json\n' "$RUNTIME_GENERATION_DIR" "$1"; }
 generation_manifest() { printf '%s/%s/manifest.sha256\n' "$GENERATION_ROOT" "$1"; }
 
+launchd_broker_disabled() {
+  launchctl print-disabled system 2>/dev/null | awk '
+    $1 == "\"one.arcanada.credential-broker\"" && $2 == "=>" && $3 == "true" { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 file_owner() {
   if [ "$(platform)" = macos ]; then stat -f '%Su' "$1"; else stat -c '%U' "$1"; fi
 }
@@ -775,20 +782,33 @@ disable_broker() {
     fi
     if [ -S "$SOCKET_PATH" ]; then rm -f "$SOCKET_PATH"; fi
   elif [ "$(platform)" = linux ]; then
-    if ! systemctl disable --now "$UNIT.socket" "$UNIT.service" 2>/dev/null; then
-      if systemctl is-active --quiet "$UNIT.socket" || systemctl is-active --quiet "$UNIT.service"; then
-        die "systemd failed to disable broker activation"
+    local managed load_state enabled active
+    for managed in "$UNIT.socket" "$UNIT.service"; do
+      load_state=$(systemctl show "$managed" --property=LoadState --value) \
+        || die "systemd unit load state is unreadable: $managed"
+      if [ "$load_state" = not-found ]; then
+        continue
       fi
-    fi
-    systemctl is-active --quiet "$UNIT.service" && die "broker remains active after disable"
-    systemctl is-active --quiet "$UNIT.socket" && die "broker socket remains active after disable"
+      [ "$load_state" = loaded ] || die "systemd unit load state is unsafe: $managed ($load_state)"
+      systemctl disable --now "$managed" \
+        || die "systemd failed to disable broker activation: $managed"
+      enabled=$(systemctl is-enabled "$managed" 2>/dev/null || true)
+      [ "$enabled" = disabled ] || die "systemd unit remains enabled after disable: $managed"
+      active=$(systemctl show "$managed" --property=ActiveState --value) \
+        || die "systemd unit state is unreadable after disable: $managed"
+      [ "$active" = inactive ] || die "systemd unit is not inactive after disable: $managed"
+    done
+    [ ! -S "$SOCKET_PATH" ] || die "systemd broker socket remains after disable"
   else
+    launchctl disable system/one.arcanada.credential-broker || die "launchd failed to persistently disable broker"
     if launchctl print system/one.arcanada.credential-broker >/dev/null 2>&1; then
       launchctl bootout system/one.arcanada.credential-broker || die "launchd failed to unload broker"
     fi
     if launchctl print system/one.arcanada.credential-broker >/dev/null 2>&1; then
       die "launchd broker remains loaded after disable"
     fi
+    launchd_broker_disabled || die "launchd broker enable override remains after disable"
+    [ ! -S "$SOCKET_PATH" ] || die "launchd broker socket remains after disable"
   fi
   ok "credentialed execution DISABLED"
 }

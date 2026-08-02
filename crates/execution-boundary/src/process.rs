@@ -703,27 +703,42 @@ fn prepare_home(home: &Path) -> Result<(), BoundaryError> {
     Ok(())
 }
 
+const POST_KILL_REAP_TIMEOUT: Duration = Duration::from_millis(200);
+
 async fn terminate_group(
     child: &mut BoundaryChild,
     grace: Duration,
 ) -> Result<ExitStatus, BoundaryError> {
     let pid = Pid::from_raw(i32::try_from(child.pid).unwrap_or(i32::MAX));
     send_group_signal(pid, Signal::SIGTERM)?;
-    let status = if let Ok(result) = tokio::time::timeout(grace, child.child_mut().wait()).await {
-        result.map_err(|err| BoundaryError::Io {
-            phase: "wait after SIGTERM",
-            reason: err.to_string(),
-        })?
-    } else {
-        child.kill_process_group()?;
-        child
-            .child_mut()
-            .wait()
-            .await
-            .map_err(|err| BoundaryError::Io {
-                phase: "wait after SIGKILL",
+    let status = match tokio::time::timeout(grace, child.child_mut().wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(err)) => {
+            let _ = child.kill_process_group();
+            return Err(BoundaryError::Io {
+                phase: "wait after SIGTERM",
                 reason: err.to_string(),
-            })?
+            });
+        }
+        Err(_) => {
+            child.kill_process_group()?;
+            match tokio::time::timeout(POST_KILL_REAP_TIMEOUT, child.child_mut().wait()).await {
+                Ok(Ok(status)) => status,
+                Ok(Err(err)) => {
+                    return Err(BoundaryError::Io {
+                        phase: "wait after SIGKILL",
+                        reason: err.to_string(),
+                    });
+                }
+                Err(_) => {
+                    return Err(BoundaryError::Io {
+                        phase: "reap after SIGKILL",
+                        reason: "direct child remained unreaped beyond the bounded deadline"
+                            .to_owned(),
+                    });
+                }
+            }
+        }
     };
     child.kill_process_group()?;
     Ok(status)

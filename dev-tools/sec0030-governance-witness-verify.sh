@@ -77,38 +77,51 @@ public_key_line=$(awk 'NF >= 2 && $1 ~ /^(ssh-ed25519|ecdsa-sha2-|sk-ssh-ed25519
 [[ -n "$public_key_line" ]] || fail
 printf 'sec0030 %s\n' "$public_key_line" > "$scratch/allowed-signers"
 
-mapfile -t candidates < <(
-    jq -rc --arg author "$expected_author" '
-      .[] |
-      select(.user.login == $author) |
-      .body as $body |
-      try ($body | fromjson) catch empty |
-      select(.type == "SEC0030_GOVERNANCE_WITNESS_V1") |
-      [.manifest_b64, .signature_b64] | @tsv
-    ' "$comments"
-)
+candidate=$(jq -rc --arg author "$expected_author" '
+  [
+    .[] |
+    select(.user.login == $author) |
+    . as $comment |
+    try ($comment.body | fromjson) catch empty |
+    . as $witness |
+    select($witness.type == "SEC0030_GOVERNANCE_WITNESS_V1") |
+    select(($comment.id | type) == "number" and $comment.id > 0) |
+    select(($comment.created_at | type) == "string") |
+    ($comment.created_at | try fromdateiso8601 catch empty) as $created_epoch |
+    select(($created_epoch | type) == "number") |
+    {
+      id: $comment.id,
+      created_epoch: $created_epoch,
+      manifest_b64: $witness.manifest_b64,
+      signature_b64: $witness.signature_b64
+    }
+  ] |
+  sort_by(.created_epoch, .id) |
+  last // empty |
+  [.created_epoch, .manifest_b64, .signature_b64] | @tsv
+' "$comments")
+[[ -n "$candidate" ]] || fail
+IFS=$'\t' read -r comment_created_epoch manifest_b64 signature_b64 <<<"$candidate"
+[[ "$comment_created_epoch" =~ ^[0-9]+$ && -n "$manifest_b64" && -n "$signature_b64" ]] || fail
+printf '%s' "$manifest_b64" | base64 --decode > "$scratch/manifest" 2>/dev/null || fail
+printf '%s' "$signature_b64" | base64 --decode > "$scratch/signature" 2>/dev/null || fail
 
-for candidate in "${candidates[@]}"; do
-    IFS=$'\t' read -r manifest_b64 signature_b64 <<<"$candidate"
-    [[ -n "$manifest_b64" && -n "$signature_b64" ]] || continue
-    printf '%s' "$manifest_b64" | base64 --decode > "$scratch/manifest" 2>/dev/null || continue
-    printf '%s' "$signature_b64" | base64 --decode > "$scratch/signature" 2>/dev/null || continue
+ssh-keygen -Y verify \
+    -f "$scratch/allowed-signers" \
+    -I sec0030 \
+    -n sec0030-governance \
+    -s "$scratch/signature" \
+    < "$scratch/manifest" >/dev/null 2>&1 || fail
 
-    ssh-keygen -Y verify \
-        -f "$scratch/allowed-signers" \
-        -I sec0030 \
-        -n sec0030-governance \
-        -s "$scratch/signature" \
-        < "$scratch/manifest" >/dev/null 2>&1 || continue
-
-    if jq -e \
+jq -e \
         --arg repository "$repository" \
         --arg reviewer "$reviewer" \
         --arg sha "$sha" \
         --arg pull_head_sha "$pull_head_sha" \
         --argjson repository_id "$repository_id" \
         --argjson pull_number "$pull_number" \
-        --argjson now "$now" '
+        --argjson now "$now" \
+        --argjson comment_created_epoch "$comment_created_epoch" '
       .schema == 1 and
       .repository == {id: $repository_id, full_name: $repository} and
       .subject == {
@@ -119,6 +132,9 @@ for candidate in "${candidates[@]}"; do
       (.issued_at | type) == "number" and
       (.expires_at | type) == "number" and
       .issued_at <= $now and
+      .issued_at <= $comment_created_epoch and
+      ($comment_created_epoch - .issued_at) <= 120 and
+      $comment_created_epoch <= ($now + 5) and
       $now < .expires_at and
       (.expires_at - .issued_at) > 0 and
       (.expires_at - .issued_at) <= 120 and
@@ -152,13 +168,14 @@ for candidate in "${candidates[@]}"; do
         "deletion", "non_fast_forward", "required_signatures", "update"
       ] | sort) and
       .release_environment.name == "sec0030-protected-release" and
+      .release_environment.can_admins_bypass == false and
+      .release_environment.deployment_branch_policy == {
+        protected_branches: false,
+        custom_branch_policies: true
+      } and
       .release_environment.prevent_self_review == true and
       .release_environment.reviewers == [{type: "User", identity: $reviewer}] and
-      .release_environment.tag_policies == ["v*"]
-    ' "$scratch/manifest" >/dev/null 2>&1; then
-        printf '%s\n' 'SEC0030_GOVERNANCE_WITNESS_PASS'
-        exit 0
-    fi
-done
+      .release_environment.ref_policies == [{name: "v*", type: "tag"}]
+    ' "$scratch/manifest" >/dev/null 2>&1 || fail
 
-fail
+printf '%s\n' 'SEC0030_GOVERNANCE_WITNESS_PASS'

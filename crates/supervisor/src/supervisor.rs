@@ -203,7 +203,19 @@ impl SuperviseTask {
                 Step::Poll => {}
                 Step::Terminate(cause) => {
                     self.emit(cause.audit_kind(), child_id);
-                    self.terminate().await;
+                    if let Err(error) = self.terminate().await {
+                        let reason = match &error {
+                            SupervisorError::ChildWait { .. } => "child_wait_failed",
+                            SupervisorError::ReapTimeout => "reap_timeout",
+                            _ => "termination_failed",
+                        };
+                        self.emit("escalate", child_id);
+                        tracing::error!(error = %error, cause = cause.audit_kind(), reason, "supervisor termination failed");
+                        return SupervisionOutcome::Escalated {
+                            child_id,
+                            reason: reason.to_string(),
+                        };
+                    }
                     return SupervisionOutcome::Escalated {
                         child_id,
                         reason: cause.audit_kind().to_string(),
@@ -315,9 +327,9 @@ impl SuperviseTask {
     }
 
     /// Force-terminate the child's process group and record the terminal event.
-    async fn terminate(&mut self) {
+    async fn terminate(&mut self) -> Result<(), SupervisorError> {
         let pgid = self.child.pgid();
-        if let Err(err) = terminate_group(
+        terminate_group(
             pgid,
             self.config.grace,
             &mut self.child,
@@ -325,9 +337,6 @@ impl SuperviseTask {
             &self.config.correlation_id,
         )
         .await
-        {
-            tracing::error!(error = %err, "supervisor terminate audit write failed");
-        }
     }
 
     /// Record a lifecycle event; log (do not silently drop) on a write failure.

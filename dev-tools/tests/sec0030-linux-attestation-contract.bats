@@ -29,5 +29,36 @@ SENDER="$REPO_ROOT/packaging/tests/fixtures/linux-seqpacket-sender.c"
     ! grep -Fq '/proc/' "$HARNESS"
     ! grep -Fq 'SO_PEERSEC' "$HARNESS"
     grep -Fq 'cleanup || status=1' "$PROBE"
+    grep -Fq 'apparmor_parser -R "$profile_file"' "$PROBE"
+    ! grep -Fq 'profile_loaded' "$PROBE"
     grep -Fq 'SEC0030_LINUX_ATTESTATION_CLEANUP_PASS' "$PROBE"
+}
+
+@test "bounded sender timeout reaps a hanging helper" {
+    set -e
+    python3 - "$HARNESS" <<'PY'
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("sec0030_attestation", path)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+process = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(30)"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+try:
+    module.communicate_bounded(process, timeout=0.01)
+except SystemExit as error:
+    assert "sender timed out" in str(error)
+else:
+    raise AssertionError("hanging helper unexpectedly completed")
+assert process.poll() is not None, "timed-out helper survived bounded cleanup"
+PY
 }

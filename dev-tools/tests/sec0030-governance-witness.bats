@@ -59,16 +59,22 @@ write_manifest() {
         },
         release_environment: {
           name: "sec0030-protected-release",
+          can_admins_bypass: false,
+          deployment_branch_policy: {
+            protected_branches: false,
+            custom_branch_policies: true
+          },
           prevent_self_review: true,
           reviewers: [{type:"User",identity:"PavelValentov"}],
-          tag_policies: ["v*"]
+          ref_policies: [{name:"v*",type:"tag"}]
         }
       }
     ' > "$target"
 }
 
 sign_comment() {
-    local manifest="$1" comments="$2" author="${3:-Arcanada}"
+    local manifest="$1" comments="$2" author="${3:-Arcanada}" id="${4:-1}"
+    local created_at="${5:-1970-01-01T00:16:40Z}"
     local manifest_b64 signature_b64 body
     ssh-keygen -q -Y sign -f "$PRIVATE_KEY" -n sec0030-governance "$manifest"
     manifest_b64=$(base64 -w 0 "$manifest")
@@ -77,8 +83,9 @@ sign_comment() {
       --arg manifest_b64 "$manifest_b64" \
       --arg signature_b64 "$signature_b64" \
       '{type:"SEC0030_GOVERNANCE_WITNESS_V1",manifest_b64:$manifest_b64,signature_b64:$signature_b64}')
-    jq -n --arg author "$author" --arg body "$body" \
-      '[{user:{login:$author},body:$body,created_at:"2026-08-02T00:00:00Z"}]' > "$comments"
+    jq -n --arg author "$author" --arg body "$body" --arg created_at "$created_at" \
+      --argjson id "$id" \
+      '[{id:$id,user:{login:$author},body:$body,created_at:$created_at}]' > "$comments"
 }
 
 run_verify() {
@@ -205,4 +212,40 @@ run_verify() {
     run_verify "$comments"
 
     [ "$status" -ne 0 ]
+}
+
+@test "does not fall back when the newest exact-type comment is invalid" {
+    set -e
+    valid="$BATS_TEST_TMPDIR/valid.json"
+    invalid="$BATS_TEST_TMPDIR/invalid.json"
+    old_comment="$BATS_TEST_TMPDIR/old.json"
+    new_comment="$BATS_TEST_TMPDIR/new.json"
+    comments="$BATS_TEST_TMPDIR/comments.json"
+    write_manifest "$valid"
+    jq '.repository.full_name = "example/other"' "$valid" > "$invalid"
+    sign_comment "$valid" "$old_comment" Arcanada 10 1970-01-01T00:16:40Z
+    sign_comment "$invalid" "$new_comment" Arcanada 11 1970-01-01T00:17:20Z
+    jq -s 'add' "$old_comment" "$new_comment" > "$comments"
+
+    run_verify "$comments"
+
+    [ "$status" -ne 0 ]
+}
+
+@test "accepts the newest valid comment without falling back to an older invalid one" {
+    set -e
+    valid="$BATS_TEST_TMPDIR/valid.json"
+    invalid="$BATS_TEST_TMPDIR/invalid.json"
+    old_comment="$BATS_TEST_TMPDIR/old.json"
+    new_comment="$BATS_TEST_TMPDIR/new.json"
+    comments="$BATS_TEST_TMPDIR/comments.json"
+    write_manifest "$valid"
+    jq '.repository.full_name = "example/other"' "$valid" > "$invalid"
+    sign_comment "$invalid" "$old_comment" Arcanada 10 1970-01-01T00:16:40Z
+    sign_comment "$valid" "$new_comment" Arcanada 11 1970-01-01T00:16:41Z
+    jq -s 'add' "$old_comment" "$new_comment" > "$comments"
+
+    run_verify "$comments"
+
+    [ "$status" -eq 0 ]
 }

@@ -218,6 +218,27 @@ jobs:
             dist/*.cdx.json
             dist/*.sha256
 
+      - name: Recheck current main and tag immediately before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_main=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
+          test "$GITHUB_SHA" = "$current_main"
+          tag_object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")
+          tag_type=$(jq -r '.object.type' <<<"$tag_object")
+          tag_sha=$(jq -r '.object.sha' <<<"$tag_object")
+          for _ in {1..10}; do
+            if [ "$tag_type" = commit ]; then break; fi
+            test "$tag_type" = tag
+            tag_object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}")
+            tag_type=$(jq -r '.object.type' <<<"$tag_object")
+            tag_sha=$(jq -r '.object.sha' <<<"$tag_object")
+          done
+          test "$tag_type" = commit
+          test "$GITHUB_SHA" = "$tag_sha"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:

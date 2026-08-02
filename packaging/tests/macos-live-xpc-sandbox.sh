@@ -33,11 +33,7 @@ keychain="$scratch/sec0030.keychain-db"
 keychain_password="sec0030-ephemeral-$run_id"
 launch_plist="$scratch/$service.plist"
 domain=''
-bootstrapped=0
-keychain_created=0
-trusted_cert_added=0
 certificate_sha=''
-search_list_changed=0
 listener_pid=''
 original_keychains=()
 while IFS= read -r original_keychain; do
@@ -46,38 +42,66 @@ done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:
 (( ${#original_keychains[@]} > 0 )) || fail 'user keychain search list is empty'
 
 cleanup() {
-  local cleanup_status=0
+  local cleanup_status=0 search_list_after certificates_after
   if [[ "$listener_pid" =~ ^[1-9][0-9]*$ ]]; then
     if kill -0 "$listener_pid" >/dev/null 2>&1; then
       kill "$listener_pid" >/dev/null 2>&1 || cleanup_status=1
     fi
-    wait "$listener_pid" >/dev/null 2>&1 || true
+    for _ in {1..100}; do
+      kill -0 "$listener_pid" >/dev/null 2>&1 || break
+      sleep 0.01
+    done
+    if kill -0 "$listener_pid" >/dev/null 2>&1; then
+      kill -KILL "$listener_pid" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    for _ in {1..100}; do
+      kill -0 "$listener_pid" >/dev/null 2>&1 || break
+      sleep 0.01
+    done
+    if kill -0 "$listener_pid" >/dev/null 2>&1; then
+      cleanup_status=1
+    else
+      wait "$listener_pid" >/dev/null 2>&1 || true
+    fi
     listener_pid=''
   fi
-  if (( bootstrapped == 1 )); then
-    launchctl bootout "$domain" "$launch_plist" >/dev/null 2>&1 || cleanup_status=1
+  if [[ -n "$domain" && -f "$launch_plist" ]]; then
+    launchctl bootout "$domain" "$launch_plist" >/dev/null 2>&1 || true
     if launchctl print "$domain/$service" >/dev/null 2>&1; then
       printf 'SEC0030_MACOS_NATIVE_FAIL: launchd cleanup did not remove exact service\n' >&2
       cleanup_status=1
     fi
   fi
-  if (( search_list_changed == 1 )); then
+  if (( ${#original_keychains[@]} > 0 )); then
     run_bounded 15 security list-keychains -d user -s "${original_keychains[@]}" \
       >/dev/null 2>&1 || cleanup_status=1
-    if run_bounded 15 security list-keychains -d user 2>/dev/null | grep -Fq "$keychain"; then
+    if ! search_list_after=$(run_bounded 15 security list-keychains -d user 2>/dev/null); then
+      cleanup_status=1
+    elif grep -Fq "$keychain" <<<"$search_list_after"; then
       cleanup_status=1
     fi
   fi
-  if (( trusted_cert_added == 1 )); then
+  if [[ -f "$scratch/codesign.crt" && "$certificate_sha" =~ ^[0-9A-F]{40}$ ]]; then
+    run_bounded 15 sudo -n security remove-trusted-cert -d \
+      "$scratch/codesign.crt" >/dev/null 2>&1 || true
     run_bounded 15 sudo -n security delete-certificate -Z \
       "$certificate_sha" /Library/Keychains/System.keychain >/dev/null 2>&1 \
-      || cleanup_status=1
-    if run_bounded 15 sudo -n security find-certificate -a -Z \
-      /Library/Keychains/System.keychain 2>/dev/null | grep -Fqi "$certificate_sha"; then
+      || true
+    if ! certificates_after=$(run_bounded 15 sudo -n security find-certificate -a -Z \
+      /Library/Keychains/System.keychain 2>/dev/null); then
+      cleanup_status=1
+    elif grep -Fqi "$certificate_sha" <<<"$certificates_after"; then
+      cleanup_status=1
+    fi
+    if ! run_bounded 15 sudo -n security dump-trust-settings -d \
+      >"$scratch/admin-trust-after.txt" 2>/dev/null; then
+      cleanup_status=1
+    elif grep -Eqi "$certificate_sha|SEC0030 Ephemeral Code Signing" \
+      "$scratch/admin-trust-after.txt"; then
       cleanup_status=1
     fi
   fi
-  if (( keychain_created == 1 )); then
+  if [[ -e "$keychain" ]]; then
     security delete-keychain "$keychain" >/dev/null 2>&1 || cleanup_status=1
     [[ ! -e "$keychain" ]] || cleanup_status=1
   fi
@@ -123,12 +147,10 @@ openssl pkcs12 -export \
   -passout "pass:$keychain_password" >/dev/null 2>&1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE pkcs12-exported'
 security create-keychain -p "$keychain_password" "$keychain"
-keychain_created=1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE keychain-created'
 security unlock-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 900 "$keychain"
 security list-keychains -d user -s "$keychain" "${original_keychains[@]}"
-search_list_changed=1
 security import "$scratch/codesign.p12" \
   -k "$keychain" -P "$keychain_password" -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple: -s \
@@ -139,7 +161,6 @@ certificate_sha=$(openssl x509 -in "$scratch/codesign.crt" -noout -fingerprint -
 [[ "$certificate_sha" =~ ^[0-9A-F]{40}$ ]] || fail 'ephemeral signing certificate unavailable'
 run_bounded 15 sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
   -k /Library/Keychains/System.keychain "$scratch/codesign.crt"
-trusted_cert_added=1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trust-added'
 run_bounded 15 security find-identity -v -p codesigning "$keychain" | grep -Fqi "$certificate_sha" \
   || fail 'ephemeral code-signing identity unavailable'
@@ -194,7 +215,6 @@ else
   domain="user/$uid"
 fi
 launchctl bootstrap "$domain" "$launch_plist"
-bootstrapped=1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE launch-agent-bootstrapped'
 launchctl kickstart -k "$domain/$service"
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE launch-agent-kickstarted'
@@ -326,12 +346,16 @@ if (( sandbox_status != 0 )); then
   fail 'sandbox parent did not complete'
 fi
 [[ "$sandbox_result" == 'file=denied network=denied' ]] || fail 'sandboxed descendant escaped'
+for _ in {1..500}; do
+  kill -0 "$listener_pid" >/dev/null 2>&1 || break
+  sleep 0.01
+done
+kill -0 "$listener_pid" >/dev/null 2>&1 && fail 'paired loopback listener did not terminate'
 wait "$listener_pid"
 listener_pid=''
 [[ "$(<"$network_count")" == 1 ]] || fail 'sandboxed descendant reached the paired loopback endpoint'
 
 launchctl bootout "$domain" "$launch_plist"
-bootstrapped=0
 if launchctl print "$domain/$service" >/dev/null 2>&1; then
   fail 'launchd service remained after exact bootout'
 fi

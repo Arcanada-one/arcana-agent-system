@@ -24,18 +24,63 @@ scratch=$(mktemp -d)
 run_id="sec0030-containment-$(date +%s)-$$"
 [[ "$run_id" =~ ^sec0030-containment-[0-9]+-[0-9]+$ ]] || fail 'unsafe run identifier'
 units=()
+watchers=()
+
+systemd_property() {
+  local unit="$1" property="$2"
+  sudo -n systemctl show "$unit" --property="$property" --value 2>/dev/null
+}
+
+terminate_watcher() {
+  local watcher="$1"
+  kill -0 "$watcher" 2>/dev/null || { wait "$watcher" 2>/dev/null || true; return 0; }
+  kill "$watcher" 2>/dev/null || true
+  for _ in {1..100}; do
+    kill -0 "$watcher" 2>/dev/null || { wait "$watcher" 2>/dev/null || true; return 0; }
+    sleep 0.01
+  done
+  kill -KILL "$watcher" 2>/dev/null || true
+  for _ in {1..100}; do
+    kill -0 "$watcher" 2>/dev/null || { wait "$watcher" 2>/dev/null || true; return 0; }
+    sleep 0.01
+  done
+  return 1
+}
+
+stop_and_verify_unit() {
+  local unit="$1" control_group load_state active_state sub_state settled=0
+  control_group=$(systemd_property "$unit" ControlGroup) || return 1
+  sudo -n systemctl stop "$unit" >/dev/null 2>&1 || true
+  for _ in {1..100}; do
+    load_state=$(systemd_property "$unit" LoadState) || return 1
+    active_state=$(systemd_property "$unit" ActiveState) || return 1
+    sub_state=$(systemd_property "$unit" SubState) || return 1
+    if [[ "$load_state" == not-found || \
+          (("$active_state" == inactive || "$active_state" == failed) && "$sub_state" != deactivating) ]]; then
+      settled=1
+      break
+    fi
+    sleep 0.05
+  done
+  (( settled == 1 )) || return 1
+  if [[ -n "$control_group" && -e "/sys/fs/cgroup${control_group}/cgroup.events" ]]; then
+    grep -qx 'populated 0' "/sys/fs/cgroup${control_group}/cgroup.events" || return 1
+  fi
+  sudo -n systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+  load_state=$(systemd_property "$unit" LoadState) || return 1
+  active_state=$(systemd_property "$unit" ActiveState) || return 1
+  [[ "$load_state" == not-found || "$active_state" == inactive ]]
+}
 
 cleanup() {
-  local unit cleanup_status=0 pid expected observed
+  local unit watcher cleanup_status=0 pid expected observed
+  for watcher in "${watchers[@]}"; do
+    [[ "$watcher" =~ ^[1-9][0-9]*$ ]] || continue
+    terminate_watcher "$watcher" || cleanup_status=1
+  done
   for unit in "${units[@]}"; do
     [[ "$unit" =~ ^sec0030-containment-[0-9]+-[0-9]+-[1-5]\.service$ ]] || continue
-    if sudo -n systemctl is-active --quiet "$unit"; then
-      sudo -n systemctl stop "$unit" >/dev/null 2>&1 || cleanup_status=1
-    fi
-    if sudo -n systemctl is-active --quiet "$unit"; then
-      cleanup_status=1
-    fi
-    sudo -n systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+    stop_and_verify_unit "$unit" || cleanup_status=1
   done
   while IFS=$'\t' read -r pid expected; do
     [[ "$pid" =~ ^[1-9][0-9]*$ && "$expected" =~ ^[1-9][0-9]*$ ]] || continue
@@ -183,6 +228,7 @@ finally:
 raise SystemExit(1)
 PY
   watcher_pid=$!
+  watchers+=("$watcher_pid")
   wait_for_file "$watcher_ready"
   sudo -n systemctl stop "$unit"
   wait "$watcher_pid" || fail 'cgroup.events did not report populated 0'
