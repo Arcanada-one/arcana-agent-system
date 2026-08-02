@@ -42,7 +42,7 @@ done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:
 (( ${#original_keychains[@]} > 0 )) || fail 'user keychain search list is empty'
 
 cleanup() {
-  local cleanup_status=0 search_list_after certificates_after
+  local cleanup_status=0 search_list_after certificates_after trust_verify_status
   if [[ "$listener_pid" =~ ^[1-9][0-9]*$ ]]; then
     if kill -0 "$listener_pid" >/dev/null 2>&1; then
       kill "$listener_pid" >/dev/null 2>&1 || cleanup_status=1
@@ -82,9 +82,9 @@ cleanup() {
     fi
   fi
   if [[ -f "$scratch/codesign.crt" && "$certificate_sha" =~ ^[0-9A-F]{40}$ ]]; then
-    run_bounded 15 sudo -n security remove-trusted-cert -d \
+    run_bounded 5 sudo -n security remove-trusted-cert -d \
       "$scratch/codesign.crt" >/dev/null 2>&1 || true
-    run_bounded 15 sudo -n security delete-certificate -Z \
+    run_bounded 5 sudo -n security delete-certificate -t -Z \
       "$certificate_sha" /Library/Keychains/System.keychain >/dev/null 2>&1 \
       || true
     if ! certificates_after=$(run_bounded 15 sudo -n security find-certificate -a -Z \
@@ -93,11 +93,17 @@ cleanup() {
     elif grep -Fqi "$certificate_sha" <<<"$certificates_after"; then
       cleanup_status=1
     fi
-    if ! run_bounded 15 sudo -n security dump-trust-settings -d \
-      >"$scratch/admin-trust-after.txt" 2>/dev/null; then
+    set +e
+    run_bounded 5 security verify-cert -c "$scratch/codesign.crt" -p codeSign \
+      >/dev/null 2>&1
+    trust_verify_status=$?
+    set -e
+    if (( trust_verify_status == 0 )); then
+      printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PHASE_FAIL phase=admin-trust-still-valid' >&2
       cleanup_status=1
-    elif grep -Eqi "$certificate_sha|SEC0030 Ephemeral Code Signing" \
-      "$scratch/admin-trust-after.txt"; then
+    elif (( trust_verify_status != 1 )); then
+      printf 'SEC0030_MACOS_NATIVE_CLEANUP_PHASE_FAIL phase=admin-trust-negative status=%s\n' \
+        "$trust_verify_status" >&2
       cleanup_status=1
     fi
   fi
