@@ -38,6 +38,7 @@ keychain_created=0
 trusted_cert_added=0
 certificate_sha=''
 search_list_changed=0
+listener_pid=''
 original_keychains=()
 while IFS= read -r original_keychain; do
   original_keychains+=("$original_keychain")
@@ -46,6 +47,13 @@ done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:
 
 cleanup() {
   local cleanup_status=0
+  if [[ "$listener_pid" =~ ^[1-9][0-9]*$ ]]; then
+    if kill -0 "$listener_pid" >/dev/null 2>&1; then
+      kill "$listener_pid" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    wait "$listener_pid" >/dev/null 2>&1 || true
+    listener_pid=''
+  fi
   if (( bootstrapped == 1 )); then
     launchctl bootout "$domain" "$launch_plist" >/dev/null 2>&1 || cleanup_status=1
     if launchctl print "$domain/$service" >/dev/null 2>&1; then
@@ -79,7 +87,7 @@ cleanup() {
     printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_FAIL' >&2
     return 1
   fi
-  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent search_list=restored trusted_certificate=absent keychain=absent scratch=absent'
+  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent listener=absent search_list=restored trusted_certificate=absent keychain=absent scratch=absent'
 }
 on_exit() {
   local status=$?
@@ -146,6 +154,13 @@ sign_binary() {
     codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
       --identifier "$identifier" "$target" >/dev/null
   fi
+  codesign --verify --strict "$target"
+}
+
+adhoc_sign_binary() {
+  local identifier="$1" entitlements="$2" target="$3"
+  codesign --force --sign - --identifier "$identifier" \
+    --entitlements "$entitlements" "$target" >/dev/null
   codesign --verify --strict "$target"
 }
 
@@ -265,14 +280,15 @@ cp "$scratch/sandbox-child" "$app/Contents/Helpers/SEC0030SandboxChild"
   -c 'Add :CFBundleExecutable string SEC0030Sandbox' \
   -c 'Add :CFBundlePackageType string APPL' \
   "$app/Contents/Info.plist"
-sign_binary one.arcanada.sec0030.sandbox-child "$fixture_dir/sec0030-sandbox-child.entitlements" \
+adhoc_sign_binary one.arcanada.sec0030.sandbox-child "$fixture_dir/sec0030-sandbox-child.entitlements" \
   "$app/Contents/Helpers/SEC0030SandboxChild"
-sign_binary one.arcanada.sec0030.sandbox "$fixture_dir/sec0030-sandbox-parent.entitlements" \
+adhoc_sign_binary one.arcanada.sec0030.sandbox "$fixture_dir/sec0030-sandbox-parent.entitlements" \
   "$app/Contents/MacOS/SEC0030Sandbox"
-codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
+codesign --force --sign - \
   --identifier one.arcanada.sec0030.sandbox \
   --entitlements "$fixture_dir/sec0030-sandbox-parent.entitlements" "$app" >/dev/null
 codesign --verify --strict --deep "$app"
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE sandbox-app-signed'
 codesign -d --entitlements :- "$app/Contents/MacOS/SEC0030Sandbox" \
   > "$scratch/parent-entitlements.plist" 2>/dev/null
 codesign -d --entitlements :- "$app/Contents/Helpers/SEC0030SandboxChild" \
@@ -280,11 +296,23 @@ codesign -d --entitlements :- "$app/Contents/Helpers/SEC0030SandboxChild" \
 plutil -extract com.apple.security.app-sandbox raw "$scratch/parent-entitlements.plist" | grep -qx true
 plutil -extract com.apple.security.app-sandbox raw "$scratch/child-entitlements.plist" | grep -qx true
 plutil -extract com.apple.security.inherit raw "$scratch/child-entitlements.plist" | grep -qx true
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE sandbox-entitlements-verified'
 
+set +e
 sandbox_result=$("$app/Contents/MacOS/SEC0030Sandbox" \
   "$app/Contents/Helpers/SEC0030SandboxChild" "$sentinel" "$port")
+sandbox_status=$?
+set -e
+if (( sandbox_status != 0 )); then
+  printf 'SEC0030_MACOS_NATIVE_DIAGNOSTIC sandbox_parent_status=%s\n' "$sandbox_status" >&2
+  log show --last 1m --style compact \
+    --predicate '(process == "SEC0030Sandbox") OR (process == "SEC0030SandboxChild") OR (process == "taskgated-helper") OR (process == "amfid") OR (process == "syspolicyd") OR (subsystem == "com.apple.sandbox")' \
+    | tail -n 80 >&2 || true
+  fail 'sandbox parent did not complete'
+fi
 [[ "$sandbox_result" == 'file=denied network=denied' ]] || fail 'sandboxed descendant escaped'
 wait "$listener_pid"
+listener_pid=''
 [[ "$(<"$network_count")" == 1 ]] || fail 'sandboxed descendant reached the paired loopback endpoint'
 
 launchctl bootout "$domain" "$launch_plist"

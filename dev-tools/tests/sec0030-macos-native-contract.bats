@@ -30,6 +30,7 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     set -e
     grep -Fq 'com.apple.security.app-sandbox' "$PROBE"
     grep -Fq 'com.apple.security.inherit' "$PROBE"
+    grep -Fq 'adhoc_sign_binary one.arcanada.sec0030.sandbox' "$PROBE"
     grep -Fq 'sandbox positive control failed' "$PROBE"
     grep -Fq 'sandboxed descendant escaped' "$PROBE"
     grep -Fq 'launchctl bootout "$domain" "$launch_plist"' "$PROBE"
