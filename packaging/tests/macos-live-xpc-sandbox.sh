@@ -66,17 +66,22 @@ clang -O2 -Wall -Wextra -Werror \
   -o "$scratch/sandbox-parent" "$fixture_dir/macos-sandbox-parent.c"
 clang -O2 -Wall -Wextra -Werror \
   -o "$scratch/sandbox-child" "$fixture_dir/macos-sandbox-child.c"
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE binaries-built'
 
 openssl req -new -newkey rsa:2048 -nodes -x509 -days 1 \
   -keyout "$scratch/codesign.key" \
   -out "$scratch/codesign.crt" \
   -config "$fixture_dir/sec0030-code-signing-openssl.cnf" >/dev/null 2>&1
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-generated'
 openssl pkcs12 -export \
-  -legacy \
   -inkey "$scratch/codesign.key" \
   -in "$scratch/codesign.crt" \
   -out "$scratch/codesign.p12" \
+  -keypbe PBE-SHA1-3DES \
+  -certpbe PBE-SHA1-3DES \
+  -macalg sha1 \
   -passout "pass:$keychain_password" >/dev/null 2>&1
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE pkcs12-exported'
 security create-keychain -p "$keychain_password" "$keychain"
 keychain_created=1
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE keychain-created'
