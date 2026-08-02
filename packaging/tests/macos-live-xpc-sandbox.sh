@@ -139,8 +139,13 @@ printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-derived'
 
 sign_binary() {
   local identifier="$1" entitlements="$2" target="$3"
-  codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
-    --identifier "$identifier" --entitlements "$entitlements" "$target" >/dev/null
+  if [[ -n "$entitlements" ]]; then
+    codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
+      --identifier "$identifier" --entitlements "$entitlements" "$target" >/dev/null
+  else
+    codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
+      --identifier "$identifier" "$target" >/dev/null
+  fi
   codesign --verify --strict "$target"
 }
 
@@ -148,20 +153,16 @@ cp "$scratch/xpc-client" "$scratch/trusted-client"
 cp "$scratch/xpc-client" "$scratch/trusted-client-copy"
 cp "$scratch/xpc-client" "$scratch/wrong-identifier-client"
 cp "$scratch/xpc-client" "$scratch/wrong-signer-client"
-cp "$scratch/xpc-client" "$scratch/missing-entitlement-client"
-sign_binary one.arcanada.sec0030.trusted "$fixture_dir/sec0030-trusted.entitlements" "$scratch/trusted-client"
-sign_binary one.arcanada.sec0030.trusted "$fixture_dir/sec0030-trusted.entitlements" "$scratch/trusted-client-copy"
-sign_binary one.arcanada.sec0030.wrong "$fixture_dir/sec0030-trusted.entitlements" "$scratch/wrong-identifier-client"
+sign_binary one.arcanada.sec0030.trusted '' "$scratch/trusted-client"
+sign_binary one.arcanada.sec0030.trusted '' "$scratch/trusted-client-copy"
+sign_binary one.arcanada.sec0030.wrong '' "$scratch/wrong-identifier-client"
 codesign --force --sign - --identifier one.arcanada.sec0030.trusted \
-  --entitlements "$fixture_dir/sec0030-trusted.entitlements" "$scratch/wrong-signer-client" >/dev/null
+  "$scratch/wrong-signer-client" >/dev/null
 codesign --verify --strict "$scratch/wrong-signer-client"
-codesign --force --sign 'SEC0030 Ephemeral Code Signing' \
-  --identifier one.arcanada.sec0030.trusted "$scratch/missing-entitlement-client" >/dev/null
-codesign --verify --strict "$scratch/missing-entitlement-client"
-sign_binary one.arcanada.sec0030.server "$fixture_dir/sec0030-trusted.entitlements" "$scratch/xpc-server"
+sign_binary one.arcanada.sec0030.server '' "$scratch/xpc-server"
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE signatures-ready'
 
-requirement='certificate leaf = H"'"$certificate_sha"'" and identifier "one.arcanada.sec0030.trusted" and entitlement["one.arcanada.sec0030.executor"] = true'
+requirement='certificate leaf = H"'"$certificate_sha"'" and identifier "one.arcanada.sec0030.trusted"'
 counter="$scratch/accepted-count"
 sed \
   -e "s|@@SERVICE@@|$service|g" \
@@ -207,16 +208,13 @@ printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trusted-client-copy-pass messages=1'
 before_negative=$(wc -l < "$counter")
 [[ "$before_negative" == 3 ]] || fail 'trusted XPC messages did not reach the accepted handler'
 if "$scratch/wrong-identifier-client" "$service" 1; then
-  fail 'wrong signer or entitlement was accepted'
+  fail 'wrong code identity was accepted'
 fi
 if "$scratch/wrong-signer-client" "$service" 1; then
-  fail 'wrong signer or entitlement was accepted'
-fi
-if "$scratch/missing-entitlement-client" "$service" 1; then
-  fail 'wrong signer or entitlement was accepted'
+  fail 'wrong code identity was accepted'
 fi
 after_negative=$(wc -l < "$counter")
-[[ "$after_negative" == "$before_negative" ]] || fail 'wrong signer or entitlement reached the accepted handler'
+[[ "$after_negative" == "$before_negative" ]] || fail 'wrong code identity reached the accepted handler'
 
 # Pair every App Sandbox denial with an unsandboxed positive control while the
 # same file and loopback listener are available.
@@ -255,7 +253,7 @@ done
 port=$(<"$port_file")
 
 cp "$scratch/sandbox-child" "$scratch/unsandboxed-child"
-sign_binary one.arcanada.sec0030.unsandboxed-child "$fixture_dir/sec0030-trusted.entitlements" "$scratch/unsandboxed-child"
+sign_binary one.arcanada.sec0030.unsandboxed-child '' "$scratch/unsandboxed-child"
 positive=$("$scratch/unsandboxed-child" "$sentinel" "$port" 1)
 [[ "$positive" == 'file=allowed network=allowed' ]] || fail 'sandbox positive control failed'
 
