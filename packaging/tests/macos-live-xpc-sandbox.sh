@@ -48,8 +48,8 @@ cleanup() {
     fi
   fi
   if (( trusted_cert_added == 1 )); then
-    run_bounded 15 sudo -n security remove-trusted-cert -d \
-      "$scratch/codesign.crt" >/dev/null 2>&1 \
+    run_bounded 15 sudo -n security delete-certificate -Z \
+      "$certificate_sha" /Library/Keychains/System.keychain >/dev/null 2>&1 \
       || cleanup_status=1
     if run_bounded 15 sudo -n security find-certificate -a -Z \
       /Library/Keychains/System.keychain 2>/dev/null | grep -Fqi "$certificate_sha"; then
@@ -66,7 +66,7 @@ cleanup() {
     printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_FAIL' >&2
     return 1
   fi
-  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent keychain=absent scratch=absent'
+  printf '%s\n' 'SEC0030_MACOS_NATIVE_CLEANUP_PASS launchd=absent trusted_certificate=absent keychain=absent scratch=absent'
 }
 on_exit() {
   local status=$?
@@ -124,7 +124,7 @@ printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-derived'
 
 sign_binary() {
   local identifier="$1" entitlements="$2" target="$3"
-  codesign --force --keychain "$keychain" --sign "$certificate_sha" \
+  codesign --force --keychain "$keychain" --sign 'SEC0030 Ephemeral Code Signing' \
     --identifier "$identifier" --entitlements "$entitlements" "$target" >/dev/null
   codesign --verify --strict "$target"
 }
@@ -140,7 +140,7 @@ sign_binary one.arcanada.sec0030.wrong "$fixture_dir/sec0030-trusted.entitlement
 codesign --force --sign - --identifier one.arcanada.sec0030.trusted \
   --entitlements "$fixture_dir/sec0030-trusted.entitlements" "$scratch/wrong-signer-client" >/dev/null
 codesign --verify --strict "$scratch/wrong-signer-client"
-codesign --force --keychain "$keychain" --sign "$certificate_sha" \
+codesign --force --keychain "$keychain" --sign 'SEC0030 Ephemeral Code Signing' \
   --identifier one.arcanada.sec0030.trusted "$scratch/missing-entitlement-client" >/dev/null
 codesign --verify --strict "$scratch/missing-entitlement-client"
 sign_binary one.arcanada.sec0030.server "$fixture_dir/sec0030-trusted.entitlements" "$scratch/xpc-server"
@@ -238,7 +238,7 @@ sign_binary one.arcanada.sec0030.sandbox-child "$fixture_dir/sec0030-sandbox-chi
   "$app/Contents/Helpers/SEC0030SandboxChild"
 sign_binary one.arcanada.sec0030.sandbox "$fixture_dir/sec0030-sandbox-parent.entitlements" \
   "$app/Contents/MacOS/SEC0030Sandbox"
-codesign --force --keychain "$keychain" --sign "$certificate_sha" \
+codesign --force --keychain "$keychain" --sign 'SEC0030 Ephemeral Code Signing' \
   --identifier one.arcanada.sec0030.sandbox \
   --entitlements "$fixture_dir/sec0030-sandbox-parent.entitlements" "$app" >/dev/null
 codesign --verify --strict --deep "$app"
