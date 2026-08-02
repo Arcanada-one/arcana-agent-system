@@ -12,7 +12,8 @@ FIXTURES="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/fixtures"
 
 setup() {
     PORT=$((20000 + RANDOM % 20000))
-    (cd "$FIXTURES" && python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
+    python3 -m http.server "$PORT" --bind 127.0.0.1 \
+        --directory "$FIXTURES" >/dev/null 2>&1 &
     SERVER_PID=$!
     for _ in $(seq 1 30); do
         curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
@@ -25,15 +26,18 @@ setup() {
 teardown() {
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
+    ! kill -0 "$SERVER_PID" 2>/dev/null
 }
 
 @test "usage error with no arguments exits 2" {
+    set -e
     run bash "$SCRIPT"
     [ "$status" -eq 2 ]
     [[ "$output" == *"Usage:"* ]]
 }
 
 @test "free name on both crates.io and homebrew exits 0" {
+    set -e
     run bash "$SCRIPT" free-name
     [ "$status" -eq 0 ]
     [[ "$output" == *"crates.io:  free"* ]]
@@ -41,12 +45,14 @@ teardown() {
 }
 
 @test "name taken on crates.io exits 1 and reports TAKEN" {
+    set -e
     run bash "$SCRIPT" taken-name
     [ "$status" -eq 1 ]
     [[ "$output" == *"crates.io:  TAKEN"* ]]
 }
 
 @test "checks multiple candidates in one invocation" {
+    set -e
     run bash "$SCRIPT" free-name taken-name
     [ "$status" -eq 1 ]
     [[ "$output" == *"=== free-name ==="* ]]
