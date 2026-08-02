@@ -188,7 +188,7 @@ enum Step {
     /// The child exited on its own but remains unreaped to pin PID=PGID.
     Exited,
     /// Exit observation failed before a trustworthy lifecycle result.
-    WaitFailed,
+    WaitFailed(SupervisorError),
 }
 
 impl SuperviseTask {
@@ -206,11 +206,7 @@ impl SuperviseTask {
                 Step::Terminate(cause) => {
                     self.emit(cause.audit_kind(), child_id);
                     if let Err(error) = self.terminate().await {
-                        let reason = match &error {
-                            SupervisorError::ChildWait { .. } => "child_wait_failed",
-                            SupervisorError::ReapTimeout => "reap_timeout",
-                            _ => "termination_failed",
-                        };
+                        let reason = lifecycle_failure_reason(&error);
                         self.emit("escalate", child_id);
                         tracing::error!(error = %error, cause = cause.audit_kind(), reason, "supervisor termination failed");
                         return SupervisionOutcome::Escalated {
@@ -245,7 +241,8 @@ impl SuperviseTask {
                         return outcome;
                     }
                 }
-                Step::WaitFailed => {
+                Step::WaitFailed(wait_error) => {
+                    tracing::error!(error = %wait_error, "supervisor child-exit observation failed");
                     if let Err(error) = self.terminate().await {
                         tracing::error!(error = %error, "supervisor cleanup after exit-observation failure failed");
                         self.emit("escalate", child_id);
@@ -275,7 +272,10 @@ impl SuperviseTask {
             () = self.cancel.cancelled() => Step::Terminate(TerminationCause::Cancelled),
             () = tokio::time::sleep_until(deadline) => Step::Terminate(TerminationCause::WallClockTimeout),
             result = self.child.wait_for_exit() => {
-                if result.is_ok() { Step::Exited } else { Step::WaitFailed }
+                match result {
+                    Ok(()) => Step::Exited,
+                    Err(error) => Step::WaitFailed(error),
+                }
             }
             () = tokio::time::sleep(tick) => {
                 if hb_rx.borrow().elapsed() > hb_timeout {
@@ -357,5 +357,20 @@ impl SuperviseTask {
         ) {
             tracing::error!(error = %err, kind, "supervisor audit write failed");
         }
+    }
+}
+
+fn lifecycle_failure_reason(error: &SupervisorError) -> &'static str {
+    match error {
+        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
+            phase, ..
+        }) if phase.contains("reap") => "reap_failed",
+        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
+            phase, ..
+        }) if phase.contains("disappearance") => "process_group_cleanup_failed",
+        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
+            phase, ..
+        }) if phase.contains("observe") || phase.contains("observer") => "child_wait_failed",
+        _ => "termination_failed",
     }
 }

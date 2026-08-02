@@ -25,6 +25,7 @@ use rustix::process::{waitid, Pid as RustixPid, WaitId, WaitIdOptions};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -223,7 +224,7 @@ impl ProcessSpec {
                 .await;
         let Ok((lifecycle_result, collected_result)) = joined else {
             internal_cancel.cancel();
-            let _ = finalize_group_and_reap(&mut child).await;
+            cleanup_after_output_deadline(&mut child).await?;
             stdout_task.abort();
             stderr_task.abort();
             return Err(BoundaryError::Io {
@@ -331,8 +332,10 @@ pub enum BoundaryError {
 #[derive(Debug)]
 pub struct BoundaryChild {
     pid: u32,
-    child: Child,
-    group_closed: bool,
+    child: Option<Child>,
+    exit_observer: Option<JoinHandle<Result<(), String>>>,
+    exit_observed: bool,
+    finalizer: Option<JoinHandle<Result<ExitStatus, BoundaryError>>>,
 }
 
 /// A validated terminal size.
@@ -423,11 +426,11 @@ impl BoundaryChild {
     }
 
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.child.stdout.take()
+        self.child.as_mut()?.stdout.take()
     }
 
     pub fn take_stderr(&mut self) -> Option<tokio::process::ChildStderr> {
-        self.child.stderr.take()
+        self.child.as_mut()?.stderr.take()
     }
 
     /// Observe direct-child exit without reaping the process-group leader.
@@ -438,8 +441,33 @@ impl BoundaryChild {
     /// # Errors
     /// Returns an I/O error when `waitid(WNOWAIT)` cannot observe the owned
     /// direct child.
-    pub async fn wait_for_exit(&self) -> Result<(), BoundaryError> {
-        wait_for_exit_unreaped(self.pid).await
+    pub async fn wait_for_exit(&mut self) -> Result<(), BoundaryError> {
+        if self.exit_observed {
+            return Ok(());
+        }
+        let observer = self
+            .exit_observer
+            .as_mut()
+            .ok_or_else(|| BoundaryError::Io {
+                phase: "observe child exit without reaping",
+                reason: "exit observer is unavailable".to_owned(),
+            })?;
+        let result = observer.await;
+        self.exit_observer.take();
+        match result {
+            Ok(Ok(())) => {
+                self.exit_observed = true;
+                Ok(())
+            }
+            Ok(Err(reason)) => Err(BoundaryError::Io {
+                phase: "observe child exit without reaping",
+                reason,
+            }),
+            Err(error) => Err(BoundaryError::Io {
+                phase: "join child exit observer",
+                reason: error.to_string(),
+            }),
+        }
     }
 
     /// Issue the last destructive group signal while PID=PGID is pinned, then
@@ -448,7 +476,7 @@ impl BoundaryChild {
     /// # Errors
     /// Returns an I/O error for signalling, reaping, or disappearance failure.
     pub async fn finalize_after_exit(&mut self) -> Result<ExitStatus, BoundaryError> {
-        if !child_exit_is_observable(self.pid)? {
+        if !self.exit_observed {
             return Err(BoundaryError::Io {
                 phase: "finalize process group",
                 reason: "direct child has not reached an observable exit state".to_owned(),
@@ -469,17 +497,26 @@ impl BoundaryChild {
 
 impl Drop for BoundaryChild {
     fn drop(&mut self) {
-        // `tokio::process::Child::kill_on_drop` covers the leader. Explicitly
-        // signal the owned process group as well so dropping a future cannot
-        // strand ordinary descendants merely because async cleanup was not
-        // polled to completion.
-        if !self.group_closed {
-            let pgid = Pid::from_raw(i32::try_from(self.pid).unwrap_or(i32::MAX));
-            let _ = killpg(pgid, Signal::SIGKILL);
-            self.group_closed = true;
+        let Some(mut child) = self.child.take() else {
+            // An in-flight finalizer already owns the child and remains
+            // detached when its JoinHandle is dropped.
+            return;
+        };
+        let child_pid = self.pid;
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = finalize_owned_group(&mut child, child_pid).await;
+            });
+            return;
         }
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            let _ = self.child.start_kill();
+
+        // Runtime teardown fallback: preserve final-signal-before-reap order.
+        // Tokio's kill-on-drop remains a leader-only last resort.
+        let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
+        if killpg(owned_group, Signal::SIGKILL).is_ok() {
+            let _ = child.try_wait();
+        } else {
+            let _ = child.start_kill();
         }
     }
 }
@@ -561,8 +598,10 @@ pub fn spawn_pty(spec: &ProcessSpec, size: TerminalSize) -> Result<PtyChild, Bou
     Ok(PtyChild {
         child: BoundaryChild {
             pid,
-            child,
-            group_closed: false,
+            child: Some(child),
+            exit_observer: Some(spawn_exit_observer(pid)),
+            exit_observed: false,
+            finalizer: None,
         },
         control,
         output: Some(tokio::fs::File::from_std(output_file)),
@@ -616,8 +655,10 @@ fn spawn_with_stderr(
     })?;
     Ok(BoundaryChild {
         pid,
-        child,
-        group_closed: false,
+        child: Some(child),
+        exit_observer: Some(spawn_exit_observer(pid)),
+        exit_observed: false,
+        finalizer: None,
     })
 }
 
@@ -713,31 +754,33 @@ fn prepare_home(home: &Path) -> Result<(), BoundaryError> {
     Ok(())
 }
 
-const EXIT_OBSERVATION_POLL: Duration = Duration::from_millis(5);
 const POST_KILL_REAP_TIMEOUT: Duration = Duration::from_millis(500);
 const GROUP_DISAPPEAR_TIMEOUT: Duration = Duration::from_millis(500);
+const GROUP_PROBE_POLL: Duration = Duration::from_millis(5);
 
 async fn terminate_group(
     child: &mut BoundaryChild,
     grace: Duration,
 ) -> Result<ExitStatus, BoundaryError> {
     let pid = Pid::from_raw(i32::try_from(child.pid).unwrap_or(i32::MAX));
-    if let Err(signal_error) = send_group_signal(pid, Signal::SIGTERM) {
-        let cleanup = finalize_group_and_reap(child).await;
-        return match cleanup {
-            Ok(_) => Err(signal_error),
-            Err(cleanup_error) => Err(cleanup_error),
-        };
-    }
-    match tokio::time::timeout(grace, child.wait_for_exit()).await {
+    let initial_signal = killpg(pid, Signal::SIGTERM);
+    let cleanup = match tokio::time::timeout(grace, child.wait_for_exit()).await {
         Ok(Ok(())) | Err(_) => finalize_group_and_reap(child).await,
         Ok(Err(wait_error)) => {
             let cleanup = finalize_group_and_reap(child).await;
-            match cleanup {
+            return match cleanup {
                 Ok(_) => Err(wait_error),
                 Err(cleanup_error) => Err(cleanup_error),
-            }
+            };
         }
+    };
+    let status = cleanup?;
+    match initial_signal {
+        Ok(()) | Err(Errno::EPERM | Errno::ESRCH) => Ok(status),
+        Err(error) => Err(BoundaryError::Io {
+            phase: "initial signal process group",
+            reason: error.to_string(),
+        }),
     }
 }
 
@@ -746,63 +789,85 @@ async fn wait_and_close_group(child: &mut BoundaryChild) -> Result<ExitStatus, B
     child.finalize_after_exit().await
 }
 
-fn send_group_signal(pgid: Pid, signal: Signal) -> Result<(), BoundaryError> {
-    match killpg(pgid, signal) {
-        Ok(()) => Ok(()),
-        Err(err) => Err(BoundaryError::Io {
-            phase: "signal process group",
-            reason: err.to_string(),
-        }),
+async fn cleanup_after_output_deadline(child: &mut BoundaryChild) -> Result<(), BoundaryError> {
+    finalize_group_and_reap(child)
+        .await
+        .map(|_| ())
+        .map_err(|error| BoundaryError::Io {
+            phase: "cleanup after child output deadline",
+            reason: error.to_string(),
+        })
+}
+
+fn spawn_exit_observer(pid: u32) -> JoinHandle<Result<(), String>> {
+    // Darwin can block in waitid(WNOWAIT) for a stopped child even when
+    // WNOHANG is requested. One persistent blocking waiter preserves the
+    // zombie anchor without ever occupying a Tokio async worker.
+    tokio::task::spawn_blocking(move || observe_exit_without_reaping(pid))
+}
+
+fn observe_exit_without_reaping(pid: u32) -> Result<(), String> {
+    let raw_pid = i32::try_from(pid).unwrap_or(i32::MAX);
+    let wait_pid =
+        RustixPid::from_raw(raw_pid).ok_or_else(|| "child pid must be positive".to_owned())?;
+    loop {
+        match waitid(
+            WaitId::Pid(wait_pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) | Err(rustix::io::Errno::INTR) => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
 }
 
-fn child_exit_is_observable(pid: u32) -> Result<bool, BoundaryError> {
-    let raw_pid = i32::try_from(pid).unwrap_or(i32::MAX);
-    let wait_pid = RustixPid::from_raw(raw_pid).ok_or_else(|| BoundaryError::Io {
-        phase: "observe child exit without reaping",
-        reason: "child pid must be positive".to_owned(),
-    })?;
-    match waitid(
-        WaitId::Pid(wait_pid),
-        WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-    ) {
-        Ok(Some(_)) => Ok(true),
-        Ok(None) | Err(rustix::io::Errno::INTR) => Ok(false),
+async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus, BoundaryError> {
+    if child.finalizer.is_none() {
+        let mut owned_child = child.child.take().ok_or_else(|| BoundaryError::Io {
+            phase: "start process-group finalizer",
+            reason: "child ownership is unavailable".to_owned(),
+        })?;
+        child.exit_observer.take();
+        let pid = child.pid;
+        child.finalizer = Some(tokio::spawn(async move {
+            finalize_owned_group(&mut owned_child, pid).await
+        }));
+    }
+
+    let Some(finalizer) = child.finalizer.as_mut() else {
+        return Err(BoundaryError::Io {
+            phase: "join process-group finalizer",
+            reason: "finalizer handle is unavailable".to_owned(),
+        });
+    };
+    let joined = finalizer.await;
+    child.finalizer.take();
+    match joined {
+        Ok(result) => result,
         Err(error) => Err(BoundaryError::Io {
-            phase: "observe child exit without reaping",
+            phase: "join process-group finalizer",
             reason: error.to_string(),
         }),
     }
 }
 
-async fn wait_for_exit_unreaped(pid: u32) -> Result<(), BoundaryError> {
-    loop {
-        if child_exit_is_observable(pid)? {
-            return Ok(());
+async fn finalize_owned_group(
+    child: &mut Child,
+    child_pid: u32,
+) -> Result<ExitStatus, BoundaryError> {
+    let owned_group = Pid::from_raw(i32::try_from(child_pid).unwrap_or(i32::MAX));
+    let final_signal = killpg(owned_group, Signal::SIGKILL);
+    if let Err(error) = final_signal {
+        if !matches!(error, Errno::EPERM | Errno::ESRCH) {
+            return Err(BoundaryError::Io {
+                phase: "final signal process group before reap",
+                reason: error.to_string(),
+            });
         }
-        tokio::time::sleep(EXIT_OBSERVATION_POLL).await;
-    }
-}
-
-async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus, BoundaryError> {
-    let pgid = Pid::from_raw(i32::try_from(child.pid).unwrap_or(i32::MAX));
-    let final_signal = if child.group_closed {
-        Ok(())
-    } else {
-        let result = killpg(pgid, Signal::SIGKILL);
-        // This is the last nonzero signal permitted for this numeric PGID. Set
-        // the fence even when delivery fails so Drop never signals post-reap.
-        child.group_closed = true;
-        result
-    };
-    if final_signal.is_err() {
-        // Direct-child handles remain PID-stable until wait. This fallback
-        // cannot contain descendants, but ensures the leader itself is reaped
-        // before the signalling error is returned.
-        let _ = child.child.start_kill();
     }
 
-    let status = match tokio::time::timeout(POST_KILL_REAP_TIMEOUT, child.child.wait()).await {
+    let status = match tokio::time::timeout(POST_KILL_REAP_TIMEOUT, child.wait()).await {
         Ok(Ok(status)) => status,
         Ok(Err(error)) => {
             return Err(BoundaryError::Io {
@@ -818,9 +883,14 @@ async fn finalize_group_and_reap(child: &mut BoundaryChild) -> Result<ExitStatus
         }
     };
 
-    require_group_disappeared(pgid).await?;
+    require_group_disappeared(owned_group).await?;
+    validate_final_signal(final_signal)?;
+    Ok(status)
+}
+
+fn validate_final_signal(final_signal: Result<(), Errno>) -> Result<(), BoundaryError> {
     match final_signal {
-        Ok(()) | Err(Errno::EPERM) => Ok(status),
+        Ok(()) | Err(Errno::ESRCH) => Ok(()),
         Err(error) => Err(BoundaryError::Io {
             phase: "final signal process group before reap",
             reason: error.to_string(),
@@ -834,7 +904,7 @@ async fn require_group_disappeared(pgid: Pid) -> Result<(), BoundaryError> {
         match killpg(pgid, None) {
             Err(Errno::ESRCH) => return Ok(()),
             Ok(()) | Err(Errno::EPERM) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(EXIT_OBSERVATION_POLL).await;
+                tokio::time::sleep(GROUP_PROBE_POLL).await;
             }
             Ok(()) => {
                 return Err(BoundaryError::Io {
@@ -849,6 +919,28 @@ async fn require_group_disappeared(pgid: Pid) -> Result<(), BoundaryError> {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{validate_final_signal, BoundaryError};
+    use nix::errno::Errno;
+
+    #[test]
+    fn refused_final_signal_never_promotes_to_success() {
+        assert!(matches!(
+            validate_final_signal(Err(Errno::EPERM)),
+            Err(BoundaryError::Io {
+                phase: "final signal process group before reap",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn absent_group_is_safe_only_after_disappearance_proof() {
+        assert!(validate_final_signal(Err(Errno::ESRCH)).is_ok());
     }
 }
 

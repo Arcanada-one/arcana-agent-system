@@ -11,6 +11,7 @@ use arcana_execution_boundary::{
     BoundaryError, CleanEnv, OutputPolicy, ProcessSpec, Termination, TranscriptPolicy,
     TranscriptWriter, SAFE_SYSTEM_PATH,
 };
+use nix::errno::Errno;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
@@ -104,11 +105,30 @@ async fn timeout_terminates_the_whole_process_group() {
             .parse()
             .expect("pid");
         tokio::time::sleep(Duration::from_millis(25)).await;
-        assert!(
-            nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None).is_err(),
-            "iteration {iteration} left the grandchild alive"
+        assert_eq!(
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None),
+            Err(Errno::ESRCH),
+            "iteration {iteration} left the grandchild present"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn self_stopped_child_does_not_block_the_timeout_watchdog() {
+    let dir = TempDir::new().expect("tempdir");
+    let started = std::time::Instant::now();
+    let output = ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir))
+        .args(["-c", "kill -STOP $$"])
+        .timeout(Duration::from_millis(100))
+        .termination_grace(Duration::from_millis(50))
+        .run(CancellationToken::new())
+        .await
+        .expect("stopped child must be contained");
+    assert_eq!(output.termination, Termination::TimedOut);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "exit observation must not occupy the async watchdog worker"
+    );
 }
 
 #[tokio::test]
@@ -245,7 +265,8 @@ async fn dropping_execution_future_kills_the_owned_process_group() {
     task.abort();
     let _ = task.await;
     for _ in 0..100 {
-        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None).is_err() {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None) == Err(Errno::ESRCH)
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -288,7 +309,8 @@ async fn successful_leader_exit_kills_a_pipe_closing_background_descendant() {
         .parse()
         .expect("pid");
     for _ in 0..100 {
-        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(descendant), None).is_err() {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(descendant), None) == Err(Errno::ESRCH)
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

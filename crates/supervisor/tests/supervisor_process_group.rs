@@ -11,6 +11,7 @@
 mod common;
 
 use arcana_supervisor::spawn_process_group;
+use nix::errno::Errno;
 use nix::sys::signal::{kill, killpg};
 use nix::unistd::getpgid;
 
@@ -44,8 +45,9 @@ async fn supervisor_process_group_ownership() {
             .await
             .unwrap_or_else(|error| panic!("iteration {iteration} failed: {error}"));
         assert!(status.success(), "fixture target should exit successfully");
-        assert!(
-            killpg(pgid, None).is_err(),
+        assert_eq!(
+            killpg(pgid, None),
+            Err(Errno::ESRCH),
             "iteration {iteration}: finalization must empty the group"
         );
     }

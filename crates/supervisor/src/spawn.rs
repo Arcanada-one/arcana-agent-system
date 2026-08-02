@@ -55,7 +55,7 @@ impl SpawnedChild {
     ///
     /// # Errors
     /// Propagates execution-boundary exit-observation failure.
-    pub async fn wait_for_exit(&self) -> Result<(), SupervisorError> {
+    pub async fn wait_for_exit(&mut self) -> Result<(), SupervisorError> {
         self.child.wait_for_exit().await.map_err(Into::into)
     }
 
