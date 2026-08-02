@@ -22,6 +22,8 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     grep -Fq 'one.arcanada.sec0030.executor' "$PROBE"
     grep -Fq 'wrong signer or entitlement reached the accepted handler' "$PROBE"
     grep -Fq 'codesign --verify --strict' "$PROBE"
+    grep -Fq 'security add-trusted-cert -d -r trustRoot -p codeSign' "$PROBE"
+    grep -Fq 'security remove-trusted-cert -d' "$PROBE"
 }
 
 @test "macOS entitlement control uses sandbox inheritance with paired positive controls" {

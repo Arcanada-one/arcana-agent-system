@@ -11,9 +11,10 @@ fail() {
 }
 
 [[ "$(uname -s)" == Darwin ]] || fail 'macOS host required'
-for tool in clang codesign launchctl openssl plutil security; do
+for tool in clang codesign launchctl openssl plutil security sudo; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool unavailable: $tool"
 done
+sudo -n true >/dev/null 2>&1 || fail 'non-interactive ephemeral trust authority required'
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 fixture_dir="$script_dir/fixtures"
@@ -27,6 +28,7 @@ launch_plist="$scratch/$service.plist"
 domain=''
 bootstrapped=0
 keychain_created=0
+trusted_cert_added=0
 
 cleanup() {
   local cleanup_status=0
@@ -36,6 +38,10 @@ cleanup() {
       printf 'SEC0030_MACOS_NATIVE_FAIL: launchd cleanup did not remove exact service\n' >&2
       cleanup_status=1
     fi
+  fi
+  if (( trusted_cert_added == 1 )); then
+    sudo -n security remove-trusted-cert -d "$scratch/codesign.crt" >/dev/null 2>&1 \
+      || cleanup_status=1
   fi
   if (( keychain_created == 1 )); then
     security delete-keychain "$keychain" >/dev/null 2>&1 || cleanup_status=1
@@ -92,9 +98,15 @@ security import "$scratch/codesign.p12" \
 security set-key-partition-list -S apple-tool:,apple: -s \
   -k "$keychain_password" "$keychain" >/dev/null
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE identity-imported'
-certificate_sha=$(openssl x509 -in "$scratch/codesign.crt" -noout -fingerprint -sha1 \
-  | sed 's/^.*=//; s/://g')
+sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
+  -k "$keychain" "$scratch/codesign.crt"
+trusted_cert_added=1
+printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE trust-added'
+certificate_sha=$(security find-certificate -c 'SEC0030 Ephemeral Code Signing' \
+  -Z "$keychain" | awk '/SHA-1 hash:/ {print $3; exit}')
 [[ "$certificate_sha" =~ ^[0-9A-F]{40}$ ]] || fail 'ephemeral signing certificate unavailable'
+security find-identity -v -p codesigning "$keychain" | grep -Fqi "$certificate_sha" \
+  || fail 'ephemeral code-signing identity unavailable'
 printf '%s\n' 'SEC0030_MACOS_NATIVE_STAGE certificate-derived'
 
 sign_binary() {
