@@ -274,6 +274,47 @@ async fn dropping_execution_future_kills_the_owned_process_group() {
     panic!("dropping the execution future stranded the process group");
 }
 
+#[test]
+fn runtime_shutdown_still_signals_the_owned_process_group() {
+    let dir = TempDir::new().expect("tempdir");
+    let pid_file = dir.path().join("runtime-shutdown-grandchild.pid");
+    let command = format!(
+        "sleep 30 & child=$!; printf %s \"$child\" > {}; wait",
+        pid_file.display()
+    );
+    let spec =
+        ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir)).args(["-c".to_owned(), command]);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.spawn(async move { spec.run(CancellationToken::new()).await });
+    runtime.block_on(async {
+        for _ in 0..100 {
+            if pid_file.exists() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("child did not start before runtime shutdown");
+    });
+    let grandchild: i32 = std::fs::read_to_string(&pid_file)
+        .expect("pid file")
+        .parse()
+        .expect("pid");
+
+    runtime.shutdown_timeout(Duration::from_secs(1));
+    for _ in 0..100 {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None) == Err(Errno::ESRCH)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("runtime shutdown stranded the owned process group");
+}
+
 #[tokio::test]
 async fn exited_leader_cannot_hold_the_boundary_open_via_background_pipe() {
     let dir = TempDir::new().expect("tempdir");

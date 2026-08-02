@@ -243,9 +243,9 @@ impl SuperviseTask {
                 }
                 Step::WaitFailed(wait_error) => {
                     tracing::error!(error = %wait_error, "supervisor child-exit observation failed");
+                    self.emit("escalate", child_id);
                     if let Err(error) = self.terminate().await {
                         tracing::error!(error = %error, "supervisor cleanup after exit-observation failure failed");
-                        self.emit("escalate", child_id);
                     }
                     return SupervisionOutcome::Escalated {
                         child_id,
@@ -364,13 +364,34 @@ fn lifecycle_failure_reason(error: &SupervisorError) -> &'static str {
     match error {
         SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
             phase, ..
-        }) if phase.contains("reap") => "reap_failed",
+        }) if matches!(
+            *phase,
+            "reap process-group leader" | "reap process-group anchor"
+        ) =>
+        {
+            "reap_failed"
+        }
         SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
             phase, ..
-        }) if phase.contains("disappearance") => "process_group_cleanup_failed",
+        }) if *phase == "verify process-group disappearance" => "process_group_cleanup_failed",
         SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
             phase, ..
-        }) if phase.contains("observe") || phase.contains("observer") => "child_wait_failed",
+        }) if matches!(
+            *phase,
+            "observe child exit without reaping" | "spawn child exit observer"
+        ) =>
+        {
+            "child_wait_failed"
+        }
+        SupervisorError::Boundary(arcana_execution_boundary::BoundaryError::Io {
+            phase, ..
+        }) if matches!(
+            *phase,
+            "initial signal process group" | "final signal process group before reap"
+        ) =>
+        {
+            "signal_failed"
+        }
         _ => "termination_failed",
     }
 }
