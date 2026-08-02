@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <xpc/xpc.h>
 
+#ifndef SEC0030_BUILD_VARIANT
+#define SEC0030_BUILD_VARIANT 0
+#endif
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         return 64;
@@ -22,6 +26,7 @@ int main(int argc, char **argv) {
     for (long index = 0; index < message_count; index++) {
         xpc_object_t message = xpc_dictionary_create(NULL, NULL, 0);
         xpc_dictionary_set_uint64(message, "sequence", (uint64_t)index);
+        xpc_dictionary_set_uint64(message, "build_variant", SEC0030_BUILD_VARIANT);
         __block xpc_object_t reply = NULL;
         dispatch_semaphore_t completed = dispatch_semaphore_create(0);
         xpc_connection_send_message_with_reply(

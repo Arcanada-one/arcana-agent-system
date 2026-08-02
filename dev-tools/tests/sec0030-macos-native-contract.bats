@@ -15,17 +15,15 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     ! grep -Fq '/proc/' "$SERVER"
 }
 
-@test "macOS XPC controls include exact signer identity and zero-handler negatives" {
+@test "macOS XPC controls include exact cdhash identity and zero-handler negatives" {
     set -e
-    grep -Fq 'certificate leaf = H' "$PROBE"
+    grep -Fq 'cdhash H' "$PROBE"
     grep -Fq 'identifier "one.arcanada.sec0030.trusted"' "$PROBE"
+    grep -Fq 'wrong-code-hash fixture did not mutate code identity' "$PROBE"
     grep -Fq 'wrong code identity reached the accepted handler' "$PROBE"
     grep -Fq 'codesign --verify --strict' "$PROBE"
-    grep -Fq 'security add-trusted-cert -d -r trustRoot -p codeSign' "$PROBE"
-    grep -Fq 'security remove-trusted-cert -d' "$PROBE"
-    grep -Fq 'security delete-certificate -t -Z' "$PROBE"
-    grep -Fq 'security verify-cert -c "$scratch/codesign.crt" -p codeSign' "$PROBE"
-    grep -Fq 'security list-keychains -d user -s' "$PROBE"
+    ! grep -Eq 'security (add-trusted-cert|remove-trusted-cert|delete-certificate)' "$PROBE"
+    ! grep -Fq '/Library/Keychains' "$PROBE"
 }
 
 @test "macOS entitlement control uses sandbox inheritance with paired positive controls" {
@@ -36,6 +34,17 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     grep -Fq 'sandbox positive control failed' "$PROBE"
     grep -Fq 'sandboxed descendant escaped' "$PROBE"
     grep -Fq 'launchctl bootout "$domain" "$launch_plist"' "$PROBE"
-    grep -Fq 'cleanup || status=1' "$PROBE"
+    grep -Fq 'if cleanup; then' "$PROBE"
     grep -Fq 'SEC0030_MACOS_NATIVE_CLEANUP_PASS' "$PROBE"
+}
+
+@test "native PASS is emitted only after cleanup succeeds" {
+    set -e
+    cleanup_line=$(grep -nF 'if cleanup; then' "$PROBE" | cut -d: -f1)
+    pass_line=$(grep -nF "printf '%s\\n' 'SEC0030_MACOS_NATIVE_PASS" "$PROBE" | cut -d: -f1)
+    [ -n "$cleanup_line" ]
+    [ -n "$pass_line" ]
+    [ "$cleanup_line" -lt "$pass_line" ]
+    grep -Fq 'if (( status == 0 && probe_pass == 1 )); then' "$PROBE"
+    [ "$(grep -Fc 'SEC0030_MACOS_NATIVE_PASS' "$PROBE")" -eq 1 ]
 }
