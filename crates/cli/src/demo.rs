@@ -220,6 +220,7 @@ fn canned_response(result: &str, cost_usd: f64) -> ConnectorResponse {
         latency_ms: 1,
         status: "success".to_owned(),
         error: None,
+        first_dispatch_observation: None,
     }
 }
 
