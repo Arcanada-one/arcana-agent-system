@@ -268,3 +268,20 @@ async fn case_d_http_200_returns_err_unexpected_status() {
         other => panic!("expected UnexpectedStatus(200), got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn http_201_unknown_envelope_status_fails_closed() {
+    let server = MockServer::start().await;
+    let mut body = success_body();
+    body["status"] = json!("pending");
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    match client_for(&server).execute(ping()).await {
+        Err(ConnectorError::UnexpectedEnvelopeStatus) => {}
+        other => panic!("expected UnexpectedEnvelopeStatus, got {other:?}"),
+    }
+}
