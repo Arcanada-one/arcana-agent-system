@@ -268,6 +268,11 @@ pub enum ConnectorError {
     /// HTTP status other than 201 on the success path (e.g. a stray 200).
     #[error("unexpected HTTP status {0} (expected 201)")]
     UnexpectedStatus(u16),
+    /// A 201 response used a status other than the closed `success`/`error`
+    /// envelope vocabulary. The upstream value is intentionally not retained
+    /// in the error so an untrusted string cannot leak into logs.
+    #[error("upstream returned an unexpected connector response status")]
+    UnexpectedEnvelopeStatus,
     /// A connector response with `status: "error"` — an application-level
     /// failure. `http_status` retains the actual mapped HTTP status (for
     /// example 429 or 503) while the structured receipt remains available.

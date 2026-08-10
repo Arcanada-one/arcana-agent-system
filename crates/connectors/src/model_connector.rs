@@ -183,10 +183,11 @@ fn parse_success_envelope(
             content_type,
             bytes: bytes.len(),
         })?;
-    if parsed.status == "error" {
-        return logical_error(201, parsed);
+    match parsed.status.as_str() {
+        "success" => Ok(parsed),
+        "error" => logical_error(201, parsed),
+        _ => Err(ConnectorError::UnexpectedEnvelopeStatus),
     }
-    Ok(parsed)
 }
 
 fn logical_error(
