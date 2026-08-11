@@ -7,6 +7,102 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// Wire-contract version for opt-in first-dispatch measurement metadata.
+pub const FIRST_DISPATCH_MEASUREMENT_VERSION: &str = "first-dispatch-measurement/v0";
+/// The only ARAS call site allowed to label a request as a first dispatch.
+pub const FIRST_DISPATCH_ADAPTER_BOUNDARY: &str = "arcana-agent-system/driver/first-dispatch-v0";
+
+/// Which side of a paired prompt comparison produced the dispatched payload.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptVariantV0 {
+    Baseline,
+    Compiled,
+}
+
+/// Closed, identifier-only context attached to an opted-in first dispatch.
+///
+/// This type deliberately carries no prompt content, token counts, provider
+/// output, credentials, tokenizer claim, or authorization decision. The model
+/// and exact prompt remain on [`ExecuteRequest`]; the receiving model boundary
+/// owns observation persistence and provider-usage provenance.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FirstDispatchMeasurementV0 {
+    version: &'static str,
+    corpus_id: String,
+    case_id: String,
+    role_id: String,
+    task_class_id: String,
+    command_id: String,
+    replay_index: u16,
+    variant: PromptVariantV0,
+    adapter_boundary: &'static str,
+}
+
+/// Construction failures for [`FirstDispatchMeasurementV0`].
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum FirstDispatchMeasurementError {
+    #[error("{field} must be 1..=128 bytes of ASCII identifier characters")]
+    InvalidIdentifier { field: &'static str },
+    #[error("replay_index must be greater than zero")]
+    InvalidReplayIndex,
+}
+
+impl FirstDispatchMeasurementV0 {
+    /// Build a closed first-dispatch context from bounded opaque identifiers.
+    ///
+    /// Allowed identifier characters are ASCII alphanumeric plus `-._:/`.
+    /// This excludes whitespace, controls, bidi markers, and JSON delimiters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FirstDispatchMeasurementError::InvalidIdentifier`] when any
+    /// identifier is empty, oversized, or contains a disallowed byte. Returns
+    /// [`FirstDispatchMeasurementError::InvalidReplayIndex`] when
+    /// `replay_index` is zero.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        corpus_id: impl Into<String>,
+        case_id: impl Into<String>,
+        role_id: impl Into<String>,
+        task_class_id: impl Into<String>,
+        command_id: impl Into<String>,
+        replay_index: u16,
+        variant: PromptVariantV0,
+    ) -> Result<Self, FirstDispatchMeasurementError> {
+        if replay_index == 0 {
+            return Err(FirstDispatchMeasurementError::InvalidReplayIndex);
+        }
+        Ok(Self {
+            version: FIRST_DISPATCH_MEASUREMENT_VERSION,
+            corpus_id: Self::identifier("corpus_id", corpus_id.into())?,
+            case_id: Self::identifier("case_id", case_id.into())?,
+            role_id: Self::identifier("role_id", role_id.into())?,
+            task_class_id: Self::identifier("task_class_id", task_class_id.into())?,
+            command_id: Self::identifier("command_id", command_id.into())?,
+            replay_index,
+            variant,
+            adapter_boundary: FIRST_DISPATCH_ADAPTER_BOUNDARY,
+        })
+    }
+
+    fn identifier(
+        field: &'static str,
+        value: String,
+    ) -> Result<String, FirstDispatchMeasurementError> {
+        let valid = !value.is_empty()
+            && value.len() <= 128
+            && value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b':' | b'/')
+            });
+        if !valid {
+            return Err(FirstDispatchMeasurementError::InvalidIdentifier { field });
+        }
+        Ok(value)
+    }
+}
+
 /// A connector that executes a single unary request against an upstream model
 /// router and returns a fully-formed response.
 ///
@@ -39,6 +135,12 @@ pub struct ExecuteRequest {
     pub max_turns: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "maxBudgetUsd")]
     pub max_budget_usd: Option<f64>,
+    /// Opt-in, metadata-only context for the real first model dispatch.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "firstDispatchMeasurement"
+    )]
+    pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
 }
 
 impl ExecuteRequest {
@@ -52,7 +154,41 @@ impl ExecuteRequest {
             system_prompt: None,
             max_turns: None,
             max_budget_usd: None,
+            first_dispatch_measurement: None,
         }
+    }
+}
+
+/// Opaque first-dispatch receipt returned by Model Connector.
+///
+/// This value is intentionally named unverified: it is useful only for
+/// correlating the caller with the `PostgreSQL` authority row. It is never an
+/// authorization decision or provider-authenticated usage evidence.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(transparent)]
+pub struct UnverifiedFirstDispatchObservationV0(serde_json::Value);
+
+impl UnverifiedFirstDispatchObservationV0 {
+    /// Read the opaque wire value for persistence/correlation tooling.
+    #[must_use]
+    pub const fn as_value(&self) -> &serde_json::Value {
+        &self.0
+    }
+
+    /// Model Connector observation id, when the opaque envelope has that key.
+    #[must_use]
+    pub fn observation_id(&self) -> Option<&str> {
+        self.0
+            .get("observationId")
+            .and_then(serde_json::Value::as_str)
+    }
+
+    /// Receipt digest, when the opaque envelope has that key.
+    #[must_use]
+    pub fn receipt_digest_sha256(&self) -> Option<&str> {
+        self.0
+            .get("receiptDigestSha256")
+            .and_then(serde_json::Value::as_str)
     }
 }
 
@@ -72,6 +208,12 @@ pub struct ConnectorResponse {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<LogicalError>,
+    #[serde(
+        default,
+        rename = "firstDispatchObservation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub first_dispatch_observation: Option<UnverifiedFirstDispatchObservationV0>,
 }
 
 /// Token / cost accounting attached to every response.
@@ -87,7 +229,7 @@ pub struct Usage {
     pub cost_usd: f64,
 }
 
-/// Logical-error payload carried inside a 201 response whose `status` is
+/// Logical-error payload carried inside a connector response whose `status` is
 /// `"error"` (e.g. an open circuit breaker upstream).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct LogicalError {
@@ -126,15 +268,34 @@ pub enum ConnectorError {
     /// HTTP status other than 201 on the success path (e.g. a stray 200).
     #[error("unexpected HTTP status {0} (expected 201)")]
     UnexpectedStatus(u16),
-    /// HTTP 201 with `status: "error"` — an application-level failure.
+    /// A connector response with `status: "error"` — an application-level
+    /// failure. `http_status` retains the actual mapped HTTP status (for
+    /// example 429 or 503) while the structured receipt remains available.
     #[error("upstream logical error [{kind}]: {message}")]
     Logical {
+        http_status: u16,
         kind: String,
         message: String,
         retryable: bool,
         recommendation: String,
         retry_after: Option<u64>,
+        first_dispatch_observation: Option<Box<UnverifiedFirstDispatchObservationV0>>,
     },
+}
+
+impl ConnectorError {
+    /// Return an opaque first-dispatch receipt retained from a logical-error
+    /// envelope. All other error classes have no completed observation.
+    #[must_use]
+    pub fn first_dispatch_observation(&self) -> Option<&UnverifiedFirstDispatchObservationV0> {
+        match self {
+            Self::Logical {
+                first_dispatch_observation,
+                ..
+            } => first_dispatch_observation.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +317,7 @@ mod tests {
         assert!(json.get("model").is_none(), "unset optional must be absent");
         assert!(json.get("systemPrompt").is_none());
         assert!(json.get("maxTurns").is_none());
+        assert!(json.get("firstDispatchMeasurement").is_none());
     }
 
     #[test]

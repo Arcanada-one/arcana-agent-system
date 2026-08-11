@@ -86,6 +86,7 @@ impl ModelConnector for FakeConnector {
             latency_ms: 0,
             status: "success".to_owned(),
             error: None,
+            first_dispatch_observation: None,
         })
     }
 }

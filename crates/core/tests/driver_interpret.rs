@@ -30,6 +30,7 @@ fn response_with(result: &str) -> ConnectorResponse {
         latency_ms: 1,
         status: "success".to_string(),
         error: None,
+        first_dispatch_observation: None,
     }
 }
 

@@ -19,7 +19,10 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::connector::{ConnectorResponse, ExecuteRequest, ModelConnector};
+use crate::connector::{
+    ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
+    UnverifiedFirstDispatchObservationV0,
+};
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
@@ -277,6 +280,9 @@ pub struct DriverConfig {
     pub max_cost_usd: Option<f64>,
     /// Serialized-history ceiling (chars) → compaction / `ContextWindowExhausted`.
     pub context_budget_chars: usize,
+    /// Opt-in paired-corpus metadata. The driver attaches it only to the first
+    /// connector attempt; later tool-loop turns never inherit it.
+    pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
     /// Per-turn model-selection policy (D-REQ-01). The classifier keys a
     /// [`crate::dispatch::TaskType`] off the turn context and the policy maps it
     /// to the model id written onto `ExecuteRequest.model`. The former static
@@ -297,6 +303,7 @@ impl DriverConfig {
             max_turns: 8,
             max_cost_usd: None,
             context_budget_chars: 1_000_000,
+            first_dispatch_measurement: None,
             policy: ModelPolicy::new(),
         }
     }
@@ -335,6 +342,9 @@ pub struct RunOutput {
     /// (D-REQ-05). Mirrors each `ExecuteRequest.model` in call order, making the
     /// ≥2-distinct-selections property runtime-verifiable.
     pub selected_models: Vec<String>,
+    /// Opaque, explicitly unverified receipt returned for the first dispatch.
+    /// `PostgreSQL` remains authoritative; this value is correlation-only.
+    pub first_dispatch_observation: Option<UnverifiedFirstDispatchObservationV0>,
 }
 
 /// The agent-loop driver. Borrows its collaborators; owns only run config and
@@ -390,6 +400,7 @@ impl<'a> Driver<'a> {
 
     /// Drive `task` to a terminal outcome — the single public entrypoint.
     pub async fn run(&self, task: &str) -> RunOutput {
+        let mut first_dispatch_observation = None;
         if let Some(reason) = self.config.invalid_reason() {
             return RunOutput {
                 reason,
@@ -397,13 +408,21 @@ impl<'a> Driver<'a> {
                 turns: 0,
                 cost: self.cost.snapshot(),
                 selected_models: Vec::new(),
+                first_dispatch_observation,
             };
         }
         let mut history = vec![HistoryEntry::Task(task.to_owned())];
         let mut attempts: u32 = 0;
         let mut selected: Vec<String> = Vec::new();
         loop {
-            let step = self.step(&mut history, &mut attempts, &mut selected).await;
+            let step = self
+                .step(
+                    &mut history,
+                    &mut attempts,
+                    &mut selected,
+                    &mut first_dispatch_observation,
+                )
+                .await;
             let outcome = match &step {
                 StepResult::Continue(reason) => TurnOutcome::Continue(*reason),
                 StepResult::Terminal(reason, _) => TurnOutcome::Terminal(*reason),
@@ -421,6 +440,7 @@ impl<'a> Driver<'a> {
                         turns: attempts,
                         cost: self.cost.snapshot(),
                         selected_models: selected,
+                        first_dispatch_observation,
                     };
                 }
             }
@@ -436,6 +456,7 @@ impl<'a> Driver<'a> {
         history: &mut Vec<HistoryEntry>,
         attempts: &mut u32,
         selected: &mut Vec<String>,
+        first_dispatch_observation: &mut Option<UnverifiedFirstDispatchObservationV0>,
     ) -> StepResult {
         if self.cancel.is_cancelled() {
             return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
@@ -464,6 +485,7 @@ impl<'a> Driver<'a> {
         // connector-attempt index (`*attempts`) before that counter is consumed
         // by the `max_turns`-enforcing increment below, preserving the
         // zero-based turn index the classifier expects on the first attempt.
+        let first_dispatch = *attempts == 0;
         let ctx = SelectionContext {
             history,
             turn: *attempts,
@@ -471,10 +493,21 @@ impl<'a> Driver<'a> {
         let choice = self.config.policy.select(classify(&ctx));
         selected.push(choice.model_id.clone());
         *attempts = attempts.saturating_add(1);
-        let resp = match self.call_connector(prompt, Some(choice.model_id)).await {
+        let resp = match self
+            .call_connector(prompt, Some(choice.model_id), first_dispatch)
+            .await
+        {
             Ok(resp) => resp,
-            Err(reason) => return StepResult::Terminal(reason, None),
+            Err((reason, observation)) => {
+                if first_dispatch {
+                    *first_dispatch_observation = observation;
+                }
+                return StepResult::Terminal(reason, None);
+            }
         };
+        if first_dispatch {
+            first_dispatch_observation.clone_from(&resp.first_dispatch_observation);
+        }
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
             return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
         }
@@ -499,12 +532,17 @@ impl<'a> Driver<'a> {
         &self,
         prompt: String,
         model: Option<String>,
-    ) -> Result<ConnectorResponse, TerminalReason> {
+        first_dispatch: bool,
+    ) -> Result<ConnectorResponse, (TerminalReason, Option<UnverifiedFirstDispatchObservationV0>)>
+    {
         let mut req = ExecuteRequest::new(self.config.connector_id.clone(), prompt);
         req.model = model;
         req.system_prompt = self.config.system_prompt.clone();
         req.max_turns = Some(self.config.max_turns);
         req.max_budget_usd = self.remaining_cost_budget();
+        if first_dispatch {
+            req.first_dispatch_measurement = self.config.first_dispatch_measurement.clone();
+        }
         match self.connector.execute(req).await {
             Ok(resp) => {
                 // `record_llm_call` takes u32; `Usage` fields are u64 — saturate.
@@ -514,7 +552,10 @@ impl<'a> Driver<'a> {
                     .record_llm_call(&resp.model, tokens_in, tokens_out, resp.usage.cost_usd);
                 Ok(resp)
             }
-            Err(_) => Err(TerminalReason::ConnectorFatal),
+            Err(error) => Err((
+                TerminalReason::ConnectorFatal,
+                error.first_dispatch_observation().cloned(),
+            )),
         }
     }
 
