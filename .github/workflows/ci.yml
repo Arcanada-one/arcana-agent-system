@@ -74,6 +74,14 @@ jobs:
     with:
       compose_paths: ''
       datarim_ref: '82311756b4dbfd16ddc96e098829bd9b0dea3626'
+      # Pinned to a hosted runner for the same reason security-audit above is: the
+      # reusable workflow defaults to ["self-hosted","linux","ci-general"], and that
+      # pool is oversubscribed. Jobs queued there expire after 24h and are
+      # auto-cancelled, which surfaces as a FAILED rollup even though nothing ran —
+      # blocking every PR on a required context that never executed. This job needs
+      # no self-hosted resource: it checks out two repos, installs its own yq, and
+      # runs a script.
+      runner_labels: '["ubuntu-24.04"]'
 
   platform-native-negative-controls:
     name: platform-native-negative-controls / macos-xpc-sandbox

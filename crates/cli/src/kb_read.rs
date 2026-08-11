@@ -421,6 +421,7 @@ mod tests {
             latency_ms: 1,
             status: "success".into(),
             error: None,
+            first_dispatch_observation: None,
         }
     }
 
