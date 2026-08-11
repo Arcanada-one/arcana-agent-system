@@ -30,6 +30,8 @@ use crate::hooks::HookContext;
 
 /// Maximum exact first-dispatch prompt size accepted by the driver.
 pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
+/// Upstream Model Connector prompt limit, measured as JavaScript UTF-16 code units.
+pub const MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS: usize = 100_000;
 
 /// Bounded prompt bytes for an explicitly measured first dispatch.
 ///
@@ -39,14 +41,22 @@ pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
 pub struct FirstDispatchPromptV0(String);
 
 impl FirstDispatchPromptV0 {
-    /// Capture a non-empty UTF-8 prompt within the model-boundary byte cap.
+    /// Capture a non-empty UTF-8 prompt within both model-boundary caps.
     ///
     /// # Errors
     ///
     /// Returns [`FirstDispatchPromptValidationError`] when the prompt is empty
-    /// or exceeds [`MAX_FIRST_DISPATCH_PROMPT_BYTES`].
+    /// or exceeds [`MAX_FIRST_DISPATCH_PROMPT_BYTES`] or
+    /// [`MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS`].
     pub fn try_new(value: String) -> Result<Self, FirstDispatchPromptValidationError> {
-        if value.is_empty() || value.len() > MAX_FIRST_DISPATCH_PROMPT_BYTES {
+        if value.is_empty()
+            || value.len() > MAX_FIRST_DISPATCH_PROMPT_BYTES
+            || value
+                .encode_utf16()
+                .take(MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS + 1)
+                .count()
+                > MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS
+        {
             return Err(FirstDispatchPromptValidationError);
         }
         Ok(Self(value))
