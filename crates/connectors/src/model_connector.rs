@@ -229,15 +229,13 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
             _ => Err(ConnectorError::UnexpectedEnvelopeStatus),
         };
     }
-    let message = serde_json::from_slice::<NestExceptionEnvelope>(bytes).map_or_else(
-        |_| {
-            format!(
-                "upstream returned a non-contract error body ({} bytes)",
-                bytes.len()
-            )
-        },
-        |env| env.message,
-    );
+    let message = match serde_json::from_slice::<NestExceptionEnvelope>(bytes) {
+        Ok(envelope) if envelope.status_code == status => envelope.message,
+        _ => format!(
+            "upstream returned a non-contract error body ({} bytes)",
+            bytes.len()
+        ),
+    };
     Err(ConnectorError::Http {
         status,
         message,
@@ -245,12 +243,16 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
     })
 }
 
-/// `NestJS` `HttpException` body shape `{message, error, statusCode}`. Only
-/// `message` is surfaced; `error` / `statusCode` are ignored (the HTTP status
-/// line already carries the code, and serde tolerates the extra fields).
+/// Exact `NestJS` `HttpException` body shape `{message, error, statusCode}`.
+/// Partial, extended, or status-mismatched bodies are non-contract and never
+/// contribute operator-visible text.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct NestExceptionEnvelope {
     message: String,
+    #[serde(rename = "error")]
+    _error: String,
+    status_code: u16,
 }
 
 #[cfg(test)]
