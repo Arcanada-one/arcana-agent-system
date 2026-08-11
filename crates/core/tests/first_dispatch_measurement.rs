@@ -126,6 +126,19 @@ fn first_dispatch_prompt_is_bounded_and_debug_redacted() {
     );
 }
 
+#[test]
+fn execute_request_debug_redacts_prompt_and_system_prompt() {
+    let mut request = ExecuteRequest::new("claude-code", "secret-compiled-prompt");
+    request.system_prompt = Some("secret-system-prompt".to_owned());
+    request.first_dispatch_measurement = Some(measurement());
+
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("secret-compiled-prompt"));
+    assert!(!debug.contains("secret-system-prompt"));
+    assert!(debug.contains("[REDACTED]"));
+    assert!(debug.contains("case-007"));
+}
+
 #[tokio::test]
 async fn driver_attaches_measurement_only_to_the_real_first_dispatch() {
     let mut first_response = response(&tool_call_result("echo", json!({ "text": "marker" })), 0.0);
@@ -244,7 +257,7 @@ async fn driver_rejects_first_dispatch_prompt_over_context_budget_before_io() {
     config.context_budget_chars = 50;
     config.first_dispatch_measurement = Some(measurement());
     config.first_dispatch_prompt =
-        Some(FirstDispatchPromptV0::try_new("x".repeat(51)).expect("valid bounded prompt"));
+        Some(FirstDispatchPromptV0::try_new("🧪".repeat(13)).expect("valid bounded prompt"));
     let driver = Driver::new(
         &connector,
         &executor,
