@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::io::Read;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
@@ -52,6 +53,10 @@ enum Cmd {
         /// Provider model id pinned for the measured dispatch.
         #[arg(long, requires = "first_dispatch_measurement_json")]
         first_dispatch_model: Option<String>,
+        /// Read the exact measured first-dispatch prompt from stdin. Prompt
+        /// content is never accepted in argv or included in emitted evidence.
+        #[arg(long, requires = "first_dispatch_measurement_json")]
+        first_dispatch_prompt_stdin: bool,
     },
     /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
     KbRead {
@@ -106,13 +111,25 @@ fn main() {
             first_dispatch_measurement_json,
             first_dispatch_connector,
             first_dispatch_model,
+            first_dispatch_prompt_stdin,
         }) => {
+            let first_dispatch_prompt = if first_dispatch_prompt_stdin {
+                if let Ok(prompt) = read_first_dispatch_prompt_stdin() {
+                    Some(prompt)
+                } else {
+                    eprintln!("arcana demo: invalid first-dispatch prompt on stdin");
+                    std::process::exit(1);
+                }
+            } else {
+                None
+            };
             std::process::exit(arcana_cli::demo::run_demo(
                 task,
                 live,
                 first_dispatch_measurement_json.as_deref(),
                 first_dispatch_connector.as_deref(),
                 first_dispatch_model.as_deref(),
+                first_dispatch_prompt,
             ));
         }
         Some(Cmd::KbRead { query }) => {
@@ -127,6 +144,20 @@ fn main() {
             println!("arcana {VERSION} (REPL stub — interactive mode coming soon)");
         }
     }
+}
+
+fn read_first_dispatch_prompt_stdin() -> Result<String, ()> {
+    let limit = arcana_core::agent_loop::MAX_FIRST_DISPATCH_PROMPT_BYTES + 1;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(u64::try_from(limit).map_err(|_| ())?)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.is_empty() || bytes.len() >= limit {
+        return Err(());
+    }
+    String::from_utf8(bytes).map_err(|_| ())
 }
 
 /// Build a Model Connector client from the environment, send a one-shot `ping`,

@@ -15,7 +15,9 @@ mod common;
 
 use std::sync::Arc;
 
-use arcana_core::agent_loop::{Driver, DriverConfig, TerminalReason};
+use arcana_core::agent_loop::{
+    Driver, DriverConfig, FirstDispatchPromptV0, TerminalReason, MAX_FIRST_DISPATCH_PROMPT_BYTES,
+};
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
     PromptVariantV0, UnverifiedFirstDispatchObservationV0,
@@ -112,6 +114,18 @@ fn measurement_rejects_unsafe_or_ambiguous_identifiers_and_zero_replay() {
     .is_err());
 }
 
+#[test]
+fn first_dispatch_prompt_is_bounded_and_debug_redacted() {
+    let prompt =
+        FirstDispatchPromptV0::try_new("secret-compiled-prompt".to_owned()).expect("valid prompt");
+    assert_eq!(prompt.as_str(), "secret-compiled-prompt");
+    assert!(!format!("{prompt:?}").contains("secret-compiled-prompt"));
+    assert!(FirstDispatchPromptV0::try_new(String::new()).is_err());
+    assert!(
+        FirstDispatchPromptV0::try_new("x".repeat(MAX_FIRST_DISPATCH_PROMPT_BYTES + 1)).is_err()
+    );
+}
+
 #[tokio::test]
 async fn driver_attaches_measurement_only_to_the_real_first_dispatch() {
     let mut first_response = response(&tool_call_result("echo", json!({ "text": "marker" })), 0.0);
@@ -154,6 +168,95 @@ async fn driver_attaches_measurement_only_to_the_real_first_dispatch() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].first_dispatch_measurement, Some(measurement()));
     assert_eq!(requests[1].first_dispatch_measurement, None);
+}
+
+#[tokio::test]
+async fn driver_applies_exact_prompt_only_to_the_real_first_dispatch() {
+    let connector = ScriptedConnector::new(vec![
+        response(&tool_call_result("echo", json!({ "text": "marker" })), 0.0),
+        response("done", 0.0),
+    ]);
+    let mut dispatcher = ToolDispatcher::new();
+    dispatcher
+        .register(Arc::new(EchoTool))
+        .expect("register echo tool");
+    let (executor, _audit_dir) =
+        common::test_executor(dispatcher, common::allow_cascade(), HookChain::new());
+    let mut config = DriverConfig::new("scripted");
+    config.first_dispatch_measurement = Some(measurement());
+    config.first_dispatch_prompt = Some(
+        FirstDispatchPromptV0::try_new("exact-compiled-provider-boundary".to_owned())
+            .expect("valid prompt"),
+    );
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        Arc::new(CostTracker::new()),
+        CancellationToken::new(),
+        config,
+    );
+
+    let output = driver.run("ordinary task history").await;
+    assert_eq!(output.reason, TerminalReason::Completed);
+    let requests = connector.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].prompt, "exact-compiled-provider-boundary");
+    assert!(!requests[1]
+        .prompt
+        .contains("exact-compiled-provider-boundary"));
+    assert!(requests[1].prompt.contains("ordinary task history"));
+}
+
+#[tokio::test]
+async fn driver_rejects_prompt_without_measurement_before_connector_io() {
+    let connector = ScriptedConnector::new(vec![response("must not run", 0.0)]);
+    let (executor, _audit_dir) = common::test_executor(
+        ToolDispatcher::new(),
+        common::allow_cascade(),
+        HookChain::new(),
+    );
+    let mut config = DriverConfig::new("scripted");
+    config.first_dispatch_prompt =
+        Some(FirstDispatchPromptV0::try_new("orphan-prompt".to_owned()).expect("valid prompt"));
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        Arc::new(CostTracker::new()),
+        CancellationToken::new(),
+        config,
+    );
+
+    let output = driver.run("task").await;
+    assert_eq!(output.reason, TerminalReason::ConnectorFatal);
+    assert_eq!(output.turns, 0);
+    assert!(connector.requests().is_empty());
+}
+
+#[tokio::test]
+async fn driver_rejects_first_dispatch_prompt_over_context_budget_before_io() {
+    let connector = ScriptedConnector::new(vec![response("must not run", 0.0)]);
+    let (executor, _audit_dir) = common::test_executor(
+        ToolDispatcher::new(),
+        common::allow_cascade(),
+        HookChain::new(),
+    );
+    let mut config = DriverConfig::new("scripted");
+    config.context_budget_chars = 50;
+    config.first_dispatch_measurement = Some(measurement());
+    config.first_dispatch_prompt =
+        Some(FirstDispatchPromptV0::try_new("x".repeat(51)).expect("valid bounded prompt"));
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        Arc::new(CostTracker::new()),
+        CancellationToken::new(),
+        config,
+    );
+
+    let output = driver.run("task").await;
+    assert_eq!(output.reason, TerminalReason::ContextWindowExhausted);
+    assert_eq!(output.turns, 0);
+    assert!(connector.requests().is_empty());
 }
 
 #[tokio::test]
