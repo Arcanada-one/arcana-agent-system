@@ -10,12 +10,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint-test:
-    runs-on: [self-hosted, Linux, X64, ci-general]
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt,clippy
       - name: cargo fmt
@@ -24,21 +27,70 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
         run: cargo test --workspace
+      - name: SEC-0030 governance and platform control contracts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+          bats dev-tools/tests
+          shellcheck -S warning \
+            dev-tools/*.sh \
+            packaging/tests/*.sh
+
+  platform-isolation:
+    name: platform-contract-mock / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+          - platform: macos
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: rustfmt,clippy
+      - name: Common contract and platform identity probes
+        run: cargo test --locked --workspace
+      - name: Build live broker executable
+        run: cargo build --locked --package arcana-credential-broker --bin arcana-credential-broker
+      - name: Rehearse live install, failed upgrade, and binary-plus-config rollback
+        run: bash packaging/tests/lifecycle-rehearsal.sh
+      - name: Validate lifecycle shell
+        run: bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
 
   security-audit:
-    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@main
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@4b8aa52370e0948d16db6d47a548083c97604f3f
     with:
       stack: rust_cargo
-      # The default runner_labels (["self-hosted","linux"]) match any self-hosted
-      # Linux runner, including images with no C toolchain. `cargo install
-      # cargo-audit cargo-deny` then fails at link time with `linker \`cc\` not
-      # found`, which surfaces as a security-gate failure that has nothing to do
-      # with the code under test. Pin to the same runner as lint-test, which
-      # compiles this workspace and therefore provably has a working toolchain.
-      runner_labels: '["self-hosted","Linux","X64","ci-general"]'
+      # Public pull-request code must not execute on a persistent self-hosted
+      # runner. Use an ephemeral GitHub-hosted image.
+      runner_labels: '["ubuntu-24.04"]'
 
   network-exposure-lint:
-    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@main
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@4b8aa52370e0948d16db6d47a548083c97604f3f
     with:
       compose_paths: ''
       datarim_ref: '82311756b4dbfd16ddc96e098829bd9b0dea3626'
+
+  platform-native-negative-controls:
+    name: platform-native-negative-controls / macos-xpc-sandbox
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prove XPC message identity and inherited App Sandbox denials
+        run: bash packaging/tests/macos-live-xpc-sandbox.sh
+      - name: Confirm exact launchd test resource cleanup
+        if: always()
+        run: |
+          if launchctl print "gui/$(id -u)" 2>/dev/null | grep -Fq one.arcanada.sec0030.; then
+            printf '%s\n' 'stale SEC-0030 launchd resource' >&2
+            exit 1
+          fi
+          if launchctl print "user/$(id -u)" 2>/dev/null | grep -Fq one.arcanada.sec0030.; then
+            printf '%s\n' 'stale SEC-0030 launchd resource' >&2
+            exit 1
+          fi

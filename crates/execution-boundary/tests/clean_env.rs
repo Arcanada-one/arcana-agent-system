@@ -9,6 +9,7 @@
 
 use arcana_execution_boundary::env_policy::looks_like_credential_name;
 use arcana_execution_boundary::{CleanEnv, EnvError, ALLOWED_TERMS, ALLOWLIST};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 const SENTINEL: &str = "SYNTHETIC-SEC0030-ENV-SENTINEL-0123456789";
@@ -181,4 +182,23 @@ fn credential_name_heuristic_covers_observed_shapes() {
     ] {
         assert!(looks_like_credential_name(name), "missed `{name}`");
     }
+}
+
+#[test]
+fn caller_declared_variables_are_always_rejected() {
+    for name in ["BUILD_MODE", "BASH_ENV", "LD_PRELOAD", "PROVIDER_API_KEY"] {
+        assert_eq!(
+            built()
+                .with_declared_vars(&BTreeMap::from([(name.to_owned(), "value".to_owned())]))
+                .err(),
+            Some(EnvError::CallerVariablesUnsupported)
+        );
+    }
+    assert_eq!(
+        built()
+            .with_declared_vars(&BTreeMap::new())
+            .expect("empty compatibility map")
+            .len(),
+        6
+    );
 }

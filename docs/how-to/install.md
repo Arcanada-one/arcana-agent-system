@@ -32,28 +32,59 @@ below. `arcana-agent` remains available as a shorter alternative if a
 rename is ever wanted; that is a product-naming decision for the operator,
 not a mechanical follow-up.
 
-## Install
+## Install a verified GitHub release
+
+No SEC-0030 release is trusted merely because it appears on the Releases page.
+The release workflow publishes platform archives, SBOMs, SHA-256 files, keyless
+Sigstore bundles, and GitHub build-provenance attestations. Verify all three
+layers before extracting anything.
+
+Prerequisites: `gh` 2.40 or newer, `cosign` 3.0 or newer, and `sha256sum`.
 
 ```bash
-cargo install arcana-agent-system
+TAG=v0.1.0                 # exact release tag
+PLATFORM=linux-x86_64      # or macos-arm64
+REPOSITORY=Arcanada-one/arcana-agent-system
+mkdir "arcana-${TAG}-${PLATFORM}"
+cd "arcana-${TAG}-${PLATFORM}"
+gh release download "$TAG" --repo "$REPOSITORY" --pattern "*${PLATFORM}*"
+
+for checksum in *.sha256; do
+  sha256sum -c "$checksum"
+done
+
+for artifact in *.tar.gz *.cdx.json *.sha256; do
+  cosign verify-blob \
+    --bundle "${artifact}.cosign.bundle" \
+    --certificate-identity "https://github.com/${REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "$artifact"
+  gh attestation verify "$artifact" --repo "$REPOSITORY"
+done
 ```
 
-This builds and installs the `arcana` binary (declared via `[[bin]] name
-= "arcana"` in `crates/cli/Cargo.toml`) to `~/.cargo/bin/arcana`.
+Every command above must exit zero. A checksum without the identity-bound
+cosign verification is insufficient because an attacker could replace both
+the archive and checksum. Any signature or attestation failure makes the
+release untrusted: do not extract or install it.
 
-No published release exists yet — `cargo install` from crates.io only
-works after a `cargo publish` of `crates/cli` (and its path dependencies).
-Publishing itself is a hard-gated, operator-run action (public,
-effectively irreversible on crates.io) and is out of scope for this probe
-— this document only records the collision-free path to take when that
-publish happens. Until then, install from source:
+After verification, extract the platform archive and inspect the included
+packaging files. Credentialed broker activation remains a separate deployment
+gate; installation must not provision, print, or copy a provider credential.
+
+## Developer install from a reviewed checkout
+
+The crates.io package is not published. For development, check out a reviewed
+commit and build from source:
 
 ```bash
 git clone https://github.com/Arcanada-one/arcana-agent-system.git
 cd arcana-agent-system
-cargo install --path crates/cli
+cargo install --locked --path crates/cli
 ```
 
-A Homebrew tap is not yet created; both `arcana` and `arcana-agent-system`
-are free on `formulae.brew.sh` as of the probe run above, so no rename is
-forced on that front either.
+This installs the `arcana` binary declared by `crates/cli/Cargo.toml`. It does
+not install or activate the separately packaged credential broker.
+
+A Homebrew tap is not yet created. The collision results above are historical
+probe evidence, not a current reservation of either name.

@@ -18,7 +18,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-/// The complete set of names a supervised child ever receives.
+/// The complete constructed child environment. Caller-supplied values are not
+/// accepted: a name-based filter cannot prove that a value under a benign name
+/// is not credential material.
 pub const ALLOWLIST: &[&str] = &["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TERM"];
 
 /// Terminal types a child may be told it has. A closed set: `TERM` steers
@@ -69,6 +71,8 @@ pub enum EnvError {
     PathComponentNotAbsolute,
     #[error("TERM value is not in the allowed set")]
     TermNotAllowed,
+    #[error("caller-declared environment variables are disabled at the execution boundary")]
+    CallerVariablesUnsupported,
 }
 
 /// A constructed, credential-free child environment.
@@ -170,6 +174,23 @@ impl CleanEnv {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&str> {
         self.vars.get(name).map(String::as_str)
+    }
+
+    /// Preserve input compatibility while refusing every caller-supplied value.
+    ///
+    /// The previous name-based exception accepted a credential under a benign
+    /// name and also admitted loader/shell control variables before descriptor
+    /// isolation. An empty map is accepted so existing callers that omit the
+    /// optional field keep working; every non-empty map fails closed.
+    ///
+    /// # Errors
+    /// Rejects every non-empty caller map.
+    pub fn with_declared_vars(self, vars: &BTreeMap<String, String>) -> Result<Self, EnvError> {
+        if vars.is_empty() {
+            Ok(self)
+        } else {
+            Err(EnvError::CallerVariablesUnsupported)
+        }
     }
 
     /// The sandbox `HOME` handed to the child.

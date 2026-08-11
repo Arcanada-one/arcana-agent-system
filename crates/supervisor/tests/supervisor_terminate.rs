@@ -58,3 +58,34 @@ async fn supervisor_sigterm_then_sigkill() {
 
     assert!(records(&dir).iter().any(|r| r["kind"] == "terminate"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn leader_exit_during_grace_still_kills_sigterm_ignoring_grandchild() {
+    let dir = TempDir::new().expect("tempdir");
+    let audit = audit_log(&dir);
+    let spec = child_spec()
+        .arg("--spawn-grandchild")
+        .arg("--interval")
+        .arg("50");
+    let mut child = spawn_process_group(8, &spec).expect("spawn");
+    let pgid = child.pgid();
+    let stdout = child.take_stdout().expect("stdout");
+    let grandchild = read_grandchild_pid(stdout)
+        .await
+        .expect("grandchild pid line");
+
+    terminate_group(
+        pgid,
+        Duration::from_millis(500),
+        &mut child,
+        &audit,
+        "corr-leader-exit",
+    )
+    .await
+    .expect("terminate");
+
+    assert!(
+        wait_until_gone(grandchild, Duration::from_secs(2)).await,
+        "leader exit during grace must not spare the SIGTERM-ignoring grandchild"
+    );
+}

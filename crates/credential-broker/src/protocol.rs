@@ -8,28 +8,41 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// Monotonic broker generation. A request minted against an older generation is
 /// stale and fails closed — this is what makes a restart invalidate in-flight
 /// authority rather than silently honouring it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct Generation(pub u64);
 
 /// Opaque session or cgroup identifier for the calling executor.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct SessionId(pub String);
 
 /// Idempotency key. Two requests carrying the same key denote the *same*
 /// operation, never two.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct IdempotencyKey(pub String);
 
+/// Stable digest of every authority- and side-effect-bearing request field.
+/// A key may replay only when this digest is identical.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct RequestFingerprint(pub String);
+
 /// The named executor profile a request claims to run under.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct ExecutorProfile(pub String);
 
 /// What the caller wants to do. A closed set: adding an operation is a policy
 /// change that must pass review, not a string a caller can invent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Operation {
     /// A single model completion.
     Completion,
@@ -88,12 +101,15 @@ pub struct CapabilityRequest {
     pub operation: Operation,
     /// Upstream base URL the operation will be sent to.
     pub upstream: String,
-    /// Quota units this request will consume.
+    /// Quota units this request will consume. This value is derived from the
+    /// trusted policy, never accepted from the wire caller.
     pub quota_units: u32,
     /// Absolute expiry, unix seconds. A request is dead after this instant.
     pub expires_at: u64,
     /// Idempotency key.
     pub idempotency: IdempotencyKey,
+    /// Digest binding the idempotency key to the complete request and peer.
+    pub fingerprint: RequestFingerprint,
 }
 
 /// Why a request was refused. Every variant is a fail-closed outcome.
@@ -125,6 +141,14 @@ pub enum Denial {
     WildcardOrEmpty,
     #[error("idempotency key is empty")]
     MissingIdempotencyKey,
+    #[error("idempotency key is malformed or exceeds the size limit")]
+    InvalidIdempotencyKey,
+    #[error("idempotency key was already used for a different request")]
+    IdempotencyConflict,
+    #[error("idempotency ledger capacity is exhausted")]
+    IdempotencyCapacity,
+    #[error("policy quota cost is missing or zero")]
+    InvalidQuotaCost,
 }
 
 /// An authorised lease. Carries no credential material: it is a *permission*,

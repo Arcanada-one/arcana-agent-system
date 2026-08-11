@@ -19,6 +19,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use syn::visit::Visit;
 
 /// Build-time only; never part of the shipped runtime.
 const BUILD_TIME_ALLOWLIST: &[&str] = &["crates/cli/build.rs"];
@@ -29,15 +30,14 @@ const TEST_FIXTURE_ALLOWLIST: &[&str] = &["crates/supervisor/src/bin/heartbeat-c
 /// The execution boundary itself is the sanctioned owner of process spawning —
 /// migrating the sites below *into* this crate is the goal, not a violation.
 /// Everything here is reviewed as part of the boundary's own contract.
-const BOUNDARY_ALLOWLIST: &[&str] = &["crates/execution-boundary/src/env_policy.rs"];
+const BOUNDARY_ALLOWLIST: &[&str] = &[
+    "crates/execution-boundary/src/env_policy.rs",
+    "crates/execution-boundary/src/process.rs",
+];
 
 /// Shipped-runtime spawn sites still awaiting migration, with their exact
 /// current site count. Both the set and the counts may only shrink.
-const PENDING_MIGRATION: &[(&str, usize)] = &[
-    ("crates/connectors/src/coworker.rs", 1),
-    ("crates/supervisor/src/spawn.rs", 1),
-    ("crates/tools/src/bash.rs", 1),
-];
+const PENDING_MIGRATION: &[(&str, usize)] = &[];
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -70,31 +70,131 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Spawn-API spellings. The point is to catch renames and alternate APIs, not
-/// only the one idiom the codebase happens to use today.
-fn spawn_markers(text: &str) -> Vec<&'static str> {
-    let mut markers = vec![
-        "Command::new",
-        "process::Command",
-        "posix_spawn",
-        "execve",
-        "execvp",
-        "execv(",
-        "CommandExt::exec",
-        ".exec()",
-    ];
-    // An aliased import: `use std::process::Command as Cmd;` then `Cmd::new`.
-    if let Some(idx) = text.find("process::Command as ") {
-        let alias: String = text[idx + "process::Command as ".len()..]
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        if !alias.is_empty() {
-            // Leak is bounded: one alias per file, test-scoped process.
-            markers.push(Box::leak(format!("{alias}::new").into_boxed_str()));
+#[derive(Default)]
+struct SpawnVisitor {
+    command_names: std::collections::BTreeSet<String>,
+    process_modules: std::collections::BTreeSet<String>,
+    sites: usize,
+}
+
+impl SpawnVisitor {
+    fn collect_use(&mut self, prefix: Vec<String>, tree: &syn::UseTree) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                let mut next = prefix;
+                next.push(path.ident.to_string());
+                self.collect_use(next, &path.tree);
+            }
+            syn::UseTree::Name(name) => {
+                let mut full = prefix;
+                full.push(name.ident.to_string());
+                self.record_import(&full, name.ident.to_string());
+            }
+            syn::UseTree::Rename(rename) => {
+                let mut full = prefix;
+                full.push(rename.ident.to_string());
+                self.record_import(&full, rename.rename.to_string());
+            }
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    self.collect_use(prefix.clone(), item);
+                }
+            }
+            syn::UseTree::Glob(_) => {
+                // A process-module glob can make `Command` visible.
+                if is_process_module(&prefix) {
+                    self.command_names.insert("Command".to_owned());
+                }
+            }
         }
     }
-    markers
+
+    fn record_import(&mut self, full: &[String], local: String) {
+        if is_command_path(full) {
+            self.command_names.insert(local);
+        } else if is_process_module(full) {
+            self.process_modules.insert(local);
+        }
+    }
+
+    fn path_is_spawn(&self, path: &syn::Path) -> bool {
+        let parts: Vec<String> = path
+            .segments
+            .iter()
+            .map(|part| part.ident.to_string())
+            .collect();
+        if parts.last().is_some_and(|last| {
+            matches!(last.as_str(), "posix_spawn" | "execve" | "execvp" | "execv")
+        }) {
+            return true;
+        }
+        if parts.last().is_none_or(|last| last != "new") || parts.len() < 2 {
+            return false;
+        }
+        let constructor = &parts[parts.len() - 2];
+        self.command_names.contains(constructor)
+            || constructor == "Command"
+                && (parts.len() == 2
+                    || parts[..parts.len() - 2].windows(2).any(|window| {
+                        window == ["std", "process"] || window == ["tokio", "process"]
+                    }))
+            || parts.len() >= 3
+                && self.process_modules.contains(&parts[parts.len() - 3])
+                && constructor == "Command"
+    }
+}
+
+impl<'ast> Visit<'ast> for SpawnVisitor {
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        self.collect_use(Vec::new(), &item.tree);
+        syn::visit::visit_item_use(self, item);
+    }
+
+    fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+        if let syn::Type::Path(path) = item.ty.as_ref() {
+            let parts: Vec<String> = path
+                .path
+                .segments
+                .iter()
+                .map(|part| part.ident.to_string())
+                .collect();
+            if is_command_path(&parts) {
+                self.command_names.insert(item.ident.to_string());
+            }
+        }
+        syn::visit::visit_item_type(self, item);
+    }
+
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        if self.path_is_spawn(&expression.path) {
+            self.sites += 1;
+        }
+        syn::visit::visit_expr_path(self, expression);
+    }
+
+    fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
+        if expression.method == "exec" {
+            self.sites += 1;
+        }
+        syn::visit::visit_expr_method_call(self, expression);
+    }
+}
+
+fn is_process_module(parts: &[String]) -> bool {
+    parts.ends_with(&["std".to_owned(), "process".to_owned()])
+        || parts.ends_with(&["tokio".to_owned(), "process".to_owned()])
+}
+
+fn is_command_path(parts: &[String]) -> bool {
+    parts.last().is_some_and(|last| last == "Command")
+        && is_process_module(&parts[..parts.len().saturating_sub(1)])
+}
+
+fn spawn_site_count(text: &str) -> Result<usize, syn::Error> {
+    let syntax = syn::parse_file(text)?;
+    let mut visitor = SpawnVisitor::default();
+    visitor.visit_file(&syntax);
+    Ok(visitor.sites)
 }
 
 /// Count real (non-comment) spawn sites per file, across the whole repository.
@@ -121,24 +221,8 @@ fn raw_spawn_sites() -> BTreeMap<String, usize> {
         if is_test_path {
             continue;
         }
-        let markers = spawn_markers(&text);
-        let mut count = 0usize;
-        for line in text.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("#[") {
-                continue;
-            }
-            // An import is not a spawn. It still forces the file to be
-            // classified (the file appears in `hits` via its real call site),
-            // but counting it would let a new spawn hide behind a dropped
-            // `use` line while the total stayed flat.
-            if trimmed.starts_with("use ") {
-                continue;
-            }
-            if markers.iter().any(|m| trimmed.contains(m)) {
-                count += 1;
-            }
-        }
+        let count = spawn_site_count(&text)
+            .unwrap_or_else(|error| panic!("parse {rel} for spawn inventory: {error}"));
         if count > 0 {
             hits.insert(rel, count);
         }
@@ -206,22 +290,21 @@ fn migration_set_does_not_gain_members() {
 /// Meta-test: the gate must actually detect an aliased import and a bare
 /// `Command::new`, otherwise a green result means nothing.
 #[test]
-fn gate_detects_aliased_and_plain_spawn_forms() {
-    let aliased = "use std::process::Command as Cmd;\nfn a() { Cmd::new(\"/bin/sh\"); }\n";
-    let markers = spawn_markers(aliased);
-    assert!(
-        markers.iter().any(|m| aliased.contains(m)),
-        "gate must detect an aliased spawn"
-    );
-
-    let plain = "fn a() { let _ = Command::new(\"/bin/sh\"); }";
-    assert!(spawn_markers(plain).iter().any(|m| plain.contains(m)));
-
-    let benign = "fn a() { let _ = compute(); }";
-    assert!(
-        !spawn_markers(benign).iter().any(|m| benign.contains(m)),
-        "gate must not fire on benign code"
-    );
+fn gate_detects_aliases_multiline_and_comments_without_false_hits() {
+    for source in [
+        "use std::process::Command as Cmd;\nfn a() { Cmd::new(\"/bin/sh\"); }\n",
+        "use tokio::process as p;\nfn a() { p::Command\n::new(\"/bin/sh\"); }",
+        "type Runner = std::process::Command;\nfn a() { Runner::new(\"/bin/sh\"); }",
+        "fn a() { std::process::Command::new(\"/bin/sh\"); }",
+    ] {
+        assert_eq!(spawn_site_count(source).expect("parse"), 1, "{source}");
+    }
+    let benign = r#"
+        // Command::new("/bin/sh");
+        const DOC: &str = "std::process::Command::new";
+        fn a() { let _ = compute(); }
+    "#;
+    assert_eq!(spawn_site_count(benign).expect("parse"), 0);
 }
 
 /// API-mode routing structurally cannot spawn: it carries no program at all.

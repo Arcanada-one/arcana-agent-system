@@ -39,6 +39,258 @@ Step 6 comes last because removing the distribution path before a replacement
 exists leaves the host with no credential path at all and no way to restore one.
 Step 3 does not have that problem, which is why it does not wait.
 
+Do not create a dummy value at the production destination merely to make the
+path “exist.” A placeholder creates a real secret version, can make consumers
+mistake path existence for credential readiness, and pollutes the audit/version
+history. It is safe to pre-stage policy or metadata only when data reads still
+report absent. The first data version at the destination must be the actual
+console-issued replacement, written with the store's create-only/CAS guard.
+
+For a new KV-v2 destination, use the single Mac-side handoff below. It [creates
+blank metadata][vault-kv-metadata] with check-and-set required, then performs
+the first [create-only data write][vault-kv-put]. Run it only on the trusted
+physical Mac in a local desktop session with input auditing and screen/session
+recording disabled. Never run it through an agent, SSH, tmux, `script`, CI, or
+a recorded terminal. Do not use the clipboard.
+
+Keep topology and destination pins out of the shipped repository. Before
+rotation, install these operator-private assets:
+
+- `/Library/SEC0030/Tailscale.app`: a notarized copy of the official app,
+  recursively `root:wheel`, with no symlinks, ACLs, or group/world-writable
+  entries.
+- `/Library/SEC0030/vault-handoff.env`: a non-symlink `root:wheel` mode-0600
+  file containing exactly the six assignments below, populated with private
+  values rather than the placeholders shown:
+
+```text
+VAULT_IP=<vault-tailnet-ip>
+VAULT_NODE_KEY=<vault-tailnet-node-key>
+VAULT_DNS=<vault-tailnet-dns-name>
+VAULT_VERSION=<vault-server-version>
+VAULT_MOUNT=<tenant-kv-mount>
+VAULT_SECRET_PATH=<provider-secret-path>
+```
+
+Vault may intentionally serve plain HTTP inside a tailnet. Before either
+hidden credential prompt and every authenticated request, this handoff verifies
+the pinned Apple requirement and notarization, exact peer identity, local
+Tailscale interface, ICMP-over-WireGuard reachability, and route-bound Vault
+health. Every request is bound to that interface. Exact response codes and
+metadata are validated before PASS. The clean shell uses an empty home and
+absolute macOS system binaries; `curl -q` loads no user configuration and both
+credentials reach it through pipes, never argv or the environment:
+
+```sh
+/usr/bin/env -i \
+  HOME=/var/empty \
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  TERM=dumb \
+  /bin/bash --noprofile --norc <<'SEC0030_VAULT_HANDOFF'
+set -euo pipefail
+set +x
+ulimit -c 0
+private_root=/Library/SEC0030
+private_config=$private_root/vault-handoff.env
+tailscale_app=$private_root/Tailscale.app
+tailscale_bin=$tailscale_app/Contents/MacOS/Tailscale
+
+no_acl() {
+  test "$(/bin/ls -lde "$1" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1
+}
+for directory in /Library "$private_root"; do
+  test ! -L "$directory"
+  test "$(/usr/bin/stat -f '%Su:%Sg:%Sp' "$directory")" = \
+    'root:wheel:drwxr-xr-x'
+  no_acl "$directory"
+done
+test ! -L "$private_config"
+test "$(/usr/bin/stat -f '%Su:%Sg:%Sp' "$private_config")" = \
+  'root:wheel:-rw-------'
+no_acl "$private_config"
+
+while IFS= read -r -d '' item; do
+  test ! -L "$item"
+  test "$(/usr/bin/stat -f '%Su:%Sg' "$item")" = 'root:wheel'
+  permissions=$(/usr/bin/stat -f '%Sp' "$item")
+  case "$permissions" in
+    ?????w????|????????w?) exit 1 ;;
+  esac
+  no_acl "$item"
+done < <(/usr/bin/find "$tailscale_app" -print0)
+
+vault_ip=
+vault_node_key=
+vault_dns=
+vault_version=
+vault_mount=
+vault_secret_path=
+seen='|'
+while IFS='=' read -r key value; do
+  case "$seen" in *"|${key}|"*) exit 1 ;; esac
+  seen="${seen}${key}|"
+  case "$key" in
+    VAULT_IP) vault_ip=$value ;;
+    VAULT_NODE_KEY) vault_node_key=$value ;;
+    VAULT_DNS) vault_dns=$value ;;
+    VAULT_VERSION) vault_version=$value ;;
+    VAULT_MOUNT) vault_mount=$value ;;
+    VAULT_SECRET_PATH) vault_secret_path=$value ;;
+    *) exit 1 ;;
+  esac
+done < "$private_config"
+test "$seen" = \
+  '|VAULT_IP|VAULT_NODE_KEY|VAULT_DNS|VAULT_VERSION|VAULT_MOUNT|VAULT_SECRET_PATH|'
+builtin printf '%s' "$vault_ip" |
+  /usr/bin/grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+builtin printf '%s' "$vault_node_key" |
+  /usr/bin/grep -Eq '^nodekey:[0-9a-f]{64}$'
+case "$vault_dns" in ''|*[!A-Za-z0-9.-]*) exit 1 ;; esac
+case "$vault_version" in ''|*[!A-Za-z0-9.+-]*) exit 1 ;; esac
+case "$vault_mount" in ''|*[!A-Za-z0-9_-]*) exit 1 ;; esac
+case "$vault_secret_path" in ''|/*|*/|*..*|*[!A-Za-z0-9_/-]*) exit 1 ;; esac
+
+signature=$(/usr/bin/codesign -dv --verbose=4 "$tailscale_app" 2>&1)
+identifier=$(builtin printf '%s\n' "$signature" |
+  /usr/bin/awk -F= '$1 == "Identifier" {print $2}')
+case "$identifier" in
+  io.tailscale.ipn.macsys|io.tailscale.ipn.macos) ;;
+  *) exit 1 ;;
+esac
+requirement="anchor apple generic and certificate leaf[subject.OU] = \"W5364U7YZB\" and identifier \"${identifier}\""
+/usr/bin/codesign --verify --deep --strict --check-notarization \
+  -R="$requirement" "$tailscale_app"
+/usr/sbin/spctl --assess --type execute "$tailscale_app"
+
+peer_value() {
+  builtin printf '%s' "$status_json" |
+    /usr/bin/plutil -extract "Peer.${vault_node_key}.$1" raw -o - -
+}
+assert_tailnet_path() {
+  local self_ip health_response health_status health_body
+  status_json=$("$tailscale_bin" status --json)
+  test "$(peer_value DNSName)" = "$vault_dns"
+  test "$(peer_value TailscaleIPs.0)" = "$vault_ip"
+  test "$(peer_value Online)" = true
+  self_ip=$(builtin printf '%s' "$status_json" |
+    /usr/bin/plutil -extract Self.TailscaleIPs.0 raw -o - -)
+  route_interface=$(/sbin/route -n get "$vault_ip" |
+    /usr/bin/awk '$1 == "interface:" {print $2; exit}')
+  case "$route_interface" in
+    utun[0-9]*) ;;
+    *) exit 1 ;;
+  esac
+  /sbin/ifconfig "$route_interface" |
+    /usr/bin/awk -v expected="$self_ip" '
+      $1 == "inet" && $2 == expected {found = 1}
+      END {exit found ? 0 : 1}
+    '
+  "$tailscale_bin" ping --icmp --c=1 --timeout=5s "$vault_ip" >/dev/null
+  health_response=$(/usr/bin/curl -q --silent --show-error \
+    --connect-timeout 5 --max-time 10 \
+    --max-redirs 0 --proto '=http' \
+    --interface "$route_interface" \
+    --write-out $'\n%{http_code}' \
+    "http://${vault_ip}:8200/v1/sys/health")
+  health_status=${health_response##*$'\n'}
+  health_body=${health_response%$'\n'*}
+  test "$health_status" = 200
+  test "$(builtin printf '%s' "$health_body" |
+    /usr/bin/plutil -extract initialized raw -o - -)" = true
+  test "$(builtin printf '%s' "$health_body" |
+    /usr/bin/plutil -extract sealed raw -o - -)" = false
+  test "$(builtin printf '%s' "$health_body" |
+    /usr/bin/plutil -extract version raw -o - -)" = "$vault_version"
+}
+
+assert_tailnet_path
+
+vault_token=$(/usr/bin/osascript -e \
+  'text returned of (display dialog "Authorized Vault token" default answer "" with hidden answer buttons {"Continue"} default button "Continue")')
+case "$vault_token" in
+  ''|*[!A-Za-z0-9._-]*) exit 1 ;;
+esac
+test "${#vault_token}" -ge 20
+
+vault_request() {
+  local method=$1 endpoint=$2 body=$3 response
+  assert_tailnet_path
+  if [ "$method" = POST ]; then
+    response=$(builtin printf '%s' "$body" |
+      /usr/bin/curl -q --silent --show-error \
+        --connect-timeout 5 --max-time 10 \
+        --max-redirs 0 --proto '=http' \
+        --interface "$route_interface" \
+        --request POST \
+        --url "http://${vault_ip}:8200${endpoint}" \
+        --config /dev/fd/3 \
+        --header 'Content-Type: application/json' \
+        --data-binary @- \
+        --write-out $'\n%{http_code}' \
+        3< <(builtin printf 'header = "X-Vault-Token: %s"\n' "$vault_token"))
+  else
+    test "$method" = GET
+    response=$(/usr/bin/curl -q --silent --show-error \
+      --connect-timeout 5 --max-time 10 \
+      --max-redirs 0 --proto '=http' \
+      --interface "$route_interface" \
+      --request GET \
+      --url "http://${vault_ip}:8200${endpoint}" \
+      --config /dev/fd/3 \
+      --write-out $'\n%{http_code}' \
+      3< <(builtin printf 'header = "X-Vault-Token: %s"\n' "$vault_token"))
+  fi
+  vault_status=${response##*$'\n'}
+  vault_body=${response%$'\n'*}
+}
+
+metadata_endpoint="/v1/${vault_mount}/metadata/${vault_secret_path}"
+data_endpoint="/v1/${vault_mount}/data/${vault_secret_path}"
+vault_request POST "$metadata_endpoint" \
+  '{"cas_required":true}'
+test "$vault_status" = 204
+test -z "$vault_body"
+vault_request GET "$metadata_endpoint" ''
+test "$vault_status" = 200
+test "$(builtin printf '%s' "$vault_body" |
+  /usr/bin/plutil -extract data.cas_required raw -o - -)" = true
+test "$(builtin printf '%s' "$vault_body" |
+  /usr/bin/plutil -extract data.current_version raw -o - -)" = 0
+
+assert_tailnet_path
+replacement=$(/usr/bin/osascript -e \
+  'text returned of (display dialog "Replacement DeepSeek API key" default answer "" with hidden answer buttons {"Store"} default button "Store")')
+case "$replacement" in
+  ''|*[!A-Za-z0-9._-]*) exit 1 ;;
+esac
+test "${#replacement}" -ge 12
+data_body='{"options":{"cas":0},"data":{"api_key":"'"$replacement"'"}}'
+vault_request POST "$data_endpoint" "$data_body"
+test "$vault_status" = 200
+test "$(builtin printf '%s' "$vault_body" |
+  /usr/bin/plutil -extract data.version raw -o - -)" = 1
+vault_request GET "$metadata_endpoint" ''
+test "$vault_status" = 200
+test "$(builtin printf '%s' "$vault_body" |
+  /usr/bin/plutil -extract data.cas_required raw -o - -)" = true
+test "$(builtin printf '%s' "$vault_body" |
+  /usr/bin/plutil -extract data.current_version raw -o - -)" = 1
+unset data_body replacement vault_token status_json signature vault_body
+builtin printf '%s\n' SEC0030_VAULT_CREATE_PASS
+SEC0030_VAULT_HANDOFF
+```
+
+Open the provider console first and keep the newly issued replacement visible.
+Type the existing authorized Vault token and the replacement into the two
+hidden dialogs. The handoff fails if metadata/data authorization, route
+identity, input shape, or create-only CAS fails. Return to the same provider
+console session, revoke the exposed credential, then read back only Vault
+version metadata and prove the old credential rejects the same provider
+metadata request accepted by the replacement. Never print either value.
+
+[vault-kv-metadata]: https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2
+[vault-kv-put]: https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2
+
 ## Inventorying copies without leaking them
 
 Read the credential from the process environment inside your script — never pass

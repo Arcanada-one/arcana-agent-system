@@ -13,7 +13,7 @@ use arcana_credential_broker::policy::ProviderRule;
 use arcana_credential_broker::protocol::{ExactSet, SessionId};
 use arcana_credential_broker::{
     authorize, CapabilityPolicy, CapabilityRequest, Denial, ExecutorProfile, Generation,
-    IdempotencyKey, Ledger, Operation, PeerIdentity,
+    IdempotencyKey, Ledger, Operation, PeerIdentity, RequestFingerprint,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -37,6 +37,7 @@ fn policy() -> CapabilityPolicy {
         ProviderRule {
             models,
             operations,
+            quota_costs: BTreeMap::from([(Operation::Completion, 1)]),
             upstream: UPSTREAM.to_owned(),
         },
     );
@@ -76,6 +77,7 @@ fn request() -> CapabilityRequest {
         quota_units: 1,
         expires_at: NOW + 60,
         idempotency: IdempotencyKey("idem-001".to_owned()),
+        fingerprint: RequestFingerprint("fingerprint-001".to_owned()),
     }
 }
 
@@ -87,10 +89,31 @@ fn ledger() -> Ledger {
 
 #[test]
 fn scoped_request_succeeds() {
+    policy().validate().expect("policy validates");
     let lease = authorize(&policy(), &mut ledger(), &request(), NOW).expect("scoped request");
     assert_eq!(lease.provider, "mockprovider");
     assert_eq!(lease.charged, 1);
     assert!(!lease.replayed);
+}
+
+#[test]
+fn policy_refuses_missing_or_zero_trusted_quota_cost() {
+    let mut missing = policy();
+    missing
+        .providers
+        .get_mut("mockprovider")
+        .expect("provider")
+        .quota_costs
+        .clear();
+    assert!(missing.validate().is_err());
+
+    let mut zero = policy();
+    zero.providers
+        .get_mut("mockprovider")
+        .expect("provider")
+        .quota_costs
+        .insert(Operation::Completion, 0);
+    assert!(zero.validate().is_err());
 }
 
 // --- one falsifier per axis ------------------------------------------------
@@ -220,6 +243,22 @@ fn missing_idempotency_key_fails_closed() {
     );
 }
 
+#[test]
+fn malformed_or_oversized_idempotency_key_fails_closed() {
+    for key in ["contains space", "slash/not-allowed"] {
+        assert_denied(
+            |r| r.idempotency = IdempotencyKey(key.to_owned()),
+            Denial::InvalidIdempotencyKey,
+            "idempotency format",
+        );
+    }
+    assert_denied(
+        |r| r.idempotency = IdempotencyKey("x".repeat(129)),
+        Denial::InvalidIdempotencyKey,
+        "idempotency length",
+    );
+}
+
 /// A wildcard is not a broad grant — it is a malformed request.
 #[test]
 fn wildcard_fields_fail_closed() {
@@ -247,9 +286,8 @@ fn empty_fields_fail_closed() {
 
 #[test]
 fn over_quota_fails_closed() {
-    let mut led = ledger();
-    let mut req = request();
-    req.quota_units = 11;
+    let mut led = Ledger::new(Generation(7), 0);
+    let req = request();
     assert_eq!(
         authorize(&policy(), &mut led, &req, NOW).err(),
         Some(Denial::QuotaExceeded)
@@ -300,6 +338,23 @@ fn duplicate_request_replays_without_repeating_side_effect() {
     assert_eq!(led.committed_count(), 1, "exactly one committed operation");
 }
 
+#[test]
+fn reused_key_with_different_fingerprint_fails_closed() {
+    let pol = policy();
+    let mut led = ledger();
+    let req = request();
+    authorize(&pol, &mut led, &req, NOW).expect("first");
+
+    let mut changed = req;
+    changed.fingerprint = RequestFingerprint("fingerprint-other".to_owned());
+    assert_eq!(
+        authorize(&pol, &mut led, &changed, NOW).err(),
+        Some(Denial::IdempotencyConflict)
+    );
+    assert_eq!(led.quota_spent(), 1);
+    assert_eq!(led.committed_count(), 1);
+}
+
 /// A replay of a still-valid key survives quota exhaustion: it is not a charge.
 #[test]
 fn replay_succeeds_even_when_quota_is_exhausted() {
@@ -331,4 +386,26 @@ fn denied_request_never_reaches_the_ledger() {
     req.provider = "otherprovider".to_owned();
     assert!(authorize(&pol, &mut led, &req, NOW).is_err());
     assert_eq!(led.committed_count(), 0);
+}
+
+#[test]
+fn deserialized_ledger_rejects_inconsistent_quota_and_outcome_state() {
+    let pol = policy();
+    let mut valid = ledger();
+    authorize(&pol, &mut valid, &request(), NOW).expect("commit");
+    assert!(valid.durable_invariants_hold());
+
+    for (field, value) in [
+        ("quota_spent", serde_json::json!(0)),
+        ("next_outcome", serde_json::json!(99)),
+        ("max_entries", serde_json::json!(0)),
+    ] {
+        let mut encoded = serde_json::to_value(&valid).expect("serialize");
+        encoded[field] = value;
+        let corrupted: Ledger = serde_json::from_value(encoded).expect("deserialize");
+        assert!(
+            !corrupted.durable_invariants_hold(),
+            "corruption of {field} must fail closed"
+        );
+    }
 }

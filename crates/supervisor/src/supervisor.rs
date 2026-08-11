@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::audit::AuditLog;
+use arcana_execution_boundary::BoundaryError;
 use nix::unistd::Pid;
 use serde_json::json;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
@@ -185,8 +186,10 @@ enum Step {
     Poll,
     /// The child must be force-terminated for the given cause.
     Terminate(TerminationCause),
-    /// The child exited on its own.
-    Exited { success: bool },
+    /// The child exited on its own but remains unreaped to pin PID=PGID.
+    Exited,
+    /// Exit observation failed before a trustworthy lifecycle result.
+    WaitFailed(SupervisorError),
 }
 
 impl SuperviseTask {
@@ -203,22 +206,67 @@ impl SuperviseTask {
                 Step::Poll => {}
                 Step::Terminate(cause) => {
                     self.emit(cause.audit_kind(), child_id);
-                    self.terminate().await;
+                    if let Err(error) = self.terminate().await {
+                        let reason = lifecycle_failure_reason(&error);
+                        self.emit("escalate", child_id);
+                        tracing::error!(error = %error, cause = cause.audit_kind(), reason, "supervisor termination failed");
+                        return SupervisionOutcome::Escalated {
+                            child_id,
+                            reason: reason.to_string(),
+                        };
+                    }
                     return SupervisionOutcome::Escalated {
                         child_id,
                         reason: cause.audit_kind().to_string(),
                     };
                 }
-                Step::Exited { success: true } => {
-                    return SupervisionOutcome::Completed { child_id };
-                }
-                Step::Exited { success: false } => {
+                Step::Exited => {
+                    let status = match self.child.finalize_after_exit().await {
+                        Ok(status) => status,
+                        Err(error) => {
+                            let reason = lifecycle_failure_reason(&error);
+                            tracing::error!(error = %error, "supervisor process-group finalization failed");
+                            self.emit("escalate", child_id);
+                            return SupervisionOutcome::Escalated {
+                                child_id,
+                                reason: reason.to_string(),
+                            };
+                        }
+                    };
+                    if status.success() {
+                        return SupervisionOutcome::Completed { child_id };
+                    }
                     if let Some(outcome) = self
                         .handle_failure(child_id, &mut restarts, &mut window_start, &mut deadline)
                         .await
                     {
                         return outcome;
                     }
+                }
+                Step::WaitFailed(wait_error) => {
+                    tracing::error!(error = %wait_error, "supervisor child-exit observation failed");
+                    self.emit("escalate", child_id);
+                    let termination_error = self.terminate().await.err();
+                    let reason =
+                        wait_failure_outcome_reason(&wait_error, termination_error.as_ref());
+                    match termination_error {
+                        None => tracing::info!(
+                            "supervisor termination path after exit-observation failure completed"
+                        ),
+                        Some(ref error) if reason == "child_wait_failed" => tracing::info!(
+                            error = %error,
+                            "supervisor cleanup completed and preserved the primary exit-observation failure"
+                        ),
+                        Some(ref error) => tracing::error!(
+                            error = %error,
+                            reason,
+                            "supervisor termination path after exit-observation failure failed"
+                        ),
+                    }
+                    return SupervisionOutcome::Escalated {
+                        child_id,
+                        reason: reason.to_string(),
+                    };
                 }
             }
         }
@@ -239,8 +287,11 @@ impl SuperviseTask {
             biased;
             () = self.cancel.cancelled() => Step::Terminate(TerminationCause::Cancelled),
             () = tokio::time::sleep_until(deadline) => Step::Terminate(TerminationCause::WallClockTimeout),
-            status = self.child.child_mut().wait() => {
-                Step::Exited { success: matches!(status, Ok(code) if code.success()) }
+            result = self.child.wait_for_exit() => {
+                match result {
+                    Ok(()) => Step::Exited,
+                    Err(error) => Step::WaitFailed(error),
+                }
             }
             () = tokio::time::sleep(tick) => {
                 if hb_rx.borrow().elapsed() > hb_timeout {
@@ -301,9 +352,9 @@ impl SuperviseTask {
     }
 
     /// Force-terminate the child's process group and record the terminal event.
-    async fn terminate(&mut self) {
+    async fn terminate(&mut self) -> Result<(), SupervisorError> {
         let pgid = self.child.pgid();
-        if let Err(err) = terminate_group(
+        terminate_group(
             pgid,
             self.config.grace,
             &mut self.child,
@@ -311,9 +362,6 @@ impl SuperviseTask {
             &self.config.correlation_id,
         )
         .await
-        {
-            tracing::error!(error = %err, "supervisor terminate audit write failed");
-        }
     }
 
     /// Record a lifecycle event; log (do not silently drop) on a write failure.
@@ -325,5 +373,121 @@ impl SuperviseTask {
         ) {
             tracing::error!(error = %err, kind, "supervisor audit write failed");
         }
+    }
+}
+
+fn lifecycle_failure_reason(error: &SupervisorError) -> &'static str {
+    match error {
+        SupervisorError::Boundary(error) => boundary_lifecycle_failure_reason(error),
+        _ => "termination_failed",
+    }
+}
+
+fn wait_failure_outcome_reason(
+    wait_error: &SupervisorError,
+    termination_error: Option<&SupervisorError>,
+) -> &'static str {
+    match termination_error {
+        Some(error) if lifecycle_failure_reason(error) != "child_wait_failed" => {
+            lifecycle_failure_reason(error)
+        }
+        _ => lifecycle_failure_reason(wait_error),
+    }
+}
+
+fn boundary_lifecycle_failure_reason(error: &BoundaryError) -> &'static str {
+    match error {
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "reap process-group leader" | "reap process-group anchor"
+            ) =>
+        {
+            "reap_failed"
+        }
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "verify process-group disappearance"
+                    | "finalize process group"
+                    | "finalize owned process group"
+                    | "terminate after exit-observation failure"
+                    | "cleanup after child output deadline"
+            ) =>
+        {
+            "process_group_cleanup_failed"
+        }
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "observe child exit without reaping"
+                    | "spawn child exit observer"
+                    | "start child exit observer service"
+                    | "register child exit observer"
+                    | "register Darwin process-exit observer"
+            ) =>
+        {
+            "child_wait_failed"
+        }
+        BoundaryError::Io { phase, .. }
+            if matches!(
+                *phase,
+                "initial signal process group"
+                    | "final signal process group before reap"
+                    | "fallback signal process-group leader"
+                    | "fallback signal process-group anchor"
+                    | "terminate after initial-signal failure"
+            ) =>
+        {
+            "signal_failed"
+        }
+        _ => "termination_failed",
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_reason_tests {
+    use super::{boundary_lifecycle_failure_reason, wait_failure_outcome_reason};
+    use crate::error::SupervisorError;
+    use arcana_execution_boundary::BoundaryError;
+
+    fn phase(name: &'static str) -> BoundaryError {
+        BoundaryError::Io {
+            phase: name,
+            reason: "test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn classifies_normal_exit_and_composite_cleanup_phases() {
+        assert_eq!(
+            boundary_lifecycle_failure_reason(&phase("finalize owned process group")),
+            "process_group_cleanup_failed"
+        );
+        assert_eq!(
+            boundary_lifecycle_failure_reason(&phase("terminate after exit-observation failure")),
+            "process_group_cleanup_failed"
+        );
+        assert_eq!(
+            boundary_lifecycle_failure_reason(&phase("terminate after initial-signal failure")),
+            "signal_failed"
+        );
+    }
+
+    #[test]
+    fn wait_failure_preserves_primary_only_when_cleanup_did_not_fail() {
+        let wait_error = SupervisorError::Boundary(phase("observe child exit without reaping"));
+        let preserved = SupervisorError::Boundary(phase("observe child exit without reaping"));
+        let cleanup_failed =
+            SupervisorError::Boundary(phase("terminate after exit-observation failure"));
+
+        assert_eq!(
+            wait_failure_outcome_reason(&wait_error, Some(&preserved)),
+            "child_wait_failed"
+        );
+        assert_eq!(
+            wait_failure_outcome_reason(&wait_error, Some(&cleanup_failed)),
+            "process_group_cleanup_failed"
+        );
     }
 }

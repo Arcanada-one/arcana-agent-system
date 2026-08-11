@@ -8,6 +8,10 @@
 
 use crate::protocol::{Denial, Generation, Operation};
 use std::fmt;
+use std::fs::File;
+use std::io::Write;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 /// The causal identifiers a record carries. Any of these may be absent for a
 /// given event, but none of them can hold content.
@@ -54,8 +58,13 @@ pub enum EventKind {
     PolicyDeny,
     QuotaCharge,
     ReplayServed,
+    ReplayPending,
     OutputScanBlock,
     OutputScanPass,
+    ProviderRequestRejected,
+    ProviderOutcomeUnknown,
+    ProviderResponseSuccess,
+    ProviderResponseError,
     BrokerStart,
     BrokerStop,
     GenerationRejected,
@@ -69,8 +78,13 @@ impl EventKind {
             Self::PolicyDeny => "policy_deny",
             Self::QuotaCharge => "quota_charge",
             Self::ReplayServed => "replay_served",
+            Self::ReplayPending => "replay_pending",
             Self::OutputScanBlock => "output_scan_block",
             Self::OutputScanPass => "output_scan_pass",
+            Self::ProviderRequestRejected => "provider_request_rejected",
+            Self::ProviderOutcomeUnknown => "provider_outcome_unknown",
+            Self::ProviderResponseSuccess => "provider_response_success",
+            Self::ProviderResponseError => "provider_response_error",
             Self::BrokerStart => "broker_start",
             Self::BrokerStop => "broker_stop",
             Self::GenerationRejected => "generation_rejected",
@@ -99,6 +113,8 @@ pub struct AuditRecord {
     pub charged: Option<u32>,
     /// A count, e.g. bytes scanned or copies found.
     pub count: Option<u64>,
+    /// Known provider HTTP status. Never response bytes.
+    pub status: Option<u16>,
     /// A hex digest of an artifact — never the artifact.
     pub artifact_sha256: Option<String>,
 }
@@ -117,9 +133,140 @@ impl AuditRecord {
             denial: None,
             charged: None,
             count: None,
+            status: None,
             artifact_sha256: None,
         }
     }
+
+    fn validate(&self) -> Result<(), AuditError> {
+        let ids = &self.ids;
+        for value in [
+            &ids.incident,
+            &ids.execution,
+            &ids.host_boot,
+            &ids.process_tree,
+            &ids.pane_session,
+            &ids.credential_id,
+            &ids.lease,
+            &ids.output_scan,
+            &ids.transcript_artifact,
+            &ids.provider_request,
+            &ids.provider_revocation,
+            &ids.vault_accessor,
+            &ids.deployment,
+            &ids.canary,
+            &self.provider,
+            &self.model,
+            &self.artifact_sha256,
+        ] {
+            if value.as_deref().is_some_and(|value| {
+                value.is_empty()
+                    || value.len() > 128
+                    || !value.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric()
+                            || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
+                    })
+            }) {
+                return Err(AuditError::InvalidIdentifier);
+            }
+        }
+        if self.artifact_sha256.as_deref().is_some_and(|digest| {
+            digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
+            return Err(AuditError::InvalidIdentifier);
+        }
+        Ok(())
+    }
+}
+
+/// Owner-only, append-only metadata audit sink.
+pub struct AuditWriter {
+    path: PathBuf,
+    file: File,
+}
+
+impl fmt::Debug for AuditWriter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuditWriter")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AuditWriter {
+    /// Open a broker-owned, mode-0600 non-symlink audit file.
+    ///
+    /// # Errors
+    /// Refuses relative paths, symlinks, foreign ownership and weak modes.
+    pub fn open(path: &Path) -> Result<Self, AuditError> {
+        if !path.is_absolute() {
+            return Err(AuditError::PathNotAbsolute);
+        }
+        let parent = path.parent().ok_or(AuditError::PathNotAbsolute)?;
+        std::fs::create_dir_all(parent).map_err(|error| AuditError::Io(error.to_string()))?;
+        let parent_metadata =
+            std::fs::symlink_metadata(parent).map_err(|error| AuditError::Io(error.to_string()))?;
+        let uid = nix::unistd::geteuid().as_raw();
+        if parent_metadata.file_type().is_symlink()
+            || !parent_metadata.is_dir()
+            || parent_metadata.uid() != uid
+        {
+            return Err(AuditError::UnsafeOwnership);
+        }
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .map_err(|error| AuditError::Io(error.to_string()))?;
+        let descriptor = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::WRONLY
+                | rustix::fs::OFlags::APPEND
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::from_bits_truncate(0o600),
+        )
+        .map_err(|error| AuditError::Io(error.to_string()))?;
+        let file = File::from(descriptor);
+        let metadata = file
+            .metadata()
+            .map_err(|error| AuditError::Io(error.to_string()))?;
+        if !metadata.is_file() || metadata.uid() != uid {
+            return Err(AuditError::UnsafeOwnership);
+        }
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            return Err(AuditError::UnsafeMode);
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+        })
+    }
+
+    /// Append and durably sync one validated metadata-only record.
+    ///
+    /// # Errors
+    /// Refuses unbounded/unsafe identifiers and any write or sync failure.
+    pub fn append(&mut self, record: &AuditRecord) -> Result<(), AuditError> {
+        record.validate()?;
+        writeln!(self.file, "{record}").map_err(|error| AuditError::Io(error.to_string()))?;
+        self.file
+            .sync_data()
+            .map_err(|error| AuditError::Io(error.to_string()))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuditError {
+    #[error("audit path must be absolute")]
+    PathNotAbsolute,
+    #[error("audit path ownership is unsafe")]
+    UnsafeOwnership,
+    #[error("audit file mode must be exactly 0600")]
+    UnsafeMode,
+    #[error("audit identifier is malformed or exceeds its bound")]
+    InvalidIdentifier,
+    #[error("audit I/O failed: {0}")]
+    Io(String),
 }
 
 /// Render as a stable, greppable key=value line.
@@ -173,6 +320,9 @@ impl fmt::Display for AuditRecord {
         }
         if let Some(v) = self.count {
             write!(f, " count={v}")?;
+        }
+        if let Some(v) = self.status {
+            write!(f, " status={v}")?;
         }
         if let Some(v) = &self.artifact_sha256 {
             write!(f, " artifact_sha256={v}")?;
