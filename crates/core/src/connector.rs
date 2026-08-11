@@ -121,7 +121,7 @@ pub trait ModelConnector: Send + Sync {
 /// Field names mirror the upstream Zod schema; camelCase wire names are pinned
 /// with explicit `rename` so the Rust `snake_case` API is independent of the
 /// wire contract.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct ExecuteRequest {
     /// Connector id, e.g. `"claude-code"`. Required.
     pub connector: String,
@@ -141,6 +141,27 @@ pub struct ExecuteRequest {
         rename = "firstDispatchMeasurement"
     )]
     pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
+}
+
+impl std::fmt::Debug for ExecuteRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExecuteRequest")
+            .field("connector", &self.connector)
+            .field("prompt", &"[REDACTED]")
+            .field("model", &self.model)
+            .field(
+                "system_prompt",
+                &self.system_prompt.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("max_turns", &self.max_turns)
+            .field("max_budget_usd", &self.max_budget_usd)
+            .field(
+                "first_dispatch_measurement",
+                &self.first_dispatch_measurement,
+            )
+            .finish()
+    }
 }
 
 impl ExecuteRequest {

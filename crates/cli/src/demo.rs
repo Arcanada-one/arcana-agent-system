@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use arcana_core::agent_loop::{Driver, DriverConfig, TerminalReason};
+use arcana_core::agent_loop::{Driver, DriverConfig, FirstDispatchPromptV0, TerminalReason};
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
     PromptVariantV0, Usage,
@@ -64,6 +64,7 @@ pub fn run_demo(
     first_dispatch_measurement_json: Option<&str>,
     first_dispatch_connector: Option<&str>,
     first_dispatch_model: Option<&str>,
+    first_dispatch_prompt: Option<String>,
 ) -> i32 {
     let task = task.unwrap_or_else(|| DEFAULT_TASK.to_owned());
     let measurement = match first_dispatch_measurement_json
@@ -87,6 +88,17 @@ pub fn run_demo(
             return 1;
         }
     };
+    let Ok(prompt) = first_dispatch_prompt
+        .map(FirstDispatchPromptV0::try_new)
+        .transpose()
+    else {
+        eprintln!("arcana demo: invalid first-dispatch prompt");
+        return 1;
+    };
+    if prompt.is_some() && measurement.is_none() {
+        eprintln!("arcana demo: first-dispatch prompt requires measurement metadata");
+        return 1;
+    }
     if measurement.is_some() && !live {
         eprintln!("arcana demo: first-dispatch measurement requires --live");
         return 1;
@@ -101,7 +113,7 @@ pub fn run_demo(
             return 1;
         }
     };
-    runtime.block_on(run_demo_async(&task, live, measurement, route))
+    runtime.block_on(run_demo_async(&task, live, measurement, route, prompt))
 }
 
 /// Async body: build the components, run the driver, print the phases.
@@ -110,6 +122,7 @@ async fn run_demo_async(
     live: bool,
     measurement: Option<FirstDispatchMeasurementV0>,
     route: Option<FirstDispatchRoute>,
+    first_dispatch_prompt: Option<FirstDispatchPromptV0>,
 ) -> i32 {
     // Isolated audit sink under the system temp dir; `AuditHook::new` creates it.
     let audit_dir: PathBuf = std::env::temp_dir().join("arcana-demo");
@@ -153,7 +166,7 @@ async fn run_demo_async(
             &executor,
             cost,
             CancellationToken::new(),
-            driver_config(measurement, route.as_ref()),
+            driver_config(measurement, route.as_ref(), first_dispatch_prompt),
         );
         driver.run(task).await
     };
@@ -335,6 +348,7 @@ fn parse_first_dispatch_route(
 fn driver_config(
     measurement: Option<FirstDispatchMeasurementV0>,
     route: Option<&FirstDispatchRoute>,
+    first_dispatch_prompt: Option<FirstDispatchPromptV0>,
 ) -> DriverConfig {
     let mut config = DriverConfig::new(route.map_or("arcana-demo", |measurement_route| {
         measurement_route.connector_id.as_str()
@@ -343,6 +357,7 @@ fn driver_config(
         config.policy = ModelPolicy::single_model(&measurement_route.model_id);
     }
     config.first_dispatch_measurement = measurement;
+    config.first_dispatch_prompt = first_dispatch_prompt;
     config
 }
 
@@ -693,7 +708,7 @@ mod tests {
             connector_id: "claude-code".to_owned(),
             model_id: "sonnet-4.6".to_owned(),
         };
-        let config = driver_config(Some(measurement), Some(&route));
+        let config = driver_config(Some(measurement), Some(&route), None);
         let actual = serde_json::to_value(config.first_dispatch_measurement)
             .expect("serialize configured measurement");
 
