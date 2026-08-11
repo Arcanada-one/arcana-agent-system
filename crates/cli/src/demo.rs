@@ -169,11 +169,16 @@ async fn run_demo_async(
             eprintln!("arcana demo: missing expected first-dispatch measurement");
             return 1;
         };
+        let Some(expected_route) = route.as_ref() else {
+            eprintln!("arcana demo: missing expected first-dispatch route");
+            return 1;
+        };
         match measurement_evidence_json(
             &format!("{:?}", out.reason),
             out.turns,
             observation,
             expected_measurement,
+            expected_route,
         ) {
             Ok(encoded) => println!("{encoded}"),
             Err(err) => {
@@ -431,6 +436,7 @@ fn canonical_receipt_digest(value: &Value) -> Result<String, String> {
 fn validated_observation(
     observation: &arcana_core::connector::UnverifiedFirstDispatchObservationV0,
     expected_measurement: &FirstDispatchMeasurementV0,
+    expected_route: &FirstDispatchRoute,
 ) -> Result<Value, String> {
     let value = observation.as_value();
     let object = exact_object(value, &OBSERVATION_KEYS)
@@ -454,6 +460,8 @@ fn validated_observation(
         || object["measurement"] != expected
         || !is_identifier(&object["connector"], 256)
         || !is_identifier(&object["model"], 256)
+        || object["connector"].as_str() != Some(expected_route.connector_id.as_str())
+        || object["model"].as_str() != Some(expected_route.model_id.as_str())
         || !is_uuid(&object["connectorResponseId"])
         || !is_lower_sha256(&object["requestPayloadDigestSha256"])
         || object["requestPayloadBytes"]
@@ -480,8 +488,9 @@ fn measurement_evidence_json(
     turns: u32,
     observation: &arcana_core::connector::UnverifiedFirstDispatchObservationV0,
     expected_measurement: &FirstDispatchMeasurementV0,
+    expected_route: &FirstDispatchRoute,
 ) -> Result<String, String> {
-    let receipt = validated_observation(observation, expected_measurement)?;
+    let receipt = validated_observation(observation, expected_measurement, expected_route)?;
     serde_json::to_string(&json!({
         "terminalReason": terminal_reason,
         "turns": turns,
@@ -703,8 +712,12 @@ mod tests {
     fn emits_one_validated_json_record_for_a_closed_receipt() {
         let measurement = parse_first_dispatch_measurement(INPUT).expect("valid input");
         let observation = observation_from(observation_value(&measurement));
+        let route = FirstDispatchRoute {
+            connector_id: "claude-code".to_owned(),
+            model_id: "sonnet-4.6".to_owned(),
+        };
 
-        let encoded = measurement_evidence_json("Completed", 1, &observation, &measurement)
+        let encoded = measurement_evidence_json("Completed", 1, &observation, &measurement, &route)
             .expect("valid receipt emits");
         let value: Value = serde_json::from_str(&encoded).expect("single JSON record");
 
@@ -719,6 +732,10 @@ mod tests {
     #[test]
     fn rejects_malformed_mismatched_or_leaky_receipts() {
         let measurement = parse_first_dispatch_measurement(INPUT).expect("valid input");
+        let route = FirstDispatchRoute {
+            connector_id: "claude-code".to_owned(),
+            model_id: "sonnet-4.6".to_owned(),
+        };
         let empty = observation_from(json!({}));
         let mut leaky_value = observation_value(&measurement);
         leaky_value["prompt"] = json!("secret-sentinel");
@@ -742,6 +759,18 @@ mod tests {
                 .expect("digest poisoned identifier receipt"),
         );
         let poisoned_identifier = observation_from(poisoned_identifier_value);
+        let mut wrong_connector_value = observation_value(&measurement);
+        wrong_connector_value["connector"] = json!("openrouter");
+        wrong_connector_value["receiptDigestSha256"] = Value::String(
+            canonical_receipt_digest(&wrong_connector_value).expect("digest wrong connector"),
+        );
+        let wrong_connector = observation_from(wrong_connector_value);
+        let mut wrong_model_value = observation_value(&measurement);
+        wrong_model_value["model"] = json!("another-model");
+        wrong_model_value["receiptDigestSha256"] = Value::String(
+            canonical_receipt_digest(&wrong_model_value).expect("digest wrong model"),
+        );
+        let wrong_model = observation_from(wrong_model_value);
 
         for observation in [
             &empty,
@@ -749,8 +778,13 @@ mod tests {
             &mismatched,
             &bad_digest,
             &poisoned_identifier,
+            &wrong_connector,
+            &wrong_model,
         ] {
-            assert!(measurement_evidence_json("Completed", 1, observation, &measurement,).is_err());
+            assert!(
+                measurement_evidence_json("Completed", 1, observation, &measurement, &route)
+                    .is_err()
+            );
         }
     }
 

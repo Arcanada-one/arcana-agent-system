@@ -337,3 +337,27 @@ async fn http_429_unknown_envelope_status_fails_closed_without_body_fallback() {
         other => panic!("expected UnexpectedEnvelopeStatus, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn malformed_error_body_is_never_copied_into_the_error_message() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(502).set_body_string("secret-model-output-sentinel"))
+        .mount(&server)
+        .await;
+
+    match client_for(&server).execute(ping()).await {
+        Err(ConnectorError::Http {
+            status, message, ..
+        }) => {
+            assert_eq!(status, 502);
+            assert_eq!(
+                message,
+                "upstream returned a non-contract error body (28 bytes)"
+            );
+            assert!(!message.contains("secret-model-output-sentinel"));
+        }
+        other => panic!("expected redacted ConnectorError::Http, got {other:?}"),
+    }
+}
