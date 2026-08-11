@@ -38,6 +38,7 @@ use arcana_core::connector::{
     PromptVariantV0, Usage,
 };
 use arcana_core::cost::CostTracker;
+use arcana_core::dispatch::ModelPolicy;
 use arcana_core::execution::CapabilityExecutor;
 use arcana_core::hooks::audit::AuditLog;
 use arcana_core::hooks::HookChain;
@@ -61,6 +62,8 @@ pub fn run_demo(
     task: Option<String>,
     live: bool,
     first_dispatch_measurement_json: Option<&str>,
+    first_dispatch_connector: Option<&str>,
+    first_dispatch_model: Option<&str>,
 ) -> i32 {
     let task = task.unwrap_or_else(|| DEFAULT_TASK.to_owned());
     let measurement = match first_dispatch_measurement_json
@@ -70,6 +73,17 @@ pub fn run_demo(
         Ok(measurement) => measurement,
         Err(err) => {
             eprintln!("arcana demo: invalid first-dispatch measurement: {err}");
+            return 1;
+        }
+    };
+    let route = match parse_first_dispatch_route(
+        measurement.is_some(),
+        first_dispatch_connector,
+        first_dispatch_model,
+    ) {
+        Ok(route) => route,
+        Err(err) => {
+            eprintln!("arcana demo: invalid first-dispatch route: {err}");
             return 1;
         }
     };
@@ -87,7 +101,7 @@ pub fn run_demo(
             return 1;
         }
     };
-    runtime.block_on(run_demo_async(&task, live, measurement))
+    runtime.block_on(run_demo_async(&task, live, measurement, route))
 }
 
 /// Async body: build the components, run the driver, print the phases.
@@ -95,6 +109,7 @@ async fn run_demo_async(
     task: &str,
     live: bool,
     measurement: Option<FirstDispatchMeasurementV0>,
+    route: Option<FirstDispatchRoute>,
 ) -> i32 {
     // Isolated audit sink under the system temp dir; `AuditHook::new` creates it.
     let audit_dir: PathBuf = std::env::temp_dir().join("arcana-demo");
@@ -138,7 +153,7 @@ async fn run_demo_async(
             &executor,
             cost,
             CancellationToken::new(),
-            driver_config(measurement),
+            driver_config(measurement, route.as_ref()),
         );
         driver.run(task).await
     };
@@ -284,8 +299,44 @@ fn parse_first_dispatch_measurement(
     .map_err(|err| err.to_string())
 }
 
-fn driver_config(measurement: Option<FirstDispatchMeasurementV0>) -> DriverConfig {
-    let mut config = DriverConfig::new("arcana-demo");
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FirstDispatchRoute {
+    connector_id: String,
+    model_id: String,
+}
+
+fn parse_first_dispatch_route(
+    measurement_requested: bool,
+    connector_id: Option<&str>,
+    model_id: Option<&str>,
+) -> Result<Option<FirstDispatchRoute>, String> {
+    match (measurement_requested, connector_id, model_id) {
+        (false, None, None) => Ok(None),
+        (false, _, _) => Err("route identifiers require a measurement".to_owned()),
+        (true, Some(connector_id), Some(model_id))
+            if is_identifier_text(connector_id, 50) && is_identifier_text(model_id, 100) =>
+        {
+            Ok(Some(FirstDispatchRoute {
+                connector_id: connector_id.to_owned(),
+                model_id: model_id.to_owned(),
+            }))
+        }
+        (true, None, _) => Err("missing --first-dispatch-connector".to_owned()),
+        (true, _, None) => Err("missing --first-dispatch-model".to_owned()),
+        (true, _, _) => Err("connector or model is not a closed identifier".to_owned()),
+    }
+}
+
+fn driver_config(
+    measurement: Option<FirstDispatchMeasurementV0>,
+    route: Option<&FirstDispatchRoute>,
+) -> DriverConfig {
+    let mut config = DriverConfig::new(route.map_or("arcana-demo", |measurement_route| {
+        measurement_route.connector_id.as_str()
+    }));
+    if let Some(measurement_route) = route {
+        config.policy = ModelPolicy::single_model(&measurement_route.model_id);
+    }
     config.first_dispatch_measurement = measurement;
     config
 }
@@ -352,20 +403,18 @@ fn is_uuid(value: &Value) -> bool {
     })
 }
 
-fn is_identifier(value: &Value, max_bytes: usize) -> bool {
-    value.as_str().is_some_and(|text| {
-        !text.is_empty()
-            && text.len() <= max_bytes
-            && text.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b':' | b'/')
-            })
-    })
+fn is_identifier_text(text: &str, max_bytes: usize) -> bool {
+    !text.is_empty()
+        && text.len() <= max_bytes
+        && text.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b':' | b'/')
+        })
 }
 
-fn is_bounded_text(value: &Value, max_bytes: usize) -> bool {
-    value.as_str().is_some_and(|text| {
-        !text.is_empty() && text.len() <= max_bytes && !text.chars().any(char::is_control)
-    })
+fn is_identifier(value: &Value, max_bytes: usize) -> bool {
+    value
+        .as_str()
+        .is_some_and(|text| is_identifier_text(text, max_bytes))
 }
 
 fn canonical_receipt_digest(value: &Value) -> Result<String, String> {
@@ -374,7 +423,8 @@ fn canonical_receipt_digest(value: &Value) -> Result<String, String> {
         .as_object_mut()
         .ok_or_else(|| "observation must be an object".to_owned())?;
     object.remove("receiptDigestSha256");
-    let encoded = serde_json::to_vec(&claims).map_err(|_| "canonicalization failed".to_owned())?;
+    let encoded = serde_json_canonicalizer::to_vec(&claims)
+        .map_err(|_| "canonicalization failed".to_owned())?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
@@ -404,7 +454,7 @@ fn validated_observation(
         || object["measurement"] != expected
         || !is_identifier(&object["connector"], 256)
         || !is_identifier(&object["model"], 256)
-        || !is_bounded_text(&object["connectorResponseId"], 1_024)
+        || !is_uuid(&object["connectorResponseId"])
         || !is_lower_sha256(&object["requestPayloadDigestSha256"])
         || object["requestPayloadBytes"]
             .as_u64()
@@ -565,7 +615,7 @@ mod tests {
             "measurement": serde_json::to_value(measurement).expect("serialize measurement"),
             "connector": "claude-code",
             "model": "sonnet-4.6",
-            "connectorResponseId": "response-001",
+            "connectorResponseId": "10000000-0000-4000-8000-000000000001",
             "requestPayloadDigestSha256": "a".repeat(64),
             "requestPayloadBytes": 128,
             "observationBoundary": "model-connector/service/pre-adapter-v0",
@@ -630,11 +680,23 @@ mod tests {
     fn driver_config_carries_the_parsed_measurement_to_the_real_driver_seam() {
         let measurement = parse_first_dispatch_measurement(INPUT).expect("valid input");
         let expected = serde_json::to_value(&measurement).expect("serialize expected");
-        let config = driver_config(Some(measurement));
+        let route = FirstDispatchRoute {
+            connector_id: "claude-code".to_owned(),
+            model_id: "sonnet-4.6".to_owned(),
+        };
+        let config = driver_config(Some(measurement), Some(&route));
         let actual = serde_json::to_value(config.first_dispatch_measurement)
             .expect("serialize configured measurement");
 
         assert_eq!(actual, expected);
+        assert_eq!(config.connector_id, "claude-code");
+        assert_eq!(
+            config
+                .policy
+                .select(arcana_core::dispatch::TaskType::Code)
+                .model_id,
+            "sonnet-4.6"
+        );
     }
 
     #[test]
@@ -672,9 +734,42 @@ mod tests {
         let mut bad_digest_value = observation_value(&measurement);
         bad_digest_value["receiptDigestSha256"] = Value::String("f".repeat(64));
         let bad_digest = observation_from(bad_digest_value);
+        let mut poisoned_identifier_value = observation_value(&measurement);
+        poisoned_identifier_value["connectorResponseId"] =
+            json!("secret model output is printable but not an identifier");
+        poisoned_identifier_value["receiptDigestSha256"] = Value::String(
+            canonical_receipt_digest(&poisoned_identifier_value)
+                .expect("digest poisoned identifier receipt"),
+        );
+        let poisoned_identifier = observation_from(poisoned_identifier_value);
 
-        for observation in [&empty, &leaky, &mismatched, &bad_digest] {
+        for observation in [
+            &empty,
+            &leaky,
+            &mismatched,
+            &bad_digest,
+            &poisoned_identifier,
+        ] {
             assert!(measurement_evidence_json("Completed", 1, observation, &measurement,).is_err());
         }
+    }
+
+    #[test]
+    fn canonical_receipt_numbers_match_ecmascript_json_stringify() {
+        let value = json!({
+            "costUsd": 0.000_003,
+            "large": 100_000_000_000_000_000_000_f64,
+            "receiptDigestSha256": "not-part-of-the-preimage"
+        });
+        let encoded = serde_json_canonicalizer::to_string(&value).expect("canonical JSON");
+
+        assert_eq!(
+            encoded,
+            r#"{"costUsd":0.000003,"large":100000000000000000000,"receiptDigestSha256":"not-part-of-the-preimage"}"#
+        );
+        assert_eq!(
+            canonical_receipt_digest(&value).expect("receipt digest"),
+            "a5886e750a52e7959d64996b7fe7dc7abbc6d6c38a3774c71d5b6890dfbe8d89"
+        );
     }
 }
