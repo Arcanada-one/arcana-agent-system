@@ -184,30 +184,46 @@ fn parse_success_envelope(
             bytes: bytes.len(),
         })?;
     if parsed.status == "error" {
-        let logical = parsed
-            .error
-            .unwrap_or_else(|| arcana_core::connector::LogicalError {
-                kind: "unknown".into(),
-                message: "upstream reported status=error with no error payload".into(),
-                retryable: false,
-                recommendation: String::new(),
-                retry_after: None,
-            });
-        return Err(ConnectorError::Logical {
-            kind: logical.kind,
-            message: logical.message,
-            retryable: logical.retryable,
-            recommendation: logical.recommendation,
-            retry_after: logical.retry_after,
-        });
+        return logical_error(201, parsed);
     }
     Ok(parsed)
 }
 
-/// Parse a 4xx/5xx `NestJS` exception envelope `{message, error, statusCode}`
-/// into [`ConnectorError::Http`]. Falls back to a generic message if the body
-/// is not the expected `JSON` shape.
+fn logical_error(
+    http_status: u16,
+    parsed: ConnectorResponse,
+) -> Result<ConnectorResponse, ConnectorError> {
+    let first_dispatch_observation = parsed.first_dispatch_observation.map(Box::new);
+    let logical = parsed
+        .error
+        .unwrap_or_else(|| arcana_core::connector::LogicalError {
+            kind: "unknown".into(),
+            message: "upstream reported status=error with no error payload".into(),
+            retryable: false,
+            recommendation: String::new(),
+            retry_after: None,
+        });
+    Err(ConnectorError::Logical {
+        http_status,
+        kind: logical.kind,
+        message: logical.message,
+        retryable: logical.retryable,
+        recommendation: logical.recommendation,
+        retry_after: logical.retry_after,
+        first_dispatch_observation,
+    })
+}
+
+/// Parse a 4xx/5xx body. Model Connector maps structured logical failures to
+/// their HTTP status while preserving the full [`ConnectorResponse`] body, so
+/// parse that shape first to retain the observation receipt. Other `NestJS`
+/// exception envelopes become [`ConnectorError::Http`].
 fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, ConnectorError> {
+    if let Ok(parsed) = serde_json::from_slice::<ConnectorResponse>(bytes) {
+        if parsed.status == "error" {
+            return logical_error(status, parsed);
+        }
+    }
     let message = serde_json::from_slice::<NestExceptionEnvelope>(bytes).map_or_else(
         |_| String::from_utf8_lossy(bytes).trim().to_owned(),
         |env| env.message,

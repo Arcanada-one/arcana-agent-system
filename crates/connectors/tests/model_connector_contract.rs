@@ -11,10 +11,12 @@
 )]
 
 use arcana_connectors::ModelConnectorClient;
-use arcana_core::connector::{ConnectorError, ExecuteRequest, ModelConnector};
+use arcana_core::connector::{
+    ConnectorError, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector, PromptVariantV0,
+};
 use serde_json::json;
 use url::Url;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Build a client pointed at the mock server. The mock uses http://, so
@@ -44,6 +46,17 @@ fn success_body() -> serde_json::Value {
     })
 }
 
+fn observation_body() -> serde_json::Value {
+    json!({
+        "version": "first-dispatch-observation/v0",
+        "observationId": "00000000-0000-4000-8000-000000000001",
+        "authorization": "NOT_AUTHORIZED",
+        "evidenceStatus": "PERSISTED_PRE_ADAPTER_OBSERVATION",
+        "usage": {"source": "CONNECTOR_RESPONSE_UNVERIFIED"},
+        "receiptDigestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    })
+}
+
 #[tokio::test]
 async fn case_a_http_201_success_returns_ok() {
     let server = MockServer::start().await;
@@ -63,7 +76,64 @@ async fn case_a_http_201_success_returns_ok() {
 }
 
 #[tokio::test]
-async fn case_b_http_201_logical_error_returns_err_logical() {
+async fn opted_in_first_dispatch_context_reaches_the_exact_http_boundary() {
+    let server = MockServer::start().await;
+    let mut response = success_body();
+    response["firstDispatchObservation"] = observation_body();
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .and(body_json(json!({
+            "connector": "claude-code",
+            "prompt": "ping",
+            "firstDispatchMeasurement": {
+                "version": "first-dispatch-measurement/v0",
+                "corpusId": "corpus-v0",
+                "caseId": "case-007",
+                "roleId": "developer",
+                "taskClassId": "code-change",
+                "commandId": "implement",
+                "replayIndex": 1,
+                "variant": "baseline",
+                "adapterBoundary": "arcana-agent-system/driver/first-dispatch-v0"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(response))
+        .mount(&server)
+        .await;
+
+    let mut request = ping();
+    request.first_dispatch_measurement = Some(
+        FirstDispatchMeasurementV0::try_new(
+            "corpus-v0",
+            "case-007",
+            "developer",
+            "code-change",
+            "implement",
+            1,
+            PromptVariantV0::Baseline,
+        )
+        .expect("valid measurement context"),
+    );
+
+    let response = client_for(&server)
+        .execute(request)
+        .await
+        .expect("the exact request body must match the first-dispatch contract");
+    let observation = response
+        .first_dispatch_observation
+        .expect("the originating caller must retain the correlation receipt");
+    assert_eq!(
+        observation.observation_id(),
+        Some("00000000-0000-4000-8000-000000000001")
+    );
+    assert_eq!(
+        observation.receipt_digest_sha256(),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    );
+}
+
+#[tokio::test]
+async fn case_b_http_503_logical_error_retains_observation() {
     let server = MockServer::start().await;
     let body = json!({
         "id": "00000000-0000-0000-0000-000000000000",
@@ -78,24 +148,82 @@ async fn case_b_http_201_logical_error_returns_err_logical() {
             "message": "circuit breaker open for claude-code/sonnet-4.6",
             "retryable": false,
             "recommendation": "wait"
-        }
+        },
+        "firstDispatchObservation": observation_body()
     });
     Mock::given(method("POST"))
         .and(path("/execute"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(body))
+        .respond_with(ResponseTemplate::new(503).set_body_json(body))
         .mount(&server)
         .await;
 
     match client_for(&server).execute(ping()).await {
         Err(ConnectorError::Logical {
+            http_status,
             kind,
             retryable,
             recommendation,
+            first_dispatch_observation,
             ..
         }) => {
+            assert_eq!(http_status, 503);
             assert_eq!(kind, "circuit_open");
             assert!(!retryable);
             assert_eq!(recommendation, "wait");
+            assert_eq!(
+                first_dispatch_observation
+                    .as_ref()
+                    .and_then(|observation| observation.observation_id()),
+                Some("00000000-0000-4000-8000-000000000001")
+            );
+        }
+        other => panic!("expected ConnectorError::Logical, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn http_429_logical_error_retains_status_and_observation() {
+    let server = MockServer::start().await;
+    let body = json!({
+        "id": "00000000-0000-0000-0000-000000000000",
+        "connector": "openrouter",
+        "model": "bounded-model",
+        "result": "",
+        "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, "costUsd": 0.0},
+        "latencyMs": 12,
+        "status": "error",
+        "error": {
+            "type": "rate_limited",
+            "message": "try later",
+            "retryable": true,
+            "recommendation": "wait",
+            "retryAfter": 5
+        },
+        "firstDispatchObservation": observation_body()
+    });
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    match client_for(&server).execute(ping()).await {
+        Err(ConnectorError::Logical {
+            http_status,
+            kind,
+            retry_after,
+            first_dispatch_observation,
+            ..
+        }) => {
+            assert_eq!(http_status, 429);
+            assert_eq!(kind, "rate_limited");
+            assert_eq!(retry_after, Some(5));
+            assert_eq!(
+                first_dispatch_observation
+                    .as_ref()
+                    .and_then(|observation| observation.observation_id()),
+                Some("00000000-0000-4000-8000-000000000001")
+            );
         }
         other => panic!("expected ConnectorError::Logical, got {other:?}"),
     }
