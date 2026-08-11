@@ -191,7 +191,7 @@ async fn http_429_logical_error_retains_status_and_observation() {
         "result": "",
         "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, "costUsd": 0.0},
         "latencyMs": 12,
-        "status": "error",
+        "status": "rate_limited",
         "error": {
             "type": "rate_limited",
             "message": "try later",
@@ -226,6 +226,40 @@ async fn http_429_logical_error_retains_status_and_observation() {
             );
         }
         other => panic!("expected ConnectorError::Logical, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn http_201_timeout_retains_observation() {
+    let server = MockServer::start().await;
+    let mut body = success_body();
+    body["status"] = json!("timeout");
+    body["result"] = json!("");
+    body["error"] = json!({
+        "type": "timeout",
+        "message": "provider timed out",
+        "retryable": true,
+        "recommendation": "retry"
+    });
+    body["firstDispatchObservation"] = observation_body();
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    match client_for(&server).execute(ping()).await {
+        Err(ConnectorError::Logical {
+            http_status,
+            kind,
+            first_dispatch_observation,
+            ..
+        }) => {
+            assert_eq!(http_status, 201);
+            assert_eq!(kind, "timeout");
+            assert!(first_dispatch_observation.is_some());
+        }
+        other => panic!("expected timeout Logical error, got {other:?}"),
     }
 }
 
@@ -277,6 +311,24 @@ async fn http_201_unknown_envelope_status_fails_closed() {
     Mock::given(method("POST"))
         .and(path("/execute"))
         .respond_with(ResponseTemplate::new(201).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    match client_for(&server).execute(ping()).await {
+        Err(ConnectorError::UnexpectedEnvelopeStatus) => {}
+        other => panic!("expected UnexpectedEnvelopeStatus, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn http_429_unknown_envelope_status_fails_closed_without_body_fallback() {
+    let server = MockServer::start().await;
+    let mut body = success_body();
+    body["status"] = json!("pending");
+    body["result"] = json!("secret-model-output-sentinel");
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(body))
         .mount(&server)
         .await;
 
