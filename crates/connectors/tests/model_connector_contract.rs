@@ -361,3 +361,27 @@ async fn malformed_error_body_is_never_copied_into_the_error_message() {
         other => panic!("expected redacted ConnectorError::Http, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn partial_json_error_body_is_never_treated_as_a_nest_exception() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(
+            ResponseTemplate::new(502)
+                .set_body_json(json!({ "message": "secret-model-output-sentinel" })),
+        )
+        .mount(&server)
+        .await;
+
+    match client_for(&server).execute(ping()).await {
+        Err(ConnectorError::Http {
+            status, message, ..
+        }) => {
+            assert_eq!(status, 502);
+            assert!(message.starts_with("upstream returned a non-contract error body ("));
+            assert!(!message.contains("secret-model-output-sentinel"));
+        }
+        other => panic!("expected redacted ConnectorError::Http, got {other:?}"),
+    }
+}
