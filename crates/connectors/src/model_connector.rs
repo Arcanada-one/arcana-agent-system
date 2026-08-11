@@ -230,7 +230,12 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
         };
     }
     let message = serde_json::from_slice::<NestExceptionEnvelope>(bytes).map_or_else(
-        |_| String::from_utf8_lossy(bytes).trim().to_owned(),
+        |_| {
+            format!(
+                "upstream returned a non-contract error body ({} bytes)",
+                bytes.len()
+            )
+        },
         |env| env.message,
     );
     Err(ConnectorError::Http {
