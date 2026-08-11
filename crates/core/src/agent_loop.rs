@@ -547,7 +547,7 @@ impl<'a> Driver<'a> {
         } else {
             serialize_history(history)
         };
-        if prompt.chars().count() > self.config.context_budget_chars {
+        if prompt.len() > self.config.context_budget_chars {
             return StepResult::Terminal(TerminalReason::ContextWindowExhausted, None);
         }
         // Per-step multi-model dispatch (D-REQ-01/03/05): classify the step
