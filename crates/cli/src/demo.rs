@@ -161,7 +161,11 @@ async fn run_demo_async(
     let interrupt = crate::interrupt::Interrupt::install();
     let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
     let out = session
-        .run_task(task, driver_config(measurement, route.as_ref(), first_dispatch_prompt), cancel)
+        .run_task(
+            task,
+            driver_config(measurement, route.as_ref(), first_dispatch_prompt),
+            cancel,
+        )
         .await;
     drop(turn_guard);
 

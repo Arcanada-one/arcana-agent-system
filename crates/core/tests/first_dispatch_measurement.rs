@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use arcana_core::agent_loop::{
     Driver, DriverConfig, FirstDispatchPromptV0, TerminalReason, MAX_FIRST_DISPATCH_PROMPT_BYTES,
+    MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS,
 };
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
@@ -124,6 +125,23 @@ fn first_dispatch_prompt_is_bounded_and_debug_redacted() {
     assert!(
         FirstDispatchPromptV0::try_new("x".repeat(MAX_FIRST_DISPATCH_PROMPT_BYTES + 1)).is_err()
     );
+
+    assert!(
+        FirstDispatchPromptV0::try_new("x".repeat(MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS))
+            .is_ok()
+    );
+    assert!(FirstDispatchPromptV0::try_new(
+        "x".repeat(MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS + 1)
+    )
+    .is_err());
+    assert!(FirstDispatchPromptV0::try_new(
+        "🧪".repeat(MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS / 2)
+    )
+    .is_ok());
+    assert!(FirstDispatchPromptV0::try_new(
+        "🧪".repeat(MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS / 2 + 1)
+    )
+    .is_err());
 }
 
 #[test]
