@@ -28,6 +28,59 @@ use crate::dispatch::{classify, ModelPolicy, SelectionContext};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
 use crate::hooks::HookContext;
 
+/// Maximum exact first-dispatch prompt size accepted by the driver.
+pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
+
+/// Bounded prompt bytes for an explicitly measured first dispatch.
+///
+/// The inner text is deliberately absent from `Debug` so configuration logs
+/// cannot disclose the baseline or compiled corpus payload.
+#[derive(Clone, PartialEq, Eq)]
+pub struct FirstDispatchPromptV0(String);
+
+impl FirstDispatchPromptV0 {
+    /// Capture a non-empty UTF-8 prompt within the model-boundary byte cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FirstDispatchPromptValidationError`] when the prompt is empty
+    /// or exceeds [`MAX_FIRST_DISPATCH_PROMPT_BYTES`].
+    pub fn try_new(value: String) -> Result<Self, FirstDispatchPromptValidationError> {
+        if value.is_empty() || value.len() > MAX_FIRST_DISPATCH_PROMPT_BYTES {
+            return Err(FirstDispatchPromptValidationError);
+        }
+        Ok(Self(value))
+    }
+
+    /// Borrow the exact captured bytes as UTF-8 text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for FirstDispatchPromptV0 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("FirstDispatchPromptV0([REDACTED])")
+    }
+}
+
+/// Validation error for a first-dispatch prompt outside the closed byte cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FirstDispatchPromptValidationError;
+
+impl std::fmt::Display for FirstDispatchPromptValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("invalid first-dispatch prompt")
+    }
+}
+
+impl std::error::Error for FirstDispatchPromptValidationError {}
+
 /// Reasons a turn yields control back to the driver for another LLM call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContinueReason {
@@ -283,6 +336,9 @@ pub struct DriverConfig {
     /// Opt-in paired-corpus metadata. The driver attaches it only to the first
     /// connector attempt; later tool-loop turns never inherit it.
     pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
+    /// Exact prompt override applied only to the measured first connector
+    /// attempt. It is invalid without `first_dispatch_measurement`.
+    pub first_dispatch_prompt: Option<FirstDispatchPromptV0>,
     /// Per-turn model-selection policy (D-REQ-01). The classifier keys a
     /// [`crate::dispatch::TaskType`] off the turn context and the policy maps it
     /// to the model id written onto `ExecuteRequest.model`. The former static
@@ -304,6 +360,7 @@ impl DriverConfig {
             max_cost_usd: None,
             context_budget_chars: 1_000_000,
             first_dispatch_measurement: None,
+            first_dispatch_prompt: None,
             policy: ModelPolicy::new(),
         }
     }
@@ -322,6 +379,9 @@ impl DriverConfig {
         }
         if self.context_budget_chars == 0 {
             return Some(TerminalReason::ContextWindowExhausted);
+        }
+        if self.first_dispatch_prompt.is_some() && self.first_dispatch_measurement.is_none() {
+            return Some(TerminalReason::ConnectorFatal);
         }
         None
     }
@@ -478,14 +538,24 @@ impl<'a> Driver<'a> {
                 }
             }
         }
-        let prompt = serialize_history(history);
+        let first_dispatch = *attempts == 0;
+        let prompt = if first_dispatch {
+            self.config.first_dispatch_prompt.clone().map_or_else(
+                || serialize_history(history),
+                FirstDispatchPromptV0::into_inner,
+            )
+        } else {
+            serialize_history(history)
+        };
+        if prompt.chars().count() > self.config.context_budget_chars {
+            return StepResult::Terminal(TerminalReason::ContextWindowExhausted, None);
+        }
         // Per-step multi-model dispatch (D-REQ-01/03/05): classify the step
         // context, select the model, record it, and route it through the
         // connector on `ExecuteRequest.model`. Selection keys off the current
         // connector-attempt index (`*attempts`) before that counter is consumed
         // by the `max_turns`-enforcing increment below, preserving the
         // zero-based turn index the classifier expects on the first attempt.
-        let first_dispatch = *attempts == 0;
         let ctx = SelectionContext {
             history,
             turn: *attempts,

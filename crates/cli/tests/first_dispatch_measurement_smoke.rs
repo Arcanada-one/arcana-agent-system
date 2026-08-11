@@ -62,3 +62,47 @@ fn measurement_requires_an_explicit_connector_and_model_route() {
         .failure()
         .stderr(predicate::str::contains("--first-dispatch-connector"));
 }
+
+#[test]
+fn prompt_stdin_requires_measurement_mode() {
+    Command::cargo_bin("arcana")
+        .unwrap()
+        .args([
+            "demo",
+            "measure this prompt",
+            "--live",
+            "--first-dispatch-prompt-stdin",
+        ])
+        .write_stdin("secret-compiled-prompt")
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(
+            predicate::str::contains("--first-dispatch-measurement-json")
+                .and(predicate::str::contains("secret-compiled-prompt").not()),
+        );
+}
+
+#[test]
+fn prompt_stdin_is_consumed_without_echo_before_live_token_gate() {
+    let mut command = Command::cargo_bin("arcana").unwrap();
+    command
+        .args([
+            "demo",
+            "measure this prompt",
+            "--live",
+            "--first-dispatch-measurement-json",
+            MEASUREMENT,
+            "--first-dispatch-prompt-stdin",
+        ])
+        .args(ROUTE_ARGS)
+        .write_stdin("secret-compiled-prompt")
+        .env_remove("ARCANA_MC_TOKEN")
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(
+            predicate::str::contains("never falls back offline")
+                .and(predicate::str::contains("secret-compiled-prompt").not()),
+        );
+}
