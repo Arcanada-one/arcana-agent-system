@@ -6,6 +6,12 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 const MEASUREMENT: &str = r#"{"corpusId":"corpus-v0","caseId":"case-007","roleId":"developer","taskClassId":"code-change","commandId":"implement","replayIndex":1,"variant":"baseline"}"#;
+const ROUTE_ARGS: [&str; 4] = [
+    "--first-dispatch-connector",
+    "claude-code",
+    "--first-dispatch-model",
+    "sonnet-4.6",
+];
 
 #[test]
 fn measurement_option_requires_an_explicit_live_run() {
@@ -24,6 +30,25 @@ fn measurement_option_requires_an_explicit_live_run() {
 
 #[test]
 fn measurement_never_falls_back_to_the_offline_demo() {
+    let mut command = Command::cargo_bin("arcana").unwrap();
+    command
+        .args([
+            "demo",
+            "measure this prompt",
+            "--live",
+            "--first-dispatch-measurement-json",
+            MEASUREMENT,
+        ])
+        .args(ROUTE_ARGS)
+        .env_remove("ARCANA_MC_TOKEN")
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("never falls back offline"));
+}
+
+#[test]
+fn measurement_requires_an_explicit_connector_and_model_route() {
     Command::cargo_bin("arcana")
         .unwrap()
         .args([
@@ -33,9 +58,7 @@ fn measurement_never_falls_back_to_the_offline_demo() {
             "--first-dispatch-measurement-json",
             MEASUREMENT,
         ])
-        .env_remove("ARCANA_MC_TOKEN")
         .assert()
         .failure()
-        .stdout(predicate::str::is_empty())
-        .stderr(predicate::str::contains("never falls back offline"));
+        .stderr(predicate::str::contains("--first-dispatch-connector"));
 }

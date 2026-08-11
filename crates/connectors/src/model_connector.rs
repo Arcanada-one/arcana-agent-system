@@ -185,7 +185,7 @@ fn parse_success_envelope(
         })?;
     match parsed.status.as_str() {
         "success" => Ok(parsed),
-        "error" => logical_error(201, parsed),
+        "error" | "timeout" | "rate_limited" => logical_error(201, parsed),
         _ => Err(ConnectorError::UnexpectedEnvelopeStatus),
     }
 }
@@ -194,12 +194,15 @@ fn logical_error(
     http_status: u16,
     parsed: ConnectorResponse,
 ) -> Result<ConnectorResponse, ConnectorError> {
+    let envelope_status = parsed.status.clone();
     let first_dispatch_observation = parsed.first_dispatch_observation.map(Box::new);
     let logical = parsed
         .error
         .unwrap_or_else(|| arcana_core::connector::LogicalError {
-            kind: "unknown".into(),
-            message: "upstream reported status=error with no error payload".into(),
+            kind: envelope_status.clone(),
+            message: format!(
+                "upstream reported status={envelope_status} with no logical error payload"
+            ),
             retryable: false,
             recommendation: String::new(),
             retry_after: None,
@@ -221,9 +224,10 @@ fn logical_error(
 /// exception envelopes become [`ConnectorError::Http`].
 fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, ConnectorError> {
     if let Ok(parsed) = serde_json::from_slice::<ConnectorResponse>(bytes) {
-        if parsed.status == "error" {
-            return logical_error(status, parsed);
-        }
+        return match parsed.status.as_str() {
+            "error" | "timeout" | "rate_limited" => logical_error(status, parsed),
+            _ => Err(ConnectorError::UnexpectedEnvelopeStatus),
+        };
     }
     let message = serde_json::from_slice::<NestExceptionEnvelope>(bytes).map_or_else(
         |_| String::from_utf8_lossy(bytes).trim().to_owned(),

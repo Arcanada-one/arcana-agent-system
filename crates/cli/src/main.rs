@@ -46,6 +46,12 @@ enum Cmd {
         /// credentials, token counts, or authorization claims.
         #[arg(long, requires = "live")]
         first_dispatch_measurement_json: Option<String>,
+        /// Registered Model Connector id used for the measured dispatch.
+        #[arg(long, requires = "first_dispatch_measurement_json")]
+        first_dispatch_connector: Option<String>,
+        /// Provider model id pinned for the measured dispatch.
+        #[arg(long, requires = "first_dispatch_measurement_json")]
+        first_dispatch_model: Option<String>,
     },
     /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
     KbRead {
@@ -98,11 +104,15 @@ fn main() {
             task,
             live,
             first_dispatch_measurement_json,
+            first_dispatch_connector,
+            first_dispatch_model,
         }) => {
             std::process::exit(arcana_cli::demo::run_demo(
                 task,
                 live,
                 first_dispatch_measurement_json.as_deref(),
+                first_dispatch_connector.as_deref(),
+                first_dispatch_model.as_deref(),
             ));
         }
         Some(Cmd::KbRead { query }) => {
