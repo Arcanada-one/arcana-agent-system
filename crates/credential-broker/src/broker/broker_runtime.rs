@@ -16,7 +16,7 @@ use arcana_credential_broker::{
     Ledger, Operation, PeerIdentity, RequestFingerprint, SessionId,
 };
 use arcana_execution_boundary::{QuarantineScanner, ScannerConfig, Stream};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::{ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -29,15 +29,21 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Secret wrapper with no `Debug`, `Display`, serialization, or clone surface.
-pub struct Credential(SecretString);
+pub struct Credential {
+    value: SecretBox<String>,
+    exposed_len: usize,
+}
 
 impl Credential {
-    pub fn new(value: String) -> Self {
-        Self(SecretString::from(value))
+    pub(super) fn new(value: String, exposed_len: usize) -> Self {
+        Self {
+            value: SecretBox::new(Box::new(value)),
+            exposed_len,
+        }
     }
 
-    fn expose(&self) -> &str {
-        self.0.expose_secret()
+    pub(super) fn expose(&self) -> &str {
+        &self.value.expose_secret()[..self.exposed_len]
     }
 }
 
@@ -382,6 +388,11 @@ async fn audit_denial(
     denial: arcana_credential_broker::Denial,
 ) -> Result<(), String> {
     let mut record = audit_record(EventKind::PolicyDeny, request);
+    // Provider and model are caller claims until policy authorization succeeds.
+    // A denied peer can put secret-shaped bytes in either field, so denial
+    // audit records retain only broker-attested identity and closed metadata.
+    record.provider = None;
+    record.model = None;
     record.denial = Some(denial);
     state
         .audit

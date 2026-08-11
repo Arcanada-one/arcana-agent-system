@@ -340,3 +340,33 @@ fn self_reported_peer_fields_and_wrong_scope_fail_closed() {
     assert_eq!(response["ok"], false);
     assert_eq!(response["code"], "denied");
 }
+
+#[test]
+fn denied_caller_scope_is_not_persisted_in_the_audit_log() {
+    let dir = TempDir::new().expect("tempdir");
+    let (broker, socket) = start_broker(&dir);
+    let provider_sentinel = "sk-test-NOT-A-REAL-SECRET";
+    let model_sentinel = "tok-test-NOT-A-REAL-SECRET";
+    let mut denied = valid_request("denied-audit-redaction");
+    denied["provider"] = json!(provider_sentinel);
+    denied["model"] = json!(model_sentinel);
+
+    let response = request(&socket, &denied);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["code"], "denied");
+    drop(broker);
+
+    let audit =
+        std::fs::read_to_string(dir.path().join("state/audit.log")).expect("read denial audit");
+    assert!(audit.contains("event=policy_deny"));
+    for forbidden in [
+        provider_sentinel,
+        model_sentinel,
+        "c2stdGVzdC1OT1QtQS1SRUFMLVNFQ1JFVA==",
+        "dG9rLXRlc3QtTk9ULUEtUkVBTC1TRUNSRVQ=",
+        "736b2d746573742d4e4f542d412d5245414c2d534543524554",
+        "746f6b2d746573742d4e4f542d412d5245414c2d534543524554",
+    ] {
+        assert!(!audit.contains(forbidden));
+    }
+}

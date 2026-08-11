@@ -9,6 +9,7 @@ use std::process::ExitCode;
 
 use arcana_credential_broker::audit::{AuditRecord, AuditWriter, CausalIds, EventKind};
 use arcana_credential_broker::CapabilityPolicy;
+use secrecy::zeroize::Zeroizing;
 
 #[path = "../broker/broker_runtime.rs"]
 mod broker_runtime;
@@ -160,7 +161,7 @@ fn credential_attestation_ready() -> bool {
     false
 }
 
-fn load_credential(source: &Path, executor_uid: u32) -> Result<String, StartupRefusal> {
+fn load_credential(source: &Path, executor_uid: u32) -> Result<Credential, StartupRefusal> {
     let uid = effective_uid();
     if uid == executor_uid {
         return Err(StartupRefusal::RunningAsExecutorUid(uid));
@@ -197,18 +198,18 @@ fn load_credential(source: &Path, executor_uid: u32) -> Result<String, StartupRe
     if metadata.len() == 0 || metadata.len() > MAX_CREDENTIAL_BYTES {
         return Err(StartupRefusal::SourceInvalidSize(source.to_path_buf()));
     }
-    let mut value = String::new();
+    let mut value = Zeroizing::new(String::new());
     file.take(MAX_CREDENTIAL_BYTES + 1)
         .read_to_string(&mut value)
         .map_err(|_| StartupRefusal::SourceMissing(source.to_path_buf()))?;
     if value.len() as u64 > MAX_CREDENTIAL_BYTES {
         return Err(StartupRefusal::SourceInvalidSize(source.to_path_buf()));
     }
-    let value = value.trim_end_matches(['\n', '\r']).to_owned();
-    if value.is_empty() {
+    let exposed_len = value.trim_end_matches(['\n', '\r']).len();
+    if exposed_len == 0 {
         return Err(StartupRefusal::SourceEmpty(source.to_path_buf()));
     }
-    Ok(value)
+    Ok(Credential::new(std::mem::take(&mut *value), exposed_len))
 }
 
 fn load_policy(path: &Path) -> Result<CapabilityPolicy, StartupRefusal> {
@@ -282,10 +283,10 @@ async fn main() -> ExitCode {
                     std::env::consts::OS,
                 ));
             }
-            AdapterMode::Http(Credential::new(load_credential(
+            AdapterMode::Http(load_credential(
                 &args.credential_source,
                 policy.executor_uid,
-            )?))
+            )?)
         };
         let mut record = AuditRecord::new(now_unix(), EventKind::BrokerStart);
         record.ids = CausalIds {
@@ -334,7 +335,9 @@ mod tests {
         fs::set_permissions(&secret, fs::Permissions::from_mode(0o600)).expect("set mode");
         let executor_uid = effective_uid().wrapping_add(1);
         assert_eq!(
-            load_credential(&secret, executor_uid).expect("secure credential"),
+            load_credential(&secret, executor_uid)
+                .expect("secure credential")
+                .expose(),
             "test-only-sentinel"
         );
 
