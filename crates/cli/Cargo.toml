@@ -23,7 +23,7 @@ arcana-mcp = { path = "../mcp" }
 arcana-tools = { path = "../tools" }
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive", "cargo"] }
-rustyline = "14"
+rustyline = "18"
 serde_json = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["rt", "macros"] }

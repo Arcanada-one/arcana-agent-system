@@ -22,7 +22,7 @@ path = "src/bin/arcana-credential-broker.rs"
 [dependencies]
 arcana-execution-boundary = { path = "../execution-boundary" }
 listenfd = "1"
-nix = { version = "0.28", default-features = false, features = ["user"] }
+nix = { version = "0.31", default-features = false, features = ["user"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rustix = { version = "1", features = ["fs", "net"] }
 serde = { version = "1", features = ["derive"] }
@@ -31,7 +31,7 @@ sha2 = "0.10"
 secrecy = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-toml = "0.8"
+toml = "1.1"
 url = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
