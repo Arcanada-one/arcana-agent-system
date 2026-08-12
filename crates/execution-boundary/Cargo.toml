@@ -16,7 +16,7 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-m
 tokio-util = { version = "0.7", default-features = false }
 
 [dev-dependencies]
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
 
 [lints]
