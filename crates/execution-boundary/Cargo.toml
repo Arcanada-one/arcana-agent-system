@@ -9,14 +9,14 @@ authors.workspace = true
 description = "Typed, fail-closed execution boundary for Agent Arcana: clean-environment launching and streaming output quarantine."
 
 [dependencies]
-nix = { version = "0.28", default-features = false, features = ["event", "signal", "process", "term", "user"] }
+nix = { version = "0.31", default-features = false, features = ["event", "signal", "process", "term", "user"] }
 rustix = { version = "1", features = ["fs", "process", "termios"] }
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false }
 
 [dev-dependencies]
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
 
 [lints]
