@@ -24,7 +24,7 @@ tiktoken-rs = { version = "0.12", default-features = false }
 time = { version = "0.3", features = ["formatting", "macros"] }
 tokio = { version = "1", features = ["sync"] }
 tokio-util = { version = "0.7", default-features = false }
-toml = "0.8"
+toml = "1.1"
 tracing = "0.1"
 tracing-appender = "0.2"
 xdg = "2.5"
