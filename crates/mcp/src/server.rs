@@ -255,15 +255,19 @@ impl ServerHandler for ArcanaMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
     }
 
-    async fn list_tools(
+    // Nothing here awaits: the descriptors are already in memory. Returning a
+    // ready future rather than declaring `async` says so at the signature, and
+    // keeps clippy's `unused_async_trait_impl` (new in 1.98) quiet without an
+    // allow attribute that older toolchains would reject as an unknown lint.
+    fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::ListToolsResult, ErrorData> {
-        Ok(rmcp::model::ListToolsResult {
+    ) -> impl Future<Output = Result<rmcp::model::ListToolsResult, ErrorData>> {
+        std::future::ready(Ok(rmcp::model::ListToolsResult {
             tools: self.tool_descriptors(),
             ..Default::default()
-        })
+        }))
     }
 
     async fn call_tool(

@@ -41,6 +41,17 @@ enum Cmd {
         /// Route through the real Model Connector when `ARCANA_MC_TOKEN` is set.
         #[arg(long)]
         live: bool,
+        /// Closed identifier-only metadata for an explicitly opted-in paired
+        /// first-dispatch measurement. The JSON must not contain prompt text,
+        /// credentials, token counts, or authorization claims.
+        #[arg(long, requires = "live")]
+        first_dispatch_measurement_json: Option<String>,
+        /// Registered Model Connector id used for the measured dispatch.
+        #[arg(long, requires = "first_dispatch_measurement_json")]
+        first_dispatch_connector: Option<String>,
+        /// Provider model id pinned for the measured dispatch.
+        #[arg(long, requires = "first_dispatch_measurement_json")]
+        first_dispatch_model: Option<String>,
     },
     /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
     KbRead {
@@ -89,8 +100,20 @@ fn main() {
         Some(Cmd::Whoami) => {
             std::process::exit(run_whoami());
         }
-        Some(Cmd::Demo { task, live }) => {
-            std::process::exit(arcana_cli::demo::run_demo(task, live));
+        Some(Cmd::Demo {
+            task,
+            live,
+            first_dispatch_measurement_json,
+            first_dispatch_connector,
+            first_dispatch_model,
+        }) => {
+            std::process::exit(arcana_cli::demo::run_demo(
+                task,
+                live,
+                first_dispatch_measurement_json.as_deref(),
+                first_dispatch_connector.as_deref(),
+                first_dispatch_model.as_deref(),
+            ));
         }
         Some(Cmd::KbRead { query }) => {
             std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));

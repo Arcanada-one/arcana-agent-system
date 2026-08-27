@@ -183,22 +183,26 @@ fn parse_success_envelope(
             content_type,
             bytes: bytes.len(),
         })?;
-    if parsed.status == "error" {
-        return logical_error(201, parsed);
+    match parsed.status.as_str() {
+        "success" => Ok(parsed),
+        "error" | "timeout" | "rate_limited" => logical_error(201, parsed),
+        _ => Err(ConnectorError::UnexpectedEnvelopeStatus),
     }
-    Ok(parsed)
 }
 
 fn logical_error(
     http_status: u16,
     parsed: ConnectorResponse,
 ) -> Result<ConnectorResponse, ConnectorError> {
+    let envelope_status = parsed.status.clone();
     let first_dispatch_observation = parsed.first_dispatch_observation.map(Box::new);
     let logical = parsed
         .error
         .unwrap_or_else(|| arcana_core::connector::LogicalError {
-            kind: "unknown".into(),
-            message: "upstream reported status=error with no error payload".into(),
+            kind: envelope_status.clone(),
+            message: format!(
+                "upstream reported status={envelope_status} with no logical error payload"
+            ),
             retryable: false,
             recommendation: String::new(),
             retry_after: None,
@@ -220,14 +224,18 @@ fn logical_error(
 /// exception envelopes become [`ConnectorError::Http`].
 fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, ConnectorError> {
     if let Ok(parsed) = serde_json::from_slice::<ConnectorResponse>(bytes) {
-        if parsed.status == "error" {
-            return logical_error(status, parsed);
-        }
+        return match parsed.status.as_str() {
+            "error" | "timeout" | "rate_limited" => logical_error(status, parsed),
+            _ => Err(ConnectorError::UnexpectedEnvelopeStatus),
+        };
     }
-    let message = serde_json::from_slice::<NestExceptionEnvelope>(bytes).map_or_else(
-        |_| String::from_utf8_lossy(bytes).trim().to_owned(),
-        |env| env.message,
-    );
+    let message = match serde_json::from_slice::<NestExceptionEnvelope>(bytes) {
+        Ok(envelope) if envelope.status_code == status => envelope.message,
+        _ => format!(
+            "upstream returned a non-contract error body ({} bytes)",
+            bytes.len()
+        ),
+    };
     Err(ConnectorError::Http {
         status,
         message,
@@ -235,12 +243,16 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
     })
 }
 
-/// `NestJS` `HttpException` body shape `{message, error, statusCode}`. Only
-/// `message` is surfaced; `error` / `statusCode` are ignored (the HTTP status
-/// line already carries the code, and serde tolerates the extra fields).
+/// Exact `NestJS` `HttpException` body shape `{message, error, statusCode}`.
+/// Partial, extended, or status-mismatched bodies are non-contract and never
+/// contribute operator-visible text.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct NestExceptionEnvelope {
     message: String,
+    #[serde(rename = "error")]
+    _error: String,
+    status_code: u16,
 }
 
 #[cfg(test)]
