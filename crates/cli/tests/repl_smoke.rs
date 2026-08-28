@@ -9,15 +9,30 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use tempfile::TempDir;
 
 /// A task carrying the code signal the offline demo connector replies to.
 const TASK: &str = "implement a greeting in rust: echo the world back";
 
+/// An `arcana` command whose audit log is redirected into a per-test temporary
+/// state home.
+///
+/// Cargo runs these tests in parallel, so they MUST NOT share an audit
+/// directory: an earlier revision let every test write to one fixed path under
+/// the system temp dir and they raced (`audit file open failed: No such file or
+/// directory`) on macOS. Isolating per test also keeps the suite off the
+/// developer's real `~/.local/state`.
+fn arcana(state: &TempDir) -> Command {
+    let mut command = Command::cargo_bin("arcana").unwrap();
+    command.env("XDG_STATE_HOME", state.path());
+    command
+}
+
 /// The REPL must no longer print the placeholder it shipped as through 0.1.0.
 #[test]
 fn bare_invocation_is_no_longer_a_stub() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .write_stdin("exit\n")
         .assert()
         .success()
@@ -28,8 +43,8 @@ fn bare_invocation_is_no_longer_a_stub() {
 /// The banner names the session and how to leave it.
 #[test]
 fn bare_invocation_opens_a_session() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .write_stdin("exit\n")
         .assert()
         .success()
@@ -41,11 +56,8 @@ fn bare_invocation_opens_a_session() {
 /// hang and not an error.
 #[test]
 fn end_of_input_exits_cleanly_without_an_exit_word() {
-    Command::cargo_bin("arcana")
-        .unwrap()
-        .write_stdin("")
-        .assert()
-        .success();
+    let state = TempDir::new().unwrap();
+    arcana(&state).write_stdin("").assert().success();
 }
 
 /// Each exit word ends the session on its own.
@@ -65,8 +77,8 @@ fn every_exit_word_ends_the_session() {
 /// stands in for the operator approving the tool call at the interactive tail.
 #[test]
 fn a_task_line_runs_the_agent_loop_and_prints_the_result() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .env("ARCANA_PERMISSION_AUTO", "allow")
         .write_stdin(format!("{TASK}\nexit\n"))
         .assert()
@@ -80,8 +92,8 @@ fn a_task_line_runs_the_agent_loop_and_prints_the_result() {
 /// that test could pass on a cascade that allows everything.
 #[test]
 fn without_an_approval_directive_the_tool_call_is_denied() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .env_remove("ARCANA_PERMISSION_AUTO")
         .write_stdin(format!("{TASK}\nexit\n"))
         .assert()
@@ -94,8 +106,8 @@ fn without_an_approval_directive_the_tool_call_is_denied() {
 /// rather than the allow case being a coincidence of some other default.
 #[test]
 fn an_explicit_deny_directive_is_honoured() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .env("ARCANA_PERMISSION_AUTO", "deny")
         .write_stdin(format!("{TASK}\nexit\n"))
         .assert()
@@ -107,8 +119,8 @@ fn an_explicit_deny_directive_is_honoured() {
 /// still runs.
 #[test]
 fn blank_lines_are_skipped_without_ending_the_session() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .env("ARCANA_PERMISSION_AUTO", "allow")
         .write_stdin(format!("\n   \n{TASK}\nexit\n"))
         .assert()
@@ -120,8 +132,8 @@ fn blank_lines_are_skipped_without_ending_the_session() {
 /// session from a loop around `arcana demo`.
 #[test]
 fn successive_tasks_run_against_one_session() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .env("ARCANA_PERMISSION_AUTO", "allow")
         .write_stdin(format!("{TASK}\n{TASK}\nexit\n"))
         .assert()
@@ -132,8 +144,8 @@ fn successive_tasks_run_against_one_session() {
 /// Input after an exit word is not executed — `exit` means exit.
 #[test]
 fn input_after_an_exit_word_is_not_executed() {
-    Command::cargo_bin("arcana")
-        .unwrap()
+    let state = TempDir::new().unwrap();
+    arcana(&state)
         .env("ARCANA_PERMISSION_AUTO", "allow")
         .write_stdin(format!("exit\n{TASK}\n"))
         .assert()

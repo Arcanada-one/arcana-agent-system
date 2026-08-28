@@ -24,14 +24,29 @@
 //! and it is what the tests drive.
 
 use std::io::{BufRead, IsTerminal, Write};
+use std::path::PathBuf;
 
 use arcana_core::agent_loop::{DriverConfig, TerminalReason};
 
 use crate::demo::{PermissionMode, Session};
 
-/// Audit sink for interactive sessions, kept distinct from `arcana demo`'s so
-/// an interactive transcript is never interleaved with a demo run's.
-const REPL_AUDIT_DIR: &str = "arcana-repl";
+/// Fallback audit directory when the XDG state home cannot be resolved.
+const FALLBACK_STATE_DIR: &str = ".arcana-state";
+
+/// Resolve the directory the interactive session writes its audit log to.
+///
+/// This is the per-user XDG state home (`~/.local/state/arcana`, honouring
+/// `XDG_STATE_HOME`) — the same place `bootstrap::assemble` puts `whoami`'s
+/// log, and deliberately NOT a fixed path under the shared system temp dir. A
+/// predictable `/tmp` path is both a multi-user hazard on a shared host and a
+/// race between concurrent sessions: an earlier revision of this module used
+/// one, and ten parallel integration tests promptly raced on it.
+fn audit_dir() -> PathBuf {
+    xdg::BaseDirectories::with_prefix("arcana").map_or_else(
+        |_| PathBuf::from(FALLBACK_STATE_DIR),
+        |base| base.get_state_home(),
+    )
+}
 
 /// Connector id recorded on interactive turns.
 const REPL_CONNECTOR_ID: &str = "arcana-repl";
@@ -95,7 +110,7 @@ pub fn run_repl(live: bool) -> i32 {
         }
     };
 
-    let Some(session) = Session::build(live, false, REPL_AUDIT_DIR, PermissionMode::Interactive)
+    let Some(session) = Session::build(live, false, audit_dir(), PermissionMode::Interactive)
     else {
         return 1;
     };

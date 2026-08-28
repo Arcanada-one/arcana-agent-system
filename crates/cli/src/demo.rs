@@ -123,7 +123,7 @@ async fn run_demo_async(
     let Some(session) = Session::build(
         live,
         measurement_requested,
-        DEMO_AUDIT_DIR,
+        demo_audit_dir(),
         PermissionMode::DenyAll,
     ) else {
         return 1;
@@ -195,8 +195,14 @@ async fn run_demo_async(
 /// directory — mirrors `bootstrap`'s XDG-plus-project cascade.
 const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
 
-/// Audit sink used by `arcana demo`.
+/// Audit sink used by `arcana demo`, under the system temp dir.
 pub const DEMO_AUDIT_DIR: &str = "arcana-demo";
+
+/// Resolve `arcana demo`'s audit directory.
+#[must_use]
+pub fn demo_audit_dir() -> PathBuf {
+    std::env::temp_dir().join(DEMO_AUDIT_DIR)
+}
 
 /// Which permission cascade a [`Session`] runs its tool calls through.
 ///
@@ -264,8 +270,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Assemble the capability core against an audit sink named `audit_dir_name`
-    /// under the system temp dir.
+    /// Assemble the capability core against an audit sink at `audit_dir`.
     ///
     /// Returns `None` when a component fails to initialise; the specific cause
     /// has already been reported on stderr, matching the surrounding
@@ -274,10 +279,9 @@ impl Session {
     pub fn build(
         live: bool,
         measurement_requested: bool,
-        audit_dir_name: &str,
+        audit_dir: PathBuf,
         permissions: PermissionMode,
     ) -> Option<Self> {
-        let audit_dir: PathBuf = std::env::temp_dir().join(audit_dir_name);
         let connector = select_connector(live, measurement_requested)?;
 
         let mut dispatcher = ToolDispatcher::new();

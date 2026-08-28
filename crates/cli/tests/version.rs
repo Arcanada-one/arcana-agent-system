@@ -28,8 +28,13 @@ fn version_flag_prints_clap_version_line() {
 // a regression — and the session's behaviour is covered in `repl_smoke.rs`.
 #[test]
 fn bare_invocation_no_longer_shows_a_stub_banner() {
+    // Redirect the session's audit log into a temporary state home so this test
+    // neither touches the developer's real ~/.local/state nor races any other
+    // test for the same audit file.
+    let state = tempfile::TempDir::new().unwrap();
     let mut cmd = Command::cargo_bin("arcana").unwrap();
-    cmd.write_stdin("exit\n")
+    cmd.env("XDG_STATE_HOME", state.path())
+        .write_stdin("exit\n")
         .assert()
         .success()
         .stdout(predicate::str::contains("REPL stub").not());
