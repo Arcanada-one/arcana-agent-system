@@ -30,6 +30,7 @@ use arcana_core::agent_loop::{DriverConfig, TerminalReason};
 use arcana_core::dispatch::ModelPolicy;
 
 use crate::demo::{PermissionMode, Session};
+use crate::usage::TurnSpend;
 
 /// Fallback audit directory when the XDG state home cannot be resolved.
 const FALLBACK_STATE_DIR: &str = ".arcana-state";
@@ -133,6 +134,8 @@ pub fn run_repl(live: bool) -> i32 {
 fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
     use rustyline::error::ReadlineError;
 
+    let mut spend = crate::usage::zero_snapshot();
+
     let mut editor = match rustyline::DefaultEditor::new() {
         Ok(editor) => editor,
         Err(err) => {
@@ -154,7 +157,7 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
                         // Ignore a history-write failure: losing a history entry
                         // must never abort the operator's session.
                         let _ = editor.add_history_entry(task);
-                        drive(runtime, session, task);
+                        drive(runtime, session, task, &mut spend);
                     }
                 }
             }
@@ -174,6 +177,7 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
 
 /// Non-terminal path: plain line reads from stdin, no prompt, no history.
 fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
+    let mut spend = crate::usage::zero_snapshot();
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let line = match line {
@@ -186,14 +190,22 @@ fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
         match classify(&line) {
             Action::Skip => {}
             Action::Exit => break,
-            Action::Task(task) => drive(runtime, session, task),
+            Action::Task(task) => drive(runtime, session, task, &mut spend),
         }
     }
     0
 }
 
 /// Run one task through the shared session and print the outcome.
-fn drive(runtime: &tokio::runtime::Runtime, session: &Session, task: &str) {
+///
+/// `previous` carries the session's cumulative cost as of the last turn, so the
+/// spend line can report THIS turn rather than everything so far.
+fn drive(
+    runtime: &tokio::runtime::Runtime,
+    session: &Session,
+    task: &str,
+    previous: &mut arcana_core::cost::CostSnapshot,
+) {
     // ARAS-0065 — honour the operator's chosen model. Without this the
     // preference would be a file nothing reads: `arcana models use` would
     // report success and change nothing about what the agent actually calls.
@@ -228,6 +240,16 @@ fn drive(runtime: &tokio::runtime::Runtime, session: &Session, task: &str) {
         // anything ran at all.
         None => println!("(no final text — {:?})", out.reason),
     }
+    // ARAS-0066 — what this turn cost, and the session so far. Shown even on a
+    // failed turn: a turn that burned tokens and then failed still spent money,
+    // and hiding that would understate the bill.
+    let turn = TurnSpend::between(previous, &out.cost);
+    println!(
+        "{}",
+        crate::usage::turn_line(&turn, out.cost.total_cost_usd_micros)
+    );
+    *previous = out.cost;
+
     if out.reason != TerminalReason::Completed {
         eprintln!("arcana: turn ended on {:?}", out.reason);
     }

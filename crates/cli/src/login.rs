@@ -312,8 +312,16 @@ async fn poll_for_token(
                 interval += DEFAULT_INTERVAL;
                 continue;
             }
-            Some("expired_token") => {
-                eprintln!("arcana login: the code expired before it was approved. Run `arcana login` again.");
+            // RFC 8628 §3.5 specifies `expired_token`, but the provider in
+            // front of us answers an expired device code with `invalid_grant`
+            // — observed on a live run, where the operator saw the useless
+            // "sign-in failed (invalid_grant): grant request is invalid"
+            // instead of being told to ask for a new code. Both are handled,
+            // because the spec says one thing and the deployment does another.
+            Some("expired_token" | "invalid_grant") => {
+                eprintln!(
+                    "arcana login: the code expired or was already used. Run `arcana login` again for a fresh one."
+                );
                 return 1;
             }
             Some("access_denied") => {

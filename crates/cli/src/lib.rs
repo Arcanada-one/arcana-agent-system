@@ -11,3 +11,4 @@ pub mod login;
 pub mod models;
 pub mod permission_prompt;
 pub mod repl;
+pub mod usage;
