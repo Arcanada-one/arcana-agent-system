@@ -12,9 +12,9 @@ Scrutator KB.
 ## Status
 
 This is the initial public release (`0.1.0`). The capability core and its
-supporting subsystems ship in this release, as does the interactive session
-(`arcana` with no subcommand). The OIDC login flow is still a stub (see
-[Known limitations](#known-limitations) and the [CHANGELOG](CHANGELOG.md)).
+supporting subsystems ship in this release, as do the interactive session
+(`arcana` with no subcommand) and `arcana login` (see the
+[CHANGELOG](CHANGELOG.md) and [Known limitations](#known-limitations)).
 
 ### Stability (0.x)
 
@@ -49,6 +49,9 @@ arcana                    # interactive session — type a task, get a result;
                           #   `exit`/`quit`/`:q` or Ctrl-D to leave (--live
                           #   routes through the real Model Connector when
                           #   ARCANA_MC_TOKEN is set)
+arcana login              # sign in via the OIDC device grant: shows a short
+                          #   code to enter in a browser, then stores the
+                          #   credentials under the XDG state home (mode 0600)
 arcana version            # print version, embedded git SHA, and license
 arcana whoami             # permission-cascade + audit smoke check
 arcana demo [TASK]        # offline-deterministic driver + dispatch + tool +
@@ -65,13 +68,10 @@ Run `arcana --help` for the full command reference.
 
 ## Known limitations
 
-- `arcana login` is not implemented. It is specified as an Auth Arcana OIDC
-  device-code flow, but the identity provider does not currently offer one:
-  its discovery document advertises `authorization_code`, `refresh_token` and
-  `client_credentials`, and no `device_authorization_endpoint`. Implementing
-  login therefore needs a change on the provider side (enabling the device
-  grant, or registering a client for the loopback authorization-code + PKCE
-  flow that IS supported) before there is anything for the CLI to talk to.
+- `arcana login` is implemented (OIDC device grant, RFC 8628), but it only
+  works against an identity provider that offers that grant. Until the
+  provider side is rolled out, the command fails closed with a message saying
+  exactly that and exits `2` — it does not hang, and it writes no credential.
 - Tool calls in an interactive session are gated by the permission cascade,
   which is **fail-closed**. On a terminal you are prompted per call; without
   one, `ARCANA_PERMISSION_AUTO` decides and defaults to deny — so a piped or

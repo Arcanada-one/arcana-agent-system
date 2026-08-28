@@ -25,7 +25,9 @@ struct Cli {
 enum Cmd {
     /// Print version, git SHA, and license metadata.
     Version,
-    /// Authenticate against the Auth Arcana identity provider (stub).
+    /// Sign in to Auth Arcana using the OIDC device-authorization grant
+    /// (RFC 8628). Prints a short code to enter in a browser, then stores the
+    /// resulting credentials under the XDG state home with mode 0600.
     Login,
     /// Send a one-shot `ping` through the Model Connector and print the
     /// response. Reads the API key from `ARCANA_MC_TOKEN`. Hidden debug surface;
@@ -92,12 +94,7 @@ fn main() {
             println!("arcana {VERSION} ({GIT_SHA}) — {LICENSE}");
         }
         Some(Cmd::Login) => {
-            println!(
-                "arcana login: Auth Arcana OIDC device-code flow is not yet implemented in this build."
-            );
-            println!(
-                "Track the upstream OIDC RP rollout at https://github.com/Arcanada-one/arcana-agent-system"
-            );
+            std::process::exit(arcana_cli::login::run_login());
         }
         Some(Cmd::McPing) => {
             std::process::exit(run_mc_ping());

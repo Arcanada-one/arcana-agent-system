@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `arcana login` — sign-in through the OIDC device-authorization grant
+  (RFC 8628). Prints a short user code and a verification URL, polls the token
+  endpoint through `authorization_pending`, honours a `slow_down` back-off, and
+  on approval writes the credentials to the XDG state home with mode `0600`.
+  The access token is never echoed to the terminal. A provider that does not
+  offer the grant, an unreachable provider, a declined request, and a success
+  envelope carrying no token are each reported as distinct fail-closed errors
+  rather than a panic or a partially written credential.
+
 - Interactive session: `arcana` with no subcommand now opens a REPL instead of
   printing a placeholder. It builds one capability core — the same driver,
   multi-model dispatch, tool dispatcher and audit log `arcana demo` assembles —
