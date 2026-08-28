@@ -27,6 +27,7 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
 use arcana_core::agent_loop::{DriverConfig, TerminalReason};
+use arcana_core::dispatch::ModelPolicy;
 
 use crate::demo::{PermissionMode, Session};
 
@@ -193,7 +194,32 @@ fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
 
 /// Run one task through the shared session and print the outcome.
 fn drive(runtime: &tokio::runtime::Runtime, session: &Session, task: &str) {
-    let out = runtime.block_on(session.run_task(task, DriverConfig::new(REPL_CONNECTOR_ID)));
+    // ARAS-0065 — honour the operator's chosen model. Without this the
+    // preference would be a file nothing reads: `arcana models use` would
+    // report success and change nothing about what the agent actually calls.
+    //
+    // An EXPLICIT choice pins the policy to that single model. Setting
+    // `config.model` alone is not enough: it only supplies the policy's
+    // `Default` fallback, so task-typed turns keep routing to the tiered
+    // models and the operator's choice is silently ignored on exactly the
+    // turns that cost money.
+    //
+    // With no explicit choice, the tiered policy is left alone — defaulting
+    // into single-model would disable cost-tiered dispatch for everyone who
+    // never ran `models use`.
+    let mut config = DriverConfig::new(REPL_CONNECTOR_ID);
+    if let Some(chosen) = crate::models::explicit_model() {
+        config.policy = ModelPolicy::single_model(&chosen);
+        config.model = Some(chosen);
+    }
+    let out = runtime.block_on(session.run_task(task, config));
+
+    // ARAS-0065 — say which model answered. Without this the operator's choice
+    // is unobservable: `models use` could silently fail to reach the loop and
+    // nothing on screen would differ.
+    if !out.selected_models.is_empty() {
+        println!("[{}]", out.selected_models.join(" -> "));
+    }
 
     match out.final_text.as_deref() {
         Some(text) => println!("{text}"),

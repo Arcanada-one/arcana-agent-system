@@ -52,6 +52,10 @@ arcana                    # interactive session — type a task, get a result;
 arcana login              # sign in via the OIDC device grant: shows a short
                           #   code to enter in a browser, then stores the
                           #   credentials under the XDG state home (mode 0600)
+arcana models             # curated model list from the LIVE Model Connector
+                          #   catalogue, with price per 1M tokens
+arcana models use <ID>    # choose the model this agent uses; any id is
+                          #   accepted, including one the list does not show
 arcana version            # print version, embedded git SHA, and license
 arcana whoami             # permission-cascade + audit smoke check
 arcana demo [TASK]        # offline-deterministic driver + dispatch + tool +
@@ -81,6 +85,12 @@ Run `arcana --help` for the full command reference.
   cascade treats as deny-all, so the demo terminates on `PermissionDenied`
   before completing a tool call. The interactive session does not share this
   limitation.
+- `arcana models` needs `ARCANA_MC_TOKEN`. The list is read from the live
+  catalogue and is never hard-coded, so without a token there is nothing to
+  show and the command says so rather than printing a stale table.
+- The model list is capped at 10 per provider, cheapest first. The cap is
+  presentational only — `arcana models use` accepts any id, including one the
+  list does not show.
 - `mc-ping` is a hidden debug surface, not a supported command.
 
 ## Documentation

@@ -60,6 +60,14 @@ enum Cmd {
         #[arg(long, requires = "first_dispatch_measurement_json")]
         first_dispatch_model: Option<String>,
     },
+    /// List the models available through the Model Connector, or choose one.
+    ///
+    /// The list is read from the LIVE catalogue, never a hard-coded table, and
+    /// shows the price per 1M tokens beside each model.
+    Models {
+        #[command(subcommand)]
+        command: Option<ModelsCmd>,
+    },
     /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
     KbRead {
         /// Literal search query. Multiple shell words are canonicalized into one query.
@@ -70,6 +78,16 @@ enum Cmd {
     Mcp {
         #[command(subcommand)]
         command: McpCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelsCmd {
+    /// Persist the model this agent should use by default.
+    Use {
+        /// Model id, e.g. `deepseek-v4-flash`. Any id is accepted, including
+        /// one the curated list does not show.
+        model: String,
     },
 }
 
@@ -117,6 +135,12 @@ fn main() {
                 first_dispatch_model.as_deref(),
             ));
         }
+        Some(Cmd::Models { command }) => match command {
+            None => std::process::exit(arcana_cli::models::run_list()),
+            Some(ModelsCmd::Use { model }) => {
+                std::process::exit(arcana_cli::models::run_use(&model));
+            }
+        },
         Some(Cmd::KbRead { query }) => {
             std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));
         }
