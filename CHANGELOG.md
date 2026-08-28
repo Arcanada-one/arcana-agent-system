@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Interactive session: `arcana` with no subcommand now opens a REPL instead of
+  printing a placeholder. It builds one capability core — the same driver,
+  multi-model dispatch, tool dispatcher and audit log `arcana demo` assembles —
+  and runs each entered task against it, so a session shares one append-only
+  audit log and accumulates cost across turns. `exit`, `quit`, `:q` and Ctrl-D
+  end it. On a terminal the prompt is `rustyline`; when stdin is not a terminal
+  the same loop reads plain lines, so piped input is predictable rather than
+  hanging.
+- `--live` on the bare invocation, routing the session through the real Model
+  Connector when `ARCANA_MC_TOKEN` is set (mirroring `demo --live`).
+
+### Changed
+
+- Interactive tool calls are gated by the canonical `Schema → Rule →
+  Interactive` permission cascade rather than the empty cascade `arcana demo`
+  uses. The cascade is fail-closed, so a call is denied unless a layer allows
+  it: the operator is prompted on a terminal, and `ARCANA_PERMISSION_AUTO`
+  decides off one (default deny).
+
 ## [0.1.0] - 2026-07-24
 
 Initial public release.

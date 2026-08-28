@@ -28,11 +28,12 @@
 //! [`ModelConnectorClient`](arcana_connectors::ModelConnectorClient) when
 //! `ARCANA_MC_TOKEN` is present, and falls back to the offline path otherwise.
 
-use std::path::PathBuf;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use arcana_core::agent_loop::{Driver, DriverConfig, TerminalReason};
+use arcana_core::agent_loop::{Driver, DriverConfig, RunOutput, TerminalReason};
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
     PromptVariantV0, Usage,
@@ -42,12 +43,16 @@ use arcana_core::dispatch::ModelPolicy;
 use arcana_core::execution::CapabilityExecutor;
 use arcana_core::hooks::audit::AuditLog;
 use arcana_core::hooks::HookChain;
-use arcana_core::permission::PermissionCascade;
+use arcana_core::permission::{
+    AutoFromEnv, PermissionCascade, PermissionLayer, RuleLayer, SchemaLayer,
+};
 use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolInvocation, ToolOutput};
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
+
+use crate::permission_prompt::ReadlinePrompt;
 
 /// Default small real task when the operator does not pass one. Carries a code
 /// signal ("implement"/"rust") so turn-0 classifies as `Code` (expensive model)
@@ -111,52 +116,22 @@ async fn run_demo_async(
     measurement: Option<FirstDispatchMeasurementV0>,
     route: Option<FirstDispatchRoute>,
 ) -> i32 {
-    // Isolated audit sink under the system temp dir; `AuditHook::new` creates it.
-    let audit_dir: PathBuf = std::env::temp_dir().join("arcana-demo");
-
     let measurement_requested = measurement.is_some();
     let expected_measurement = measurement.clone();
-    let Some(connector) = select_connector(live, measurement_requested) else {
+
+    // Isolated audit sink under the system temp dir; `AuditLog::new` creates it.
+    let Some(session) = Session::build(
+        live,
+        measurement_requested,
+        DEMO_AUDIT_DIR,
+        PermissionMode::DenyAll,
+    ) else {
         return 1;
     };
 
-    let mut dispatcher = ToolDispatcher::new();
-    if let Err(err) = dispatcher.register(Arc::new(DemoEchoTool)) {
-        eprintln!("arcana demo: tool registration failed: {err}");
-        return 1;
-    }
-
-    // Empty (always-allow) cascade + an executor-OWNED AuditLog: in the C4
-    // CapabilityExecutor the audit is a field of the fused
-    // authorize→audit→execute transaction (single audit by construction), not a
-    // composable ToolHook.
-    let cascade = PermissionCascade::new(vec![]);
-    let audit = match AuditLog::new(&audit_dir) {
-        Ok(log) => log,
-        Err(err) => {
-            eprintln!("arcana demo: audit log setup failed: {err}");
-            return 1;
-        }
-    };
-    let cost = Arc::new(CostTracker::new());
-
-    // Fuse the capability core: the executor takes ownership of the dispatcher,
-    // the cascade, an empty post-cascade HookChain, and the AuditLog. The driver
-    // dispatches every tool THROUGH this executor.
-    let executor = CapabilityExecutor::new(dispatcher, cascade, HookChain::new(), audit);
-
-    // Default ModelPolicy maps Code→"arcana-code-strong" and
-    // Summarize→"arcana-cheap-fast" (distinct ids) — reused verbatim.
-    let out = {
-        let driver = Driver::new(
-            connector.as_ref(),
-            &executor,
-            cost,
-            CancellationToken::new(),
-            driver_config(measurement, route.as_ref()),
-        );
-        driver.run(task).await
-    };
+    let out = session
+        .run_task(task, driver_config(measurement, route.as_ref()))
+        .await;
 
     if measurement_requested {
         let Some(observation) = out.first_dispatch_observation.as_ref() else {
@@ -208,12 +183,160 @@ async fn run_demo_async(
         "final: {}",
         out.final_text.as_deref().unwrap_or("<no final text>")
     );
-    println!("audit log: {}", audit_dir.join("audit.log").display());
+    println!("audit log: {}", session.audit_log_path().display());
 
     // `AuditLog` appends synchronously and flushes per record; the executor owns
     // it and drops at function scope end, so no explicit flush is required.
 
     i32::from(out.reason != TerminalReason::Completed)
+}
+
+/// Project-local rule file, resolved relative to the current working
+/// directory — mirrors `bootstrap`'s XDG-plus-project cascade.
+const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
+
+/// Audit sink used by `arcana demo`.
+pub const DEMO_AUDIT_DIR: &str = "arcana-demo";
+
+/// Which permission cascade a [`Session`] runs its tool calls through.
+///
+/// The cascade is **fail-closed**: it denies unless a layer explicitly allows,
+/// so an empty layer list is a deny-all, NOT an allow-all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionMode {
+    /// No layers — every tool call is denied by the cascade's fail-closed
+    /// fall-through. This is what `arcana demo` has always used.
+    DenyAll,
+    /// The canonical `Schema → Rule → Interactive` chain: the operator is
+    /// asked to approve tool calls on a TTY, and `ARCANA_PERMISSION_AUTO`
+    /// decides off one (defaulting to deny).
+    Interactive,
+}
+
+/// Build the canonical `Schema → Rule → Interactive` cascade for an
+/// interactive session, over a dispatcher carrying this module's tools.
+///
+/// The `SchemaLayer` needs its own `Arc<ToolDispatcher>` because the executor
+/// takes ownership of the one it dispatches through — the same split
+/// `bootstrap::assemble_at` makes. A rule file that fails to parse degrades to
+/// no rule layer rather than refusing to open a session; the interactive tail
+/// still gates every call, so the cascade stays fail-closed.
+fn interactive_cascade() -> PermissionCascade {
+    let mut schema_dispatcher = ToolDispatcher::new();
+    let _ = schema_dispatcher.register(Arc::new(DemoEchoTool));
+
+    let mut layers: Vec<Arc<dyn PermissionLayer>> =
+        vec![Arc::new(SchemaLayer::new(Arc::new(schema_dispatcher)))];
+
+    match RuleLayer::load(
+        RuleLayer::xdg_user_path().ok().as_deref(),
+        Some(Path::new(PROJECT_RULES_RELATIVE)),
+    ) {
+        Ok(rules) => layers.push(Arc::new(rules)),
+        Err(err) => eprintln!("arcana: ignoring unreadable permission rules: {err}"),
+    }
+
+    let interactive: Arc<dyn PermissionLayer> = if std::io::stdin().is_terminal() {
+        match ReadlinePrompt::with_terminal() {
+            Ok(prompt) => Arc::new(prompt),
+            Err(_) => Arc::new(AutoFromEnv::from_env()),
+        }
+    } else {
+        Arc::new(AutoFromEnv::from_env())
+    };
+    layers.push(interactive);
+
+    PermissionCascade::new(layers)
+}
+
+/// The composed capability core: connector, fused executor, and cost tracker.
+///
+/// Extracted from [`run_demo_async`] so the interactive REPL drives the SAME
+/// assembly instead of standing up a second one. The REPL builds this once and
+/// then runs many tasks against it — which is the whole reason the composition
+/// is separated from the per-task [`Driver`], since `Driver` borrows its
+/// collaborators and is therefore cheap to construct per turn.
+pub struct Session {
+    connector: Box<dyn ModelConnector>,
+    executor: CapabilityExecutor,
+    cost: Arc<CostTracker>,
+    audit_dir: PathBuf,
+}
+
+impl Session {
+    /// Assemble the capability core against an audit sink named `audit_dir_name`
+    /// under the system temp dir.
+    ///
+    /// Returns `None` when a component fails to initialise; the specific cause
+    /// has already been reported on stderr, matching the surrounding
+    /// exit-code-not-panic convention of this binary.
+    #[must_use]
+    pub fn build(
+        live: bool,
+        measurement_requested: bool,
+        audit_dir_name: &str,
+        permissions: PermissionMode,
+    ) -> Option<Self> {
+        let audit_dir: PathBuf = std::env::temp_dir().join(audit_dir_name);
+        let connector = select_connector(live, measurement_requested)?;
+
+        let mut dispatcher = ToolDispatcher::new();
+        if let Err(err) = dispatcher.register(Arc::new(DemoEchoTool)) {
+            eprintln!("arcana: tool registration failed: {err}");
+            return None;
+        }
+
+        // An executor-OWNED AuditLog: in the C4 CapabilityExecutor the audit is
+        // a field of the fused authorize→audit→execute transaction (single
+        // audit by construction), not a composable ToolHook.
+        let cascade = match permissions {
+            PermissionMode::DenyAll => PermissionCascade::new(vec![]),
+            PermissionMode::Interactive => interactive_cascade(),
+        };
+        let audit = match AuditLog::new(&audit_dir) {
+            Ok(log) => log,
+            Err(err) => {
+                eprintln!("arcana: audit log setup failed: {err}");
+                return None;
+            }
+        };
+
+        // Fuse the capability core: the executor takes ownership of the
+        // dispatcher, the cascade, an empty post-cascade HookChain, and the
+        // AuditLog. The driver dispatches every tool THROUGH this executor.
+        let executor = CapabilityExecutor::new(dispatcher, cascade, HookChain::new(), audit);
+
+        Some(Self {
+            connector,
+            executor,
+            cost: Arc::new(CostTracker::new()),
+            audit_dir,
+        })
+    }
+
+    /// Drive one task through the shared core.
+    ///
+    /// A fresh [`Driver`] per task is deliberate: it borrows the connector and
+    /// executor, so successive turns reuse the one assembled core (and its one
+    /// append-only audit log) while each run gets its own config. The
+    /// [`CostTracker`] handle is cloned, so spend accumulates ACROSS turns
+    /// rather than resetting per turn.
+    pub async fn run_task(&self, task: &str, config: DriverConfig) -> RunOutput {
+        let driver = Driver::new(
+            self.connector.as_ref(),
+            &self.executor,
+            Arc::clone(&self.cost),
+            CancellationToken::new(),
+            config,
+        );
+        driver.run(task).await
+    }
+
+    /// Path of the append-only audit log this session writes to.
+    #[must_use]
+    pub fn audit_log_path(&self) -> PathBuf {
+        self.audit_dir.join("audit.log")
+    }
 }
 
 /// Select the offline demo or real production connector. Measurement mode is

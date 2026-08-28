@@ -21,12 +21,18 @@ fn version_flag_prints_clap_version_line() {
         .stdout(predicate::str::starts_with("arcana 0.1.0"));
 }
 
+// The former `bare_invocation_shows_repl_stub_banner` asserted the placeholder
+// banner, i.e. it encoded the stub as intent and would have gone green forever
+// while the REPL stayed unimplemented. ARAS-0059 replaced the stub with a real
+// interactive session, so the assertion is inverted here — a stub banner is now
+// a regression — and the session's behaviour is covered in `repl_smoke.rs`.
 #[test]
-fn bare_invocation_shows_repl_stub_banner() {
+fn bare_invocation_no_longer_shows_a_stub_banner() {
     let mut cmd = Command::cargo_bin("arcana").unwrap();
-    cmd.assert()
+    cmd.write_stdin("exit\n")
+        .assert()
         .success()
-        .stdout(predicate::str::contains("REPL stub"));
+        .stdout(predicate::str::contains("REPL stub").not());
 }
 
 #[test]

@@ -8,3 +8,4 @@ pub mod bootstrap;
 pub mod demo;
 pub mod kb_read;
 pub mod permission_prompt;
+pub mod repl;
