@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `arcana models` and `arcana models use <id>` — the model list comes from the
+  live Model Connector catalogue (`GET /connectors/catalog`), never a
+  hard-coded table, and shows the price per 1M tokens beside each model.
+  Capped at 10 per provider, cheapest first, with free models leading and
+  unpriced ones last (an unknown price is not a cheap price). The cap is
+  presentational: `use` accepts any id. The choice persists in the XDG state
+  home, defaults to `deepseek-v4-flash`, and an EXPLICIT choice pins the model
+  policy so it is honoured on task-typed turns rather than only supplying the
+  fallback arm. The interactive session now prints which models answered each
+  turn.
+
 - `arcana login` — sign-in through the OIDC device-authorization grant
   (RFC 8628). Prints a short user code and a verification URL, polls the token
   endpoint through `authorization_pending`, honours a `slow_down` back-off, and
