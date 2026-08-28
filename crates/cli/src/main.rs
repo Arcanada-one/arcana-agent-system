@@ -14,6 +14,11 @@ const GIT_SHA: &str = env!("ARCANA_GIT_SHA");
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
+    /// Route the interactive session through the real Model Connector when
+    /// `ARCANA_MC_TOKEN` is set. Applies to the no-subcommand REPL; `demo` has
+    /// its own `--live`.
+    #[arg(long)]
+    live: bool,
 }
 
 #[derive(Subcommand)]
@@ -124,7 +129,7 @@ fn main() {
             std::process::exit(arcana_mcp::run_mcp_serve(bind.as_deref()));
         }
         None => {
-            println!("arcana {VERSION} (REPL stub — interactive mode coming soon)");
+            std::process::exit(arcana_cli::repl::run_repl(cli.live));
         }
     }
 }
