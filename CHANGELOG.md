@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `arcana demo` completes its loop. It ran through an empty permission cascade,
+  which is fail-closed and therefore denied every tool call, so the command
+  advertised as demonstrating the permission cascade only ever demonstrated a
+  refusal. It now runs the same canonical `Schema → Rule → Interactive` cascade
+  as the interactive session; off a terminal it still denies by default, so the
+  demo is not the one path where permissions are waived.
+- `arcana demo` writes its audit log under the per-user XDG state home instead
+  of a fixed path in the shared temp dir. A stale world-readable log left there
+  by an earlier run made every later demo fail outright, because the audit
+  writer correctly refuses an insecure file.
+
 ### Added
 
 - `arcana models` and `arcana models use <id>` — the model list comes from the
