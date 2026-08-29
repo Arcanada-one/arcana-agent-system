@@ -124,7 +124,19 @@ async fn run_demo_async(
         live,
         measurement_requested,
         demo_audit_dir(),
-        PermissionMode::DenyAll,
+        // ARAS-0062. This was DenyAll, which meant the demo never completed a
+        // tool call: `PermissionCascade` is fail-closed, so the empty layer
+        // list denied everything and the run always ended on PermissionDenied.
+        // The command advertises itself as demonstrating "the full driver +
+        // multi-model dispatch + tool dispatch + permission cascade + audit
+        // loop"; what it actually demonstrated was a refusal.
+        //
+        // It now runs the SAME canonical Schema -> Rule -> Interactive cascade
+        // the interactive session uses, so the cascade it shows is the real
+        // one. Off a terminal that still denies by default —
+        // `ARCANA_PERMISSION_AUTO` decides — which is correct: a demo must not
+        // be the one path where permissions are waived.
+        PermissionMode::Interactive,
     ) else {
         return 1;
     };
@@ -195,13 +207,29 @@ async fn run_demo_async(
 /// directory — mirrors `bootstrap`'s XDG-plus-project cascade.
 const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
 
-/// Audit sink used by `arcana demo`, under the system temp dir.
-pub const DEMO_AUDIT_DIR: &str = "arcana-demo";
+/// Audit sink used by `arcana demo`, under the per-user XDG state home.
+pub const DEMO_AUDIT_DIR: &str = "demo";
+
+/// Fallback when the XDG state home cannot be resolved.
+const FALLBACK_STATE_DIR: &str = ".arcana-state";
 
 /// Resolve `arcana demo`'s audit directory.
+///
+/// ARAS-0062: this used to be a FIXED path under the system temp dir. On a
+/// shared host that is another user's to read or pre-create, and it broke the
+/// command outright — a stale `/tmp/arcana-demo/audit.log` left by an earlier
+/// run under a different umask (mode 664) made every later `arcana demo` fail
+/// with "audit file has insecure permissions", because the audit writer
+/// correctly refuses a world-readable log. A per-user state dir has neither
+/// problem, and matches where the interactive session already writes.
 #[must_use]
 pub fn demo_audit_dir() -> PathBuf {
-    std::env::temp_dir().join(DEMO_AUDIT_DIR)
+    xdg::BaseDirectories::with_prefix("arcana")
+        .map_or_else(
+            |_| PathBuf::from(FALLBACK_STATE_DIR),
+            |base| base.get_state_home(),
+        )
+        .join(DEMO_AUDIT_DIR)
 }
 
 /// Which permission cascade a [`Session`] runs its tool calls through.

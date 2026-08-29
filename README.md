@@ -81,10 +81,6 @@ Run `arcana --help` for the full command reference.
   one, `ARCANA_PERMISSION_AUTO` decides and defaults to deny — so a piped or
   CI invocation runs the loop but declines the tool call unless that variable
   is set explicitly.
-- `arcana demo` runs its loop through an empty permission cascade, which the
-  cascade treats as deny-all, so the demo terminates on `PermissionDenied`
-  before completing a tool call. The interactive session does not share this
-  limitation.
 - `arcana models` needs `ARCANA_MC_TOKEN`. The list is read from the live
   catalogue and is never hard-coded, so without a token there is nothing to
   show and the command says so rather than printing a stale table.
