@@ -170,6 +170,38 @@ async fn a_declined_request_stores_nothing() {
     assert!(!state.path().join("arcana/credentials.json").exists());
 }
 
+/// An expired code must say so plainly, whichever error the provider uses.
+///
+/// The live provider answers an expired device code with `invalid_grant`, not
+/// the `expired_token` that RFC 8628 specifies. Before this was handled, the operator
+/// saw `sign-in failed (invalid_grant)`, which does
+/// not tell them the one thing they need to do — ask for a new code.
+#[tokio::test]
+async fn an_expired_code_tells_the_operator_to_get_a_new_one() {
+    for provider_error in ["expired_token", "invalid_grant"] {
+        let server = MockServer::start().await;
+        mount_discovery(&server, true).await;
+        mount_device_auth(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": provider_error
+            })))
+            .mount(&server)
+            .await;
+
+        let state = TempDir::new().unwrap();
+        arcana(&server, &state)
+            .timeout(std::time::Duration::from_secs(60))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("expired or was already used"))
+            .stderr(predicate::str::contains("again"));
+
+        assert!(!state.path().join("arcana/credentials.json").exists());
+    }
+}
+
 /// A success envelope carrying no token is a failure, not a success —
 /// the control-plane-green/data-plane-dead trap.
 #[tokio::test]

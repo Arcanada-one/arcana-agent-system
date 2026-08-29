@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Spend reporting: the interactive session prints tokens and cost for each
+  turn plus the session running total, and `arcana usage` reports what the
+  Model Connector has recorded. The per-turn figure is a DELTA — the session
+  cost tracker is cumulative, so echoing it would bill every later turn for
+  everything before it. Figures carry six decimals, because a cheap call costs
+  far less than a cent and two decimals would show `$0.00`. `arcana usage`
+  reads from the connector and refuses without a token rather than falling
+  back to a local tally that would look authoritative while disagreeing with
+  what was actually charged.
+
+### Fixed
+
+- `arcana login` now reports an expired device code plainly. The provider
+  answers an expired code with `invalid_grant`, not the `expired_token` RFC
+  8628 specifies, so the operator previously saw "sign-in failed
+  (invalid_grant): grant request is invalid" instead of being told to request
+  a new code. Found on a live sign-in attempt.
+
 - `arcana models` and `arcana models use <id>` — the model list comes from the
   live Model Connector catalogue (`GET /connectors/catalog`), never a
   hard-coded table, and shows the price per 1M tokens beside each model.

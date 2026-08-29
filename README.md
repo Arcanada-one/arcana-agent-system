@@ -56,6 +56,7 @@ arcana models             # curated model list from the LIVE Model Connector
                           #   catalogue, with price per 1M tokens
 arcana models use <ID>    # choose the model this agent uses; any id is
                           #   accepted, including one the list does not show
+arcana usage              # token spend as the Model Connector recorded it
 arcana version            # print version, embedded git SHA, and license
 arcana whoami             # permission-cascade + audit smoke check
 arcana demo [TASK]        # offline-deterministic driver + dispatch + tool +

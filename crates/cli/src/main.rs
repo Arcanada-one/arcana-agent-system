@@ -68,6 +68,8 @@ enum Cmd {
         #[command(subcommand)]
         command: Option<ModelsCmd>,
     },
+    /// Report recorded token spend, as the Model Connector has it.
+    Usage,
     /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
     KbRead {
         /// Literal search query. Multiple shell words are canonicalized into one query.
@@ -141,6 +143,9 @@ fn main() {
                 std::process::exit(arcana_cli::models::run_use(&model));
             }
         },
+        Some(Cmd::Usage) => {
+            std::process::exit(arcana_cli::usage::run_usage());
+        }
         Some(Cmd::KbRead { query }) => {
             std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));
         }
