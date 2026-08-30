@@ -141,9 +141,45 @@ async fn run_demo_async(
         return 1;
     };
 
-    let out = session
-        .run_task(task, driver_config(measurement, route.as_ref()))
-        .await;
+    // ARAS-0058 phase 7 follow-up. ARAS-0062 (`5914144`) repaired the demo's
+    // permission cascade so the loop can COMPLETE a tool call; this repairs the
+    // ROUTE so a live run reaches the loop at all. The default demo config
+    // carries the placeholder connector id "arcana-demo" and the abstract
+    // `ModelPolicy` ids ("arcana-code-strong", …); the Model Connector has
+    // neither, so `--live` answered 404 ("Connector \"arcana-demo\" not
+    // found") before any model was called. The measurement path
+    // (`--first-dispatch-*`) already pins a real connector+model; the ordinary
+    // live path did not. Pin it to a real, tool-capable connector+model — the
+    // same shape `kb-read` uses (orq / deepseek-v4-flash) — overridable per run
+    // for whatever the target deployment actually serves. Offline and
+    // measurement runs are untouched.
+    let config = {
+        let mut c = driver_config(measurement, route.as_ref());
+        if live && route.is_none() {
+            let connector = std::env::var("ARCANA_DEMO_CONNECTOR")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| DEMO_LIVE_CONNECTOR.to_owned());
+            let model = std::env::var("ARCANA_DEMO_MODEL")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| DEMO_LIVE_MODEL.to_owned());
+            c.connector_id = connector;
+            c.policy = ModelPolicy::single_model(&model);
+            c.model = Some(model);
+            // A live model is never told about the demo's `echo` tool otherwise:
+            // the tool schema does not cross the `/execute` boundary, so tool
+            // use is induced by the SAME driver-owned wire format `kb-read`
+            // teaches. Without this a capable model just answers the task in
+            // prose and the loop terminates `Completed` with ZERO tool calls —
+            // a green verdict that never exercised the tool loop. This makes the
+            // first turn a real `echo` dispatch, mirroring the offline demo's
+            // canned {"text":"world"} call, then a final answer from its result.
+            c.system_prompt = Some(DEMO_LIVE_SYSTEM_PROMPT.to_owned());
+        }
+        c
+    };
+    let out = session.run_task(task, config).await;
 
     if measurement_requested {
         let Some(observation) = out.first_dispatch_observation.as_ref() else {
@@ -206,6 +242,26 @@ async fn run_demo_async(
 /// Project-local rule file, resolved relative to the current working
 /// directory — mirrors `bootstrap`'s XDG-plus-project cascade.
 const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
+
+/// Real connector + model the ordinary `--live` demo routes to, replacing the
+/// placeholder "arcana-demo"/"arcana-code-strong" the Model Connector cannot
+/// resolve. `orq` / `deepseek-v4-flash` is the same tool-capable pair `kb-read`
+/// uses and is verified to complete a real tool call end-to-end. Override per
+/// run with `ARCANA_DEMO_CONNECTOR` / `ARCANA_DEMO_MODEL` for a deployment that
+/// serves a different (or a priced) model.
+const DEMO_LIVE_CONNECTOR: &str = "orq";
+const DEMO_LIVE_MODEL: &str = "deepseek-v4-flash";
+
+/// System prompt for the live demo, inducing a real tool call. The `echo`
+/// tool's schema never crosses the `/execute` boundary, so — exactly as
+/// `kb-read` does for `arcana_search` — the model is taught the driver-owned
+/// ```tool_call fence and told to use it once. Without this a live model
+/// answers in prose and the loop completes having dispatched no tool at all.
+const DEMO_LIVE_SYSTEM_PROMPT: &str = "You are a demo agent with exactly one tool, `echo`. \
+On your FIRST turn emit exactly one tool request and no prose, using this \
+driver-owned wire format:\n```tool_call\n{\"name\":\"echo\",\"input\":{\"text\":\"world\"}}\n```\n\
+After you receive the tool result, reply with a single short sentence that quotes \
+the echoed content. Never request another tool.";
 
 /// Audit sink used by `arcana demo`, under the per-user XDG state home.
 pub const DEMO_AUDIT_DIR: &str = "demo";
