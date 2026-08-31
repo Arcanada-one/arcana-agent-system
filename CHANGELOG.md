@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Ctrl-C during a turn stops the run, says what it cost, and is recorded.
+  Nothing installed a SIGINT handler, so an interrupt killed the process where
+  it stood: the request already on the wire completed at the Model Connector
+  and was charged anyway, the audit log gained nothing, and the operator was
+  told neither. Measured live before the fix — `demo --live` interrupted at
+  t=2.0s of a 5.1s turn exited 0 with zero bytes appended and no mention of the
+  charge; the charge itself lands in the ledger five to ten seconds after the
+  process is already gone. The first Ctrl-C now cancels the run and waits for
+  the reply that is being billed regardless, which is what turns "you may have
+  been charged" into an exact figure; a second exits immediately, so the wait
+  cannot become a hang. An answer that already arrived is still delivered — it
+  is paid for — but the verdict is `AbortedByOperator`, the abort is written to
+  the audit log with the session spend, and the exit code is `130` rather than
+  a `1` a wrapper script cannot tell from a product failure. Interrupting at
+  the prompt, where no turn is running, still ends the session as it always
+  has.
+
 - Slash commands in the interactive session are handled locally instead of
   being sent to the model and billed. `/help` returned 381 tokens of the model
   inventing a feature list for this product, presented as though it were the
