@@ -131,16 +131,21 @@ pub fn run_usage() -> i32 {
 }
 
 async fn usage_async() -> i32 {
-    let Ok(token) = std::env::var("ARCANA_MC_TOKEN") else {
+    // CONN-0272 follow-up: this route is purpose-scoped. `StatsReadGuard` reads
+    // only `x-stats-token` and its docstring is explicit that it must never
+    // accept ADMIN_TOKEN or an inference ApiKey — so `ARCANA_MC_TOKEN`, which is
+    // an inference key sent as a bearer token, was refused twice over.
+    let Ok(token) = std::env::var("ARCANA_STATS_TOKEN") else {
         eprintln!(
-            "arcana usage: ARCANA_MC_TOKEN is not set. Usage is read from the Model Connector, \
-             which is where spend is measured and charged — there is no local figure to show \
-             instead."
+            "arcana usage: ARCANA_STATS_TOKEN is not set. Usage is read from the Model \
+             Connector, which is where spend is measured and charged — there is no local \
+             figure to show instead. This route is purpose-scoped and accepts only that \
+             token; an inference key (ARCANA_MC_TOKEN) is refused by design."
         );
         return 1;
     };
     if token.trim().is_empty() {
-        eprintln!("arcana usage: ARCANA_MC_TOKEN is empty");
+        eprintln!("arcana usage: ARCANA_STATS_TOKEN is empty");
         return 1;
     }
     let base = std::env::var("ARCANA_MC_BASE_URL")
@@ -160,7 +165,12 @@ async fn usage_async() -> i32 {
     };
 
     let url = format!("{}/stats/requests/daily", base.trim_end_matches('/'));
-    let resp = match client.get(&url).bearer_auth(&token).send().await {
+    let resp = match client
+        .get(&url)
+        .header("x-stats-token", &token)
+        .send()
+        .await
+    {
         Ok(resp) => resp,
         Err(err) => {
             eprintln!("arcana usage: cannot reach the Model Connector at {base}: {err}");
@@ -168,10 +178,18 @@ async fn usage_async() -> i32 {
         }
     };
     if !resp.status().is_success() {
-        eprintln!(
-            "arcana usage: the Model Connector returned HTTP {} for {url}",
-            resp.status().as_u16()
-        );
+        let code = resp.status().as_u16();
+        eprintln!("arcana usage: the Model Connector returned HTTP {code} for {url}");
+        if code == 403 {
+            // The guard denies before reading the request when the server has no
+            // token configured, so a correct client still sees 403. Saying so
+            // saves the next reader from debugging their own credential.
+            eprintln!(
+                "  403 here means either ARCANA_STATS_TOKEN does not match the \
+server's STATS_READ_TOKEN, or the server has none configured at all (the guard \
+denies with reason=no-expected-token before reading the request)."
+            );
+        }
         return 1;
     }
     let days: Vec<DailyUsage> = match resp.json().await {
