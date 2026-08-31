@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `arcana kb-read` reports why the search failed, not that an internal invariant
+  was violated. A missing client secret, an unreadable one, a 401, a 503 and a
+  saturated backend all printed the identical line — `grounding proof requires
+  exactly one successful search (observed 0)` — because the counter simply never
+  incremented and the real failure was discarded. The cause is now captured
+  where the tool call fails and carried into the message, with the invariant
+  kept only as a backstop for when nothing was recorded. Internal error-variant
+  names no longer leak into the sentence.
+
 - `arcana models` lists the models the agent actually routes to. Curation is
   cheapest-first capped per provider, and `orq` carries enough free models to
   fill every slot — so both dispatch tiers were pushed out, and the header read
