@@ -13,6 +13,7 @@ async fn usage_reports_the_connectors_numbers() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/stats/requests/daily"))
+        .and(wiremock::matchers::header_exists("x-stats-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {"date": "2026-08-28", "requests": 3, "total_tokens": 1_500, "cost_usd": 0.001234},
             {"date": "2026-08-27", "requests": 1, "total_tokens": 500,  "cost_usd": 0.000500},
@@ -24,7 +25,7 @@ async fn usage_reports_the_connectors_numbers() {
     Command::cargo_bin("arcana")
         .unwrap()
         .env("ARCANA_MC_BASE_URL", server.uri())
-        .env("ARCANA_MC_TOKEN", "t")
+        .env("ARCANA_STATS_TOKEN", "t")
         .env("XDG_STATE_HOME", state.path())
         .arg("usage")
         .assert()
@@ -45,12 +46,12 @@ async fn usage_without_a_token_refuses_rather_than_guessing_locally() {
     let state = TempDir::new().unwrap();
     Command::cargo_bin("arcana")
         .unwrap()
-        .env_remove("ARCANA_MC_TOKEN")
+        .env_remove("ARCANA_STATS_TOKEN")
         .env("XDG_STATE_HOME", state.path())
         .arg("usage")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("ARCANA_MC_TOKEN"))
+        .stderr(predicate::str::contains("ARCANA_STATS_TOKEN"))
         .stderr(predicate::str::contains("no local figure"));
 }
 
@@ -60,7 +61,7 @@ async fn usage_reports_an_unreachable_connector_rather_than_panicking() {
     Command::cargo_bin("arcana")
         .unwrap()
         .env("ARCANA_MC_BASE_URL", "http://127.0.0.1:1")
-        .env("ARCANA_MC_TOKEN", "t")
+        .env("ARCANA_STATS_TOKEN", "t")
         .env("XDG_STATE_HOME", state.path())
         .arg("usage")
         .assert()
