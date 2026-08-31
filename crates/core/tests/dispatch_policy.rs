@@ -136,3 +136,26 @@ fn dispatch_cost_tier_distinct() {
         "aggregate cost grows over the multi-model run"
     );
 }
+
+/// The catalogue listing derives its "always show these" set from here.
+///
+/// `arcana models` omitted both models the agent actually dispatches to,
+/// because curation is cheapest-first and the free tier filled every slot. The
+/// fix pins the routed ids — and pins them by ASKING the policy, so the listing
+/// cannot drift from the dispatcher the way a hard-coded copy would.
+#[test]
+fn routed_ids_cover_every_tier_without_duplicates() {
+    let policy = ModelPolicy::new();
+    let ids = policy.routed_model_ids();
+    assert!(ids.contains(&"grok-3-latest"), "{ids:?}");
+    assert!(ids.contains(&"deepseek-v4-flash"), "{ids:?}");
+    // `summarize` and `default` share a model in the built-in table.
+    assert_eq!(ids.len(), 2, "duplicates not collapsed: {ids:?}");
+}
+
+#[test]
+fn a_single_model_policy_reports_exactly_one_id() {
+    let policy = ModelPolicy::single_model("only-this");
+    let ids = policy.routed_model_ids();
+    assert_eq!(ids, vec!["only-this"]);
+}
