@@ -283,3 +283,66 @@ async fn a_model_the_connector_cannot_dispatch_is_not_offered() {
         .stdout(predicate::str::contains("reachable"))
         .stdout(predicate::str::contains("aura-asteria-en").not());
 }
+
+/// A reader that quits early must not turn into exit 101.
+///
+/// Rust ignores `SIGPIPE`, so a closed reader reaches `println!` as an `EPIPE`
+/// write error and `println!` panics on it — exiting 101 with the panic message
+/// itself swallowed by the same closed pipe. `arcana models` prints 123 lines
+/// against production, so `| head`, `| grep -m1` and `| less` with an early quit
+/// are the ordinary ways to read it, and every one of them failed.
+///
+/// This drops the read end after one line, which is exactly what `head -1` does.
+#[tokio::test]
+async fn a_reader_that_stops_early_does_not_crash_the_command() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command as StdCommand, Stdio};
+
+    let server = MockServer::start().await;
+    // The output must EXCEED the pipe buffer (64 KiB on Linux), or the child
+    // writes everything into the buffer and exits before the closed reader is
+    // ever observed — the test then passes whether or not the bug is present.
+    // Curation caps 10 per provider, so breadth comes from provider count.
+    let many: Vec<_> = (0..300)
+        .flat_map(|p| {
+            (0..10).map(move |m| {
+                entry(
+                    &format!("provider-{p:03}"),
+                    &format!("model-{p:03}-{m:02}"),
+                    f64::from(m),
+                    1.0,
+                )
+            })
+        })
+        .collect();
+    assert!(many.len() >= 3000, "need output well over 64 KiB");
+    mount(&server, serde_json::json!(many)).await;
+    let state = TempDir::new().unwrap();
+
+    let exe = assert_cmd::cargo::cargo_bin("arcana");
+    let mut child = StdCommand::new(exe)
+        .arg("models")
+        .env("ARCANA_MC_BASE_URL", server.uri())
+        .env("ARCANA_MC_TOKEN", "test-token")
+        .env("XDG_STATE_HOME", state.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    {
+        // Read one line, then drop the handle: the write end now sees EPIPE.
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout);
+        let mut first = String::new();
+        let _ = reader.read_line(&mut first);
+    }
+    // Dropping the reader closes the read end; the writer is still mid-page.
+
+    let status = child.wait().unwrap();
+    assert!(
+        status.success(),
+        "a closed reader must not be a failure; got {status:?}"
+    );
+    assert_ne!(status.code(), Some(101), "101 is the panic exit");
+}

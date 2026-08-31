@@ -10,6 +10,7 @@ pub mod http_error;
 pub mod kb_read;
 pub mod login;
 pub mod models;
+pub mod out;
 pub mod permission_prompt;
 pub mod repl;
 pub mod usage;

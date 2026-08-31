@@ -14,6 +14,7 @@
 //! from `use`, so an operator who knows the id can still select one that did
 //! not make the shortlist.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -318,22 +319,33 @@ pub fn run_list() -> i32 {
         return 1;
     }
 
-    println!("Selected: {current}\n");
+    // Composed then written once through a checked handle rather than printed
+    // line by line: this is 123 lines against the production catalogue, so it is
+    // routinely piped into `head`, `grep` or `less`, and `println!` panics
+    // (exit 101) the moment the reader goes away. See `crate::out`.
+    let mut page = String::new();
+    let _ = writeln!(page, "Selected: {current}\n");
     let mut provider = String::new();
     for entry in &curated {
         if entry.connector != provider {
             provider.clone_from(&entry.connector);
-            println!("{provider}:");
+            let _ = writeln!(page, "{provider}:");
         }
         let marker = if entry.model == current { "*" } else { " " };
-        println!("  {marker} {:<38} {}", entry.model, price_label(entry));
+        let _ = writeln!(
+            page,
+            "  {marker} {:<38} {}",
+            entry.model,
+            price_label(entry)
+        );
     }
-    println!(
+    let _ = writeln!(
+        page,
         "\nShowing at most {MAX_PER_PROVIDER} per provider, cheapest first; the \
          selected model and the ones the agent routes to are always listed. \
          `arcana models use <id>` accepts any id, including one not listed."
     );
-    0
+    crate::out::write_all(&page)
 }
 
 /// `arcana models use <id>` — persist a choice. Returns a process exit code.
