@@ -181,8 +181,11 @@ jobs:
           if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
             echo "v${version} is tagged"; exit 0
           fi
-          # `-S` finds the commit that introduced this exact version string.
-          bumped=$(git log -1 --format=%ct -S"version = \"${version}\"" -- Cargo.toml)
+          # Anchoring is subtle (see the script): the root manifest now holds
+          # nine copies of this version string, only one of which is the
+          # package version, so a bare `-S` pickaxe on it can be reset by an
+          # unrelated `[workspace.dependencies]` edit.
+          bumped=$(dev-tools/release-bump-anchor.sh .)
           test -n "$bumped"
           age_days=$(( ( $(date +%s) - bumped ) / 86400 ))
           echo "workspace version ${version}; no v${version} tag; bumped ${age_days}d ago"
