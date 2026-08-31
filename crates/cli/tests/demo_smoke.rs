@@ -71,3 +71,40 @@ fn demo_writes_its_audit_log_under_the_per_user_state_home() {
         assert_eq!(mode, 0o600, "audit log must be owner-only, got {mode:o}");
     }
 }
+
+/// `demo` must account for what it spent, and must not invent a charge.
+///
+/// It charged the account and printed nothing — on the command a first-time
+/// user is told to run, dispatching on the expensive tier, so it was both the
+/// priciest invocation and the only silent one. The interactive session had
+/// shown per-turn spend all along.
+///
+/// The offline half matters just as much: the offline connector reports a
+/// synthetic cost, and rendering that as money would invent a charge that never
+/// happened. On a metered product that is the worse error of the two.
+#[test]
+fn an_offline_demo_states_that_nothing_was_charged() {
+    let state = tempfile::TempDir::new().unwrap();
+    Command::cargo_bin("arcana")
+        .unwrap()
+        .env("XDG_STATE_HOME", state.path())
+        .arg("demo")
+        .assert()
+        .stdout(predicate::str::contains("nothing was charged"))
+        // No dollar figure anywhere: an offline run has no price.
+        .stdout(predicate::str::contains("$").not());
+}
+
+#[test]
+fn live_requested_without_a_token_falls_back_and_still_claims_no_charge() {
+    // The fallback path is the one a first run actually hits.
+    let state = tempfile::TempDir::new().unwrap();
+    Command::cargo_bin("arcana")
+        .unwrap()
+        .env_remove("ARCANA_MC_TOKEN")
+        .env("XDG_STATE_HOME", state.path())
+        .args(["demo", "--live"])
+        .assert()
+        .stdout(predicate::str::contains("nothing was charged"))
+        .stdout(predicate::str::contains("$").not());
+}

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `arcana demo --live` reports what it cost. It charged the account and printed
+  nothing, on the command a first-time user is told to run first and the one
+  that dispatches on the expensive tier — so it was both the priciest
+  invocation and the only silent one, while the interactive session had shown
+  per-turn spend all along. An offline run now says plainly that nothing was
+  charged rather than printing the offline connector's synthetic figure, which
+  would invent a charge that never happened.
+
 - `arcana kb-read` reports why the search failed, not that an internal invariant
   was violated. A missing client secret, an unreadable one, a 401, a 503 and a
   saturated backend all printed the identical line — `grounding proof requires
