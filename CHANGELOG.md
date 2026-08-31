@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected model and the dispatch tiers are now always listed, taking slots
   rather than adding to them. The ids come from the dispatch policy itself, so
   the listing cannot drift from what the agent will actually call.
+- Piping `arcana models` or `arcana usage` into a reader that stops early no
+  longer exits 101. Rust ignores `SIGPIPE`, so a closed reader arrives as an
+  `EPIPE` write error and `println!` panics on it — with the panic message
+  itself lost to the same closed pipe, leaving a plausible prefix of the output
+  and an unexplained failure code. `models` prints 123 lines against the live
+  catalogue, so `| head`, `| grep -m1` and quitting out of `| less` are the
+  ordinary ways to read it, and each of them broke `set -o pipefail` scripts.
+  Both commands now write through a checked handle and treat a closed reader as
+  the reader having finished, which it has.
 
 - `arcana models` and `arcana usage` say what the server said. Both carried
   their own HTTP client and collapsed every non-2xx into the bare status

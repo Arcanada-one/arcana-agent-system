@@ -14,6 +14,8 @@
 //! what the connector says, and says so when it cannot reach it, rather than
 //! quietly falling back to a local guess that would look authoritative.
 
+use std::fmt::Write as _;
+
 use arcana_core::cost::CostSnapshot;
 
 /// Convert integer micros to USD for display.
@@ -436,28 +438,41 @@ denies with reason=no-expected-token before reading the request)."
 
     let report = fold_by_day(&rows);
 
-    println!("Usage from {} to {} (UTC).", window.since, window.until);
+    // One checked write for the same reason `models` does it: a 30-day table is
+    // long enough to pipe, and `println!` panics on a closed reader.
+    let mut page = String::new();
+    let _ = writeln!(
+        page,
+        "Usage from {} to {} (UTC).",
+        window.since, window.until
+    );
     if report.days.is_empty() {
-        println!("No recorded usage in this window.");
-        return 0;
+        let _ = writeln!(page, "No recorded usage in this window.");
+        return crate::out::write_all(&page);
     }
 
-    println!(
+    let _ = writeln!(
+        page,
         "{:<12} {:>9} {:>12} {:>12}",
         "DATE", "REQUESTS", "TOKENS", "COST USD"
     );
     for day in &report.days {
-        println!(
+        let _ = writeln!(
+            page,
             "{:<12} {:>9} {:>12} {:>12.6}",
             day.date, day.requests, day.total_tokens, day.cost_usd
         );
     }
-    println!(
+    let _ = writeln!(
+        page,
         "{:<12} {:>9} {:>12} {:>12.6}",
         report.total.date, report.total.requests, report.total.total_tokens, report.total.cost_usd
     );
-    println!("\nSource: Model Connector — the same records the account is charged against.");
-    0
+    let _ = writeln!(
+        page,
+        "\nSource: Model Connector — the same records the account is charged against."
+    );
+    crate::out::write_all(&page)
 }
 
 #[cfg(test)]
