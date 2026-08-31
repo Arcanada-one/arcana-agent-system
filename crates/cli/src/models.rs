@@ -60,17 +60,53 @@ pub struct CatalogEntry {
     /// `false` for a catalogued model the connector cannot currently dispatch.
     #[serde(default)]
     pub available: Option<bool>,
+    /// `chat`, `embedding`, `image_generation`, `speech_to_text`,
+    /// `text_to_speech`, `video`, `moderation`, `rerank`.
+    #[serde(default)]
+    pub modality: Option<String>,
+}
+
+/// Whether a catalogue tariff is a price at all.
+///
+/// Mirrors `isUsablePrice` in the Model Connector's `billing/measured-cost.ts`,
+/// deliberately: that function is what decides whether a number becomes the
+/// charge, and a display that calls something a price when billing refuses to
+/// is telling the customer about a tariff they will never be billed at.
+///
+/// `OpenRouter` publishes `-1` for its auto-routing models, meaning "depends
+/// which model this routes to". The catalogue's per-token → per-1M conversion
+/// multiplies it by a million, so the sentinel arrives here as
+/// `-1000000`. Live on 2026-08-31 that is five rows — `openrouter/auto`,
+/// `auto-beta`, `bodybuilder`, `fusion`, `pareto-code` — and they were the only
+/// negative tariffs in a 968-row catalogue.
+#[must_use]
+fn usable_price(value: Option<f64>) -> Option<f64> {
+    value.filter(|price| price.is_finite() && *price >= 0.0)
 }
 
 impl CatalogEntry {
     #[must_use]
     pub fn input_per_m_tok(&self) -> Option<f64> {
-        self.pricing.as_ref().and_then(|p| p.input_per_m_tok)
+        usable_price(self.pricing.as_ref().and_then(|p| p.input_per_m_tok))
     }
 
     #[must_use]
     pub fn output_per_m_tok(&self) -> Option<f64> {
-        self.pricing.as_ref().and_then(|p| p.output_per_m_tok)
+        usable_price(self.pricing.as_ref().and_then(|p| p.output_per_m_tok))
+    }
+
+    /// Whether this model is billed per token at all.
+    ///
+    /// Speech, image and video models are billed per second, per character or
+    /// per image. For those, "price unknown" is not merely unhelpful, it is
+    /// wrong: it describes a gap in the catalogue that could be filled, when
+    /// the truth is that no per-1M-token figure exists to fill it with.
+    #[must_use]
+    fn billed_per_token(&self) -> bool {
+        !matches!(
+            self.modality.as_deref(),
+            Some("image_generation" | "speech_to_text" | "text_to_speech" | "video")
+        )
     }
 }
 
@@ -215,6 +251,7 @@ pub fn price_label(entry: &CatalogEntry) -> String {
         return "free".to_owned();
     }
     match (entry.input_per_m_tok(), entry.output_per_m_tok()) {
+        (None, None) if !entry.billed_per_token() => "not priced per token".to_owned(),
         (None, None) => "price unknown".to_owned(),
         (input, output) => format!(
             "in ${:.2} / out ${:.2} per 1M tok",
@@ -401,6 +438,7 @@ mod tests {
             }),
             free: None,
             available: None,
+            modality: Some("chat".to_owned()),
         }
     }
 
@@ -416,7 +454,7 @@ mod tests {
     fn the_live_catalogue_body_decodes() {
         let parsed: CatalogResponse =
             serde_json::from_str(LIVE_CATALOGUE).expect("the real wire body must decode");
-        assert_eq!(parsed.count, Some(5));
+        assert_eq!(parsed.count, Some(7));
         let grok = parsed
             .models
             .iter()
@@ -454,10 +492,88 @@ mod tests {
             .find(|m| m.model == "universal-2")
             .expect("fixture carries an unpriced entry");
         assert_eq!(stt.input_per_m_tok(), None);
-        assert_eq!(price_label(stt), "price unknown");
+        // Speech-to-text is billed per second of audio, so there is no
+        // per-1M-token figure to be missing. Saying "price unknown" describes a
+        // catalogue gap that could be filled; this one cannot.
+        assert_eq!(price_label(stt), "not priced per token");
         assert!(
             sort_price(stt) > 1e300,
             "unpriced must sort last, not first"
+        );
+    }
+
+    /// The live catalogue's only negative tariffs, on the exact rows that carry
+    /// them.
+    ///
+    /// `OpenRouter` publishes `-1` for its auto-routers, meaning "depends which
+    /// model this routes to"; the per-1M conversion turns it into `-1000000`.
+    /// Rendered verbatim, `arcana models` told a paying customer that
+    /// `openrouter/auto` costs **minus one million dollars** per 1M tokens.
+    #[test]
+    fn a_sentinel_tariff_is_never_rendered_as_money() {
+        let parsed: CatalogResponse = serde_json::from_str(LIVE_CATALOGUE).expect("decodes");
+        let auto = parsed
+            .models
+            .iter()
+            .find(|m| m.model == "openrouter/auto")
+            .expect("fixture carries the real sentinel row");
+        // The wire value is still there — this is a reading rule, not a
+        // rewrite of what the server sent.
+        assert_eq!(
+            auto.pricing.as_ref().and_then(|p| p.input_per_m_tok),
+            Some(-1_000_000.0)
+        );
+        assert_eq!(auto.input_per_m_tok(), None, "not a usable price");
+        assert_eq!(price_label(auto), "price unknown");
+    }
+
+    /// The property, not the phrasing: nothing this command prints may claim a
+    /// model costs a negative amount.
+    #[test]
+    fn no_row_in_the_live_catalogue_renders_a_negative_price() {
+        let parsed: CatalogResponse = serde_json::from_str(LIVE_CATALOGUE).expect("decodes");
+        for entry in &parsed.models {
+            let label = price_label(entry);
+            assert!(
+                !label.contains("$-"),
+                "{} {} rendered as {label}",
+                entry.connector,
+                entry.model
+            );
+        }
+    }
+
+    /// The half of this defect that costs the user something.
+    ///
+    /// `sort_price` sums the two tariffs, so a `-1000000` pair scored
+    /// `-2000000` — the lowest number in a 968-row catalogue. Cheapest-first
+    /// then ranked the five sentinel rows above every real model, and the
+    /// ten-per-provider cap meant they displaced five genuine recommendations.
+    /// Measured live before this fix: the top FIVE of openrouter's ten rows
+    /// were `auto`, `auto-beta`, `bodybuilder`, `fusion` and `pareto-code`.
+    #[test]
+    fn a_sentinel_tariff_does_not_win_the_cheapest_first_ranking() {
+        let parsed: CatalogResponse = serde_json::from_str(LIVE_CATALOGUE).expect("decodes");
+        let find = |id: &str| {
+            parsed
+                .models
+                .iter()
+                .find(|m| m.model == id)
+                .expect("fixture row")
+                .clone()
+        };
+        let sentinel = find("openrouter/auto");
+        let real = find("mistralai/mistral-nemo");
+        assert!(
+            sort_price(&real) < sort_price(&sentinel),
+            "a real $0.019 model must outrank a sentinel, not the other way round"
+        );
+
+        let curated = curate(vec![sentinel, real], &[]);
+        assert_eq!(
+            curated.first().map(|entry| entry.model.as_str()),
+            Some("mistralai/mistral-nemo"),
+            "the cheapest REAL model must lead its provider's list"
         );
     }
 
