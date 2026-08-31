@@ -176,6 +176,32 @@ PYEOF
     [[ "$output" != *"403"* ]]
 }
 
+@test "the fixture reproduces crates.io's measured User-Agent rule" {
+    # Checks the FIXTURE, not the script — because the fixture is the thing
+    # that decides whether the test above can fail, and it has already been
+    # wrong once.
+    #
+    # Measured against the live registry, 2026-08-31:
+    #     (header suppressed)  403
+    #     curl/8.5.0           403
+    #     Mozilla/5.0          200
+    #     arcana-check/1.0     200
+    #
+    # `Mozilla/5.0` is the discriminating case. A rule of "a User-Agent is
+    # present" fits the first three observations and is WRONG; only the fourth
+    # separates it from "not absent and not the default curl/*". Two data
+    # points confirm almost anything.
+    local port; port=$(start_server ua)
+    local url="http://127.0.0.1:$port/crates/anything"
+
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'User-Agent:' "$url")" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -A 'curl/8.5.0' "$url")" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0' "$url")" = 404 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -A 'arcana-check/1.0' "$url")" = 404 ]
+
+    stop_aux_server
+}
+
 @test "name taken on crates.io exits 1 and reports TAKEN" {
     set -e
     run bash "$SCRIPT" taken-name
