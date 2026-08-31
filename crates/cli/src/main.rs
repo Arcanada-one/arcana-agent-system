@@ -3,6 +3,11 @@ use clap::{Parser, Subcommand};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 const GIT_SHA: &str = env!("ARCANA_GIT_SHA");
+/// Whether this binary was built from a tree with uncommitted changes.
+///
+/// A suffix on the sha is easy to skim past, and this is the one line a release
+/// verification actually rests on, so the dirty case gets its own sentence.
+const GIT_DIRTY: bool = matches!(env!("ARCANA_GIT_DIRTY").as_bytes(), b"true");
 
 #[derive(Parser)]
 #[command(
@@ -119,6 +124,13 @@ fn main() {
     match cli.command {
         Some(Cmd::Version) => {
             println!("arcana {VERSION} ({GIT_SHA}) — {LICENSE}");
+            if GIT_DIRTY {
+                println!(
+                    "WARNING: built from a working tree with uncommitted changes. \
+                     This binary does not correspond to {GIT_SHA} or to any commit, \
+                     and its provenance cannot be verified."
+                );
+            }
         }
         Some(Cmd::Login) => {
             std::process::exit(arcana_cli::login::run_login());

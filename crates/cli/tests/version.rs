@@ -5,11 +5,78 @@ use predicates::prelude::*;
 
 #[test]
 fn version_subcommand_prints_version_sha_and_license() {
+    // Accepts both provenance states, because the test suite runs from clean
+    // checkouts in CI and from working trees on a developer's box, and pinning
+    // only the clean form would fail locally for a reason that is not a defect.
     let mut cmd = Command::cargo_bin("arcana").unwrap();
     cmd.arg("version").assert().success().stdout(
-        predicate::str::is_match(r"^arcana 0\.1\.0 \([0-9a-f]{7}\) — MIT OR Apache-2\.0\n$")
-            .unwrap(),
+        predicate::str::is_match(
+            r"^arcana 0\.1\.0 \([0-9a-f]{7}(-dirty)?\) — MIT OR Apache-2\.0\n",
+        )
+        .unwrap(),
     );
+}
+
+/// The stamp and the warning must agree.
+///
+/// `arcana version` is the provenance primitive: signing, attestation and the
+/// documented verified-install path all end with someone reading this line. It
+/// used to print an identical string whether or not the tree carried
+/// uncommitted changes, so a binary containing code present in no commit
+/// claimed that commit (proved by building one: same version output, different
+/// sha256, carrying a marker string absent from every commit).
+///
+/// Asserting the PAIRING rather than either half is what makes this hold in
+/// both environments: a `-dirty` stamp without the warning, or a warning
+/// without the stamp, is the regression.
+#[test]
+fn a_dirty_build_says_so_and_a_clean_one_does_not() {
+    let mut cmd = Command::cargo_bin("arcana").unwrap();
+    let output = cmd.arg("version").output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let stamped_dirty = stdout.lines().next().unwrap().contains("-dirty");
+    let warned = stdout.contains("does not correspond to");
+
+    assert_eq!(
+        stamped_dirty, warned,
+        "the -dirty stamp and the provenance warning must agree; got: {stdout:?}"
+    );
+    if !stamped_dirty {
+        assert!(
+            stdout.lines().count() == 1,
+            "a clean build must print exactly the one version line, got: {stdout:?}"
+        );
+    }
+}
+
+/// The rebuild triggers must be resolved through git, not hand-built.
+///
+/// In a linked worktree `.git` is a file, so the previous literal
+/// `../../.git/HEAD` and `../../.git/refs/heads` resolved to nothing and the
+/// `rerun-if-changed` they fed never fired — letting a cached stamp outlive the
+/// commit it names. Worktrees are how this repo is built day to day.
+#[test]
+fn build_script_resolves_git_paths_instead_of_guessing_them() {
+    let build_rs =
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"))
+            .unwrap();
+    // Comments necessarily NAME the old path to explain why it was replaced, so
+    // assert against code lines only — otherwise the prose keeps this red.
+    let code: String = build_rs
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(code.contains("--git-path"), "must ask git for the path");
+    assert!(
+        !code.contains("../../.git/"),
+        "hand-built .git paths do not exist in a worktree"
+    );
+    // Fail-closed dirty detection: unable to consult git must mean "assume
+    // dirty", never "assume clean".
+    // `is_none_or` encodes it: None (git unavailable) => dirty, never clean.
+    assert!(code.contains("is_none_or"), "dirty check must fail closed");
 }
 
 #[test]
