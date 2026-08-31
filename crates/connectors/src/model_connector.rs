@@ -63,13 +63,11 @@ impl ModelConnectorClient {
     ///
     /// # Errors
     /// Returns [`ConnectorError::MissingApiKey`] if `ARCANA_MC_TOKEN` is unset
-    /// or empty, or [`ConnectorError::Transport`] if the base URL fails to
-    /// parse or the client fails to build.
+    /// or empty, [`ConnectorError::InvalidApiKey`] if it holds a byte that is
+    /// illegal in an HTTP header, or [`ConnectorError::Transport`] if the base
+    /// URL fails to parse or the client fails to build.
     pub fn try_from_env() -> Result<Self, ConnectorError> {
-        let token = std::env::var(ENV_API_KEY).map_err(|_| ConnectorError::MissingApiKey)?;
-        if token.trim().is_empty() {
-            return Err(ConnectorError::MissingApiKey);
-        }
+        let api_key = read_api_key()?;
         let base = std::env::var(ENV_BASE_URL)
             .ok()
             .filter(|raw| !raw.trim().is_empty())
@@ -83,7 +81,7 @@ impl ModelConnectorClient {
                 "Model Connector production base URL is not approved".into(),
             ));
         }
-        Self::new(base_url, ApiKey::new(token))
+        Self::new(base_url, api_key)
     }
 
     /// Build the hidden diagnostic probe client, allowing the explicit
@@ -94,17 +92,14 @@ impl ModelConnectorClient {
     /// Returns the same credential, URL parsing, and HTTP-client errors as the
     /// production constructor.
     pub fn try_from_probe_env() -> Result<Self, ConnectorError> {
-        let token = std::env::var(ENV_API_KEY).map_err(|_| ConnectorError::MissingApiKey)?;
-        if token.trim().is_empty() {
-            return Err(ConnectorError::MissingApiKey);
-        }
+        let api_key = read_api_key()?;
         let base = std::env::var(ENV_BASE_URL)
             .ok()
             .filter(|raw| !raw.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
         let base_url =
             Url::parse(&base).map_err(|err| ConnectorError::Transport(err.to_string()))?;
-        Self::new(base_url, ApiKey::new(token))
+        Self::new(base_url, api_key)
     }
 
     /// Build a client with an explicit base `URL` and key (used by tests and
@@ -121,7 +116,9 @@ impl ModelConnectorClient {
             .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|err| ConnectorError::Transport(err.to_string()))?;
+            .map_err(|err| {
+                ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, REQUEST_TIMEOUT))
+            })?;
         Ok(Self {
             http,
             base_url,
@@ -138,6 +135,87 @@ impl ModelConnectorClient {
     }
 }
 
+/// Read and validate `ARCANA_MC_TOKEN`.
+///
+/// Two things go wrong with a pasted credential often enough to deserve their
+/// own message. Surrounding whitespace: the old code trimmed only for the
+/// emptiness test and then sent the token untrimmed, so a stray space produced
+/// a puzzling 401. And an embedded control byte: `reqwest` rejects it inside
+/// `bearer_auth`, and `reqwest::Error::to_string()` renders that as the two
+/// words "builder error", which names neither the token nor the newline.
+///
+/// The returned error never contains the credential — only the offending
+/// byte's identity and offset.
+///
+/// # Errors
+/// [`ConnectorError::MissingApiKey`] when unset or blank;
+/// [`ConnectorError::InvalidApiKey`] when a control byte survives trimming.
+fn read_api_key() -> Result<ApiKey, ConnectorError> {
+    let raw = std::env::var(ENV_API_KEY).map_err(|_| ConnectorError::MissingApiKey)?;
+    let token = raw.trim();
+    if token.is_empty() {
+        return Err(ConnectorError::MissingApiKey);
+    }
+    if let Some(offset) = token.bytes().position(|byte| byte < 0x20 || byte == 0x7f) {
+        let named = match token.as_bytes().get(offset) {
+            Some(b'\r') => "a carriage return",
+            Some(b'\n') => "a newline",
+            Some(0) => "a NUL byte",
+            _ => "a control character",
+        };
+        return Err(ConnectorError::InvalidApiKey {
+            reason: format!(
+                "{ENV_API_KEY} contains {named} at byte {offset}, which cannot go in an HTTP \
+                 header. This usually means the token was read from a file with a CRLF line \
+                 ending, or that two values were concatenated. Re-export it without the \
+                 embedded newline."
+            ),
+        });
+    }
+    Ok(ApiKey::new(token))
+}
+
+/// Describe a `reqwest` failure in terms an operator can act on.
+///
+/// `reqwest::Error::to_string()` renders every network failure as
+/// `error sending request for url (...)` — the same eleven words for a
+/// connection refused in 8 ms and a stall that burned the full
+/// [`REQUEST_TIMEOUT`]. The distinguishing facts are all present: the typed
+/// `is_timeout` / `is_connect` predicates, and the cause chain hanging off
+/// [`std::error::Error::source`]. This walks both.
+///
+/// The two timeout budgets are parameters rather than reads of the module
+/// constants so the emitted duration is always the one the failing client was
+/// actually built with — a test that injects a 100 ms budget must not be told
+/// the request timed out after 120 s.
+fn describe_reqwest(err: &reqwest::Error, connect: Duration, request: Duration) -> String {
+    let headline = if err.is_timeout() {
+        let budget = if err.is_connect() { connect } else { request };
+        format!("timed out after {}s", budget.as_secs())
+    } else if err.is_connect() {
+        "could not connect".to_owned()
+    } else if err.is_decode() || err.is_body() {
+        "could not read the response body".to_owned()
+    } else if err.is_builder() {
+        "the request could not be built".to_owned()
+    } else {
+        "the request failed".to_owned()
+    };
+
+    let mut parts = vec![headline, err.to_string()];
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(err);
+    while let Some(cause) = source {
+        let rendered = cause.to_string();
+        // Nested `reqwest`/`hyper` errors frequently restate their child
+        // verbatim; repeating it adds length and no information.
+        if parts.last().is_none_or(|last| last != &rendered) {
+            parts.push(rendered);
+        }
+        source = cause.source();
+    }
+    parts.join(": ")
+}
+
 #[async_trait]
 impl ModelConnector for ModelConnectorClient {
     async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
@@ -150,7 +228,9 @@ impl ModelConnector for ModelConnectorClient {
             .json(&req)
             .send()
             .await
-            .map_err(|err| ConnectorError::Transport(err.to_string()))?;
+            .map_err(|err| {
+                ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, REQUEST_TIMEOUT))
+            })?;
 
         let status = resp.status().as_u16();
         let content_type = resp
@@ -158,10 +238,9 @@ impl ModelConnector for ModelConnectorClient {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|err| ConnectorError::Transport(err.to_string()))?;
+        let bytes = resp.bytes().await.map_err(|err| {
+            ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, REQUEST_TIMEOUT))
+        })?;
 
         match status {
             201 => parse_success_envelope(&bytes, content_type),
@@ -269,6 +348,119 @@ mod tests {
         assert_eq!(format!("{key}"), "mc-***");
         assert!(!format!("{key:?}").contains("supersecret"));
         assert_eq!(key.secret(), "mc-supersecret-value");
+    }
+
+    // --- credential validation (issue #107) --------------------------------
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed_off_the_credential() {
+        // The old code trimmed only for the emptiness test and then sent the
+        // token untrimmed, so a trailing space came back as a puzzling 401.
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_API_KEY, "  mc-live-abc \n");
+        let key = read_api_key();
+        std::env::remove_var(ENV_API_KEY);
+        assert_eq!(key.unwrap().secret(), "mc-live-abc");
+    }
+
+    #[test]
+    fn embedded_newline_is_rejected_by_name_and_offset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_API_KEY, "mc-abc\ndef");
+        let result = read_api_key();
+        std::env::remove_var(ENV_API_KEY);
+        match result {
+            Err(ConnectorError::InvalidApiKey { reason }) => {
+                assert!(reason.contains("a newline"), "reason={reason}");
+                assert!(reason.contains("byte 6"), "reason={reason}");
+                assert!(reason.contains(ENV_API_KEY), "reason={reason}");
+            }
+            other => panic!("expected InvalidApiKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn embedded_carriage_return_is_rejected() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_API_KEY, "mc-abc\rdef");
+        let result = read_api_key();
+        std::env::remove_var(ENV_API_KEY);
+        match result {
+            Err(ConnectorError::InvalidApiKey { reason }) => {
+                assert!(reason.contains("a carriage return"), "reason={reason}");
+            }
+            other => panic!("expected InvalidApiKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_credential_error_never_echoes_the_credential() {
+        // The whole point of `ApiKey`'s redacted Debug/Display is defeated if
+        // the validation error prints the secret instead.
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_API_KEY, "mc-supersecret\nvalue");
+        let result = read_api_key();
+        std::env::remove_var(ENV_API_KEY);
+        let err = result.expect_err("embedded newline must be rejected");
+        let rendered = format!("{err:?} {err}");
+        assert!(!rendered.contains("supersecret"), "leaked: {rendered}");
+    }
+
+    // --- transport-error description (issue #96) ---------------------------
+
+    #[tokio::test]
+    async fn connection_refused_names_the_cause_not_just_the_url() {
+        // Port 1 on loopback refuses immediately. Before this change every
+        // transport failure — refusal, DNS, TLS, a 120s stall — rendered as
+        // the same "error sending request for url (...)".
+        let client = ModelConnectorClient::new(
+            Url::parse("http://127.0.0.1:1").unwrap(),
+            ApiKey::new("mc-test"),
+        )
+        .unwrap();
+        let err = client
+            .execute(ExecuteRequest::new("claude-code", "ping"))
+            .await
+            .expect_err("port 1 must refuse");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("could not connect"),
+            "expected a connect headline, got: {rendered}"
+        );
+        assert!(
+            rendered.to_lowercase().contains("refused"),
+            "expected the OS cause in the chain, got: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stalled_response_reports_the_timeout_and_its_budget() {
+        // A listener that accepts and never answers. The budget is injected so
+        // the assertion is about the message, not about waiting 120 seconds.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream); // accept, never respond, never close
+            }
+        });
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let err = client
+            .get(format!("http://{addr}/execute"))
+            .send()
+            .await
+            .expect_err("a stalled server must time out");
+
+        let rendered = describe_reqwest(&err, Duration::from_secs(10), Duration::from_secs(120));
+        assert!(
+            rendered.starts_with("timed out after 120s"),
+            "expected the request budget in the headline, got: {rendered}"
+        );
     }
 
     #[test]

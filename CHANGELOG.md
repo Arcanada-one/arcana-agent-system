@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Connector failures say what went wrong. Every transport error used to render
+  as `error sending request for url (...)` — the same eleven words for a
+  connection refused in 8 ms and a stall that burned the full 120-second
+  request budget, because `reqwest::Error::to_string()` drops the cause chain.
+  Failures now lead with a headline (`could not connect`, `timed out after
+  120s`) and carry the underlying cause, so `Connection refused (os error 111)`
+  reaches the operator instead of being discarded.
+- A credential containing a newline no longer fails with `transport error:
+  builder error`. `ARCANA_MC_TOKEN` is validated where it is read: surrounding
+  whitespace is trimmed before use rather than only before the emptiness check,
+  and a control byte that cannot go in an HTTP header is reported by name and
+  offset. The message never echoes the credential.
+- Out-of-credit and rate-limit responses show their remediation. The connector's
+  logical-error contract carries `recommendation` and `retryAfter`; both were
+  parsed and then dropped by the error's `Display`, so the one field whose whole
+  purpose is telling the caller what to do next never reached them. A rejected
+  request now reads `the request was rejected — Insufficient credit: balance
+  0.00 USD. Top up your balance at <url>. (insufficient_credit)` instead of
+  `upstream logical error [insufficient_credit]: ...`.
+
 - `arcana demo` completes its loop. It ran through an empty permission cascade,
   which is fail-closed and therefore denied every tool call, so the command
   advertised as demonstrating the permission cascade only ever demonstrated a
