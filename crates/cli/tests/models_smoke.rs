@@ -5,7 +5,7 @@
 //! cap, an unreachable connector. Proving the command talks to the REAL
 //! connector is ARAS-0070's job, not this file's.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -13,18 +13,43 @@ use tempfile::TempDir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// One entry in the shape the real route sends: tariffs nested under
+/// `pricing`, camelCase, no `tier` field. The previous helper here emitted flat
+/// `snake_case` keys that the server has never produced.
 fn entry(connector: &str, model: &str, input: f64, output: f64) -> serde_json::Value {
     serde_json::json!({
         "connector": connector,
         "model": model,
-        "input_per_m_tok": input,
-        "output_per_m_tok": output,
-        "tier": "paid",
+        "modality": "chat",
         "free": false,
+        "pricing": {
+            "inputPerMTok": input,
+            "outputPerMTok": output,
+            "unit": "per_1m_tokens",
+        },
+        "available": true,
     })
 }
 
-async fn mount(server: &MockServer, body: serde_json::Value) {
+/// Wrap entries in the envelope the route returns. `mount` takes the bare array
+/// so the call sites read naturally; the envelope is applied here, in one place,
+/// because it is a property of the transport rather than of any one test.
+async fn mount(server: &MockServer, models: serde_json::Value) {
+    let count = models.as_array().map_or(0, Vec::len);
+    mount_raw(
+        server,
+        serde_json::json!({
+            "models": models,
+            "generatedAt": "2026-08-31T07:30:18.079Z",
+            "count": count,
+        }),
+    )
+    .await;
+}
+
+/// Mount an exact body, envelope and all — for asserting on the transport shape
+/// itself.
+async fn mount_raw(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("GET"))
         .and(path("/connectors/catalog"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
@@ -197,4 +222,64 @@ async fn an_empty_catalogue_is_an_error_not_a_blank_success() {
         .assert()
         .failure()
         .stdout(predicate::str::contains("empty catalogue"));
+}
+
+#[tokio::test]
+async fn a_bare_array_is_reported_not_silently_accepted() {
+    // The shape the client used to expect. The server has never sent it, and if
+    // it ever did, saying so beats guessing.
+    let server = MockServer::start().await;
+    mount_raw(&server, serde_json::json!([entry("groq", "m", 1.0, 1.0)])).await;
+    let state = TempDir::new().unwrap();
+
+    arcana(&server, &state)
+        .arg("models")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("could not be read"))
+        .stderr(predicate::str::contains("models"))
+        .stderr(predicate::str::contains("panicked").not());
+}
+
+#[tokio::test]
+async fn prices_from_the_real_nested_shape_reach_the_screen() {
+    // The second half of the defect: with the envelope fixed but the entry
+    // shape still flat, every model would list as "price unknown" -- a silent
+    // wrong answer rather than an error.
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        serde_json::json!([entry("orq", "grok-3-latest", 3.0, 15.0)]),
+    )
+    .await;
+    let state = TempDir::new().unwrap();
+
+    arcana(&server, &state)
+        .arg("models")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("in $3.00 / out $15.00 per 1M tok"))
+        .stdout(predicate::str::contains("price unknown").not());
+}
+
+#[tokio::test]
+async fn a_model_the_connector_cannot_dispatch_is_not_offered() {
+    // Listing an unavailable model invites the operator to choose it and get a
+    // dispatch failure the list already knew about.
+    let server = MockServer::start().await;
+    let mut down = entry("deepgram-tts", "aura-asteria-en", 1.0, 1.0);
+    down["available"] = serde_json::json!(false);
+    mount(
+        &server,
+        serde_json::json!([entry("orq", "reachable", 1.0, 1.0), down]),
+    )
+    .await;
+    let state = TempDir::new().unwrap();
+
+    arcana(&server, &state)
+        .arg("models")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reachable"))
+        .stdout(predicate::str::contains("aura-asteria-en").not());
 }
