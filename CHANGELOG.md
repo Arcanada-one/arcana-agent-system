@@ -28,6 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request now reads `the request was rejected — Insufficient credit: balance
   0.00 USD. Top up your balance at <url>. (insufficient_credit)` instead of
   `upstream logical error [insufficient_credit]: ...`.
+- `arcana usage` works against the real stats route. It sent neither of the
+  two query parameters the route requires, so every call was an unconditional
+  HTTP 400 — masked as a 403 until the read token was configured, which is why
+  the command shipped and stayed broken. The response shape was wrong
+  underneath that as well: rows arrive as `day` / `totalTokens` / `costUsd`
+  aggregated per model, and every field defaulted, so the table would have
+  rendered zeroes rather than failing. Adds `--since` / `--until`, defaulting
+  to the last 30 days, and prints the server's own message when it refuses.
+- `arcana models` works against the real catalogue. It decoded the response as
+  a bare JSON array while `GET /connectors/catalog` returns
+  `{"models": [...], "count": N}`, so the command failed on the first byte for
+  its whole life — `the catalogue response could not be read` against a healthy
+  endpoint serving 969 models. The entry shape was wrong underneath that too:
+  tariffs arrive nested under `pricing`, so fixing only the envelope would have
+  listed every model as `price unknown`. Models the connector reports as
+  unavailable are no longer offered as choices.
 - The interactive session exits non-zero when a turn fails. It returned `0`
   unconditionally on a clean session end, so `printf 'task\n' | arcana --live`
   against an out-of-credit key printed the failure and exited `0` — and

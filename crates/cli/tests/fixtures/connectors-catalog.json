@@ -1,0 +1,178 @@
+{
+  "models": [
+    {
+      "connector": "assemblyai-stt",
+      "model": "universal-2",
+      "modality": "speech_to_text",
+      "tags": [
+        "modality:speech_to_text"
+      ],
+      "free": false,
+      "cheap": false,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": null,
+      "contextWindow": null,
+      "maxOutputTokens": null,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": false,
+        "supportsTools": false
+      },
+      "routing": {
+        "connector": "assemblyai-stt",
+        "model": "universal-2",
+        "endpoint": "/v1/speech/stt"
+      },
+      "available": true,
+      "snapshotId": "cmtgx50mn0xqa01nctsm0wz9m",
+      "contentFingerprint": "19bfef2180db2cdf9d5ff5a81ebb2d23769d592416c848f3cd8cf5123d149c40",
+      "observedAt": "2026-08-31T07:30:00.006Z",
+      "source": "static-modality-catalog",
+      "freshness": "static"
+    },
+    {
+      "connector": "orq",
+      "model": "grok-3-latest",
+      "modality": "chat",
+      "tags": [
+        "modality:chat",
+        "cap:tools",
+        "cap:json-schema"
+      ],
+      "free": false,
+      "cheap": false,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": {
+        "inputPerMTok": 3,
+        "outputPerMTok": 15,
+        "unit": "per_1m_tokens"
+      },
+      "contextWindow": 131072,
+      "maxOutputTokens": 8192,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": true,
+        "supportsTools": true
+      },
+      "routing": {
+        "connector": "orq",
+        "model": "grok-3-latest"
+      },
+      "available": true,
+      "snapshotId": "cmtgx52300y5s01nciu68ju5n",
+      "contentFingerprint": "1395cf0078980b778aeb02c2ea1e0cc4ec9166c0c3d044edbc5cd8a19d43dc4e",
+      "observedAt": "2026-08-31T07:30:00.408Z",
+      "source": "provider-api",
+      "freshness": "fresh"
+    },
+    {
+      "connector": "orq",
+      "model": "deepseek-v4-flash",
+      "modality": "chat",
+      "tags": [
+        "modality:chat",
+        "cap:tools",
+        "cap:json-schema"
+      ],
+      "free": false,
+      "cheap": false,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": {
+        "inputPerMTok": 0.14,
+        "outputPerMTok": 0.28,
+        "unit": "per_1m_tokens"
+      },
+      "contextWindow": 1000000,
+      "maxOutputTokens": 384000,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": true,
+        "supportsTools": true
+      },
+      "routing": {
+        "connector": "orq",
+        "model": "deepseek-v4-flash"
+      },
+      "available": true,
+      "snapshotId": "cmtgx52300y5s01nciu68ju5n",
+      "contentFingerprint": "859556f3d985aede17261e64d7bfdeb2741214a3cd875e4a7b2f77d1465735ef",
+      "observedAt": "2026-08-31T07:30:00.408Z",
+      "source": "provider-api",
+      "freshness": "fresh"
+    },
+    {
+      "connector": "orq",
+      "model": "z-ai/glm-5.2",
+      "modality": "chat",
+      "tags": [
+        "modality:chat",
+        "cost:free",
+        "cost:cheap",
+        "cap:tools",
+        "cap:json-schema"
+      ],
+      "free": true,
+      "cheap": true,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": {
+        "inputPerMTok": 0,
+        "outputPerMTok": 0,
+        "unit": "per_1m_tokens"
+      },
+      "contextWindow": 1048576,
+      "maxOutputTokens": null,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": true,
+        "supportsTools": true
+      },
+      "routing": {
+        "connector": "orq",
+        "model": "z-ai/glm-5.2"
+      },
+      "available": true,
+      "snapshotId": "cmtgx52300y5s01nciu68ju5n",
+      "contentFingerprint": "7c7ee674489008f5b45ea1d724bb35ae01a9be1d464dfd31a55c6203151023b0",
+      "observedAt": "2026-08-31T07:30:00.408Z",
+      "source": "provider-api",
+      "freshness": "fresh"
+    },
+    {
+      "connector": "deepgram-tts",
+      "model": "aura-asteria-en",
+      "modality": "text_to_speech",
+      "tags": [
+        "modality:text_to_speech"
+      ],
+      "free": false,
+      "cheap": false,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": null,
+      "contextWindow": null,
+      "maxOutputTokens": null,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": false,
+        "supportsTools": false
+      },
+      "routing": {
+        "connector": "deepgram-tts",
+        "model": "aura-asteria-en",
+        "endpoint": "/v1/speech/tts"
+      },
+      "available": false,
+      "snapshotId": "cmtgx50sd0xr301nc2hfmjm7f",
+      "contentFingerprint": "3040a289cb802e1cf26abdf147ecc880e11169a55e617f490c5fe9769b640ba0",
+      "observedAt": "2026-08-31T07:30:00.006Z",
+      "source": "static-modality-catalog",
+      "freshness": "static"
+    }
+  ],
+  "generatedAt": "2026-08-31T07:30:18.079Z",
+  "count": 5
+}
