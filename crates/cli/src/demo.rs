@@ -189,6 +189,25 @@ async fn run_demo_async(
     println!("=== CHECK ===");
     println!("tool turns: {}", out.turns);
     println!("terminal verdict: {} ({:?})", out.reason, out.reason);
+    // What the run cost. `demo --live` charged the account and printed nothing,
+    // while the interactive session had shown per-turn spend all along — and it
+    // is the command a first-time user is told to run, on the Code tier, so it
+    // was the most expensive invocation and the only silent one. Offline runs
+    // report zero because they are free, which is worth saying rather than
+    // leaving the reader to assume it.
+    // Offline runs must NOT print a dollar figure. The offline connector reports
+    // a synthetic cost, and rendering it as money on a billing line invents a
+    // charge that never happened — the opposite mistake to the silent one, and
+    // worse on a metered product.
+    if live && std::env::var("ARCANA_MC_TOKEN").is_ok() {
+        let spend = crate::usage::TurnSpend::between(&crate::usage::zero_snapshot(), &out.cost);
+        println!(
+            "{}",
+            crate::usage::turn_line(&spend, out.cost.total_cost_usd_micros)
+        );
+    } else {
+        println!("cost: none — this was an offline run, nothing was charged");
+    }
     println!();
     println!("=== CONCLUSION ===");
     println!(
