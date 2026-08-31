@@ -26,6 +26,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the prompt, where no turn is running, still ends the session as it always
   has.
 
+- `arcana models` no longer quotes a negative price, and no longer ranks the
+  rows that carry one first. OpenRouter publishes `-1` for its auto-routing
+  models, meaning "depends which model this routes to"; the catalogue's
+  per-token to per-1M conversion multiplies it by a million, and the listing
+  printed the result verbatim — `openrouter/auto: in $-1000000.00 / out
+  $-1000000.00 per 1M tok`, a model that appears to pay the customer. Worse,
+  `sort_price` summed the two tariffs to `-2000000`, the lowest number in a
+  968-row catalogue, so cheapest-first ranked all five sentinel rows above every
+  real model and the ten-per-provider cap displaced five genuine
+  recommendations. A tariff is now a price only if it is finite and not
+  negative — the same rule the billing path applies before charging anyone, so
+  the listing and the invoice cannot disagree about what counts as a price.
+  Models billed per second, per character or per image are labelled `not priced
+  per token` rather than `price unknown`, which described a gap in the catalogue
+  that could be filled when there is no per-token figure to fill it with.
+  Measured on the live catalogue: negative prices 5 to 0, mislabelled rows 21,
+  and `price unknown` down from 66 of 96 to 45 — the honest remainder.
+
 - Slash commands in the interactive session are handled locally instead of
   being sent to the model and billed. `/help` returned 381 tokens of the model
   inventing a feature list for this product, presented as though it were the

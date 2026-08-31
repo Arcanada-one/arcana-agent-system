@@ -171,8 +171,80 @@
       "observedAt": "2026-08-31T07:30:00.006Z",
       "source": "static-modality-catalog",
       "freshness": "static"
+    },
+    {
+      "connector": "openrouter",
+      "model": "openrouter/auto",
+      "modality": "chat",
+      "tags": [
+        "modality:chat",
+        "cap:tools",
+        "cap:json-schema"
+      ],
+      "free": false,
+      "cheap": false,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": {
+        "inputPerMTok": -1000000,
+        "outputPerMTok": -1000000,
+        "unit": "per_1m_tokens"
+      },
+      "contextWindow": 2000000,
+      "maxOutputTokens": null,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": true,
+        "supportsTools": true
+      },
+      "routing": {
+        "connector": "openrouter",
+        "model": "openrouter/auto"
+      },
+      "available": true,
+      "snapshotId": "cmthhhsuk0t9601pb33d3c63n",
+      "contentFingerprint": "70a918883e2788c2c8ff962150f9c7efd4925c29678ecf646876582e53625146",
+      "observedAt": "2026-08-31T17:00:00.144Z",
+      "source": "provider-api",
+      "freshness": "fresh"
+    },
+    {
+      "connector": "openrouter",
+      "model": "mistralai/mistral-nemo",
+      "modality": "chat",
+      "tags": [
+        "modality:chat",
+        "cap:tools",
+        "cap:json-schema"
+      ],
+      "free": false,
+      "cheap": false,
+      "priceMultiplier": null,
+      "rateLimits": null,
+      "pricing": {
+        "inputPerMTok": 0.019,
+        "outputPerMTok": 0.03,
+        "unit": "per_1m_tokens"
+      },
+      "contextWindow": 131072,
+      "maxOutputTokens": 16384,
+      "capabilities": {
+        "supportsStreaming": false,
+        "supportsJsonSchema": true,
+        "supportsTools": true
+      },
+      "routing": {
+        "connector": "openrouter",
+        "model": "mistralai/mistral-nemo"
+      },
+      "available": true,
+      "snapshotId": "cmthhhsuk0t9601pb33d3c63n",
+      "contentFingerprint": "2b9ace036126e26309e539ad857001fd64569838ee793b2a770d285d2501bdfa",
+      "observedAt": "2026-08-31T17:00:00.144Z",
+      "source": "provider-api",
+      "freshness": "fresh"
     }
   ],
   "generatedAt": "2026-08-31T07:30:18.079Z",
-  "count": 5
+  "count": 7
 }
