@@ -291,11 +291,41 @@ fn canonical_query(query: &str) -> Result<String, KbReadError> {
     Ok(canonical.to_owned())
 }
 
+/// Test-only entry point: the whole flow with no operator-abort token.
+///
+/// Production goes through [`run_kb_read_cancellable`]. Keeping this wrapper
+/// means the existing behaviour tests still read as calls to "the kb-read
+/// flow" rather than every one of them carrying an uncancelled token that has
+/// nothing to do with what they assert.
+#[cfg(test)]
 async fn run_kb_read_with(
     query: &str,
     connector: &dyn ModelConnector,
     search_tool: ArcanaSearchTool,
     audit_dir: &Path,
+) -> Result<KbReadReport, KbReadError> {
+    run_kb_read_cancellable(
+        query,
+        connector,
+        search_tool,
+        audit_dir,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+/// As [`run_kb_read_with`], with an operator-abort token supplied by the caller.
+///
+/// `kb-read` is a single billable dispatch followed by one search, so an
+/// interrupt has a narrow window — but it is exactly the window where a Ctrl-C
+/// used to kill the process while the request was on the wire, leaving the
+/// charge and no local record of it.
+async fn run_kb_read_cancellable(
+    query: &str,
+    connector: &dyn ModelConnector,
+    search_tool: ArcanaSearchTool,
+    audit_dir: &Path,
+    cancel: CancellationToken,
 ) -> Result<KbReadReport, KbReadError> {
     let query = canonical_query(query)?;
     let fixed_input = json!({
@@ -345,7 +375,7 @@ async fn run_kb_read_with(
          source_path verbatim. Never request another tool."
     ));
     let cost = Arc::new(CostTracker::new());
-    let driver = Driver::new(connector, &executor, cost, CancellationToken::new(), config);
+    let driver = Driver::new(connector, &executor, cost, cancel, config);
     let output = driver.run(&query).await;
     if output.reason != TerminalReason::Completed {
         return Err(KbReadError::Loop(output.reason));
@@ -444,7 +474,12 @@ pub fn run_kb_read(query: String) -> i32 {
             |_| PathBuf::from(".arcana-state"),
             |base| base.get_state_home(),
         );
-        match run_kb_read_with(&query, &connector, search_tool, &audit_dir).await {
+        let interrupt = crate::interrupt::Interrupt::install();
+        let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
+        let result =
+            run_kb_read_cancellable(&query, &connector, search_tool, &audit_dir, cancel).await;
+        drop(turn_guard);
+        match result {
             Ok(report) => {
                 match report.outcome {
                     KbReadOutcome::Grounded => {
@@ -476,7 +511,13 @@ pub fn run_kb_read(query: String) -> i32 {
             }
             Err(error) => {
                 eprintln!("arcana kb-read: {error}");
-                1
+                // An operator abort is not a product failure. Reported as `1`
+                // it is indistinguishable from "the Model Connector broke",
+                // which is the wrong thing to tell a wrapper script.
+                match error {
+                    KbReadError::Loop(reason) => crate::interrupt::exit_code(reason),
+                    _ => 1,
+                }
             }
         }
     })

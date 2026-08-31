@@ -87,6 +87,32 @@ impl CapabilityExecutor {
         }
     }
 
+    /// Append an agent-run lifecycle record to the executor's audit sink.
+    ///
+    /// The audit log is owned by this executor and deliberately has no public
+    /// accessor: exposing the sink would let a caller compose a second,
+    /// unaudited execution path, which is the exact failure this type exists
+    /// to prevent. This narrow method instead lets the agent loop record what
+    /// happened to a RUN — the tool-level `decision`/`result` pair already
+    /// covers what happened to a CAPABILITY.
+    ///
+    /// Honours the audit latch: once a durable append has failed, nothing more
+    /// is written, so an abort record can never be the one line that appears
+    /// after the log stopped being trustworthy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuditHookError`] when the executor is latched closed or the
+    /// append does not reach the backing store.
+    pub fn record_run_event(&self, kind: &str, fields: &Value) -> Result<(), AuditHookError> {
+        if self.audit_latched.load(Ordering::Acquire) {
+            return Err(AuditHookError::WriteFailed(std::io::Error::other(
+                "capability executor is latched closed after audit failure",
+            )));
+        }
+        self.audit.record_run_event(kind, fields)
+    }
+
     /// Authorize, validate, audit, and execute one capability attempt.
     ///
     /// # Errors

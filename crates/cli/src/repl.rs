@@ -26,7 +26,7 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
-use arcana_core::agent_loop::DriverConfig;
+use arcana_core::agent_loop::{DriverConfig, TerminalReason};
 use arcana_core::dispatch::ModelPolicy;
 
 use crate::demo::{PermissionMode, Session};
@@ -190,10 +190,16 @@ pub fn run_repl(live: bool) -> i32 {
     );
     println!("audit log: {}", session.audit_log_path().display());
 
+    // A session runs many billable turns, so it is the surface where an
+    // unhandled Ctrl-C costs the most: today it kills the process mid-turn and
+    // the operator loses the session, the spend line, and the audit record of
+    // the dispatch they are about to be charged for.
+    let interrupt = crate::interrupt::Interrupt::install();
+
     if std::io::stdin().is_terminal() {
-        run_terminal(&runtime, &session)
+        run_terminal(&runtime, &session, interrupt.as_ref())
     } else {
-        run_piped(&runtime, &session)
+        run_piped(&runtime, &session, interrupt.as_ref())
     }
 }
 
@@ -204,12 +210,22 @@ pub fn run_repl(live: bool) -> i32 {
 #[derive(Default)]
 struct SessionOutcome {
     any_turn_failed: bool,
+    /// Set when a turn ended because the operator pressed Ctrl-C.
+    ///
+    /// Tracked separately from `any_turn_failed` because a shell reads the two
+    /// differently: `1` says this product could not do the job, `130` says the
+    /// human stopped it. Collapsing them would make `arcana ... || rollback`
+    /// fire a rollback on a deliberate interrupt.
+    interrupted: bool,
 }
 
 impl SessionOutcome {
-    /// `0` when every turn completed, `1` when any did not.
+    /// `0` when every turn completed, `130` when the operator interrupted one,
+    /// `1` when any turn failed for another reason.
     const fn exit_code(&self) -> i32 {
-        if self.any_turn_failed {
+        if self.interrupted {
+            crate::interrupt::EXIT_INTERRUPTED
+        } else if self.any_turn_failed {
             1
         } else {
             0
@@ -218,7 +234,11 @@ impl SessionOutcome {
 }
 
 /// Interactive path: `rustyline` owns the prompt, history and key handling.
-fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
+fn run_terminal(
+    runtime: &tokio::runtime::Runtime,
+    session: &Session,
+    interrupt: Option<&crate::interrupt::Interrupt>,
+) -> i32 {
     use rustyline::error::ReadlineError;
 
     let mut spend = crate::usage::zero_snapshot();
@@ -231,7 +251,7 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
             // fall back to the plain reader rather than denying the operator a
             // session.
             eprintln!("arcana: line editor unavailable ({err}); falling back to plain input");
-            return run_piped(runtime, session);
+            return run_piped(runtime, session, interrupt);
         }
     };
 
@@ -250,7 +270,7 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
                         // Ignore a history-write failure: losing a history entry
                         // must never abort the operator's session.
                         let _ = editor.add_history_entry(task);
-                        drive(runtime, session, task, &mut spend, &mut outcome);
+                        drive(runtime, session, task, &mut spend, &mut outcome, interrupt);
                     }
                 }
             }
@@ -269,7 +289,11 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
 }
 
 /// Non-terminal path: plain line reads from stdin, no prompt, no history.
-fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
+fn run_piped(
+    runtime: &tokio::runtime::Runtime,
+    session: &Session,
+    interrupt: Option<&crate::interrupt::Interrupt>,
+) -> i32 {
     let mut spend = crate::usage::zero_snapshot();
     let mut outcome = SessionOutcome::default();
     let stdin = std::io::stdin();
@@ -289,7 +313,9 @@ fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
                 "unknown command {word} — type /help for commands. Put it in a \
                  sentence if you meant it as a task."
             ),
-            Action::Task(task) => drive(runtime, session, task, &mut spend, &mut outcome),
+            Action::Task(task) => {
+                drive(runtime, session, task, &mut spend, &mut outcome, interrupt);
+            }
         }
     }
     outcome.exit_code()
@@ -305,6 +331,7 @@ fn drive(
     task: &str,
     previous: &mut arcana_core::cost::CostSnapshot,
     outcome: &mut SessionOutcome,
+    interrupt: Option<&crate::interrupt::Interrupt>,
 ) {
     // ARAS-0065 — honour the operator's chosen model. Without this the
     // preference would be a file nothing reads: `arcana models use` would
@@ -324,7 +351,12 @@ fn drive(
         config.policy = ModelPolicy::single_model(&chosen);
         config.model = Some(chosen);
     }
-    let out = runtime.block_on(session.run_task(task, config));
+    // Armed only for the duration of the turn. Between turns the slot is empty
+    // and a Ctrl-C leaves the session, which is what a Ctrl-C at a prompt has
+    // always meant.
+    let (cancel, turn_guard) = crate::interrupt::arm(interrupt);
+    let out = runtime.block_on(session.run_task(task, config, cancel));
+    drop(turn_guard);
 
     // ARAS-0065 — say which model answered. Without this the operator's choice
     // is unobservable: `models use` could silently fail to reach the loop and
@@ -350,7 +382,13 @@ fn drive(
     );
     *previous = out.cost;
 
-    if !out.reason.is_success() {
+    if out.reason == TerminalReason::AbortedByOperator {
+        // The spend line above is the point of having waited: it is the exact
+        // amount the interrupted dispatch cost, not a hedge about whether it
+        // cost anything.
+        outcome.interrupted = true;
+        eprintln!("arcana: turn aborted by the operator; the amount above was charged");
+    } else if !out.reason.is_success() {
         outcome.any_turn_failed = true;
         eprintln!("arcana: turn ended — {} ({:?})", out.reason, out.reason);
     }

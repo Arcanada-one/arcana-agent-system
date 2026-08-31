@@ -141,9 +141,16 @@ async fn run_demo_async(
         return 1;
     };
 
+    // Ctrl-C during a live turn used to kill the process outright, leaving the
+    // dispatch charged and unrecorded. `demo --live` is the most expensive
+    // first thing a new user runs, so it is the one that most needs to survive
+    // an interrupt long enough to say what it cost.
+    let interrupt = crate::interrupt::Interrupt::install();
+    let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
     let out = session
-        .run_task(task, driver_config(measurement, route.as_ref()))
+        .run_task(task, driver_config(measurement, route.as_ref()), cancel)
         .await;
+    drop(turn_guard);
 
     if measurement_requested {
         let Some(observation) = out.first_dispatch_observation.as_ref() else {
@@ -173,7 +180,7 @@ async fn run_demo_async(
                 return 1;
             }
         }
-        return i32::from(!out.reason.is_success());
+        return crate::interrupt::exit_code(out.reason);
     }
 
     // --- attempt → check → conclusion --------------------------------------
@@ -219,7 +226,7 @@ async fn run_demo_async(
     // `AuditLog` appends synchronously and flushes per record; the executor owns
     // it and drops at function scope end, so no explicit flush is required.
 
-    i32::from(!out.reason.is_success())
+    crate::interrupt::exit_code(out.reason)
 }
 
 /// Project-local rule file, resolved relative to the current working
@@ -372,12 +379,17 @@ impl Session {
     /// append-only audit log) while each run gets its own config. The
     /// [`CostTracker`] handle is cloned, so spend accumulates ACROSS turns
     /// rather than resetting per turn.
-    pub async fn run_task(&self, task: &str, config: DriverConfig) -> RunOutput {
+    pub async fn run_task(
+        &self,
+        task: &str,
+        config: DriverConfig,
+        cancel: CancellationToken,
+    ) -> RunOutput {
         let driver = Driver::new(
             self.connector.as_ref(),
             &self.executor,
             Arc::clone(&self.cost),
-            CancellationToken::new(),
+            cancel,
             config,
         );
         driver.run(task).await

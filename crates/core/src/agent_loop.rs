@@ -478,16 +478,59 @@ impl<'a> Driver<'a> {
                         StepResult::Terminal(_, text) => text,
                         StepResult::Continue(_) => None,
                     };
+                    let cost = self.cost.snapshot();
+                    let reason = if reason == TerminalReason::AbortedByOperator {
+                        self.record_abort(attempts, &selected, &cost)
+                    } else {
+                        reason
+                    };
                     return RunOutput {
                         reason,
                         final_text,
                         turns: attempts,
-                        cost: self.cost.snapshot(),
+                        cost,
                         selected_models: selected,
                         first_dispatch_observation,
                     };
                 }
             }
+        }
+    }
+
+    /// Write the operator-abort record, and report whether the audit held.
+    ///
+    /// A Ctrl-C used to leave nothing behind at all: the dispatch had been sent
+    /// and would be charged, and the only local evidence of it was a dead
+    /// process. The tool-level `decision`/`result` pair cannot cover this,
+    /// because an abort during the connector call has no tool to attribute to.
+    ///
+    /// Returns [`TerminalReason::AuditFatal`] when the append fails. An abort
+    /// the operator was told about but that was never recorded is precisely the
+    /// state Law-5 forbids, and the driver already treats a failed audit append
+    /// as fatal everywhere else; reporting a clean abort over a broken log
+    /// would make this one site the exception.
+    fn record_abort(
+        &self,
+        attempts: u32,
+        selected: &[String],
+        cost: &crate::cost::CostSnapshot,
+    ) -> TerminalReason {
+        // Both figures are named for their scope, because they do not share
+        // one. `attempts` counts connector calls in THIS run; the `CostTracker`
+        // is owned by the session and shared across every run in it, so its
+        // snapshot is cumulative. A field called plainly `cost_usd_micros`
+        // beside a per-run turn count reads as the cost of the aborted turn —
+        // measured live, an abort on the second turn of a session recorded 20
+        // micro-USD next to `turns: 1` when that turn had cost 11.
+        let fields = serde_json::json!({
+            "reason": "aborted_by_operator",
+            "run_turns": attempts,
+            "run_models": selected,
+            "session_cost_usd_micros": cost.total_cost_usd_micros,
+        });
+        match self.executor.record_run_event("run_aborted", &fields) {
+            Ok(()) => TerminalReason::AbortedByOperator,
+            Err(_) => TerminalReason::AuditFatal,
         }
     }
 
@@ -558,9 +601,32 @@ impl<'a> Driver<'a> {
         history.push(HistoryEntry::Assistant(resp.result.clone()));
         match interpret(&resp) {
             AssistantAction::Final { text } => {
-                StepResult::Terminal(TerminalReason::Completed, Some(text))
+                // An answer that arrived is DELIVERED even when the operator
+                // interrupted: it is already paid for, and withholding it would
+                // be a second harm. But the verdict still says they stopped the
+                // run, so the exit code is 130 and the abort is audited. The
+                // alternative — reporting a clean `Completed` — makes Ctrl-C
+                // inert on the commonest shape there is, a task answered in one
+                // dispatch, and tells a wrapper script the run was never
+                // interrupted at all.
+                let reason = if self.cancel.is_cancelled() {
+                    TerminalReason::AbortedByOperator
+                } else {
+                    TerminalReason::Completed
+                };
+                StepResult::Terminal(reason, Some(text))
             }
             AssistantAction::ToolCall { name, input } => {
+                // Re-check between the answer and the side effect. The
+                // top-of-step check already stops the NEXT billable dispatch,
+                // but a tool turn is where the run touches the world — an
+                // operator who pressed Ctrl-C while the model was deciding
+                // should not then watch a bash command run. The final-text
+                // branch above deliberately does NOT check: that answer is
+                // already paid for, and discarding it would be a second harm.
+                if self.cancel.is_cancelled() {
+                    return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
+                }
                 history.push(HistoryEntry::ToolCall {
                     name: name.clone(),
                     input: input.to_string(),

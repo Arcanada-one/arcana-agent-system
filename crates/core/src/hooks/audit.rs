@@ -138,6 +138,35 @@ impl AuditLog {
         }))
     }
 
+    /// Record an agent-run lifecycle event (`phase: "run"`).
+    ///
+    /// Separate from [`Self::record_event`], whose `phase` is `"supervisor"`:
+    /// these are emitted by the agent loop itself, and a consumer that filters
+    /// supervision events must not silently start receiving run events.
+    ///
+    /// The module invariant is hashes-only for anything that could carry
+    /// prompt text, tool output, credentials, or an error string. `fields` is
+    /// persisted verbatim precisely because the caller is restricted to
+    /// non-secret scalars this crate produced itself — turn counts, cost in
+    /// micro-USD, the terminal reason, and model ids chosen by our own
+    /// `ModelPolicy`. Hashing those would make the record unreadable while
+    /// protecting nothing: an abort with an opaque `fields_hash` cannot answer
+    /// "what was I charged for", which is the only reason the record exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuditHookError`] if the record cannot be synchronously
+    /// written and flushed.
+    pub fn record_run_event(&self, kind: &str, fields: &Value) -> Result<(), AuditHookError> {
+        self.append(&serde_json::json!({
+            "version": AUDIT_VERSION,
+            "ts": now_rfc3339(),
+            "phase": "run",
+            "kind": kind,
+            "fields": fields,
+        }))
+    }
+
     pub(crate) fn record_decision(
         &self,
         invocation_id: u64,
