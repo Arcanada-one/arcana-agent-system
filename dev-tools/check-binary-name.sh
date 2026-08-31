@@ -36,6 +36,12 @@ CRATES_UA="arcana-agent-system-check-binary-name/1.0 (github.com/Arcanada-one/ar
 CRATES_IO_BASE="${CRATES_IO_BASE:-https://crates.io/api/v1/crates}"
 BREW_API_BASE="${BREW_API_BASE:-https://formulae.brew.sh/api/formula}"
 OVERALL_STATUS=0
+# Set whenever a registry could not answer. An inconclusive run MUST NOT exit 0:
+# `0` reads as "these names are available", and a run where nothing could be
+# reached observed nothing at all. crates.io answers 403 to a request with no
+# User-Agent — the same 403 for a taken name, a free one, and a typo — so this
+# is not a hypothetical.
+INCONCLUSIVE=0
 
 check_crates_io() {
     local name="$1"
@@ -57,8 +63,10 @@ check_crates_io() {
     case "${http_code}" in
         404) echo "  crates.io:  free" ;;
         200) echo "  crates.io:  TAKEN"; OVERALL_STATUS=1 ;;
-        000) echo "  crates.io:  UNKNOWN (request failed)" ;;
-        *)   echo "  crates.io:  UNKNOWN (http ${http_code})" ;;
+        000) echo "  crates.io:  UNKNOWN (request failed)"; INCONCLUSIVE=1 ;;
+        403) echo "  crates.io:  UNKNOWN (http 403 — is the User-Agent set?)"
+             INCONCLUSIVE=1 ;;
+        *)   echo "  crates.io:  UNKNOWN (http ${http_code})"; INCONCLUSIVE=1 ;;
     esac
 }
 
@@ -69,7 +77,7 @@ check_homebrew() {
     case "${http_code}" in
         404) echo "  homebrew:   free" ;;
         200) echo "  homebrew:   TAKEN"; OVERALL_STATUS=1 ;;
-        *)   echo "  homebrew:   UNKNOWN (http ${http_code})" ;;
+        *)   echo "  homebrew:   UNKNOWN (http ${http_code})"; INCONCLUSIVE=1 ;;
     esac
 }
 
@@ -96,4 +104,14 @@ for name in "$@"; do
     check_apt "${name}"
 done
 
-exit "${OVERALL_STATUS}"
+# A definite TAKEN outranks an inconclusive registry: it is the actionable
+# answer either way. Otherwise an unreachable registry exits 3, so a caller
+# cannot read "nothing was observed taken" as "these names are free".
+if [[ "${OVERALL_STATUS}" -ne 0 ]]; then
+    exit "${OVERALL_STATUS}"
+fi
+if [[ "${INCONCLUSIVE}" -ne 0 ]]; then
+    echo "INCONCLUSIVE: at least one registry could not answer; no name is confirmed free." >&2
+    exit 3
+fi
+exit 0
