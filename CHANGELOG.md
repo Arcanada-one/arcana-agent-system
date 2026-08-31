@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request now reads `the request was rejected — Insufficient credit: balance
   0.00 USD. Top up your balance at <url>. (insufficient_credit)` instead of
   `upstream logical error [insufficient_credit]: ...`.
+- The interactive session exits non-zero when a turn fails. It returned `0`
+  unconditionally on a clean session end, so `printf 'task\n' | arcana --live`
+  against an out-of-credit key printed the failure and exited `0` — and
+  `arcana ... && deploy` deployed. `arcana demo` already exited `1` on the
+  identical condition; two commands wrapping the same driver no longer
+  disagree about what failure is.
+- Terminal verdicts are explained in words. `demo` and the interactive session
+  formatted `TerminalReason` with `{:?}`, so the operator was shown
+  `ConnectorFatal` and `ContextWindowExhausted` verbatim. Each verdict now
+  carries a sentence — an over-long prompt says to shorten it or choose a model
+  with a larger context window — with the variant name kept as a trailing
+  parenthetical for support.
 
 - `arcana demo` completes its loop. It ran through an empty permission cascade,
   which is fail-closed and therefore denied every tool call, so the command

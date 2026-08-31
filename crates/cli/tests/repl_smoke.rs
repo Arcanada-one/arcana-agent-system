@@ -90,6 +90,8 @@ fn a_task_line_runs_the_agent_loop_and_prints_the_result() {
 /// tool call is denied and the session says so rather than pretending to
 /// succeed. This is the negative control for the test above — without it,
 /// that test could pass on a cascade that allows everything.
+///
+/// The session exits non-zero because the turn did not complete (#94).
 #[test]
 fn without_an_approval_directive_the_tool_call_is_denied() {
     let state = TempDir::new().unwrap();
@@ -97,9 +99,9 @@ fn without_an_approval_directive_the_tool_call_is_denied() {
         .env_remove("ARCANA_PERMISSION_AUTO")
         .write_stdin(format!("{TASK}\nexit\n"))
         .assert()
-        .success()
+        .failure()
         .stdout(predicate::str::contains("hello world").not())
-        .stdout(predicate::str::contains("PermissionDenied"));
+        .stderr(predicate::str::contains("(PermissionDenied)"));
 }
 
 /// An explicit deny directive is honoured too — proving the directive is read
@@ -111,8 +113,95 @@ fn an_explicit_deny_directive_is_honoured() {
         .env("ARCANA_PERMISSION_AUTO", "deny")
         .write_stdin(format!("{TASK}\nexit\n"))
         .assert()
-        .success()
+        .failure()
         .stdout(predicate::str::contains("hello world").not());
+}
+
+// --- exit codes (#94) ------------------------------------------------------
+
+/// A session whose only turn failed must NOT report success.
+///
+/// Measured before the fix: an out-of-credit key gave `ConnectorFatal` on
+/// stdout and exit 0, so `arcana ... && deploy` deployed. The offline deny
+/// path reproduces the same shape without a network call or a live key.
+#[test]
+fn a_session_whose_turn_failed_exits_non_zero() {
+    let state = TempDir::new().unwrap();
+    arcana(&state)
+        .env("ARCANA_PERMISSION_AUTO", "deny")
+        .write_stdin(format!("{TASK}\nexit\n"))
+        .assert()
+        .code(1);
+}
+
+/// One failed turn poisons the session's exit code even when a later turn
+/// succeeds. A script cannot see the individual verdicts, only the code, so a
+/// run that contained a failure must not be indistinguishable from a clean one.
+#[test]
+fn one_failed_turn_among_several_still_exits_non_zero() {
+    let state = TempDir::new().unwrap();
+    arcana(&state)
+        .env("ARCANA_PERMISSION_AUTO", "deny")
+        .write_stdin(format!("{TASK}\n{TASK}\nexit\n"))
+        .assert()
+        .code(1);
+}
+
+/// The converse, so the check above cannot pass by always failing: a session
+/// where every turn completed still exits 0.
+#[test]
+fn a_session_whose_turns_all_completed_exits_zero() {
+    let state = TempDir::new().unwrap();
+    arcana(&state)
+        .env("ARCANA_PERMISSION_AUTO", "allow")
+        .write_stdin(format!("{TASK}\nexit\n"))
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("hello world"));
+}
+
+/// A session that ran no turns at all is not a failure.
+#[test]
+fn a_session_with_no_turns_exits_zero() {
+    let state = TempDir::new().unwrap();
+    arcana(&state).write_stdin("\n  \nexit\n").assert().code(0);
+}
+
+// --- verdict wording (#106) ------------------------------------------------
+
+/// The operator must be told what happened, not shown a Rust enum variant.
+#[test]
+fn a_failed_turn_is_explained_in_words_not_just_a_variant_name() {
+    let state = TempDir::new().unwrap();
+    arcana(&state)
+        .env("ARCANA_PERMISSION_AUTO", "deny")
+        .write_stdin(format!("{TASK}\nexit\n"))
+        .assert()
+        .failure()
+        // The sentence, on stdout where the missing answer is reported...
+        .stdout(predicate::str::contains(
+            "the permission cascade refused the tool call",
+        ))
+        // ...and on stderr, where the turn's verdict is reported.
+        .stderr(predicate::str::contains(
+            "the permission cascade refused the tool call",
+        ))
+        // The variant survives as a parenthetical for support.
+        .stderr(predicate::str::contains("(PermissionDenied)"));
+}
+
+/// Regression guard on the exact prior text: a bare variant name with no
+/// sentence anywhere near it.
+#[test]
+fn the_verdict_line_is_no_longer_a_bare_variant_name() {
+    let state = TempDir::new().unwrap();
+    arcana(&state)
+        .env("ARCANA_PERMISSION_AUTO", "deny")
+        .write_stdin(format!("{TASK}\nexit\n"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("turn ended on PermissionDenied").not())
+        .stdout(predicate::str::contains("(no final text — PermissionDenied)").not());
 }
 
 /// Blank lines cost nothing and do not end the session: the task after them
