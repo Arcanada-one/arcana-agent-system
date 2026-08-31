@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Daily, for `release-pending` below. That check must not ride on PR
+    # traffic: a quiet repo is exactly where "bumped but never tagged" hides.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -128,6 +133,54 @@ jobs:
           echo
           echo "Add an entry under '## [Unreleased]', or label the PR 'no-changelog'"
           echo "if this change is genuinely invisible to users."
+          exit 1
+
+  release-pending:
+    # The level above the `changelog` gate. That one catches a fix shipped
+    # without a note; this one catches a whole RELEASE prepared and never cut —
+    # version bumped in Cargo.toml, notes written, no tag, no GitHub release,
+    # and `gh release list` still showing the previous version as Latest.
+    #
+    # Observed 2026-08-31: 0.2.0 merged to main with curated notes while v0.1.0
+    # remained the only tag. Merged is not shipped.
+    #
+    # A grace period rather than an immediate failure, deliberately. Cutting a
+    # tag legitimately lags the merge — here it waits on a code-owner approval
+    # that is a human signature by design (SEC0030) — so failing the instant the
+    # bump lands would make this permanently red and teach everyone to ignore
+    # it. It fires only once the gap has persisted long enough to be a
+    # forgotten release rather than an in-flight one.
+    name: release-pending
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: a bumped version must reach a tag
+        env:
+          GRACE_DAYS: '3'
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 -E '^version = "' Cargo.toml | cut -d'"' -f2)
+          test -n "$version"
+          if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
+            echo "v${version} is tagged"; exit 0
+          fi
+          # `-S` finds the commit that introduced this exact version string.
+          bumped=$(git log -1 --format=%ct -S"version = \"${version}\"" -- Cargo.toml)
+          test -n "$bumped"
+          age_days=$(( ( $(date +%s) - bumped ) / 86400 ))
+          echo "workspace version ${version}; no v${version} tag; bumped ${age_days}d ago"
+          if [ "$age_days" -lt "$GRACE_DAYS" ]; then
+            echo "within the ${GRACE_DAYS}-day grace period — release presumed in flight"
+            exit 0
+          fi
+          echo "::error::version ${version} was bumped ${age_days} days ago and has no v${version} tag."
+          echo "The code and the notes are on main; nothing is published, so"
+          echo "'gh release list' still shows the previous version as Latest."
+          echo "Cut the release, or revert the bump if it is not going out."
           exit 1
 
   platform-native-negative-controls:
