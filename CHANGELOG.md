@@ -48,6 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries a sentence — an over-long prompt says to shorten it or choose a model
   with a larger context window — with the variant name kept as a trailing
   parenthetical for support.
+- The interactive permission prompt no longer waits forever. Failing closed on
+  EOF is not enough on its own, because a terminal that is attached and idle
+  never reaches EOF: `script -qec 'arcana whoami' /dev/null < /dev/null` was
+  still alive at 60 seconds and had to be killed, with the prompt line as the
+  last thing the process ever printed. That is the shape of every `ssh -t host
+  arcana ...`, every CI job that allocates a pty, and every unattended pane.
+  The read is now bounded — two minutes by default, overridable with
+  `ARCANA_PROMPT_TIMEOUT_SECS`, and `0` restores the unbounded wait — and a
+  prompt nobody answers denies, saying so.
 
 - `arcana demo` completes its loop. It ran through an empty permission cascade,
   which is fail-closed and therefore denied every tool call, so the command
