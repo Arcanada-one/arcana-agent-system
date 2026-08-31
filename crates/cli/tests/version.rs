@@ -160,3 +160,78 @@ fn login_output_omits_internal_task_ids() {
                 .not(),
         );
 }
+
+/// `--help` is the first thing a paying user reads.
+///
+/// It used to be written for the people who built the product: `Phase-C
+/// vertical prototype`, `Bootstrap smoke check`, `Tier-1 loopback`, `capability
+/// core`. Those name our roadmap phases and internal architecture, and tell a
+/// customer nothing about what a command does. Worse, the product's MAIN mode —
+/// running `arcana` with no subcommand — appeared nowhere except inside the
+/// `--live` flag text, which referred to "the no-subcommand REPL" as though the
+/// reader already knew what that was.
+#[test]
+fn help_is_written_for_the_person_reading_it() {
+    let mut cmd = Command::cargo_bin("arcana").unwrap();
+    let out = cmd.arg("--help").output().unwrap();
+    let help = String::from_utf8(out.stdout).unwrap();
+
+    // The main mode is named, in the top-level description.
+    assert!(
+        help.contains("Run with no command to start an interactive session"),
+        "{help}"
+    );
+
+    // Internal vocabulary must not reach a customer.
+    for term in [
+        "Phase-C",
+        "vertical prototype",
+        "Bootstrap smoke",
+        "permission cascade",
+        "Tier-1",
+        "capability core",
+        "no-subcommand",
+    ] {
+        assert!(
+            !help.contains(term),
+            "internal term {term:?} in --help:\n{help}"
+        );
+    }
+
+    // The variables every command needs are documented, not discovered from an
+    // error message.
+    for var in [
+        "ARCANA_MC_TOKEN",
+        "ARCANA_STATS_TOKEN",
+        "ARCANA_KB_CLIENT_SECRET_FILE",
+    ] {
+        assert!(help.contains(var), "{var} missing from --help:\n{help}");
+    }
+
+    // Public-surface hygiene: internal task ids never reach a user.
+    assert!(
+        !regex_lite_matches_task_id(&help),
+        "internal task id in --help:\n{help}"
+    );
+}
+
+/// Minimal `[A-Z]{2,8}-[0-9]{4}` scan, without pulling in a regex dependency.
+fn regex_lite_matches_task_id(text: &str) -> bool {
+    let bytes: Vec<char> = text.chars().collect();
+    for i in 0..bytes.len() {
+        let mut j = i;
+        while j < bytes.len() && bytes[j].is_ascii_uppercase() {
+            j += 1;
+        }
+        let letters = j - i;
+        if (2..=8).contains(&letters)
+            && j < bytes.len()
+            && bytes[j] == '-'
+            && bytes.len() >= j + 5
+            && bytes[j + 1..j + 5].iter().all(char::is_ascii_digit)
+        {
+            return true;
+        }
+    }
+    false
+}
