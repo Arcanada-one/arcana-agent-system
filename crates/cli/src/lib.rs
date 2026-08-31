@@ -6,6 +6,7 @@
 
 pub mod bootstrap;
 pub mod demo;
+pub mod http_error;
 pub mod kb_read;
 pub mod login;
 pub mod models;

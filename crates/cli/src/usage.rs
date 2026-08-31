@@ -409,9 +409,9 @@ async fn usage_async(window: &UsageWindow) -> i32 {
     };
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
+        let described = crate::http_error::describe(&requested, resp).await;
         eprintln!(
-            "arcana usage: the Model Connector returned HTTP {code} for {url} \
-             (since={}, until={})",
+            "arcana usage: {described} (since={}, until={})",
             window.since, window.until
         );
         if code == 403 {
@@ -423,13 +423,6 @@ async fn usage_async(window: &UsageWindow) -> i32 {
 server's STATS_READ_TOKEN, or the server has none configured at all (the guard \
 denies with reason=no-expected-token before reading the request)."
             );
-        }
-        // Print what the server said. Swallowing this body is what made the
-        // missing query parameters invisible: the 400 named both of them, and
-        // the user was shown only the status code.
-        match resp.text().await {
-            Ok(body) if !body.trim().is_empty() => eprintln!("  the server said: {}", body.trim()),
-            _ => {}
         }
         return 1;
     }

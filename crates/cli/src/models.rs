@@ -242,10 +242,7 @@ pub async fn fetch_catalog() -> Result<Vec<CatalogEntry>, String> {
         .map_err(|err| format!("cannot reach the Model Connector at {base}: {err}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!(
-            "the Model Connector returned HTTP {} for {url}",
-            resp.status().as_u16()
-        ));
+        return Err(crate::http_error::describe(&url, resp).await);
     }
     let bytes = resp
         .bytes()
