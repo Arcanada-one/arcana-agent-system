@@ -18,6 +18,6 @@ pub mod ops_bot;
 pub mod scrutator;
 
 pub use coworker::CoworkerClient;
-pub use model_connector::ModelConnectorClient;
+pub use model_connector::{ApiKey, ModelConnectorClient};
 pub use ops_bot::OpsBotClient;
 pub use scrutator::{skill_store_from_env, ScrutatorClient, SkillStoreInitError};

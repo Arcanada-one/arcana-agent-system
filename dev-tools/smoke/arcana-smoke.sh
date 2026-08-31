@@ -233,7 +233,13 @@ stage_s3() {
     if start_replay 201 "$FIXTURES/mc-error.json"; then
         iso_arcana s3-err ARCANA_MC_BASE_URL="http://127.0.0.1:$REPLAY_PORT" ARCANA_MC_TOKEN=staging -- mc-ping
         stop_replay
-        assert_contains "S3 201-error pinned-Display" "$ISO_OUT" "upstream logical error ["
+        # Pins the operator-visible shape, not just the fact of an error: the
+        # message leads, the connector's `recommendation` survives to the
+        # screen (it used to be parsed and dropped), and the wire `kind` is a
+        # trailing parenthetical rather than the headline.
+        assert_contains "S3 201-error pinned-Display" "$ISO_OUT" "the request was rejected — circuit breaker open for claude-code."
+        assert_contains "S3 201-error recommendation-shown" "$ISO_OUT" "wait."
+        assert_contains "S3 201-error kind-parenthetical" "$ISO_OUT" "(circuit_open)"
     else
         fail "S3 201-error pinned-Display" "replay server failed to start"
     fi

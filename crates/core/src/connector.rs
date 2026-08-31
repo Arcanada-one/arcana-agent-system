@@ -249,8 +249,18 @@ pub enum ConnectorError {
     /// `ARCANA_MC_TOKEN` is unset or empty.
     #[error("missing API key (set ARCANA_MC_TOKEN)")]
     MissingApiKey,
+    /// `ARCANA_MC_TOKEN` is set but cannot be used as an HTTP credential.
+    ///
+    /// `reason` is written for the operator and NEVER contains the credential
+    /// itself — only a description of the offending byte and its position.
+    #[error("{reason}")]
+    InvalidApiKey { reason: String },
     /// Transport-level failure (DNS, TLS, connect, timeout, body read).
-    #[error("transport error: {0}")]
+    ///
+    /// The payload already leads with its own headline ("could not connect",
+    /// "timed out after 120s", …) followed by the `reqwest`/`hyper` cause
+    /// chain, so this variant adds no prefix of its own.
+    #[error("{0}")]
     Transport(String),
     /// Upstream returned a 4xx/5xx `NestJS` exception envelope.
     #[error("HTTP {status}: {message}")]
@@ -276,7 +286,7 @@ pub enum ConnectorError {
     /// A connector response with `status: "error"` — an application-level
     /// failure. `http_status` retains the actual mapped HTTP status (for
     /// example 429 or 503) while the structured receipt remains available.
-    #[error("upstream logical error [{kind}]: {message}")]
+    #[error("{}", render_logical(.kind, .message, .recommendation, .retry_after.as_ref()))]
     Logical {
         http_status: u16,
         kind: String,
@@ -286,6 +296,47 @@ pub enum ConnectorError {
         retry_after: Option<u64>,
         first_dispatch_observation: Option<Box<UnverifiedFirstDispatchObservationV0>>,
     },
+}
+
+/// Render a logical-error envelope as one operator-facing sentence.
+///
+/// The wire contract carries a `recommendation` (what the caller should DO)
+/// and a `retryAfter` (when it is worth trying again). Both used to be parsed
+/// and then dropped by the `Display` impl, so the single field whose whole
+/// purpose is remediation never reached the person who needed it. The wire
+/// `kind` is kept, but as a trailing parenthetical for support rather than as
+/// the headline — it is an enum name, not a sentence.
+fn render_logical(
+    kind: &str,
+    message: &str,
+    recommendation: &str,
+    retry_after: Option<&u64>,
+) -> String {
+    use std::fmt::Write as _;
+    let mut out = format!("the request was rejected — {}", end_sentence(message));
+    if let Some(seconds) = retry_after {
+        let _ = write!(out, " Retry after {seconds}s.");
+    }
+    let recommendation = recommendation.trim();
+    if !recommendation.is_empty() {
+        out.push(' ');
+        out.push_str(&end_sentence(recommendation));
+    }
+    let _ = write!(out, " ({kind})");
+    out
+}
+
+/// Terminate a clause so two upstream-supplied sentences do not run together.
+///
+/// The connector's `message` and `recommendation` are independent strings, and
+/// neither is guaranteed to end in punctuation; concatenating them raw produces
+/// "…balance 0.00 USD Top up your balance…".
+fn end_sentence(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.ends_with(['.', '!', '?', ':', ';']) {
+        return trimmed.to_owned();
+    }
+    format!("{trimmed}.")
 }
 
 impl ConnectorError {
@@ -312,6 +363,85 @@ impl ConnectorError {
 )]
 mod tests {
     use super::*;
+
+    // --- logical-error rendering (issue #109) ------------------------------
+
+    fn logical(recommendation: &str, retry_after: Option<u64>) -> ConnectorError {
+        ConnectorError::Logical {
+            http_status: 402,
+            kind: "insufficient_credit".into(),
+            message: "Insufficient credit: balance 0.00 USD".into(),
+            retryable: retry_after.is_some(),
+            recommendation: recommendation.into(),
+            retry_after,
+            first_dispatch_observation: None,
+        }
+    }
+
+    #[test]
+    fn logical_display_shows_the_recommendation() {
+        // The recommendation is the one field on the wire whose entire purpose
+        // is to tell the caller what to DO. It used to be parsed and dropped.
+        let rendered =
+            logical("Top up your balance at https://billing.arcanada.ai", None).to_string();
+        assert!(
+            rendered.contains("Top up your balance at https://billing.arcanada.ai"),
+            "recommendation missing from: {rendered}"
+        );
+        assert!(rendered.contains("Insufficient credit: balance 0.00 USD"));
+    }
+
+    #[test]
+    fn logical_display_shows_the_retry_interval() {
+        let rendered = logical("Retry or pick another model", Some(30)).to_string();
+        assert!(
+            rendered.contains("Retry after 30s."),
+            "retry_after missing from: {rendered}"
+        );
+    }
+
+    #[test]
+    fn logical_display_leads_with_the_message_not_the_wire_enum() {
+        // `kind` is an enum name, useful to support and meaningless to a
+        // customer, so it must not be the headline.
+        let rendered = logical("", None).to_string();
+        assert!(
+            rendered.starts_with("the request was rejected — Insufficient credit"),
+            "unexpected headline: {rendered}"
+        );
+        assert!(
+            rendered.ends_with("(insufficient_credit)"),
+            "kind should survive as a trailing parenthetical: {rendered}"
+        );
+    }
+
+    #[test]
+    fn logical_display_omits_an_absent_recommendation_cleanly() {
+        // An empty recommendation must not leave a dangling separator.
+        let rendered = logical("   ", None).to_string();
+        assert_eq!(
+            rendered,
+            "the request was rejected — Insufficient credit: balance 0.00 USD. (insufficient_credit)"
+        );
+    }
+
+    #[test]
+    fn two_upstream_sentences_do_not_run_together() {
+        // "…balance 0.00 USD Top up your balance…" — the message and the
+        // recommendation are separate strings and neither is punctuated.
+        let rendered = logical("Top up your balance", None).to_string();
+        assert!(
+            rendered.contains("USD. Top up your balance."),
+            "sentences ran together: {rendered}"
+        );
+    }
+
+    #[test]
+    fn transport_display_carries_no_redundant_prefix() {
+        let rendered =
+            ConnectorError::Transport("could not connect: tcp connect error".into()).to_string();
+        assert_eq!(rendered, "could not connect: tcp connect error");
+    }
 
     #[test]
     fn execute_request_omits_unset_optionals() {
