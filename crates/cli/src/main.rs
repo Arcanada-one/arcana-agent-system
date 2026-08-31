@@ -9,44 +9,60 @@ const GIT_SHA: &str = env!("ARCANA_GIT_SHA");
 /// verification actually rests on, so the dirty case gets its own sentence.
 const GIT_DIRTY: bool = matches!(env!("ARCANA_GIT_DIRTY").as_bytes(), b"true");
 
+/// Shown under `--help`. These are required by most commands and appeared
+/// nowhere in the help text: a first-run user met `ARCANA_MC_TOKEN` in an error
+/// message or not at all.
+const ENVIRONMENT_HELP: &str = "\
+Environment:
+  ARCANA_MC_TOKEN               Model Connector API key. Required by `models`,
+                                `kb-read`, and by `--live`.
+  ARCANA_STATS_TOKEN            Read token for spend reporting, used by `usage`.
+                                Purpose-scoped: an ARCANA_MC_TOKEN is refused.
+  ARCANA_KB_CLIENT_SECRET_FILE  Path to the knowledge-base client secret,
+                                required by `kb-read`.
+  ARCANA_MC_BASE_URL            Override the Model Connector endpoint.";
+
 #[derive(Parser)]
 #[command(
     name = "arcana",
     version,
     about = "Arcanada Agent System CLI",
-    long_about = None,
+    // `Usage: arcana [OPTIONS] [COMMAND]` says the command is optional and never
+    // says what happens without one — which is the product's main mode. The only
+    // mention used to be inside the `--live` flag text, referring to "the
+    // no-subcommand REPL" as though the reader already knew what that was.
+    long_about = "Arcanada Agent System CLI.\n\nRun with no command to start an interactive session.",
+    after_help = ENVIRONMENT_HELP,
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
-    /// Route the interactive session through the real Model Connector when
-    /// `ARCANA_MC_TOKEN` is set. Applies to the no-subcommand REPL; `demo` has
-    /// its own `--live`.
+    /// Run the interactive session against the real Model Connector, which
+    /// costs money. Requires `ARCANA_MC_TOKEN`. `demo` has its own `--live`.
     #[arg(long)]
     live: bool,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Print version, git SHA, and license metadata.
+    /// Show the version, the exact commit it was built from, and the licence.
     Version,
-    /// Sign in to Auth Arcana using the OIDC device-authorization grant
-    /// (RFC 8628). Prints a short code to enter in a browser, then stores the
-    /// resulting credentials under the XDG state home with mode 0600.
+    /// Sign in. Prints a short code to enter in your browser.
+    ///
+    /// Uses the OIDC device-authorization grant (RFC 8628); the resulting
+    /// credentials are stored for your user only, mode 0600.
     Login,
     /// Send a one-shot `ping` through the Model Connector and print the
     /// response. Reads the API key from `ARCANA_MC_TOKEN`. Hidden debug surface;
     /// the agent loop wires the connector properly in a later release.
     #[command(hide = true)]
     McPing,
-    /// Bootstrap smoke check: assemble the default permission cascade,
-    /// walk it once, and report where the audit log landed.
+    /// Show who you are signed in as, and where the audit log is written.
     Whoami,
-    /// Phase-C vertical prototype: assemble the full driver + multi-model
-    /// dispatch + tool dispatch + permission cascade + audit loop, run a small
-    /// task, and print the three phases (attempt / check / conclusion). Offline
-    /// and deterministic by default; `--live` routes through the real Model
-    /// Connector when `ARCANA_MC_TOKEN` is set, else falls back to offline.
+    /// Run a short built-in task end to end, and show what the agent did.
+    ///
+    /// Offline and repeatable by default. `--live` runs it through the real
+    /// Model Connector when `ARCANA_MC_TOKEN` is set, and costs money.
     Demo {
         /// The small task to drive (defaults to a built-in code-signal task).
         task: Option<String>,
@@ -73,7 +89,7 @@ enum Cmd {
         #[command(subcommand)]
         command: Option<ModelsCmd>,
     },
-    /// Report recorded token spend, as the Model Connector has it.
+    /// Show what you have spent, as recorded by the Model Connector.
     Usage {
         /// First day of the report, YYYY-MM-DD at UTC. Defaults to 29 days before `--until`.
         #[arg(long)]
@@ -82,13 +98,16 @@ enum Cmd {
         #[arg(long)]
         until: Option<String>,
     },
-    /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
+    /// Answer one question using only the knowledge base, citing its sources.
+    ///
+    /// Refuses to answer rather than guess: if the search finds nothing, it
+    /// says so.
     KbRead {
         /// Literal search query. Multiple shell words are canonicalized into one query.
         #[arg(required = true, num_args = 1..)]
         query: Vec<String>,
     },
-    /// Expose the capability core as an MCP server (Tier-1 loopback).
+    /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
         #[command(subcommand)]
         command: McpCmd,
