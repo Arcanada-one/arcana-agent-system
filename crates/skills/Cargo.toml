@@ -9,7 +9,7 @@ authors.workspace = true
 description = "Skills-engine: declarative skill plans as data executed over the CapabilityExecutor"
 
 [dependencies]
-arcana-core = { path = "../core" }
+arcana-core = { workspace = true }
 async-trait = "0.1"
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
@@ -18,6 +18,15 @@ thiserror = "2"
 xdg = "2.5"
 
 [dev-dependencies]
+# DELIBERATELY version-less, and it must stay that way.
+#
+# The published dependency graph has one cycle: tools -> connectors -> skills,
+# and this edge closes it. `cargo publish` drops a dev-dependency that carries
+# no version, which breaks the cycle in the published manifests and lets cargo
+# order the nine crates. Give this a version — as `{ workspace = true }` would —
+# and the cycle becomes real: `cargo publish --workspace --dry-run` then orders
+# `arcana-tools` third, before the `arcana-connectors` it needs, and fails with
+# "no matching package named `arcana-connectors` found". Measured, not assumed.
 arcana-tools = { path = "../tools" }
 blake3 = "1"
 tempfile = "3"

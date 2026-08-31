@@ -9,9 +9,9 @@ authors.workspace = true
 description = "Built-in tools: Read, Write, Edit, Grep, Bash, WebFetch, ArcanaSearch"
 
 [dependencies]
-arcana-connectors = { path = "../connectors" }
-arcana-core = { path = "../core" }
-arcana-execution-boundary = { path = "../execution-boundary" }
+arcana-connectors = { workspace = true }
+arcana-core = { workspace = true }
+arcana-execution-boundary = { workspace = true }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
