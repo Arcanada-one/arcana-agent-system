@@ -51,7 +51,18 @@ fn audit_dir() -> PathBuf {
 }
 
 /// Connector id recorded on interactive turns.
-const REPL_CONNECTOR_ID: &str = "arcana-repl";
+/// Connector the interactive session dispatches through.
+///
+/// This is a CONNECTOR id, not a route label: `DriverConfig::connector_id` goes
+/// straight onto the wire (`agent_loop.rs`, `ExecuteRequest::new`). It used to
+/// read `arcana-repl`, which no connector answers to, so every live turn came
+/// back `404 Connector "arcana-repl" not found` — collapsed to `ConnectorFatal`
+/// with the message discarded, which is why the session appeared to fail for no
+/// reason while `curl` to the same endpoint succeeded.
+///
+/// `orq` is the id every working path already uses: `kb_read.rs` names it as a
+/// constant and asserts that every request it issues goes there.
+const REPL_CONNECTOR_ID: &str = "orq";
 
 /// The prompt shown on a terminal.
 const PROMPT: &str = "arcana> ";
