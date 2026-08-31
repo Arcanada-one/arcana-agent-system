@@ -154,9 +154,16 @@ async fn a_server_rejection_shows_what_the_server_said() {
         .arg("usage")
         .assert()
         .failure()
+        // Assert the PROPERTY, not the phrasing: the status and the server's
+        // own words must both reach the user. An earlier version of this test
+        // pinned the literal sentence that introduced the body, and broke when
+        // the rendering moved into a shared helper while the behaviour it cares
+        // about was unchanged.
         .stderr(predicate::str::contains("HTTP 400"))
-        .stderr(predicate::str::contains("the server said"))
-        .stderr(predicate::str::contains("Validation failed"));
+        .stderr(predicate::str::contains("Validation failed"))
+        // The validation array names WHICH parameter was wrong; that is the
+        // part worth having, so pin it rather than the wrapper text.
+        .stderr(predicate::str::contains("since: Invalid input"));
 }
 
 #[tokio::test]

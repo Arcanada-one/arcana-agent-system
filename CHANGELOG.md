@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `arcana models` and `arcana usage` say what the server said. Both carried
+  their own HTTP client and collapsed every non-2xx into the bare status
+  number, reading the response body and throwing it away — so a 402 whose body
+  said `Insufficient credit: balance 0.00 USD`, a 400 naming exactly which
+  query parameters were missing, and a 503 were all rendered as a number. The
+  message now carries the server's own text, and a `Retry-After` header is
+  reported instead of discarded.
+
 ## [0.2.0] - 2026-08-31
 
 The first release you can actually drive. `0.1.0` shipped the capability core
