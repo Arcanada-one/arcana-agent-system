@@ -491,7 +491,17 @@ fn driver_config(
     measurement: Option<FirstDispatchMeasurementV0>,
     route: Option<&FirstDispatchRoute>,
 ) -> DriverConfig {
-    let mut config = DriverConfig::new(route.map_or("arcana-demo", |measurement_route| {
+    // This is a CONNECTOR id, not a route label: it goes straight onto the
+    // wire via `ExecuteRequest`. "arcana-demo" is not a connector, so the
+    // server answered `404 Connector "arcana-demo" not found` and every live
+    // demo run died as `ConnectorFatal`.
+    //
+    // A measurement route supplies a real connector id and is untouched below,
+    // so per-route dispatch — and the multi-model behaviour this command exists
+    // to demonstrate — works exactly as before. Only the fallback for a plain
+    // `demo --live` needed a real id, and `orq` is the one every working path
+    // already uses (`kb_read.rs` names it as a constant and asserts on it).
+    let mut config = DriverConfig::new(route.map_or("orq", |measurement_route| {
         measurement_route.connector_id.as_str()
     }));
     if let Some(measurement_route) = route {
