@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cargo publish` can run against this workspace. Every internal dependency
+  was a bare `path` with no version, so `cargo publish -p arcana-agent-system`
+  exited 101 before doing anything (#101). The sixteen declarations now inherit
+  a single version from `[workspace.dependencies]`, and CI runs
+  `cargo publish --workspace --dry-run` so the ability cannot be lost again to
+  one careless manifest edit. Nothing is published — this restores the option,
+  which for a nine-crate chain is worth having in hand: a crates.io version can
+  be yanked but never reused, so the first real attempt has to be right.
+
+  One declaration is deliberately left version-less. `crates/skills`'
+  dev-dependency on `arcana-tools` closes the only cycle in the published graph
+  (`tools -> connectors -> skills -> tools`); cargo drops a version-less
+  dev-dependency when publishing, which breaks the cycle in the published
+  manifests and is what lets cargo order the nine crates at all. Versioning it
+  uniformly with the rest — the obvious thing to do — makes the cycle real and
+  the workspace unpublishable again.
+
 - Ctrl-C during a turn stops the run, says what it cost, and is recorded.
   Nothing installed a SIGINT handler, so an interrupt killed the process where
   it stood: the request already on the wire completed at the Model Connector

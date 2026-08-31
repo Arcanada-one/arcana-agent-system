@@ -9,13 +9,13 @@ authors.workspace = true
 description = "Ecosystem connectors: HTTP bridges to Arcanada services (Model Connector, …) and the coworker subprocess wrapper"
 
 [dependencies]
-arcana-core = { path = "../core" }
-arcana-execution-boundary = { path = "../execution-boundary" }
+arcana-core = { workspace = true }
+arcana-execution-boundary = { workspace = true }
 # The skills-store fetch seam (`FetchConn`) lives in `arcana-skills`; this crate
 # provides the live adapter (`impl FetchConn for ScrutatorClient`). The edge is
 # one-directional — `arcana-skills` never depends on `arcana-connectors` — so
 # there is no cycle.
-arcana-skills = { path = "../skills" }
+arcana-skills = { workspace = true }
 async-trait = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
 secrecy = "0.10"

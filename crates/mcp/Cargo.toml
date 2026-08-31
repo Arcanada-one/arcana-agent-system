@@ -15,7 +15,7 @@ default = ["http"]
 http = ["rmcp/transport-streamable-http-server", "dep:hyper", "dep:hyper-util"]
 
 [dependencies]
-arcana-core = { path = "../core" }
+arcana-core = { workspace = true }
 async-trait = "0.1"
 hyper = { version = "1", features = ["server", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio", "service"], optional = true }

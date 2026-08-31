@@ -20,6 +20,24 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Arcanada-one/arcana-agent-system"
 authors = ["Arcanada <origin@veritasarcana.ai>"]
 
+# Internal crates, versioned in ONE place.
+#
+# `cargo publish` requires a version on every dependency it will rewrite, and a
+# bare `path` is what blocked `cargo publish` outright (#101). Hard-coding the
+# version at each of the fifteen use sites would mean fifteen edits per release
+# and fifteen chances to miss one, so the version lives here and members say
+# `{ workspace = true }`. `dev-tools/check-internal-versions.sh` asserts it
+# still equals `workspace.package.version`.
+[workspace.dependencies]
+arcana-connectors = { path = "crates/connectors", version = "0.2.0" }
+arcana-core = { path = "crates/core", version = "0.2.0" }
+arcana-credential-broker = { path = "crates/credential-broker", version = "0.2.0" }
+arcana-execution-boundary = { path = "crates/execution-boundary", version = "0.2.0" }
+arcana-mcp = { path = "crates/mcp", version = "0.2.0" }
+arcana-skills = { path = "crates/skills", version = "0.2.0" }
+arcana-supervisor = { path = "crates/supervisor", version = "0.2.0" }
+arcana-tools = { path = "crates/tools", version = "0.2.0" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

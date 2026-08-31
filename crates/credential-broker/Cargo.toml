@@ -20,7 +20,7 @@ name = "arcana-credential-broker"
 path = "src/bin/arcana-credential-broker.rs"
 
 [dependencies]
-arcana-execution-boundary = { path = "../execution-boundary" }
+arcana-execution-boundary = { workspace = true }
 listenfd = "1"
 nix = { version = "0.31", default-features = false, features = ["user"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }

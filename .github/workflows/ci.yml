@@ -32,6 +32,19 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
         run: cargo test --workspace
+      - name: the workspace can still be published
+        # #101 was `cargo publish` failing outright on bare `path` dependencies.
+        # Publishing nine interdependent crates is a one-way ratchet — a
+        # crates.io version can be yanked but never reused — so the rehearsal
+        # has to be real. `--workspace --dry-run` packages and verifies all nine
+        # in dependency order against an in-memory index, which is the only way
+        # to find out that the order works WITHOUT burning the version numbers.
+        #
+        # Nothing here publishes. This guards the option, which is otherwise
+        # one careless manifest edit away from being lost again.
+        run: cargo publish --workspace --dry-run
+      - name: internal dependency versions and the publish cycle
+        run: dev-tools/check-internal-versions.sh
       - name: SEC-0030 governance and platform control contracts
         run: |
           sudo apt-get update
