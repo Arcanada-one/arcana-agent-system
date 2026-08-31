@@ -161,11 +161,24 @@ pub fn save_preference(pref: &ModelPreference) -> std::io::Result<PathBuf> {
 /// entries happened to sort first. Free models lead; unpriced models sort last,
 /// because an unknown price is not a cheap price and presenting it as one would
 /// invite exactly the wrong choice.
+/// `pinned` ids always survive, regardless of price.
+///
+/// Without them the shortlist omitted both models the agent dispatches to: the
+/// cap is per provider, `orq` carries enough free models to fill all ten slots,
+/// and cheapest-first put every one of them ahead of the paid tiers the
+/// dispatcher actually uses. The header then read `Selected: deepseek-v4-flash`
+/// above a list that did not contain it.
+///
+/// Pinned entries consume slots rather than adding to them, so the list stays
+/// the documented length.
 #[must_use]
-pub fn curate(mut entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
+pub fn curate(mut entries: Vec<CatalogEntry>, pinned: &[String]) -> Vec<CatalogEntry> {
+    let is_pinned = |entry: &CatalogEntry| pinned.contains(&entry.model);
     entries.sort_by(|a, b| {
         a.connector
             .cmp(&b.connector)
+            // Pinned first within a provider, then cheapest-first as before.
+            .then_with(|| is_pinned(b).cmp(&is_pinned(a)))
             .then_with(|| sort_price(a).total_cmp(&sort_price(b)))
             .then_with(|| a.model.cmp(&b.model))
     });
@@ -287,7 +300,19 @@ pub fn run_list() -> i32 {
     };
 
     let current = selected_model();
-    let curated = curate(entries);
+    // Ask the policy rather than restating its ids here: a hard-coded copy
+    // would drift the moment the dispatch table changed, which is how the list
+    // came to omit both routed models in the first place.
+    let policy = arcana_core::dispatch::ModelPolicy::new();
+    let mut pinned: Vec<String> = policy
+        .routed_model_ids()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if !pinned.contains(&current) {
+        pinned.push(current.clone());
+    }
+    let curated = curate(entries, &pinned);
     if curated.is_empty() {
         println!("The Model Connector returned an empty catalogue.");
         return 1;
@@ -304,7 +329,8 @@ pub fn run_list() -> i32 {
         println!("  {marker} {:<38} {}", entry.model, price_label(entry));
     }
     println!(
-        "\nShowing at most {MAX_PER_PROVIDER} per provider, cheapest first. \
+        "\nShowing at most {MAX_PER_PROVIDER} per provider, cheapest first; the \
+         selected model and the ones the agent routes to are always listed. \
          `arcana models use <id>` accepts any id, including one not listed."
     );
     0
@@ -341,6 +367,12 @@ mod tests {
         curate, price_label, sort_price, CatalogEntry, CatalogPricing, CatalogResponse,
         MAX_PER_PROVIDER,
     };
+
+    /// The cap/order tests predate pinning and are about those properties, so
+    /// they run with an empty pin set — which is exactly the old behaviour.
+    fn curate_unpinned(entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
+        curate(entries, &[])
+    }
 
     fn entry(
         connector: &str,
@@ -429,6 +461,79 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_model_survives_a_provider_full_of_cheaper_ones() {
+        // The reported defect, reproduced: one provider with more free models
+        // than the cap, plus the paid model the dispatcher actually routes to.
+        // Cheapest-first alone drops the paid one entirely.
+        let mut entries: Vec<CatalogEntry> = (0..MAX_PER_PROVIDER + 5)
+            .map(|i| {
+                let mut e = entry("orq", &format!("free-{i:02}"), Some(0.0), Some(0.0));
+                e.free = Some(true);
+                e
+            })
+            .collect();
+        entries.push(entry("orq", "grok-3-latest", Some(3.0), Some(15.0)));
+
+        let unpinned = curate_unpinned(entries.clone());
+        assert!(
+            !unpinned.iter().any(|e| e.model == "grok-3-latest"),
+            "without pinning the paid model is dropped — this is the bug"
+        );
+
+        let pinned = curate(entries, &["grok-3-latest".to_owned()]);
+        assert!(
+            pinned.iter().any(|e| e.model == "grok-3-latest"),
+            "a pinned model must survive"
+        );
+        assert_eq!(
+            pinned.len(),
+            MAX_PER_PROVIDER,
+            "pinning consumes a slot rather than growing the list"
+        );
+        assert_eq!(pinned[0].model, "grok-3-latest", "pinned entries lead");
+    }
+
+    #[test]
+    fn pinning_an_absent_model_changes_nothing() {
+        // `models use <id>` accepts ids outside the catalogue, so the selected
+        // model may simply not be there. That must not disturb the list.
+        let entries = vec![
+            entry("orq", "a", Some(1.0), Some(1.0)),
+            entry("orq", "b", Some(2.0), Some(2.0)),
+        ];
+        let pinned = curate(entries.clone(), &["not-in-the-catalogue".to_owned()]);
+        assert_eq!(
+            pinned.iter().map(|e| e.model.clone()).collect::<Vec<_>>(),
+            curate_unpinned(entries)
+                .iter()
+                .map(|e| e.model.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn every_model_the_policy_routes_to_can_be_pinned() {
+        // The listing pins whatever the dispatch table says. If that table
+        // grows a tier, this catches a listing that still shows the old set.
+        let policy = arcana_core::dispatch::ModelPolicy::new();
+        let ids = policy.routed_model_ids();
+        assert!(ids.len() >= 2, "expected distinct tiers, got {ids:?}");
+        let entries: Vec<CatalogEntry> = (0..MAX_PER_PROVIDER + 5)
+            .map(|i| {
+                let mut e = entry("orq", &format!("free-{i:02}"), Some(0.0), Some(0.0));
+                e.free = Some(true);
+                e
+            })
+            .chain(ids.iter().map(|id| entry("orq", id, Some(3.0), Some(15.0))))
+            .collect();
+        let owned: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+        let kept = curate(entries, &owned);
+        for id in &ids {
+            assert!(kept.iter().any(|e| e.model == *id), "{id} was dropped");
+        }
+    }
+
+    #[test]
     fn caps_each_provider_independently() {
         let mut entries = Vec::new();
         for i in 0..25 {
@@ -445,7 +550,7 @@ mod tests {
                 Some(0.0),
             ));
         }
-        let kept = curate(entries);
+        let kept = curate_unpinned(entries);
         for provider in ["groq", "openrouter"] {
             let n = kept.iter().filter(|e| e.connector == provider).count();
             assert_eq!(n, MAX_PER_PROVIDER, "{provider} should be capped, got {n}");
@@ -461,13 +566,13 @@ mod tests {
             .collect();
         entries.push(entry("tiny", "only-one", Some(2.0), Some(2.0)));
 
-        let kept = curate(entries);
+        let kept = curate_unpinned(entries);
         assert_eq!(kept.iter().filter(|e| e.connector == "tiny").count(), 1);
     }
 
     #[test]
     fn cheapest_first_within_a_provider() {
-        let kept = curate(vec![
+        let kept = curate_unpinned(vec![
             entry("groq", "dear", Some(50.0), Some(50.0)),
             entry("groq", "cheap", Some(1.0), Some(1.0)),
         ]);
@@ -478,7 +583,7 @@ mod tests {
     fn unpriced_models_sort_last_not_first() {
         // An unknown price is not a cheap price. Sorting it first would put the
         // model whose cost nobody knows at the top of a list people pick from.
-        let kept = curate(vec![
+        let kept = curate_unpinned(vec![
             entry("groq", "unknown", None, None),
             entry("groq", "priced", Some(9.0), Some(9.0)),
         ]);

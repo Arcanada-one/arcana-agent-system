@@ -99,6 +99,24 @@ impl ModelPolicy {
         }
     }
 
+    /// Every model id this policy can dispatch to, in tier order, deduplicated.
+    ///
+    /// Exposed so a catalogue listing can guarantee the models the agent will
+    /// actually route to are visible. Deriving them from the policy rather than
+    /// restating the ids at the call site is the point: a hard-coded copy in the
+    /// CLI would silently drift the first time this table changed, which is
+    /// exactly how the listing came to omit both of them.
+    #[must_use]
+    pub fn routed_model_ids(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = Vec::new();
+        for choice in [&self.code, &self.summarize, &self.default] {
+            if !ids.contains(&choice.model_id.as_str()) {
+                ids.push(choice.model_id.as_str());
+            }
+        }
+        ids
+    }
+
     /// Pin every task class to one abstract model id.
     ///
     /// This is the fail-closed policy for purpose-built loops whose approved

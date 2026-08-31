@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `arcana models` lists the models the agent actually routes to. Curation is
+  cheapest-first capped per provider, and `orq` carries enough free models to
+  fill every slot — so both dispatch tiers were pushed out, and the header read
+  `Selected: deepseek-v4-flash` above a list that did not contain it. The
+  selected model and the dispatch tiers are now always listed, taking slots
+  rather than adding to them. The ids come from the dispatch policy itself, so
+  the listing cannot drift from what the agent will actually call.
+
 - `arcana models` and `arcana usage` say what the server said. Both carried
   their own HTTP client and collapsed every non-2xx into the bare status
   number, reading the response body and throwing it away — so a 402 whose body
