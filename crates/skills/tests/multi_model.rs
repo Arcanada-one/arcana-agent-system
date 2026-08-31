@@ -79,10 +79,7 @@ async fn skill_per_stage_multi_model() {
     assert_eq!(out.selected_models[0], "m-a");
     assert_eq!(out.selected_models[1], "grok-3-latest");
     assert!(out.stages[0].output.content.contains("echo:m-a"));
-    assert!(out.stages[1]
-        .output
-        .content
-        .contains("echo:grok-3-latest"));
+    assert!(out.stages[1].output.content.contains("echo:grok-3-latest"));
 
     // >= 2 distinct model ids exercised in one run.
     let distinct: HashSet<&String> = out.selected_models.iter().collect();
