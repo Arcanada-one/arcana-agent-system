@@ -83,6 +83,53 @@ jobs:
       # runs a script.
       runner_labels: '["ubuntu-24.04"]'
 
+  changelog:
+    # A user-visible change is not finished at the commit: `release.yml` builds
+    # its notes with `body_path` from CHANGELOG.md, so a missing entry is a
+    # published release that does not mention a shipped behaviour change.
+    #
+    # This exists because intention failed three times in one session — #113,
+    # #120 and #121 all merged touching user-facing source with no entry, and
+    # the gap was only caught by hand while rebasing the release PR.
+    #
+    # Escape hatch: label the PR `no-changelog` for refactors, tests and
+    # internal-only edits. Deliberate and visible in the PR, not silent.
+    name: changelog
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: a user-facing source change needs a CHANGELOG line
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          case ",$LABELS," in
+            *,no-changelog,*)
+              echo "labelled no-changelog — skipping"; exit 0 ;;
+          esac
+          # Three dots: compare against the merge base, so commits that landed
+          # on main after this branch was cut are not counted as its changes.
+          changed=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          src=$(printf '%s\n' "$changed" | grep -E '^crates/[^/]+/src/.*\.rs$' || true)
+          if [ -z "$src" ]; then
+            echo "no user-facing source touched"; exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "CHANGELOG.md updated alongside:"; printf '  %s\n' "$src"; exit 0
+          fi
+          echo "::error::source under crates/*/src changed with no CHANGELOG.md entry."
+          echo "Changed source:"; printf '  %s\n' "$src"
+          echo
+          echo "Add an entry under '## [Unreleased]', or label the PR 'no-changelog'"
+          echo "if this change is genuinely invisible to users."
+          exit 1
+
   platform-native-negative-controls:
     name: platform-native-negative-controls / macos-xpc-sandbox
     runs-on: macos-14
