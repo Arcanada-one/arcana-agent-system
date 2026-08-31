@@ -69,7 +69,14 @@ enum Cmd {
         command: Option<ModelsCmd>,
     },
     /// Report recorded token spend, as the Model Connector has it.
-    Usage,
+    Usage {
+        /// First day of the report, YYYY-MM-DD at UTC. Defaults to 29 days before `--until`.
+        #[arg(long)]
+        since: Option<String>,
+        /// Last day of the report, YYYY-MM-DD at UTC. Defaults to today.
+        #[arg(long)]
+        until: Option<String>,
+    },
     /// Run one fail-closed agent loop grounded by the authenticated wiki KB.
     KbRead {
         /// Literal search query. Multiple shell words are canonicalized into one query.
@@ -143,8 +150,11 @@ fn main() {
                 std::process::exit(arcana_cli::models::run_use(&model));
             }
         },
-        Some(Cmd::Usage) => {
-            std::process::exit(arcana_cli::usage::run_usage());
+        Some(Cmd::Usage { since, until }) => {
+            std::process::exit(arcana_cli::usage::run_usage(
+                since.as_deref(),
+                until.as_deref(),
+            ));
         }
         Some(Cmd::KbRead { query }) => {
             std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));
