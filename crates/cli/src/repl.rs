@@ -26,7 +26,7 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
-use arcana_core::agent_loop::{DriverConfig, TerminalReason};
+use arcana_core::agent_loop::DriverConfig;
 use arcana_core::dispatch::ModelPolicy;
 
 use crate::demo::{PermissionMode, Session};
@@ -105,11 +105,17 @@ pub fn classify(line: &str) -> Action<'_> {
 
 /// Entry point for the no-subcommand invocation. Returns a process exit code.
 ///
-/// The code is `0` for a clean session end (`exit`, `quit`, `:q`, `Ctrl-D`, or
-/// end of piped input) regardless of what individual turns concluded: a task
-/// that the agent could not complete is a result the operator has already
-/// seen printed, not a failure of the session. Only a failure to stand the
-/// session up at all is non-zero.
+/// `0` when the session stood up and every turn it ran reached
+/// [`TerminalReason::Completed`]. `1` when the session could not be built, or
+/// when any turn ended on some other verdict.
+///
+/// This used to return `0` unconditionally on a clean session end, on the
+/// argument that a failed task is a printed result rather than a failed
+/// session. That reasoning does not survive contact with a script:
+/// `printf 'task\n' | arcana --live` against an out-of-credit key printed
+/// `ConnectorFatal` and exited `0`, so `arcana ... && deploy` deployed.
+/// `arcana demo` already exits `1` on the identical condition, and two
+/// commands wrapping the same driver must not disagree about what failure is.
 #[must_use]
 pub fn run_repl(live: bool) -> i32 {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -141,11 +147,32 @@ pub fn run_repl(live: bool) -> i32 {
     }
 }
 
+/// Tracks whether any turn in the session ended on a non-`Completed` verdict.
+///
+/// Held by the reader loops and folded into the process exit code, so a
+/// session whose turns all failed cannot report success.
+#[derive(Default)]
+struct SessionOutcome {
+    any_turn_failed: bool,
+}
+
+impl SessionOutcome {
+    /// `0` when every turn completed, `1` when any did not.
+    const fn exit_code(&self) -> i32 {
+        if self.any_turn_failed {
+            1
+        } else {
+            0
+        }
+    }
+}
+
 /// Interactive path: `rustyline` owns the prompt, history and key handling.
 fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
     use rustyline::error::ReadlineError;
 
     let mut spend = crate::usage::zero_snapshot();
+    let mut outcome = SessionOutcome::default();
 
     let mut editor = match rustyline::DefaultEditor::new() {
         Ok(editor) => editor,
@@ -168,7 +195,7 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
                         // Ignore a history-write failure: losing a history entry
                         // must never abort the operator's session.
                         let _ = editor.add_history_entry(task);
-                        drive(runtime, session, task, &mut spend);
+                        drive(runtime, session, task, &mut spend, &mut outcome);
                     }
                 }
             }
@@ -183,12 +210,13 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
         }
     }
     println!("bye");
-    0
+    outcome.exit_code()
 }
 
 /// Non-terminal path: plain line reads from stdin, no prompt, no history.
 fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
     let mut spend = crate::usage::zero_snapshot();
+    let mut outcome = SessionOutcome::default();
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let line = match line {
@@ -201,10 +229,10 @@ fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
         match classify(&line) {
             Action::Skip => {}
             Action::Exit => break,
-            Action::Task(task) => drive(runtime, session, task, &mut spend),
+            Action::Task(task) => drive(runtime, session, task, &mut spend, &mut outcome),
         }
     }
-    0
+    outcome.exit_code()
 }
 
 /// Run one task through the shared session and print the outcome.
@@ -216,6 +244,7 @@ fn drive(
     session: &Session,
     task: &str,
     previous: &mut arcana_core::cost::CostSnapshot,
+    outcome: &mut SessionOutcome,
 ) {
     // ARAS-0065 — honour the operator's chosen model. Without this the
     // preference would be a file nothing reads: `arcana models use` would
@@ -249,7 +278,7 @@ fn drive(
         // A run that ended without final text still has to say something, or
         // the operator is left staring at a silent prompt wondering whether
         // anything ran at all.
-        None => println!("(no final text — {:?})", out.reason),
+        None => println!("(no final text — {})", out.reason),
     }
     // ARAS-0066 — what this turn cost, and the session so far. Shown even on a
     // failed turn: a turn that burned tokens and then failed still spent money,
@@ -261,8 +290,9 @@ fn drive(
     );
     *previous = out.cost;
 
-    if out.reason != TerminalReason::Completed {
-        eprintln!("arcana: turn ended on {:?}", out.reason);
+    if !out.reason.is_success() {
+        outcome.any_turn_failed = true;
+        eprintln!("arcana: turn ended — {} ({:?})", out.reason, out.reason);
     }
     // Interactive output is read as it appears, so flush rather than waiting
     // for the buffer to fill.

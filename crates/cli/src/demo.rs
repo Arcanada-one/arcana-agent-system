@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use arcana_core::agent_loop::{Driver, DriverConfig, RunOutput, TerminalReason};
+use arcana_core::agent_loop::{Driver, DriverConfig, RunOutput};
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
     PromptVariantV0, Usage,
@@ -173,7 +173,7 @@ async fn run_demo_async(
                 return 1;
             }
         }
-        return i32::from(out.reason != TerminalReason::Completed);
+        return i32::from(!out.reason.is_success());
     }
 
     // --- attempt → check → conclusion --------------------------------------
@@ -188,7 +188,7 @@ async fn run_demo_async(
     println!();
     println!("=== CHECK ===");
     println!("tool turns: {}", out.turns);
-    println!("terminal verdict: {:?}", out.reason);
+    println!("terminal verdict: {} ({:?})", out.reason, out.reason);
     println!();
     println!("=== CONCLUSION ===");
     println!(
@@ -200,7 +200,7 @@ async fn run_demo_async(
     // `AuditLog` appends synchronously and flushes per record; the executor owns
     // it and drops at function scope end, so no explicit flush is required.
 
-    i32::from(out.reason != TerminalReason::Completed)
+    i32::from(!out.reason.is_success())
 }
 
 /// Project-local rule file, resolved relative to the current working

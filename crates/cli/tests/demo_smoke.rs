@@ -22,7 +22,9 @@ fn demo_completes_its_loop_when_the_tool_call_is_approved() {
         .arg("demo")
         .assert()
         .success()
-        .stdout(predicate::str::contains("terminal verdict: Completed"))
+        .stdout(predicate::str::contains(
+            "terminal verdict: the run completed (Completed)",
+        ))
         // The point of the prototype: a tool actually ran.
         .stdout(predicate::str::contains("hello world"))
         .stdout(predicate::str::contains("PermissionDenied").not());

@@ -68,6 +68,50 @@ pub enum TerminalReason {
     AuditFatal,
 }
 
+impl TerminalReason {
+    /// One sentence a paying customer can act on.
+    ///
+    /// The three CLI print sites used to format this enum with `{:?}`, so the
+    /// operator was shown `ConnectorFatal` and `ContextWindowExhausted`
+    /// verbatim. A variant name is an implementation detail; it is fine as a
+    /// trailing parenthetical for support, but it cannot be the whole message.
+    #[must_use]
+    pub const fn explain(&self) -> &'static str {
+        match self {
+            Self::Completed => "the run completed",
+            Self::MaxTurns => "stopped at the turn limit",
+            Self::MaxCostUsd => "stopped at the cost limit",
+            Self::AbortedByOperator => "aborted by the operator",
+            Self::AbortedByHook => "stopped by a hook",
+            Self::PermissionDenied => "the permission cascade refused the tool call",
+            Self::ContextWindowExhausted => {
+                "the input is longer than the model's context window; shorten it, \
+                 or choose a model with a larger window"
+            }
+            Self::ConnectorFatal => "the Model Connector could not complete the request",
+            Self::AuditFatal => "the capability audit failed and the executor is latched closed",
+        }
+    }
+
+    /// True when the run reached its intended end.
+    ///
+    /// Callers turn this into a process exit code, so it lives beside
+    /// [`Self::explain`] rather than being re-derived as `!= Completed` at each
+    /// site — the interactive session and `demo` disagreed on exactly that
+    /// comparison, and the session reported success on a run where every turn
+    /// had failed.
+    #[must_use]
+    pub const fn is_success(&self) -> bool {
+        matches!(self, Self::Completed)
+    }
+}
+
+impl std::fmt::Display for TerminalReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.explain())
+    }
+}
+
 /// Tagged outcome of a single turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TurnOutcome {
@@ -675,5 +719,85 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::ContextWindowExhausted
         | TerminalReason::ConnectorFatal
         | TerminalReason::AuditFatal => LoopControl::Stop(reason),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod terminal_reason_tests {
+    use super::TerminalReason;
+
+    /// Every variant, so a new one cannot be added without deciding what the
+    /// operator is told when it fires.
+    const ALL: [TerminalReason; 9] = [
+        TerminalReason::Completed,
+        TerminalReason::MaxTurns,
+        TerminalReason::MaxCostUsd,
+        TerminalReason::AbortedByOperator,
+        TerminalReason::AbortedByHook,
+        TerminalReason::PermissionDenied,
+        TerminalReason::ContextWindowExhausted,
+        TerminalReason::ConnectorFatal,
+        TerminalReason::AuditFatal,
+    ];
+
+    #[test]
+    fn every_variant_explains_itself_in_prose() {
+        for reason in ALL {
+            let explained = reason.explain();
+            assert!(!explained.is_empty(), "{reason:?} has no explanation");
+            // The whole defect was showing the variant name instead of a
+            // sentence, so the sentence must not merely BE the variant name.
+            assert_ne!(
+                explained,
+                format!("{reason:?}"),
+                "{reason:?} explains itself with its own variant name"
+            );
+            assert!(
+                explained.chars().any(char::is_whitespace),
+                "{reason:?} explains itself with a single word: {explained}"
+            );
+        }
+    }
+
+    #[test]
+    fn explanations_are_distinct() {
+        for (index, reason) in ALL.iter().enumerate() {
+            for other in &ALL[index + 1..] {
+                assert_ne!(
+                    reason.explain(),
+                    other.explain(),
+                    "{reason:?} and {other:?} share an explanation"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn display_matches_explain() {
+        for reason in ALL {
+            assert_eq!(reason.to_string(), reason.explain());
+        }
+    }
+
+    #[test]
+    fn completed_is_the_only_success() {
+        for reason in ALL {
+            assert_eq!(
+                reason.is_success(),
+                matches!(reason, TerminalReason::Completed),
+                "{reason:?} disagrees about success"
+            );
+        }
+    }
+
+    #[test]
+    fn the_context_window_verdict_tells_the_user_what_to_do() {
+        // Measured: a 1 MB prompt is rejected locally in 35 ms with no network
+        // call, which is the right decision — but the operator was shown only
+        // `ContextWindowExhausted` and no way to act on it.
+        let explained = TerminalReason::ContextWindowExhausted.explain();
+        assert!(explained.contains("context window"), "{explained}");
+        assert!(explained.contains("shorten"), "{explained}");
     }
 }
