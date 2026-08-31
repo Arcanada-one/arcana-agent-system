@@ -82,9 +82,10 @@ async fn capstone_vertical_prototype_attempt_check_conclusion() {
     // cascade, post-cascade hooks, and the AuditLog.
     let executor = CapabilityExecutor::new(dispatcher, cascade, hooks, audit);
 
-    // Default ModelPolicy already maps Code→"arcana-code-strong" and
-    // Summarize→"arcana-cheap-fast" (distinct ids) — reused verbatim, no
-    // dispatch.rs change. `DriverConfig::new` carries `ModelPolicy::new()`.
+    // Default ModelPolicy maps Code and Summarize to DIFFERENT models — reused
+    // verbatim, no dispatch.rs change. `DriverConfig::new` carries
+    // `ModelPolicy::new()`. The assertion below checks the distinctness, not
+    // the particular ids, so it survives a change of model without edits.
     let out = {
         let driver = Driver::new(
             &connector,

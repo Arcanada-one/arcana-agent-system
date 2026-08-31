@@ -154,5 +154,7 @@ async fn captured_execution_dispatches_exact_arcana_search_input() {
     );
 
     // Resolved model: ByTaskType(Default) → the default policy arm.
-    assert_eq!(stage_result.selected_model, "arcana-default");
+    // The default tier resolves through `ModelPolicy::new()`; the id is a real
+    // catalogue model, not the former `arcana-default` placeholder.
+    assert_eq!(stage_result.selected_model, "deepseek-v4-flash");
 }

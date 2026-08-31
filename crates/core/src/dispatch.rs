@@ -46,22 +46,54 @@ pub struct ModelPolicy {
     default: ModelChoice,
 }
 
+/// Cheap-tier model for the built-in policy.
+///
+/// A real catalogue entry, not an abstract tier name: `DriverConfig::policy`
+/// ids go to the Model Connector verbatim. 0.14/0.28 USD per million
+/// tokens, and the
+/// model the overwhelming majority of live traffic already uses.
+const CHEAP_MODEL_ID: &str = "deepseek-v4-flash";
+
+/// Expensive-tier model for the built-in policy.
+///
+/// 3.00/15.00 USD per million tokens — about 21x the cheap tier on input,
+/// so
+/// `CostTier::Expensive` states a fact about the bill rather than a label.
+///
+/// Deliberately DISTINCT from the cheap id: `capstone_vertical_prototype`
+/// asserts that a Code turn and a Summarize turn resolve to different models,
+/// which is how tiered dispatch is proven to route at all. Both ids are also
+/// priced in `model_catalog`, so neither tier meters as `unpriced` — routing
+/// default traffic through an unpriced model would re-open the revenue leak
+/// CONN-0271 was opened to close.
+///
+/// Note the name: `grok-3` (without the suffix) dispatches but is absent from
+/// the provider listing, so its catalogue row has no price. The suffixed
+/// variants are the ones the provider actually publishes.
+const EXPENSIVE_MODEL_ID: &str = "grok-3-latest";
+
 impl ModelPolicy {
     /// Built-in default table: distinct ids and distinct tiers for the two
     /// exercised task-types (`Code` → expensive, `Summarize` → cheap).
+    ///
+    /// These ids previously read `arcana-code-strong`, `arcana-cheap-fast` and
+    /// `arcana-default`. None is a model, and once the connector ids were
+    /// corrected the provider said so outright — `Model 'arcana-code-strong'
+    /// not found or is not available` — so every live run that did not pin a
+    /// model with `models use` failed here.
     #[must_use]
     pub fn new() -> Self {
         Self {
             code: ModelChoice {
-                model_id: "arcana-code-strong".to_owned(),
+                model_id: EXPENSIVE_MODEL_ID.to_owned(),
                 tier: CostTier::Expensive,
             },
             summarize: ModelChoice {
-                model_id: "arcana-cheap-fast".to_owned(),
+                model_id: CHEAP_MODEL_ID.to_owned(),
                 tier: CostTier::Cheap,
             },
             default: ModelChoice {
-                model_id: "arcana-default".to_owned(),
+                model_id: CHEAP_MODEL_ID.to_owned(),
                 tier: CostTier::Cheap,
             },
         }

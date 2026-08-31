@@ -29,7 +29,10 @@ async fn skill_per_stage_multi_model() {
     let plan_path = dir.path().join("plan.json");
 
     // Stage A pins a literal model; stage B resolves TaskType::Code through the
-    // policy to "arcana-code-strong" — two distinct model selections.
+    // policy to the expensive-tier model — two distinct model selections. The
+    // subject of this test is the DISTINCTNESS, not the particular id: the id
+    // is whatever `ModelPolicy::new()` maps `Code` to, which is a real
+    // catalogue entry rather than the former `arcana-code-strong` placeholder.
     let plan = json!({
         "schema_version": 1,
         "name": "multi-model",
@@ -74,12 +77,9 @@ async fn skill_per_stage_multi_model() {
     // Both stages routed through model_call; the fake echoes the routed model.
     assert_eq!(out.stages.len(), 2);
     assert_eq!(out.selected_models[0], "m-a");
-    assert_eq!(out.selected_models[1], "arcana-code-strong");
+    assert_eq!(out.selected_models[1], "grok-3-latest");
     assert!(out.stages[0].output.content.contains("echo:m-a"));
-    assert!(out.stages[1]
-        .output
-        .content
-        .contains("echo:arcana-code-strong"));
+    assert!(out.stages[1].output.content.contains("echo:grok-3-latest"));
 
     // >= 2 distinct model ids exercised in one run.
     let distinct: HashSet<&String> = out.selected_models.iter().collect();
