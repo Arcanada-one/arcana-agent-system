@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `release-pending`'s grace clock can no longer be reset by an unrelated
+  manifest edit. It anchored on `git log -S"version = \"$version\""`, which was
+  precise while the root `Cargo.toml` held exactly one copy of that string. It
+  no longer does: `[workspace.dependencies]` carries the same string on eight
+  internal crates, and `check-internal-versions.sh` guarantees they stay
+  textually identical to the package version. `-S` fires on a change to the
+  COUNT, so adding or removing one internal crate re-anchored the clock to that
+  commit — silently granting another three days, and able to do so after the
+  check had already begun failing. The anchor is now `-G` against a regex tied
+  to the start of the `[workspace.package]` version line, with the version
+  escaped so build metadata (`1.0.0+build.5`) matches literally rather than as
+  `0+`. Extracted to `dev-tools/release-bump-anchor.sh`, because an inline,
+  untestable copy is how it went wrong.
+
 - `cargo publish` can run against this workspace. Every internal dependency
   was a bare `path` with no version, so `cargo publish -p arcana-agent-system`
   exited 101 before doing anything (#101). The sixteen declarations now inherit
