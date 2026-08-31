@@ -30,6 +30,17 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main
           test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+      - name: Require the tag, the workspace version, and the changelog to agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A pre-release tag (v0.2.0-rc.1) rehearses the whole release path
+          # against the same release version, so compare the X.Y.Z core only.
+          version="${GITHUB_REF_NAME#v}"
+          version="${version%%-*}"
+          grep -Fxq "version = \"${version}\"" Cargo.toml
+          grep -Eq "^## \\[${version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md
+
       - name: Require successful protected checks for the exact tagged SHA
         shell: bash
         env:
@@ -186,6 +197,29 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Extract the release notes for this tag from the changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version="${version%%-*}"
+          notes="${RUNNER_TEMP}/release-notes.md"
+          awk -v version="$version" '
+            $0 == "## [" version "]" || index($0, "## [" version "] - ") == 1 { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > "$notes"
+          # Auto-generated notes are commit subjects, which carry internal
+          # tracker identifiers. The changelog is the curated public surface.
+          test -s "$notes"
+          ! grep -nE '\b[A-Z]{2,8}-[0-9]{4}\b' "$notes" \
+            | grep -vE '\b(RUSTSEC|GHSA|CVE)-' \
+            | grep -q .
+          cat "$notes"
+
       - name: Download exact platform payloads
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -243,6 +277,10 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           draft: false
+          # A hyphenated tag (v0.2.0-rc.1) is a rehearsal, not the release
+          # channel: mark it pre-release so it is never the "latest" download.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          generate_release_notes: false
+          body_path: ${{ runner.temp }}/release-notes.md
           files: dist/*

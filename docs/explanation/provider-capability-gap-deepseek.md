@@ -2,7 +2,7 @@
 
 Date: 2026-07-31
 Status: ratified
-Decision owner: SEC-0030
+Decision owner: the credential-boundary review
 Blast radius: 3 (cross-system — provider authority, credential broker, every consumer)
 Panel: architect, security, SRE, devops, strategist
 

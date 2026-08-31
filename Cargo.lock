@@ -92,7 +92,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arcana-agent-system"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-connectors",
  "arcana-core",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-connectors"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-core",
  "arcana-execution-boundary",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-credential-broker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-execution-boundary",
  "listenfd",
@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-execution-boundary"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nix",
  "rustix",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-core",
  "async-trait",
@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-skills"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-core",
  "arcana-tools",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-supervisor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-core",
  "arcana-execution-boundary",
@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "arcana-tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arcana-connectors",
  "arcana-core",
