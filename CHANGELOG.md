@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ordinary ways to read it, and each of them broke `set -o pipefail` scripts.
   Both commands now write through a checked handle and treat a closed reader as
   the reader having finished, which it has.
+- `arcana --help` is written for the person reading it. It described commands in
+  internal vocabulary — `Phase-C vertical prototype`, `Bootstrap smoke check`,
+  `Tier-1 loopback`, `capability core` — which name our roadmap phases and
+  architecture rather than what a command does. The product's main mode was
+  invisible: running `arcana` with no subcommand starts an interactive session,
+  and that appeared nowhere except inside the `--live` flag text. And the
+  environment variables that most commands require were documented nowhere, so
+  a first run met them in an error message or not at all. All three fixed, with
+  a test that fails if internal vocabulary or an internal task id reappears.
 
 - `arcana models` and `arcana usage` say what the server said. Both carried
   their own HTTP client and collapsed every non-2xx into the bare status
