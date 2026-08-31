@@ -552,10 +552,20 @@ impl<'a> Driver<'a> {
                     .record_llm_call(&resp.model, tokens_in, tokens_out, resp.usage.cost_usd);
                 Ok(resp)
             }
-            Err(error) => Err((
-                TerminalReason::ConnectorFatal,
-                error.first_dispatch_observation().cloned(),
-            )),
+            Err(error) => {
+                // The connector's own message is the diagnosis — `ConnectorError`
+                // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
+                // "arcana-repl" not found`. Mapping to `ConnectorFatal` without
+                // it left the operator a verdict and no evidence, and cost a
+                // four-commit bisect and two wrong root causes to recover what
+                // this one line says.  rather than : the
+                // CLI installs no subscriber, so a log line here is discarded.
+                eprintln!("arcana: connector dispatch failed: {error}");
+                Err((
+                    TerminalReason::ConnectorFatal,
+                    error.first_dispatch_observation().cloned(),
+                ))
+            }
         }
     }
 
