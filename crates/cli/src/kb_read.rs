@@ -32,6 +32,18 @@ enum KbReadError {
     Composition(String),
     #[error("agent loop did not complete: {0:?}")]
     Loop(TerminalReason),
+    #[error(
+        "the knowledge-base search was issued but never completed \
+         ({0} attempt(s), 0 completed) — it timed out, was refused, or failed in \
+         transport. The KB was reached; it returned nothing usable. Check \
+         Scrutator health and load before re-running."
+    )]
+    SearchFailed(usize),
+    #[error(
+        "the model never issued a knowledge-base search, so nothing grounds this \
+         answer. This is a dispatch problem, not a retrieval one."
+    )]
+    SearchNotAttempted,
     #[error("grounding proof requires exactly one successful search (observed {0})")]
     SearchCount(usize),
     #[error("grounding proof requires exactly one search attempt (observed {0})")]
@@ -42,8 +54,20 @@ enum KbReadError {
     MissingCitation,
 }
 
+/// A search that RAN and matched nothing is a different outcome from a search
+/// that never ran. Collapsing them into one error reported the benign state as
+/// the alarming one, and hid the alarming one behind a count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KbReadOutcome {
+    /// One search completed, returned hits, and the answer cites a source.
+    Grounded,
+    /// One search completed and matched nothing. Not an error.
+    NoMatches,
+}
+
 #[derive(Debug)]
 struct KbReadReport {
+    outcome: KbReadOutcome,
     final_text: String,
     attempts: usize,
     searches: usize,
@@ -250,13 +274,36 @@ async fn run_kb_read_with(
     let evidence = evidence
         .lock()
         .map_err(|_| KbReadError::Composition("grounding evidence lock poisoned".into()))?;
+    if evidence.attempts == 0 {
+        return Err(KbReadError::SearchNotAttempted);
+    }
     if evidence.attempts != 1 {
         return Err(KbReadError::AttemptCount(evidence.attempts));
+    }
+    if evidence.searches == 0 {
+        // Issued (the pre-hook counted it) but never completed: the post-hook
+        // only runs on a well-formed result, so a timeout or transport error
+        // lands here. Distinct from `SearchNotAttempted` above.
+        return Err(KbReadError::SearchFailed(evidence.attempts));
     }
     if evidence.searches != 1 {
         return Err(KbReadError::SearchCount(evidence.searches));
     }
+    if evidence.hits == 0 && evidence.sources.is_empty() {
+        // The search ran and the KB genuinely holds nothing for this query.
+        // There is no source to cite, so the citation check below cannot apply
+        // and the caller gets an honest empty answer rather than a failure.
+        return Ok(KbReadReport {
+            outcome: KbReadOutcome::NoMatches,
+            final_text: String::new(),
+            attempts: evidence.attempts,
+            searches: evidence.searches,
+            hits: 0,
+            sources: Vec::new(),
+        });
+    }
     if evidence.hits == 0 || evidence.sources.is_empty() {
+        // hits and sources disagree — a malformed result, still a defect.
         return Err(KbReadError::NoHits);
     }
     if !evidence
@@ -267,6 +314,7 @@ async fn run_kb_read_with(
         return Err(KbReadError::MissingCitation);
     }
     Ok(KbReadReport {
+        outcome: KbReadOutcome::Grounded,
         final_text,
         attempts: evidence.attempts,
         searches: evidence.searches,
@@ -313,14 +361,31 @@ pub fn run_kb_read(query: String) -> i32 {
         );
         match run_kb_read_with(&query, &connector, search_tool, &audit_dir).await {
             Ok(report) => {
-                println!("{}", report.final_text);
-                println!(
-                    "grounding: attempts={} searches={} hits={} sources={}",
-                    report.attempts,
-                    report.searches,
-                    report.hits,
-                    report.sources.join(",")
-                );
+                match report.outcome {
+                    KbReadOutcome::Grounded => {
+                        println!("{}", report.final_text);
+                        println!(
+                            "grounding: attempts={} searches={} hits={} sources={}",
+                            report.attempts,
+                            report.searches,
+                            report.hits,
+                            report.sources.join(",")
+                        );
+                    }
+                    KbReadOutcome::NoMatches => {
+                        // Deliberately NOT the model's prose: with no hits there
+                        // is nothing grounding it, and kb-read only ever returns
+                        // grounded text.
+                        println!(
+                            "No matches in the `{KB_NAMESPACE}` knowledge base for that query."
+                        );
+                        println!(
+                            "grounding: attempts={} searches={} hits=0 \
+                             (the search ran and matched nothing)",
+                            report.attempts, report.searches
+                        );
+                    }
+                }
                 println!("audit log: {}", audit_dir.join("audit.log").display());
                 0
             }
@@ -357,7 +422,7 @@ mod tests {
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::run_kb_read_with;
+    use super::{run_kb_read_with, KbReadOutcome};
 
     struct StaticToken;
 
@@ -468,6 +533,99 @@ mod tests {
             .await;
     }
 
+    async fn mount_zero_hits(server: &MockServer, expected_query: &str) {
+        // A 200 with an empty result set: the search RAN, the KB holds nothing.
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .and(body_json(json!({
+                "query": expected_query, "namespace": "wiki", "limit": 5
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"results": []})))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_search_that_matches_nothing_is_a_result_not_a_failure() {
+        // The whole point: "the search ran and found nothing" must not be
+        // reported with the same alarm as "the search never completed".
+        let server = MockServer::start().await;
+        mount_zero_hits(&server, "does the KB mention zzzz?").await;
+        let connector = ScriptedConnector::new(&[
+            &tool_call(
+                "arcana_search",
+                json!({ "query": "does the KB mention zzzz?", "namespace": "wiki", "limit": 5 }),
+            ),
+            "I found nothing on that.",
+        ]);
+        let audit = tempdir().expect("audit dir");
+
+        let report = run_kb_read_with(
+            "does the KB mention zzzz?",
+            &connector,
+            search_tool(&server),
+            audit.path(),
+        )
+        .await
+        .expect("a zero-hit search is a successful search");
+
+        assert_eq!(report.outcome, KbReadOutcome::NoMatches);
+        assert_eq!(report.attempts, 1);
+        assert_eq!(report.searches, 1, "the search completed");
+        assert_eq!(report.hits, 0);
+        assert!(report.sources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_search_that_never_completes_is_reported_as_a_failed_search() {
+        // Scrutator answers 503: the pre-hook counts the attempt, the post-hook
+        // never runs. Previously indistinguishable from "never issued".
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let connector = ScriptedConnector::new(&[
+            &tool_call(
+                "arcana_search",
+                json!({ "query": "anything", "namespace": "wiki", "limit": 5 }),
+            ),
+            "no answer",
+        ]);
+        let audit = tempdir().expect("audit dir");
+
+        let error = run_kb_read_with("anything", &connector, search_tool(&server), audit.path())
+            .await
+            .expect_err("a failed search must not read as success");
+        let text = error.to_string();
+        assert!(text.contains("issued but never completed"), "{text}");
+        // It must NOT claim the model failed to dispatch.
+        assert!(
+            !text.contains("never issued a knowledge-base search"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_search_the_model_never_issues_is_reported_as_a_dispatch_problem() {
+        let server = MockServer::start().await;
+        // No mock mounted and no tool call scripted: the model answers directly.
+        let connector = ScriptedConnector::new(&["an ungrounded answer"]);
+        let audit = tempdir().expect("audit dir");
+
+        let error = run_kb_read_with("anything", &connector, search_tool(&server), audit.path())
+            .await
+            .expect_err("an ungrounded answer must not pass");
+        let text = error.to_string();
+        assert!(
+            text.contains("never issued a knowledge-base search"),
+            "{text}"
+        );
+        assert!(!text.contains("issued but never completed"), "{text}");
+    }
+
     #[tokio::test]
     async fn grounded_loop_fixes_query_and_namespace_and_cites_a_source() {
         let server = MockServer::start().await;
@@ -534,7 +692,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_completed_loop_without_nonzero_hits_and_source_citation() {
+    async fn a_zero_hit_run_discards_the_models_ungrounded_prose() {
+        // This used to assert that zero hits is an ERROR. The contract changed:
+        // a search that ran and matched nothing is a legitimate result. What
+        // must NOT change is the safety property the old test was really
+        // protecting -- the model says "I found nothing but will answer anyway",
+        // and that ungrounded prose must never reach the caller as an answer.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/search"))
@@ -547,11 +710,20 @@ mod tests {
         ]);
         let audit = tempdir().expect("audit dir");
 
-        let error = run_kb_read_with("question", &connector, search_tool(&server), audit.path())
+        let report = run_kb_read_with("question", &connector, search_tool(&server), audit.path())
             .await
-            .expect_err("zero-hit completion must not report readiness");
+            .expect("a completed zero-hit search is a result");
 
-        assert!(error.to_string().contains("nonzero grounded hits"));
+        assert_eq!(report.outcome, KbReadOutcome::NoMatches);
+        assert_eq!(report.hits, 0);
+        assert!(report.sources.is_empty());
+        // The load-bearing assertion: the model's ungrounded sentence is gone.
+        assert!(
+            report.final_text.is_empty(),
+            "ungrounded prose must not survive a zero-hit run, got: {:?}",
+            report.final_text
+        );
+        assert!(!report.final_text.contains("answer anyway"));
     }
 
     #[tokio::test]
