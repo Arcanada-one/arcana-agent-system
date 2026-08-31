@@ -2,15 +2,28 @@
 # Schema: v1
 # Canonical template: Projects/Datarim/code/datarim/templates/accepted-risk.yml
 # Source-of-truth — SECURITY.md § Accepted Risks renders from this file.
+#
+# Empty on purpose. An entry here SUPPRESSES an advisory, so it must correspond
+# to a finding that can actually occur against this workspace. An acceptance for
+# a package absent from the dependency graph suppresses nothing today and
+# silently suppresses the real thing on the day that package arrives — with
+# reasoning written before anyone had seen how it would be used.
+#
+# Removed 2026-08-31: RUSTSEC-2023-0071 (`rsa`, PASETO V1 timing sidechannel).
+# Its stated reason was that `rsa` is not in `cargo tree`, which is still true
+# and was re-verified before removal:
+#
+#   grep -c 'name = "rsa"' Cargo.lock                  -> 0
+#   grep -cE 'name = "(paseto|rusty_paseto)"' Cargo.lock -> 0
+#   cargo tree --workspace -i rsa
+#     error: package ID specification `rsa` did not match any packages
+#
+# So the advisory cannot fire, the entry was inert, and its `re_review` had
+# lapsed on 2026-08-14. Renewing it would have re-armed a 90-day auto-suppression
+# for a dependency this workspace does not have. If `rsa` ever enters the graph,
+# `cargo audit` should say so and the risk should be judged against its actual
+# use at that time — which is exactly what an empty register preserves.
 
 schema_version: 1
 
-entries:
-  - id: RUSTSEC-2023-0071
-    pkg: rsa
-    severity: medium
-    scope: transitive
-    reason: not-applicable to this project; PASETO V1 (RSA-based) is never used here. The PASETO surface is OIDC ID-token verification only (Ed25519 / Vault Transit) per the Auth Arcana RP contract; the `rsa` crate is not in `cargo tree`. Re-review on each major dependency change.
-    last_review: 2026-05-16
-    re_review: 2026-08-14
-    reviewed_by: agent
+entries: []
