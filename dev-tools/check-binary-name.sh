@@ -36,21 +36,38 @@ CRATES_UA="arcana-agent-system-check-binary-name/1.0 (github.com/Arcanada-one/ar
 CRATES_IO_BASE="${CRATES_IO_BASE:-https://crates.io/api/v1/crates}"
 BREW_API_BASE="${BREW_API_BASE:-https://formulae.brew.sh/api/formula}"
 OVERALL_STATUS=0
+# Set whenever a registry could not answer. An inconclusive run MUST NOT exit 0:
+# `0` reads as "these names are available", and a run where nothing could be
+# reached observed nothing at all. crates.io answers 403 to a request with no
+# User-Agent — the same 403 for a taken name, a free one, and a typo — so this
+# is not a hypothetical.
+INCONCLUSIVE=0
 
 check_crates_io() {
     local name="$1"
-    local response
-    response=$(curl -s -m 10 -A "${CRATES_UA}" "${CRATES_IO_BASE}/${name}" 2>/dev/null)
-    if [[ -z "${response}" ]]; then
-        echo "  crates.io:  UNKNOWN (request failed)"
-        return
-    fi
-    if echo "${response}" | grep -q '"errors"'; then
-        echo "  crates.io:  free"
-    else
-        echo "  crates.io:  TAKEN"
-        OVERALL_STATUS=1
-    fi
+    local http_code
+    # Decided on the HTTP status, as `check_homebrew` below already does.
+    #
+    # This used to grep the body for `"errors"` and report "free" when it found
+    # it. That string is in a 404 body, so it agreed with the truth for as long
+    # as crates.io only ever answered 200 or 404 — and it is in EVERY error
+    # body. Under a 429, a 500, or a maintenance page, every name checked reads
+    # "free". Verified against a local server returning
+    # `429 {"errors":[...]}`: `serde` came back free.
+    #
+    # The direction matters. "Free" is the permissive answer here — it is what
+    # licenses an attempt to publish, and a crates.io version that fails is
+    # burned permanently. An outage must produce UNKNOWN, never an all-clear.
+    http_code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" \
+        -A "${CRATES_UA}" "${CRATES_IO_BASE}/${name}" 2>/dev/null)
+    case "${http_code}" in
+        404) echo "  crates.io:  free" ;;
+        200) echo "  crates.io:  TAKEN"; OVERALL_STATUS=1 ;;
+        000) echo "  crates.io:  UNKNOWN (request failed)"; INCONCLUSIVE=1 ;;
+        403) echo "  crates.io:  UNKNOWN (http 403 — is the User-Agent set?)"
+             INCONCLUSIVE=1 ;;
+        *)   echo "  crates.io:  UNKNOWN (http ${http_code})"; INCONCLUSIVE=1 ;;
+    esac
 }
 
 check_homebrew() {
@@ -60,7 +77,7 @@ check_homebrew() {
     case "${http_code}" in
         404) echo "  homebrew:   free" ;;
         200) echo "  homebrew:   TAKEN"; OVERALL_STATUS=1 ;;
-        *)   echo "  homebrew:   UNKNOWN (http ${http_code})" ;;
+        *)   echo "  homebrew:   UNKNOWN (http ${http_code})"; INCONCLUSIVE=1 ;;
     esac
 }
 
@@ -87,4 +104,14 @@ for name in "$@"; do
     check_apt "${name}"
 done
 
-exit "${OVERALL_STATUS}"
+# A definite TAKEN outranks an inconclusive registry: it is the actionable
+# answer either way. Otherwise an unreachable registry exits 3, so a caller
+# cannot read "nothing was observed taken" as "these names are free".
+if [[ "${OVERALL_STATUS}" -ne 0 ]]; then
+    exit "${OVERALL_STATUS}"
+fi
+if [[ "${INCONCLUSIVE}" -ne 0 ]]; then
+    echo "INCONCLUSIVE: at least one registry could not answer; no name is confirmed free." >&2
+    exit 3
+fi
+exit 0

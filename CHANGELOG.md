@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `dev-tools/check-binary-name.sh` no longer reports every crate name as free
+  when crates.io is unavailable. It decided free-versus-taken by grepping the
+  response body for `"errors"`, a string that is in a 404 body — and in every
+  other error body too. Under a 429, a 500 or a maintenance page, every name
+  checked came back "free"; verified against a local server returning
+  `429 {"errors":[...]}`, where `serde` read as free. It now switches on the
+  HTTP status, as the Homebrew check in the same file already did, and maps
+  anything that is not 200 or 404 to UNKNOWN. "Free" is the permissive answer
+  here — it is what licenses an attempt to publish, and a crates.io version
+  that fails is burned permanently. The test fixture modelled a free crate as
+  HTTP 200 carrying a not-found body, so it agreed with the code while both
+  disagreed with the registry; it is now an absent file, which is a 404.
+
+  Two related holes closed with it. crates.io answers 403 to a request whose
+  User-Agent is absent or the default `curl/*`, and it does so before deciding
+  whether the crate exists — one answer for a taken name, a free one and a
+  typo — so the User-Agent is now pinned by a fixture that reproduces that
+  exact rule. And an inconclusive run no longer exits 0: with every registry
+  unreachable the script printed UNKNOWN on every line and then exited 0, which
+  a caller reads as "these names are available". It exits 3, while a definite
+  TAKEN still exits 1.
+
 - `release-pending`'s grace clock can no longer be reset by an unrelated
   manifest edit. It anchored on `git log -S"version = \"$version\""`, which was
   precise while the root `Cargo.toml` held exactly one copy of that string. It
