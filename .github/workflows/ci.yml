@@ -78,7 +78,7 @@ jobs:
     uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@939a72870815b039c8a57df804259a13aa72c508
     with:
       compose_paths: ''
-      datarim_ref: '82311756b4dbfd16ddc96e098829bd9b0dea3626'
+      datarim_ref: '939a72870815b039c8a57df804259a13aa72c508'
       # Pinned to a hosted runner for the same reason security-audit above is: the
       # reusable workflow defaults to ["self-hosted","linux","ci-general"], and that
       # pool is oversubscribed. Jobs queued there expire after 24h and are
