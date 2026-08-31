@@ -32,13 +32,20 @@ enum KbReadError {
     Composition(String),
     #[error("agent loop did not complete: {0:?}")]
     Loop(TerminalReason),
+    /// The cause, verbatim, when the tool recorded one.
+    ///
+    /// `searches == 0` is a symptom; this is what actually happened. A missing
+    /// client secret, an empty one, and a saturated backend used to be
+    /// indistinguishable here, all reported as the internal grounding invariant.
+    #[error("the knowledge-base search failed: {0}")]
+    SearchFailed(String),
     #[error(
         "the knowledge-base search was issued but never completed \
-         ({0} attempt(s), 0 completed) — it timed out, was refused, or failed in \
-         transport. The KB was reached; it returned nothing usable. Check \
-         Scrutator health and load before re-running."
+         ({0} attempt(s), 0 completed), and no cause was recorded — it timed \
+         out, was refused, or failed in transport. Check Scrutator health and \
+         load before re-running."
     )]
-    SearchFailed(usize),
+    SearchFailedWithoutCause(usize),
     #[error(
         "the model never issued a knowledge-base search, so nothing grounds this \
          answer. This is a dispatch problem, not a retrieval one."
@@ -81,6 +88,14 @@ struct Evidence {
     searches: usize,
     hits: u64,
     sources: Vec<String>,
+    /// The FIRST tool-side failure, kept verbatim.
+    ///
+    /// `searches == 0` is a symptom. The cause — an HTTP 401 because the client
+    /// secret could not be read, a 5xx, a timeout — is known at the moment the
+    /// tool call fails and was being discarded, leaving a post-hoc invariant as
+    /// the only thing that spoke. First and not last: the first failure is the
+    /// one that explains the run.
+    first_failure: Option<String>,
 }
 
 struct GroundingEvidenceHook {
@@ -166,6 +181,67 @@ impl ToolHook for GroundingEvidenceHook {
     }
 }
 
+/// Strip the `ToolError` variant name from the front of a cause.
+///
+/// `ToolError::ExecutionFailed` renders as `execution failed: <cause>`, which
+/// puts an internal enum name in the middle of the user's sentence — the same
+/// class of leak this whole change is about. The variant carries no information
+/// the reader can act on; the text after it does.
+fn user_facing_cause(raw: &str) -> String {
+    for prefix in [
+        "execution failed: ",
+        "invalid input: ",
+        "permission denied: ",
+    ] {
+        if let Some(rest) = raw.strip_prefix(prefix) {
+            return rest.to_owned();
+        }
+    }
+    raw.to_owned()
+}
+
+/// Wraps the search tool to record why a call failed.
+///
+/// `ToolOutput` has no failure variant and `post_tool` only runs on success, so
+/// a failing call leaves no trace anywhere the caller can read — the audit log
+/// records `outcome: tool_error` and the reason is dropped. Rather than add an
+/// error hook to the core trait for one caller, the tool is decorated here: the
+/// error passes through untouched, and a copy of its text lands on the shared
+/// evidence.
+struct RecordingSearchTool {
+    inner: ArcanaSearchTool,
+    evidence: Arc<Mutex<Evidence>>,
+}
+
+#[async_trait]
+impl arcana_core::tool::Tool for RecordingSearchTool {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+    fn description(&self) -> &'static str {
+        self.inner.description()
+    }
+    fn input_schema(&self) -> Value {
+        self.inner.input_schema()
+    }
+    async fn execute(
+        &self,
+        invocation: arcana_core::tool::ToolInvocation,
+    ) -> Result<ToolOutput, arcana_core::tool::ToolError> {
+        let result = self.inner.execute(invocation).await;
+        if let Err(error) = &result {
+            if let Ok(mut evidence) = self.evidence.lock() {
+                // Keep the first: a retry's error can be a consequence of the
+                // first failure rather than an independent cause.
+                if evidence.first_failure.is_none() {
+                    evidence.first_failure = Some(user_facing_cause(&error.to_string()));
+                }
+            }
+        }
+        result
+    }
+}
+
 struct CanonicalKbInput {
     input: Value,
 }
@@ -228,9 +304,16 @@ async fn run_kb_read_with(
         "limit": KB_LIMIT,
     });
 
+    // Created before the registry: the recording wrapper shares it, so the tool
+    // can deposit the reason a call failed where the caller will look for it.
+    let evidence = Arc::new(Mutex::new(Evidence::default()));
+
     let mut registry = ToolDispatcher::new();
     registry
-        .register(Arc::new(search_tool))
+        .register(Arc::new(RecordingSearchTool {
+            inner: search_tool,
+            evidence: Arc::clone(&evidence),
+        }))
         .map_err(|error| KbReadError::Composition(error.to_string()))?;
     let cascade = PermissionCascade::new(vec![
         Arc::new(CanonicalKbInput {
@@ -240,7 +323,6 @@ async fn run_kb_read_with(
             input: fixed_input.clone(),
         }),
     ]);
-    let evidence = Arc::new(Mutex::new(Evidence::default()));
     let mut hooks = HookChain::new();
     hooks.push(Arc::new(GroundingEvidenceHook {
         evidence: evidence.clone(),
@@ -281,10 +363,13 @@ async fn run_kb_read_with(
         return Err(KbReadError::AttemptCount(evidence.attempts));
     }
     if evidence.searches == 0 {
-        // Issued (the pre-hook counted it) but never completed: the post-hook
-        // only runs on a well-formed result, so a timeout or transport error
-        // lands here. Distinct from `SearchNotAttempted` above.
-        return Err(KbReadError::SearchFailed(evidence.attempts));
+        // Issued (the pre-hook counted it) but never completed. Report the cause
+        // the tool recorded; the attempt-count invariant is only the backstop
+        // for the case where nothing was captured.
+        return Err(match evidence.first_failure.clone() {
+            Some(cause) => KbReadError::SearchFailed(cause),
+            None => KbReadError::SearchFailedWithoutCause(evidence.attempts),
+        });
     }
     if evidence.searches != 1 {
         return Err(KbReadError::SearchCount(evidence.searches));
@@ -600,12 +685,64 @@ mod tests {
             .await
             .expect_err("a failed search must not read as success");
         let text = error.to_string();
-        assert!(text.contains("issued but never completed"), "{text}");
+        // The CAUSE, not the invariant. `searches == 0` is a symptom; the 503 is
+        // what actually happened and is known where the tool call fails.
+        assert!(text.contains("the knowledge-base search failed"), "{text}");
+        assert!(text.contains("503"), "the status must survive: {text}");
         // It must NOT claim the model failed to dispatch.
         assert!(
             !text.contains("never issued a knowledge-base search"),
             "{text}"
         );
+        // Nor fall back to the invariant when a cause WAS captured.
+        assert!(!text.contains("no cause was recorded"), "{text}");
+    }
+
+    #[test]
+    fn internal_error_variant_names_are_stripped_from_the_cause() {
+        // `ToolError::ExecutionFailed` renders as `execution failed: …`, putting
+        // an internal enum name in the middle of the user's sentence.
+        assert_eq!(
+            super::user_facing_cause("execution failed: authentication failed: no secret"),
+            "authentication failed: no secret"
+        );
+        assert_eq!(
+            super::user_facing_cause("invalid input: bad query"),
+            "bad query"
+        );
+        assert_eq!(super::user_facing_cause("plain cause"), "plain cause");
+    }
+
+    #[tokio::test]
+    async fn two_different_failures_do_not_produce_the_same_message() {
+        // The heart of the defect: a 401 and a 503 were indistinguishable, both
+        // reported as the internal grounding invariant.
+        async fn message_for(status: u16) -> String {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/search"))
+                .respond_with(ResponseTemplate::new(status))
+                .mount(&server)
+                .await;
+            let connector = ScriptedConnector::new(&[
+                &tool_call("arcana_search", json!({ "query": "q" })),
+                "no answer",
+            ]);
+            let audit = tempdir().expect("audit dir");
+            run_kb_read_with("q", &connector, search_tool(&server), audit.path())
+                .await
+                .expect_err("must fail")
+                .to_string()
+        }
+
+        let unauthorised = message_for(401).await;
+        let unavailable = message_for(503).await;
+        assert_ne!(
+            unauthorised, unavailable,
+            "distinct causes must not collapse into one message"
+        );
+        assert!(unauthorised.contains("401"), "{unauthorised}");
+        assert!(unavailable.contains("503"), "{unavailable}");
     }
 
     #[tokio::test]
