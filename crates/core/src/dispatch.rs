@@ -49,13 +49,15 @@ pub struct ModelPolicy {
 /// Cheap-tier model for the built-in policy.
 ///
 /// A real catalogue entry, not an abstract tier name: `DriverConfig::policy`
-/// ids go to the Model Connector verbatim. 0.14/0.28 USD per MTok, and the
+/// ids go to the Model Connector verbatim. 0.14/0.28 USD per million
+/// tokens, and the
 /// model the overwhelming majority of live traffic already uses.
 const CHEAP_MODEL_ID: &str = "deepseek-v4-flash";
 
 /// Expensive-tier model for the built-in policy.
 ///
-/// 3.00/15.00 USD per MTok — about 21x the cheap tier on input, so
+/// 3.00/15.00 USD per million tokens — about 21x the cheap tier on input,
+/// so
 /// `CostTier::Expensive` states a fact about the bill rather than a label.
 ///
 /// Deliberately DISTINCT from the cheap id: `capstone_vertical_prototype`
