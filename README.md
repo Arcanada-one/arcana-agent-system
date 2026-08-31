@@ -11,10 +11,11 @@ Scrutator KB.
 
 ## Status
 
-This is the initial public release (`0.1.0`). The capability core and its
-supporting subsystems ship in this release, as do the interactive session
-(`arcana` with no subcommand) and `arcana login` (see the
-[CHANGELOG](CHANGELOG.md) and [Known limitations](#known-limitations)).
+Current release: `0.2.0`. The capability core and its supporting subsystems
+ship alongside the interactive session (`arcana` with no subcommand),
+`arcana login`, model selection, spend reporting, and a separately packaged
+credential broker (see the [CHANGELOG](CHANGELOG.md) and
+[Known limitations](#known-limitations)).
 
 ### Stability (0.x)
 
@@ -32,15 +33,54 @@ change to the skills, MCP, configuration, or connector schemas. See the
 
 ## Install
 
-Build and install from source (requires Rust `1.88+`):
+### From a verified release (recommended)
+
+Every release publishes per-platform archives (`linux-x86_64`, `macos-arm64`)
+containing the `arcana` and `arcana-credential-broker` binaries and their
+packaging files, together with CycloneDX SBOMs, SHA-256 files, keyless Sigstore
+bundles, and GitHub build-provenance attestations.
+
+Do not trust an archive because it appears on the Releases page. Verify all
+three layers — checksum, signature, and provenance — before extracting
+anything. Prerequisites: `gh` 2.40+, `cosign` 3.0+, and `sha256sum`.
 
 ```bash
-cargo install --path crates/cli
+TAG=v0.2.0                 # exact release tag
+PLATFORM=linux-x86_64      # or macos-arm64
+REPOSITORY=Arcanada-one/arcana-agent-system
+
+mkdir "arcana-${TAG}-${PLATFORM}" && cd "arcana-${TAG}-${PLATFORM}"
+gh release download "$TAG" --repo "$REPOSITORY" --pattern "*${PLATFORM}*"
+
+sha256sum -c ./*.sha256
+for artifact in ./*.tar.gz ./*.cdx.json ./*.sha256; do
+  cosign verify-blob \
+    --bundle "${artifact}.cosign.bundle" \
+    --certificate-identity "https://github.com/${REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "$artifact"
+  gh attestation verify "$artifact" --repo "$REPOSITORY"
+done
 ```
 
-This builds the `arcana` binary from the `arcana-agent-system` crate. A
-crates.io publish and a Homebrew tap are **not yet available** — install from
-source for now. See [docs/how-to/install.md](docs/how-to/install.md).
+Every command must exit zero. A checksum alone is not enough: an attacker who
+can replace the archive can replace the checksum with it. Any signature or
+attestation failure makes the release untrusted — do not extract it.
+
+### From source
+
+Requires Rust `1.88+`:
+
+```bash
+cargo install --locked --path crates/cli
+```
+
+This builds the `arcana` binary from the `arcana-agent-system` crate. It does
+not install or activate the separately packaged credential broker.
+
+A crates.io publish and a Homebrew tap are **not yet available**. Full detail,
+including broker activation, is in
+[docs/how-to/install.md](docs/how-to/install.md).
 
 ## Usage
 

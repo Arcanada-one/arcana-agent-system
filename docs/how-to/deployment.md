@@ -29,7 +29,8 @@ before creating the version tag. The capture helper requires:
 
 - the `Arcanada` machine account's GitHub credential on a private file
   descriptor, never in argv or the environment;
-- the SEC-0030 Ed25519 signing key on a second private file descriptor;
+- the governance-witness Ed25519 signing key on a second private file
+  descriptor;
 - the exact merge SHA, merged PR number, repository, and independent reviewer.
 
 `dev-tools/sec0030-governance-witness-capture.sh` verifies that the GitHub

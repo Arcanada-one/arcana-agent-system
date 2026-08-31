@@ -9,10 +9,17 @@ fn version_subcommand_prints_version_sha_and_license() {
     // checkouts in CI and from working trees on a developer's box, and pinning
     // only the clean form would fail locally for a reason that is not a defect.
     let mut cmd = Command::cargo_bin("arcana").unwrap();
+    // Pin the SHAPE, not a literal version: hard-coding the number turns every
+    // release bump into a spurious test failure, and a stale literal would let a
+    // binary built at the wrong version pass.
+    let version = env!("CARGO_PKG_VERSION").replace('.', r"\.");
     cmd.arg("version").assert().success().stdout(
-        predicate::str::is_match(
-            r"^arcana 0\.1\.0 \([0-9a-f]{7}(-dirty)?\) — MIT OR Apache-2\.0\n",
-        )
+        // Both halves are load-bearing. The version comes from CARGO_PKG_VERSION
+        // so a release bump is not a spurious failure, and `-dirty` is optional
+        // with no `$` anchor because a dirty build prints a second warning line.
+        predicate::str::is_match(format!(
+            r"^arcana {version} \([0-9a-f]{{7}}(-dirty)?\) — MIT OR Apache-2\.0\n"
+        ))
         .unwrap(),
     );
 }
@@ -85,7 +92,10 @@ fn version_flag_prints_clap_version_line() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::starts_with("arcana 0.1.0"));
+        .stdout(predicate::str::starts_with(format!(
+            "arcana {}",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 // The former `bare_invocation_shows_repl_stub_banner` asserted the placeholder

@@ -34,7 +34,7 @@ not a mechanical follow-up.
 
 ## Install a verified GitHub release
 
-No SEC-0030 release is trusted merely because it appears on the Releases page.
+No release is trusted merely because it appears on the Releases page.
 The release workflow publishes platform archives, SBOMs, SHA-256 files, keyless
 Sigstore bundles, and GitHub build-provenance attestations. Verify all three
 layers before extracting anything.
@@ -42,7 +42,7 @@ layers before extracting anything.
 Prerequisites: `gh` 2.40 or newer, `cosign` 3.0 or newer, and `sha256sum`.
 
 ```bash
-TAG=v0.1.0                 # exact release tag
+TAG=v0.2.0                 # exact release tag
 PLATFORM=linux-x86_64      # or macos-arm64
 REPOSITORY=Arcanada-one/arcana-agent-system
 mkdir "arcana-${TAG}-${PLATFORM}"
@@ -68,14 +68,25 @@ cosign verification is insufficient because an attacker could replace both
 the archive and checksum. Any signature or attestation failure makes the
 release untrusted: do not extract or install it.
 
+Archives are named `arcana-<TAG>-<PLATFORM>.tar.gz` and each contains
+`bin/arcana`, `bin/arcana-credential-broker`, and the platform packaging files.
+The `v0.1.0` release predates this layout: it published a single bare
+`arcana-v0.1.0-x86_64-unknown-linux-gnu` binary with a detached signature and
+no archive or SBOM, so the loop above does not apply to it. Use `v0.2.0` or
+later.
+
 After verification, extract the platform archive and inspect the included
 packaging files. Credentialed broker activation remains a separate deployment
 gate; installation must not provision, print, or copy a provider credential.
 
 ## Developer install from a reviewed checkout
 
-The crates.io package is not published. For development, check out a reviewed
-commit and build from source:
+The crates.io package is not published, and publishing is currently blocked:
+the workspace crates depend on one another by path with no version requirement,
+which `cargo publish` rejects outright. Publishing would first require version
+requirements on every internal dependency and then publishing all nine crates
+in dependency order. For development, check out a reviewed commit and build
+from source:
 
 ```bash
 git clone https://github.com/Arcanada-one/arcana-agent-system.git
