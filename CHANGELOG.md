@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Slash commands in the interactive session are handled locally instead of
+  being sent to the model and billed. `/help` returned 381 tokens of the model
+  inventing a feature list for this product, presented as though it were the
+  CLI's own help — the agent describing capabilities it does not have, to the
+  person deciding whether to trust it — and charged for it; `/quit` answered
+  "Goodbye!", charged, and left the session open. `help`, `/help`, `?`, `/?`,
+  `exit`, `/exit`, `/quit` and `/q` now cost nothing and reach no model, and a
+  mistyped `/halp` is refused rather than charged. Only exact bare tokens
+  match, so `/etc/passwd is world-readable` is still a task.
+
 - `arcana demo --live` reports what it cost. It charged the account and printed
   nothing, on the command a first-time user is told to run first and the one
   that dispatches on the expensive tier — so it was both the priciest

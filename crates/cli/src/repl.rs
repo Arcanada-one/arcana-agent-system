@@ -79,29 +79,79 @@ pub enum Action<'a> {
     Exit,
     /// A task to drive through the agent loop.
     Task(&'a str),
+    /// Print local help. Costs nothing and reaches no model.
+    Help,
+    /// A slash word that is not a command. Refused locally rather than billed.
+    Unknown(&'a str),
 }
 
 /// Classify one line of REPL input.
 ///
 /// `exit`, `quit` and `:q` are the exit words, matched case-insensitively
-/// after trimming. Everything else that is not blank is a task — the REPL
-/// deliberately has no command prefix, because its subject matter is
-/// natural-language tasks and stealing a prefix from them would be a
-/// long-lived papercut.
+/// after trimming.
+///
+/// ## Slash words
+///
+/// This REPL deliberately has no command PREFIX — its subject matter is
+/// natural-language tasks, and reserving `/` wholesale would break perfectly
+/// good input like `/etc/passwd is world-readable, explain why`. That reasoning
+/// still holds and is why the rules below are so narrow.
+///
+/// What did not hold is passing every slash word to the model. `/help`, `/exit`
+/// and `/quit` are near-universal in CLIs, and each was sent as a prompt and
+/// BILLED — `/help` returning 381 tokens of the model inventing a feature list
+/// for a product it knows nothing about, presented as though it were this CLI's
+/// own help. That is worse than the charge: it is the agent describing
+/// capabilities it does not have, to the person deciding whether to trust it.
+///
+/// So the rules are deliberately conservative:
+///
+/// - an EXACT match against a tiny closed set is a command;
+/// - a single slash-led token that is not in that set is refused locally, with
+///   no charge, because it is far likelier a mistyped command than a task;
+/// - anything with whitespace in it is a task, slash or not.
+///
+/// A leading-space escape hatch was tried and removed: it made `  exit  ` — a
+/// stray space before an exit word — a billed task, which is this very bug in a
+/// new costume. A stray leading space is far likelier a typo than an intent to
+/// escape. Since only bare single tokens match, anyone wanting the model to
+/// discuss `/help` can write it in a sentence, which is how it would be asked
+/// anyway.
 #[must_use]
 pub fn classify(line: &str) -> Action<'_> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return Action::Skip;
     }
+    let lower = trimmed.to_ascii_lowercase();
     if matches!(
-        trimmed.to_ascii_lowercase().as_str(),
-        "exit" | "quit" | ":q"
+        lower.as_str(),
+        "exit" | "quit" | ":q" | "/exit" | "/quit" | "/q"
     ) {
         return Action::Exit;
     }
+    if matches!(lower.as_str(), "help" | "/help" | "/?" | "?") {
+        return Action::Help;
+    }
+    // Only a bare slash token. `/etc/passwd is world-readable` has whitespace
+    // and stays a task.
+    if trimmed.starts_with('/') && !trimmed.contains(char::is_whitespace) {
+        return Action::Unknown(trimmed);
+    }
     Action::Task(trimmed)
 }
+
+/// The local help text. Printed without reaching a model, so it costs nothing
+/// and cannot be invented.
+pub(crate) const REPL_HELP: &str = "\
+Type a task in plain language and press Enter; the agent works on it and prints
+the result. Commands, handled locally and never billed:
+
+  help, /help, ?     this text
+  exit, quit, /exit  leave the session (Ctrl-D also works)
+
+Anything else is sent to the model. Only these exact words are commands, so a
+line like `/etc/passwd is world-readable` is still a task.";
 
 /// Entry point for the no-subcommand invocation. Returns a process exit code.
 ///
@@ -191,6 +241,11 @@ fn run_terminal(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
                 match classify(&line) {
                     Action::Skip => {}
                     Action::Exit => break,
+                    Action::Help => println!("{REPL_HELP}"),
+                    Action::Unknown(word) => println!(
+                        "unknown command {word} — type /help for commands. Put it in a \
+                         sentence if you meant it as a task."
+                    ),
                     Action::Task(task) => {
                         // Ignore a history-write failure: losing a history entry
                         // must never abort the operator's session.
@@ -229,6 +284,11 @@ fn run_piped(runtime: &tokio::runtime::Runtime, session: &Session) -> i32 {
         match classify(&line) {
             Action::Skip => {}
             Action::Exit => break,
+            Action::Help => println!("{REPL_HELP}"),
+            Action::Unknown(word) => println!(
+                "unknown command {word} — type /help for commands. Put it in a \
+                 sentence if you meant it as a task."
+            ),
             Action::Task(task) => drive(runtime, session, task, &mut spend, &mut outcome),
         }
     }
@@ -308,6 +368,45 @@ mod tests {
         assert_eq!(classify(""), Action::Skip);
         assert_eq!(classify("   "), Action::Skip);
         assert_eq!(classify("\t \n"), Action::Skip);
+    }
+
+    #[test]
+    fn slash_commands_are_handled_locally_and_never_billed() {
+        // Each of these was sent to the model as a prompt and charged. `/help`
+        // returned 381 tokens of invented documentation for this product.
+        for word in ["/help", "help", "/?", "?", "/HELP"] {
+            assert!(matches!(classify(word), Action::Help), "{word}");
+        }
+        for word in ["/exit", "/quit", "/q", "/EXIT"] {
+            assert!(matches!(classify(word), Action::Exit), "{word}");
+        }
+    }
+
+    #[test]
+    fn a_mistyped_command_is_refused_rather_than_charged() {
+        assert!(matches!(classify("/halp"), Action::Unknown("/halp")));
+        assert!(matches!(classify("/hepl"), Action::Unknown(_)));
+    }
+
+    #[test]
+    fn a_task_that_merely_begins_with_a_slash_is_still_a_task() {
+        // The REPL's subject is natural language. Reserving `/` wholesale would
+        // break real input, which is why only bare slash TOKENS are commands.
+        for task in [
+            "/etc/passwd is world-readable, explain why",
+            "/var/log/syslog keeps growing",
+        ] {
+            assert!(matches!(classify(task), Action::Task(_)), "{task}");
+        }
+    }
+
+    #[test]
+    fn surrounding_whitespace_never_changes_what_a_line_means() {
+        // A leading-space escape hatch was tried and removed: it turned
+        // `  exit  ` into a BILLED task, which is this bug in a new costume.
+        assert!(matches!(classify("  exit  "), Action::Exit));
+        assert!(matches!(classify("  /help "), Action::Help));
+        assert!(matches!(classify(" /halp"), Action::Unknown("/halp")));
     }
 
     #[test]
