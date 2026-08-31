@@ -39,18 +39,27 @@ OVERALL_STATUS=0
 
 check_crates_io() {
     local name="$1"
-    local response
-    response=$(curl -s -m 10 -A "${CRATES_UA}" "${CRATES_IO_BASE}/${name}" 2>/dev/null)
-    if [[ -z "${response}" ]]; then
-        echo "  crates.io:  UNKNOWN (request failed)"
-        return
-    fi
-    if echo "${response}" | grep -q '"errors"'; then
-        echo "  crates.io:  free"
-    else
-        echo "  crates.io:  TAKEN"
-        OVERALL_STATUS=1
-    fi
+    local http_code
+    # Decided on the HTTP status, as `check_homebrew` below already does.
+    #
+    # This used to grep the body for `"errors"` and report "free" when it found
+    # it. That string is in a 404 body, so it agreed with the truth for as long
+    # as crates.io only ever answered 200 or 404 — and it is in EVERY error
+    # body. Under a 429, a 500, or a maintenance page, every name checked reads
+    # "free". Verified against a local server returning
+    # `429 {"errors":[...]}`: `serde` came back free.
+    #
+    # The direction matters. "Free" is the permissive answer here — it is what
+    # licenses an attempt to publish, and a crates.io version that fails is
+    # burned permanently. An outage must produce UNKNOWN, never an all-clear.
+    http_code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" \
+        -A "${CRATES_UA}" "${CRATES_IO_BASE}/${name}" 2>/dev/null)
+    case "${http_code}" in
+        404) echo "  crates.io:  free" ;;
+        200) echo "  crates.io:  TAKEN"; OVERALL_STATUS=1 ;;
+        000) echo "  crates.io:  UNKNOWN (request failed)" ;;
+        *)   echo "  crates.io:  UNKNOWN (http ${http_code})" ;;
+    esac
 }
 
 check_homebrew() {
