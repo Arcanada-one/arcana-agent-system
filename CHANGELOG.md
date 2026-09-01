@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CLI crate is named `arcana-agent` (was `arcana-agent-system`). Operator
+  decision, taken before the first publish because a crates.io name is reserved
+  by the first successful upload and cannot be given back — the long name would
+  have been burned permanently on a crate whose binary is called `arcana`. The
+  command is unchanged: `[[bin]] name = "arcana"`, and `cargo install
+  arcana-agent` still installs `arcana`. Availability confirmed for both
+  `arcana-agent` and `arcana_agent`, which crates.io treats as one name.
+
+  Two things that merely contain the old string are deliberately untouched. The
+  repository is still `Arcanada-one/arcana-agent-system`, so every URL, the
+  `repository` field and the prose keep it. And
+  `FIRST_DISPATCH_ADAPTER_BOUNDARY` — `"arcana-agent-system/driver/first-dispatch-v0"` —
+  is a cross-service protocol identifier the Model Connector reads on the other
+  side; renaming it as a side effect of a package rename would be a silent
+  contract break, and its `-v0` suffix says how it changes when it does.
+
 - `dev-tools/check-binary-name.sh` no longer reports every crate name as free
   when crates.io is unavailable. It decided free-versus-taken by grepping the
   response body for `"errors"`, a string that is in a 404 body — and in every
