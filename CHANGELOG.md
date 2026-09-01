@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The deployment guide's activate/verify/rollback commands could not run as
+  written. They invoked `sudo packaging/broker-lifecycle.sh …` — a relative
+  path into a repository checkout, where that file is committed mode 644.
+  Measured rather than assumed: a mode-644 script fails with "Permission
+  denied" when called directly and "command not found" under `sudo`; only an
+  explicit `bash` prefix runs it. The release workflow installs the helper with
+  `install -m 0755`, so the packaged copy is executable — and the same document
+  already required running "the packaged helper with absolute paths from that
+  verified root-only staging directory" ten lines earlier. These three commands
+  contradicted that rule as well as failing outright; they now use the staged
+  absolute path like the `install` step above them.
 - The install guide said publishing to crates.io was blocked because the
   workspace crates depend on one another by path with no version requirement,
   "which `cargo publish` rejects outright". That stopped being true once the
