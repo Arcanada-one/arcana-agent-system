@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The Ops Bot connector defaulted to a host that redirects. `ops.arcanada.one`
+  answers `301 -> ops.arcanada.ai`, and a redirect that changes host makes
+  reqwest drop the `Authorization` header, so every authenticated emit would
+  have arrived unauthenticated and returned 401 -- which `emit` surfaces as a
+  real error rather than swallowing. Measured against an echo service: the
+  header survives a same-host redirect and does not survive a cross-host one.
+  A `curl -L` check cannot see this, because curl keeps the header across
+  hosts. The default now names the host that serves the API, and a test pins
+  it so the redirecting alias cannot come back. Not yet observable in
+  production: the client is exported but not wired into the composition root,
+  so this is fixed ahead of that wiring rather than in response to a failure.
+
 ### Changed
 - Published doc comments no longer cite private tracker identifiers. 113 of them
   across 21 source files carried ids that resolve only inside a tracker no reader
