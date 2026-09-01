@@ -21,7 +21,7 @@ tokio-util = { version = "0.7", default-features = false }
 tracing = "0.1"
 regex = "1.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots"] }
-jsonschema = "0.30"
+jsonschema = "0.52"
 url = "2"
 
 [dev-dependencies]
