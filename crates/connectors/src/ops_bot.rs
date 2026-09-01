@@ -7,7 +7,7 @@
 //! path (never blind-emit unauthenticated). This mirrors the contract already
 //! established by the stub hook in `arcana_core::hooks::ops_bot`, which keeps
 //! the agent loop functional and observable until this connector is wired in
-//! at the composition root (tracked separately as `ARAS-0024`). A configured
+//! at the composition root (tracked separately). A configured
 //! token that the server rejects (e.g. HTTP 401) is a real error and is
 //! surfaced as `Err` — fail-soft applies only to the missing-token case.
 

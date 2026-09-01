@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Published doc comments no longer cite private tracker identifiers. 113 of them
+  across 21 source files carried ids that resolve only inside a tracker no reader
+  of the published crate can reach; in the crate tarball and on docs.rs each was
+  a reference to nowhere. Plain `//` comments, tests, and three ids inside string
+  literals are untouched -- the last of those are a fixture, an eval label and an
+  `incident:` field whose value is part of a contract. Where an id was the subject
+  of its sentence the sentence was rewritten rather than truncated; a dangling
+  verb or a bare section reference is the same dead end with fewer characters.
+
 ### Fixed
 
 - `arcana models` showed 46 rows reading "price unknown" against 3 carrying a

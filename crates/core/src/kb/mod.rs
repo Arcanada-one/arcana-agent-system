@@ -1,4 +1,4 @@
-//! `kb` — the agent-side KB interaction cascade (ARAS-0048 ratified design,
+//! `kb` — the agent-side KB interaction cascade (ratified design,
 //! thin measurable v1).
 //!
 //! Scrutator is a stateless retrieve-resolve-provenance service that ships
@@ -20,7 +20,7 @@
 //!
 //! ## Boundary / hand-off constraint
 //! Grounding **cite-or-abstain + NLI-faithfulness stays in Argana**
-//! (ARCA-0180). This module delivers sanitize + cascade only;
+//!. This module delivers sanitize + cascade only;
 //! [`cascade::Admission`] is the clean hand-off seam. The abstention /
 //! tool-action hard-gate ([`cascade::BehaviorGate`]) is carried OUT-of-band —
 //! it MUST NOT be enforced by a prompt inside the injectable payload.
