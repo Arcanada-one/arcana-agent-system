@@ -141,7 +141,7 @@ jobs:
       - name: Build compatible runtime and broker binaries
         run: |
           cargo test --locked --workspace
-          cargo build --locked --release --package arcana-agent-system --bin arcana --target "$TARGET"
+          cargo build --locked --release --package arcana-agent --bin arcana --target "$TARGET"
           cargo build --locked --release --package arcana-credential-broker --bin arcana-credential-broker --target "$TARGET"
 
       - name: Generate pinned CycloneDX SBOMs
