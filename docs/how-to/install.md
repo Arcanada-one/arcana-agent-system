@@ -21,16 +21,19 @@ Latest probe run (crate/package-name candidates):
 |---|---|---|
 | `arcana` | **taken** | free |
 | `arcana-cli` | **taken** | free |
-| `arcana-agent` | free | free |
-| `arcana-agent-system` (current `crates/cli` package name) | free | free |
+| `arcana-agent` (current `crates/cli` package name) | free | free |
 
 Both single-word ergonomic names from the original fallback list
 (`arcana` default, `arcana-cli` per OQ-4) are already occupied on
-crates.io. The workspace's current package name, `arcana-agent-system`,
-is unclaimed and requires no rename — it is the default install target
-below. `arcana-agent` remains available as a shorter alternative if a
-rename is ever wanted; that is a product-naming decision for the operator,
-not a mechanical follow-up.
+crates.io. The `crates/cli` package is named `arcana-agent`, renamed from
+`arcana-agent-system` before the first publish: a crates.io name is reserved
+by the first successful upload and cannot be given back, so the long name
+would have been burned permanently on a crate whose binary is called
+`arcana`. The command is unchanged — `[[bin]] name = "arcana"`.
+
+Note the two names that legitimately differ. The **repository** is still
+`Arcanada-one/arcana-agent-system`, so every URL and clone path below keeps
+that spelling; only the **package** was renamed.
 
 ## Install a verified GitHub release
 
