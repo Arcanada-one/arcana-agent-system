@@ -27,6 +27,14 @@ pub const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 /// provider cannot crowd every other out of the list.
 pub const MAX_PER_PROVIDER: usize = 10;
 
+/// How many of a provider's slots are reserved for models that publish a price.
+///
+/// Without a reservation, cheapest-first fills every slot with free tiers --
+/// openrouter has enough of them to do it alone -- and the list a person reads
+/// to compare prices contains no prices. Unused reserved slots fall back to the
+/// other group, so a provider with no priced models still shows ten rows.
+pub const PRICED_SLOTS_PER_PROVIDER: usize = 6;
+
 /// The tariffs for one catalogue entry.
 ///
 /// Nested under `pricing` on the wire, not flat on the entry. Absent entirely
@@ -211,27 +219,91 @@ pub fn save_preference(pref: &ModelPreference) -> std::io::Result<PathBuf> {
 #[must_use]
 pub fn curate(mut entries: Vec<CatalogEntry>, pinned: &[String]) -> Vec<CatalogEntry> {
     let is_pinned = |entry: &CatalogEntry| pinned.contains(&entry.model);
+
+    // Which providers publish a per-token price at all. Twenty-one of the
+    // twenty-four connectors on the live catalogue publish none, and the
+    // per-provider cap gave each of them the same ten slots as the two that do
+    // — so most of the shortlist was spent on rows reading "price unknown".
+    // Sorting priced providers first spends the slots where a price comparison
+    // is possible, without changing the cap or the order within a provider.
+    let priced_providers: std::collections::HashSet<&str> = entries
+        .iter()
+        .filter(|entry| entry.input_per_m_tok().is_some() || entry.output_per_m_tok().is_some())
+        .map(|entry| entry.connector.as_str())
+        .collect();
+    let provider_is_priced: std::collections::HashMap<String, bool> = entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.connector.clone(),
+                priced_providers.contains(entry.connector.as_str()),
+            )
+        })
+        .collect();
+    let priced = |entry: &CatalogEntry| {
+        provider_is_priced
+            .get(&entry.connector)
+            .copied()
+            .unwrap_or(false)
+    };
+
     entries.sort_by(|a, b| {
-        a.connector
-            .cmp(&b.connector)
+        // Providers that publish prices lead; the rest keep their relative order.
+        priced(b)
+            .cmp(&priced(a))
+            .then_with(|| a.connector.cmp(&b.connector))
             // Pinned first within a provider, then cheapest-first as before.
             .then_with(|| is_pinned(b).cmp(&is_pinned(a)))
             .then_with(|| sort_price(a).total_cmp(&sort_price(b)))
             .then_with(|| a.model.cmp(&b.model))
     });
 
-    let mut kept: Vec<CatalogEntry> = Vec::new();
-    let mut per_provider = 0usize;
-    let mut current = String::new();
+    // Fill each provider's slots in two passes rather than one.
+    //
+    // Cheapest-first inside a provider means free models lead, and openrouter
+    // alone carries enough free tiers to take all ten slots -- so a provider
+    // with 417 priced models showed ten rows reading "free" and not one price.
+    // A shortlist meant to help choose a model has to show both. Priced entries
+    // get a reserved share of the slots; free and unpriced entries fill the
+    // rest, and either group takes the whole cap when the other is empty.
+    let mut by_provider: Vec<(String, Vec<CatalogEntry>)> = Vec::new();
     for entry in entries {
-        if entry.connector != current {
-            current.clone_from(&entry.connector);
-            per_provider = 0;
+        match by_provider.last_mut() {
+            Some((name, group)) if *name == entry.connector => group.push(entry),
+            _ => by_provider.push((entry.connector.clone(), vec![entry])),
         }
-        if per_provider < MAX_PER_PROVIDER {
-            per_provider += 1;
-            kept.push(entry);
-        }
+    }
+
+    let mut kept: Vec<CatalogEntry> = Vec::new();
+    for (_, group) in by_provider {
+        // "Shows a price" means the rendered row carries a figure -- not merely
+        // that a pricing field exists. A `free` flag short-circuits the label,
+        // and a zero tariff renders as free too, so both belong in the other
+        // group however their pricing object looks.
+        let (priced_rows, other_rows): (Vec<_>, Vec<_>) = group.into_iter().partition(|entry| {
+            !entry.free.unwrap_or(false)
+                && (entry.input_per_m_tok().unwrap_or(0.0)
+                    + entry.output_per_m_tok().unwrap_or(0.0))
+                    > 0.0
+        });
+
+        let priced_quota = PRICED_SLOTS_PER_PROVIDER.min(priced_rows.len());
+        let other_quota = (MAX_PER_PROVIDER - priced_quota).min(other_rows.len());
+        // Whatever the other group did not use goes back to this one.
+        let priced_take = priced_quota
+            + (MAX_PER_PROVIDER - priced_quota - other_quota)
+                .min(priced_rows.len().saturating_sub(priced_quota));
+
+        let mut slice: Vec<CatalogEntry> = priced_rows.into_iter().take(priced_take).collect();
+        slice.extend(other_rows.into_iter().take(MAX_PER_PROVIDER - slice.len()));
+        // Restore the documented order within the provider.
+        slice.sort_by(|a, b| {
+            is_pinned(b)
+                .cmp(&is_pinned(a))
+                .then_with(|| sort_price(a).total_cmp(&sort_price(b)))
+                .then_with(|| a.model.cmp(&b.model))
+        });
+        kept.extend(slice);
     }
     kept
 }
@@ -442,6 +514,52 @@ mod tests {
         }
     }
 
+    /// A provider that publishes prices must not be crowded out by providers
+    /// that publish none.
+    ///
+    /// On the live catalogue only `openrouter`, `orq` and one `groq` row carry a
+    /// per-token price; the other twenty-one connectors carry none. The
+    /// per-provider cap gave every connector the same ten slots, so most of the
+    /// shortlist read "price unknown" while 841 priced entries went unshown.
+    /// Sorting inside a provider cannot fix that -- there is nothing to sort
+    /// when every entry of that provider is unpriced.
+    #[test]
+    fn priced_providers_lead_the_shortlist() {
+        let mut entries = Vec::new();
+        // Three unpriced providers whose names sort before the priced one.
+        for provider in ["aaa-stt", "bbb-vision", "ccc-legacy"] {
+            for n in 0..MAX_PER_PROVIDER {
+                entries.push(entry(provider, &format!("{provider}-{n}"), None, None));
+            }
+        }
+        // One provider that does publish prices.
+        for n in 0..MAX_PER_PROVIDER {
+            entries.push(entry(
+                "zzz-priced",
+                &format!("priced-{n}"),
+                Some(1.0),
+                Some(2.0),
+            ));
+        }
+
+        let kept = curate(entries, &[]);
+        let first = kept.first().expect("curate returned nothing");
+        assert_eq!(
+            first.connector, "zzz-priced",
+            "a provider with prices must lead; got {} first",
+            first.connector
+        );
+
+        let priced_shown = kept
+            .iter()
+            .filter(|e| e.input_per_m_tok().is_some())
+            .count();
+        assert_eq!(
+            priced_shown, MAX_PER_PROVIDER,
+            "every priced row should survive the cap"
+        );
+    }
+
     /// The real body, captured from `GET /connectors/catalog` on production.
     ///
     /// Checked in rather than hand-written. The fixture this replaces was
@@ -602,10 +720,16 @@ mod tests {
             .collect();
         entries.push(entry("orq", "grok-3-latest", Some(3.0), Some(15.0)));
 
+        // This assertion used to read the other way: the paid model was dropped
+        // and pinning was the only rescue. Reserving slots for rows that show a
+        // price fixes it at the source, so the paid model now survives on its
+        // own. Pinning still has to work -- it is what guarantees a specific id
+        // survives -- but it is no longer the only thing standing between the
+        // dispatcher's model and a list that omits it.
         let unpinned = curate_unpinned(entries.clone());
         assert!(
-            !unpinned.iter().any(|e| e.model == "grok-3-latest"),
-            "without pinning the paid model is dropped — this is the bug"
+            unpinned.iter().any(|e| e.model == "grok-3-latest"),
+            "a provider's priced model must survive the cap without pinning"
         );
 
         let pinned = curate(entries, &["grok-3-latest".to_owned()]);

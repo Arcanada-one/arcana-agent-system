@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `arcana models` showed 46 rows reading "price unknown" against 3 carrying a
+  price, on a catalogue that holds 841 priced entries out of 987. Not a parsing
+  defect and not a disagreement with billing -- both read the same data, and
+  production billing prices exactly what the catalogue prices. Two overlapping
+  biases in the shortlist produced it: the per-provider cap gave the same ten
+  slots to the twenty-one connectors that publish no per-token price as to the
+  three that do, and cheapest-first inside a provider let free tiers take every
+  slot, so openrouter showed ten "free" rows while 396 paid models went unshown.
+  Priced providers now sort first and each provider reserves part of its cap for
+  rows that actually show a price; unused reserved slots fall back, so a
+  provider with no prices still shows ten rows. Priced rows go 3 -> 13. The
+  remaining "price unknown" rows are providers that publish no price at all.
+
 - The CLI crate is named `arcana-agent` (was `arcana-agent-system`). Operator
   decision, taken before the first publish because a crates.io name is reserved
   by the first successful upload and cannot be given back — the long name would
