@@ -282,16 +282,17 @@ pub fn curate(mut entries: Vec<CatalogEntry>, pinned: &[String]) -> Vec<CatalogE
         // group however their pricing object looks.
         let (priced_rows, other_rows): (Vec<_>, Vec<_>) = group.into_iter().partition(|entry| {
             !entry.free.unwrap_or(false)
-                && (entry.input_per_m_tok().unwrap_or(0.0) + entry.output_per_m_tok().unwrap_or(0.0))
+                && (entry.input_per_m_tok().unwrap_or(0.0)
+                    + entry.output_per_m_tok().unwrap_or(0.0))
                     > 0.0
         });
 
         let priced_quota = PRICED_SLOTS_PER_PROVIDER.min(priced_rows.len());
         let other_quota = (MAX_PER_PROVIDER - priced_quota).min(other_rows.len());
         // Whatever the other group did not use goes back to this one.
-        let priced_take = priced_quota + (MAX_PER_PROVIDER - priced_quota - other_quota).min(
-            priced_rows.len().saturating_sub(priced_quota),
-        );
+        let priced_take = priced_quota
+            + (MAX_PER_PROVIDER - priced_quota - other_quota)
+                .min(priced_rows.len().saturating_sub(priced_quota));
 
         let mut slice: Vec<CatalogEntry> = priced_rows.into_iter().take(priced_take).collect();
         slice.extend(other_rows.into_iter().take(MAX_PER_PROVIDER - slice.len()));
@@ -533,7 +534,12 @@ mod tests {
         }
         // One provider that does publish prices.
         for n in 0..MAX_PER_PROVIDER {
-            entries.push(entry("zzz-priced", &format!("priced-{n}"), Some(1.0), Some(2.0)));
+            entries.push(entry(
+                "zzz-priced",
+                &format!("priced-{n}"),
+                Some(1.0),
+                Some(2.0),
+            ));
         }
 
         let kept = curate(entries, &[]);
