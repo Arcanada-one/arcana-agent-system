@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The install guide said publishing to crates.io was blocked because the
+  workspace crates depend on one another by path with no version requirement,
+  "which `cargo publish` rejects outright". That stopped being true once the
+  internal dependencies moved to `[workspace.dependencies]` with versions:
+  `cargo publish --workspace --dry-run` exits zero and packages all nine crates
+  in the required order. The guide now says what is actually true — publishing
+  is a decision about nine permanent public API surfaces, not a manifest defect
+  — and keeps the real objection, that `cargo install` cannot activate the
+  separately packaged credential broker.
 - The install guide still told readers the package was called
   `arcana-agent-system` and presented the rename as a hypothetical the operator
   might one day take -- while the rename had already shipped. Anyone following
