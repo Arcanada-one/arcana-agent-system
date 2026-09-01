@@ -75,7 +75,7 @@ Requires Rust `1.88+`:
 cargo install --locked --path crates/cli
 ```
 
-This builds the `arcana` binary from the `arcana-agent-system` crate. It does
+This builds the `arcana` binary from the `arcana-agent` crate. It does
 not install or activate the separately packaged credential broker.
 
 A crates.io publish and a Homebrew tap are **not yet available**. Full detail,

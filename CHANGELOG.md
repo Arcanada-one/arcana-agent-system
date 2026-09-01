@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The install guide still told readers the package was called
+  `arcana-agent-system` and presented the rename as a hypothetical the operator
+  might one day take -- while the rename had already shipped. Anyone following
+  it would have installed a crate that does not exist under that name. The
+  README named the same stale crate as the build source. Both now say
+  `arcana-agent`, and the guide states explicitly which name did NOT change:
+  the repository is still `Arcanada-one/arcana-agent-system`, so every URL and
+  clone path keeps that spelling. The collision table also carried two rows for
+  the same candidate once the rename merged them; deduplicated.
 - The Ops Bot connector defaulted to a host that redirects. `ops.arcanada.one`
   answers `301 -> ops.arcanada.ai`, and a redirect that changes host makes
   reqwest drop the `Authorization` header, so every authenticated emit would
