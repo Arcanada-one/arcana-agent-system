@@ -1,5 +1,5 @@
 //! RAGAS-style **offline** evaluation harness for the agent↔KB cascade
-//! (backlog ARAS-0054, the harness ARAS-0049 deferred to a measured v2).
+//! (backlog, the harness deferred to a measured v2).
 //!
 //! Computes the three RAGAS retrieval-quality metrics over a fixture QA set:
 //!
@@ -13,7 +13,7 @@
 //!
 //! ## Deterministic, no network / no LLM
 //! RAGAS proper uses an LLM judge for the claim↔context entailment decision.
-//! That is a **residual follow-up** (a live-arm, ARAS-0054 v2): wiring a real
+//! That is a **residual follow-up** (a live-arm, v2): wiring a real
 //! model here would make the harness non-deterministic and network-bound, which
 //! this v1 explicitly avoids. Instead the entailment decision is a [`Judge`]
 //! trait seam. The shipped [`LexicalJudge`] is an embedding-free lexical proxy

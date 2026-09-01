@@ -1,4 +1,4 @@
-//! `arcana models` — the curated model list, and choosing one (ARAS-0065).
+//! `arcana models` — the curated model list, and choosing one.
 //!
 //! The list comes from the LIVE Model Connector catalogue
 //! (`GET /connectors/catalog`), never from a hard-coded table: a table would
