@@ -8,10 +8,21 @@
 crates/cli       Binary `arcana` — args, REPL loop, slash dispatcher, terminal UI.
 crates/core      Library — agent loop, tool dispatcher, context manager, hooks, permissions.
 crates/supervisor Library — process-group-owning child supervisor: heartbeat/timeout watchdog, restart/escalation, concurrency + cost budgets.
-crates/connectors (planned) — Auth Arcana, Model Connector, Vault, Scrutator, LTM, Ops Bot, Coworker.
-crates/tools      (planned) — Read, Edit, Write, Bash, Grep, WebFetch.
+crates/connectors Library — Auth Arcana, Model Connector, Scrutator, Ops Bot, Coworker.
+crates/tools      Library — Read, Edit, Write, Bash, Grep, WebFetch, arcana_search, model_call.
 crates/mcp        Adapter — exposes the capability core as an MCP server (`arcana mcp serve`).
 ```
+
+Both `crates/connectors` and `crates/tools` were marked `(planned)` here long
+after they shipped. They are built, tested, and — for connectors — exercised
+against live services on every `arcana models`, `kb-read` and `usage` call.
+
+One caveat the map cannot show: of the eight tools in `crates/tools`, only
+`arcana_search` is on a live path today (inside `kb-read`). The other seven are
+implemented and tested but not yet registered with the interactive session or
+the MCP server; see `docs/reference/mcp-server.md` for what `tools/list`
+returns. Vault and LTM appear in neither crate — they were on the original
+sketch and have no module here.
 
 ## H-MCP-seam (`crates/mcp`)
 
