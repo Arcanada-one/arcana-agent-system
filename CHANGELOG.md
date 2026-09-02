@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Two entries under "Known limitations" in the README described states that no
+  longer hold. It said `arcana login` could not work "until the provider side is
+  rolled out" -- Auth Arcana now advertises `device_authorization_endpoint` in
+  discovery, the endpoint answers a protocol error rather than 404, and the
+  command prints a real verification URL and user code. And it said the model
+  list was "cheapest first", which was the ordering before priced providers were
+  sorted ahead and part of each cap reserved for rows that show a price. Both
+  now say what the shipped binary does. The login entry keeps the honest limit:
+  a completed sign-in needs a human at the verification URL and is not claimed.
 - The architecture reference still listed `crates/connectors` and `crates/tools`
   as `(planned)`. Both ship: connectors carries the five modules that talk to
   Auth Arcana, the Model Connector, Scrutator, Ops Bot and Coworker, and tools
