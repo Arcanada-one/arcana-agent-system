@@ -11,11 +11,16 @@ Scrutator KB.
 
 ## Status
 
-Current release: `0.2.0`. The capability core and its supporting subsystems
-ship alongside the interactive session (`arcana` with no subcommand),
-`arcana login`, model selection, spend reporting, and a separately packaged
-credential broker (see the [CHANGELOG](CHANGELOG.md) and
-[Known limitations](#known-limitations)).
+Latest release: [`v0.1.0`](https://github.com/Arcanada-one/arcana-agent-system/releases).
+The workspace is at `0.2.0` and its notes are written, but that version is not
+tagged or published yet, so `v0.1.0` is still what the Releases page serves.
+
+`0.2.0` on `main` carries the capability core and its supporting subsystems
+alongside the interactive session (`arcana` with no subcommand), `arcana login`,
+model selection, spend reporting, and a separately packaged credential broker
+(see the [CHANGELOG](CHANGELOG.md) and
+[Known limitations](#known-limitations)). To run it today, build from a reviewed
+checkout — see [Install](#from-source).
 
 ### Stability (0.x)
 

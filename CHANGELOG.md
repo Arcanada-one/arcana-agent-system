@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The README opened with "Current release: `0.2.0`". No such release exists:
+  `v0.1.0` (2026-07-26) is the only tag with a release behind it, and the only
+  entry the Releases page serves. `0.2.0` is the workspace version on `main` --
+  written, reviewed, and waiting on a tag. A reader following that line would
+  have gone looking for a release that is not there, which is the most visible
+  claim in the file. Status now names the released version, says plainly that
+  `0.2.0` is unreleased, and points at the from-source build for anyone who
+  wants what is on `main` today.
 - Two entries under "Known limitations" in the README described states that no
   longer hold. It said `arcana login` could not work "until the provider side is
   rolled out" -- Auth Arcana now advertises `device_authorization_endpoint` in
