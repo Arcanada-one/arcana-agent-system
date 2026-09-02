@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The architecture reference still listed `crates/connectors` and `crates/tools`
+  as `(planned)`. Both ship: connectors carries the five modules that talk to
+  Auth Arcana, the Model Connector, Scrutator, Ops Bot and Coworker, and tools
+  carries eight tool implementations with their tests. The map now says so, and
+  adds the caveat it could not show -- only `arcana_search` is on a live path
+  today, inside `kb-read`; the other seven are implemented but not yet
+  registered with the interactive session or the MCP server. Vault and LTM,
+  named in the old line, have no module in either crate and are no longer
+  claimed.
 - The MCP reference said `tools/list` "returns exactly the capability-core tool
   set". Measured against the shipped binary, it returns exactly one tool:
   `whoami`, the placeholder the entrypoint exposes so the list is not empty. The
