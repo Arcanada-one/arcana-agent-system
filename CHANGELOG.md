@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The MCP reference said `tools/list` "returns exactly the capability-core tool
+  set". Measured against the shipped binary, it returns exactly one tool:
+  `whoami`, the placeholder the entrypoint exposes so the list is not empty. The
+  eight real tools are implemented in `arcana-tools` but not yet wired into the
+  server. A client reading that sentence would have expected a working toolbox
+  and found an identity probe. The document now states what is returned today,
+  names the tools that are not there yet, and keeps the part that was true --
+  `arcana.resume` is a control tool and never appears in the list.
 - The deployment guide's activate/verify/rollback commands could not run as
   written. They invoked `sudo packaging/broker-lifecycle.sh …` — a relative
   path into a repository checkout, where that file is committed mode 644.
