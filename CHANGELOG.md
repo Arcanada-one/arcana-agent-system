@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The release path no longer requires a human signature. Removed from the
+  `preflight` job: the APPROVED review from the configured reviewer on the
+  merged PR head SHA, the CODEOWNERS membership assertion for that reviewer,
+  and the Ed25519 governance-witness verification. Removed from the
+  `sec0030-protected-release` environment: the `required_reviewers` rule that
+  held publication for a manual approval. The gate was introduced by PR #43
+  with zero approvals, required by no vendor or external policy, and was
+  unsatisfiable as configured -- `main` carries no
+  `required_pull_request_reviews` block, so the exact-head approval it demanded
+  could not be produced. This is a deliberate reduction in control: release no
+  longer carries independent human attestation. Every machine-checkable
+  condition is retained -- tagged SHA is the tip of `origin/main`, tag and
+  `Cargo.toml` and CHANGELOG versions agree, all six protected checks are
+  successful on that SHA from app id 15368, and exactly one merged PR produced
+  it -- as are signing, SBOM, and provenance. See
+  `docs/how-to/deployment.md` for the full record and how to restore it.
+
 ### Fixed
 - The README opened with "Current release: `0.2.0`". No such release exists:
   `v0.1.0` (2026-07-26) is the only tag with a release behind it, and the only
