@@ -145,7 +145,10 @@ run_capture_xtrace() {
       .version_tag_ruleset.bypass_actors == [] and
       .release_environment.reviewers == [{type:"User",identity:"PavelValentov"}]
     ' "$BATS_TEST_TMPDIR/manifest.json" >/dev/null
-    ! grep -Fq github_pat_SYNTHETIC_DO_NOT_LOG "$CURL_LOG"
+    if grep -Fq github_pat_SYNTHETIC_DO_NOT_LOG "$CURL_LOG"; then
+        echo "synthetic credential reached the curl log" >&2
+        return 1
+    fi
     ! find "$BATS_TEST_TMPDIR" -type f \
       ! -path "$BATS_TEST_TMPDIR/token" \
       ! -path "$BATS_TEST_TMPDIR/key" \
@@ -153,7 +156,10 @@ run_capture_xtrace() {
     ! find "$BATS_TEST_TMPDIR" -type f \
       ! -path "$BATS_TEST_TMPDIR/key" \
       -exec grep -lF 'BEGIN OPENSSH PRIVATE KEY' {} + | grep -q .
-    ! grep -Fq '"$scratch/curl.conf"' "$CAPTURE_SCRIPT"
+    if grep -Fq '"$scratch/curl.conf"' "$CAPTURE_SCRIPT"; then
+        echo "capture writes the credential to a pathname" >&2
+        return 1
+    fi
     ! grep -Fq '"$scratch/signing-key"' "$CAPTURE_SCRIPT"
 }
 
