@@ -1,4 +1,4 @@
-//! ARAS-0051 — the production skills-store **cutover** seam.
+//! — the production skills-store **cutover** seam.
 //!
 //! The production agent driver must load its skills from the untrusted KB via
 //! [`ScrutatorStore`] (the full 0047 gate chain), reserving the trusted

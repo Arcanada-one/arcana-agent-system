@@ -261,7 +261,7 @@ fn run_mc_ping() -> i32 {
     })
 }
 
-/// Assemble the default permission cascade (ARAS-0024 bootstrap), walk it
+/// Assemble the default permission cascade (bootstrap), walk it
 /// once for the built-in `whoami` probe tool, and report the outcome plus
 /// the audit log location. Returns a process exit code (0 = success).
 fn run_whoami() -> i32 {

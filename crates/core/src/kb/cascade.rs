@@ -1,4 +1,4 @@
-//! The agent-side decision cascade (ARAS-0048 §2, ratified).
+//! The agent-side decision cascade, as ratified.
 //!
 //! `retrieve → decide (chunk sufficient?) → escalate (cheapest-sufficient:
 //! parent-section → full-source, on EXPLICIT triggers only) → size-guard →
@@ -10,9 +10,9 @@
 //! explicit trigger. Scrutator ships signals; the **agent owns policy** — there
 //! is no server-side expansion.
 //!
-//! ## Boundary of this task (ARAS-0049 thin v1)
+//! ## Boundary of this task (thin v1)
 //! Delivers **sanitize + cascade** only. The grounding cite-or-abstain /
-//! NLI-faithfulness check STAYS in Argana (ARCA-0180): [`Admission`] is the clean
+//! NLI-faithfulness check STAYS in Argana: [`Admission`] is the clean
 //! hand-off seam Argana consumes; this cascade never runs grounding itself. The
 //! behaviour gate ([`BehaviorGate`]) is carried OUT-of-band and is enforced by
 //! the permission system / Argana, never as a prompt inside the injectable
@@ -34,7 +34,7 @@ use super::size_guard::{EvidenceBody, SizeGuard};
 use super::trust::{self, Dispatch, TrustError};
 
 /// One hybrid-search hit, carrying the cheap structural signals the KB ships and
-/// the agent cannot compute (ARAS-0048 §1). `trust_class` / `namespace` /
+/// the agent cannot compute. `trust_class` / `namespace` /
 /// `content_hash` are server-side response-envelope fields — never the body.
 #[derive(Debug, Clone)]
 pub struct RetrievedChunk {
@@ -160,7 +160,7 @@ pub enum EscalationOutcome {
     Escalated(EscalationLevel),
 }
 
-/// Explicit escalation triggers (ARAS-0048 §2 — no implicit widening).
+/// Explicit escalation triggers — no implicit widening.
 #[derive(Debug, Clone, Copy)]
 pub struct EscalationThresholds {
     /// A chunk at or above this score MAY be sufficient.
@@ -188,7 +188,7 @@ impl Default for EscalationThresholds {
 ///
 /// Carried alongside the [`UntrustedEnvelope`] as a code-level value the
 /// permission system / Argana consult; it is NEVER a prompt inside the fenced
-/// payload that injected content could countermand (ARAS-0048 §4.4). Retrieved
+/// payload that injected content could countermand. Retrieved
 /// content can never authorise a hard-gated action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BehaviorGate {
@@ -253,7 +253,7 @@ pub struct KbCascade<C: EvidenceFetch> {
     size_guard: SizeGuard,
     cache: SessionCache,
     thresholds: EscalationThresholds,
-    /// Additive instrumentation — the two decisive rates ARAS-0054 measures
+    /// Additive instrumentation — the two decisive rates measured
     /// (`source_fetch_trigger_rate`, `over_fetch_rate`). Never consulted by any
     /// cascade decision; updated once per admit from signals `admit` already
     /// produced.
@@ -286,7 +286,7 @@ impl<C: EvidenceFetch> KbCascade<C> {
         &self.cache
     }
 
-    /// The additive cascade instrumentation (the two decisive ARAS-0054 rates).
+    /// The additive cascade instrumentation (the two decisive rates).
     /// Read-only — consulting it never changes cascade behaviour.
     #[must_use]
     pub fn metrics(&self) -> &CascadeMetrics {
