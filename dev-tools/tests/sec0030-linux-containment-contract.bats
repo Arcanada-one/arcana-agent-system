@@ -38,7 +38,10 @@ PROBE="$REPO_ROOT/packaging/tests/linux-live-containment.sh"
     grep -Fq 'systemd_property "$unit" LoadState' "$PROBE"
     grep -Fq 'systemd_property "$unit" ActiveState' "$PROBE"
     grep -Fq "grep -qx 'populated 0'" "$PROBE"
-    ! grep -Fq 'systemctl is-active --quiet' "$PROBE"
+    if grep -Fq 'systemctl is-active --quiet' "$PROBE"; then
+        echo "probe uses a silent is-active check" >&2
+        return 1
+    fi
     grep -Fq 'cleanup || status=1' "$PROBE"
     grep -Fq 'SEC0030_LINUX_CONTAINMENT_CLEANUP_PASS' "$PROBE"
 }
