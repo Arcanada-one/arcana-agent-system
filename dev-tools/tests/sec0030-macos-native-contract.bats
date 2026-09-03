@@ -11,7 +11,10 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     grep -Fq 'SecCodeCreateWithXPCMessage' "$SERVER"
     grep -Fq 'SecCodeCheckValidity' "$SERVER"
     grep -Fq 'xpc_connection_create_mach_service' "$SERVER"
-    ! grep -Fq 'getpid' "$SERVER"
+    if grep -Fq 'getpid' "$SERVER"; then
+        echo "server identifies the peer by pid" >&2
+        return 1
+    fi
     ! grep -Fq '/proc/' "$SERVER"
 }
 
@@ -22,7 +25,10 @@ CLIENT="$REPO_ROOT/packaging/tests/fixtures/macos-xpc-client.c"
     grep -Fq 'wrong-code-hash fixture did not mutate code identity' "$PROBE"
     grep -Fq 'wrong code identity reached the accepted handler' "$PROBE"
     grep -Fq 'codesign --verify --strict' "$PROBE"
-    ! grep -Eq 'security (add-trusted-cert|remove-trusted-cert|delete-certificate)' "$PROBE"
+    if grep -Eq 'security (add-trusted-cert|remove-trusted-cert|delete-certificate)' "$PROBE"; then
+        echo "probe mutates the trust store" >&2
+        return 1
+    fi
     ! grep -Fq '/Library/Keychains' "$PROBE"
 }
 
