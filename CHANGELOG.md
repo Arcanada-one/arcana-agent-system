@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - unreleased
+
+Publication deferred on 2026-09-03: the agent is being substantially reworked
+-- resolver, watcher, and the surrounding architecture -- before anything is
+published. The notes below describe what is on `main` and are kept together
+under the version they belong to; they are not a shipped release. `v0.1.0`
+remains the latest tag. This heading takes a date when the tag is cut.
+
+
+The first release you can actually drive. `0.1.0` shipped the capability core
+with the interactive session and sign-in still stubbed out; this release turns
+both into working commands, adds model selection and spend reporting, and
+splits provider credentials out of the agent process into a separate,
+privilege-separated broker.
+
+### Added
+- **Interactive session.** `arcana` with no subcommand now opens a session
+  instead of printing a placeholder. It builds one capability core — the same
+  driver, multi-model dispatch, tool dispatcher and audit log `arcana demo`
+  assembles — and runs each entered task against it, so a session shares one
+  append-only audit log and accumulates cost across turns. `exit`, `quit`,
+  `:q` and Ctrl-D end it. On a terminal the prompt is `rustyline`; when stdin
+  is not a terminal the same loop reads plain lines, so piped input is
+  predictable rather than hanging. `--live` routes the session through the
+  real Model Connector when `ARCANA_MC_TOKEN` is set.
+- **`arcana login`.** Sign-in through the OIDC device-authorization grant
+  (RFC 8628). Prints a short user code and a verification URL, polls the token
+  endpoint through `authorization_pending`, honours a `slow_down` back-off, and
+  on approval writes the credentials to the XDG state home with mode `0600`.
+  The access token is never echoed to the terminal. A provider that does not
+  offer the grant, an unreachable provider, a declined request, and a success
+  envelope carrying no token are each reported as distinct fail-closed errors
+  rather than a panic or a partially written credential.
+- **`arcana models` and `arcana models use <ID>`.** The model list comes from
+  the live Model Connector catalogue (`GET /connectors/catalog`), never a
+  hard-coded table, and shows the price per 1M tokens beside each model.
+  Capped at 10 per provider, cheapest first, with free models leading and
+  unpriced ones last — an unknown price is not a cheap price. The cap is
+  presentational: `use` accepts any id, including one the list does not show.
+  The choice persists in the XDG state home, defaults to `deepseek-v4-flash`,
+  and an explicit choice pins the model policy so it is honoured on task-typed
+  turns rather than only supplying the fallback arm.
+- **Spend reporting.** The interactive session prints tokens and cost for each
+  turn plus the session running total, and `arcana usage` reports what the
+  Model Connector has recorded. The per-turn figure is a delta — the session
+  cost tracker is cumulative, so echoing it would bill every later turn for
+  everything before it. Figures carry six decimals, because a cheap call costs
+  far less than a cent and two decimals would show `$0.00`. `arcana usage`
+  reads from the connector and refuses without a token rather than falling
+  back to a local tally that would look authoritative while disagreeing with
+  what was actually charged.
+- **Credential broker (`arcana-credential-broker`).** A privilege-separated
+  local broker that is the sole holder of provider credentials, shipped as a
+  second binary alongside `arcana`. Its library is protocol, policy, ledger and
+  audit only and contains no secret-loading code, so nothing that links it can
+  acquire provider authority. Platform packaging ships with the release: a
+  socket-activated systemd unit on Linux, a launchd agent on macOS, an example
+  capability policy, and a lifecycle helper for install, upgrade and rollback.
+- **Execution boundary (`arcana-execution-boundary`).** A typed, fail-closed
+  boundary for launching child processes in a clean environment with streaming
+  output quarantine, so a subprocess neither inherits ambient credentials nor
+  streams unvetted output back into the agent loop.
+- **Opt-in paired first-dispatch measurement** on `arcana demo --live`, behind
+  explicit flags and restricted to identifier-only metadata: the payload must
+  carry no prompt text, credentials, token counts, or authorization claims.
+- **Signed, attested release artefacts.** Releases now carry per-platform
+  archives for `linux-x86_64` and `macos-arm64` containing both binaries and
+  the packaging files, plus CycloneDX SBOMs, SHA-256 files, keyless Sigstore
+  bundles, and GitHub build-provenance attestations for every artefact. See
+  [docs/how-to/install.md](docs/how-to/install.md) for the verification recipe.
+
+### Changed
+- The release path no longer requires a human signature. Removed from the
+  `preflight` job: the APPROVED review from the configured reviewer on the
+  merged PR head SHA, the CODEOWNERS membership assertion for that reviewer,
+  and the Ed25519 governance-witness verification. Removed from the
+  `sec0030-protected-release` environment: the `required_reviewers` rule that
+  held publication for a manual approval. The gate was introduced by PR #43
+  with zero approvals, required by no vendor or external policy, and was
+  unsatisfiable as configured -- `main` carries no
+  `required_pull_request_reviews` block, so the exact-head approval it demanded
+  could not be produced. This is a deliberate reduction in control: release no
+  longer carries independent human attestation. Every machine-checkable
+  condition is retained -- tagged SHA is the tip of `origin/main`, tag and
+  `Cargo.toml` and CHANGELOG versions agree, all six protected checks are
+  successful on that SHA from app id 15368, and exactly one merged PR produced
+  it -- as are signing, SBOM, and provenance. See
+  `docs/how-to/deployment.md` for the full record and how to restore it.
+- Published doc comments no longer cite private tracker identifiers. 113 of them
+  across 21 source files carried ids that resolve only inside a tracker no reader
+  of the published crate can reach; in the crate tarball and on docs.rs each was
+  a reference to nowhere. Plain `//` comments, tests, and three ids inside string
+  literals are untouched -- the last of those are a fixture, an eval label and an
+  `incident:` field whose value is part of a contract. Where an id was the subject
+  of its sentence the sentence was rewritten rather than truncated; a dangling
+  verb or a bare section reference is the same dead end with fewer characters.
+- Interactive tool calls are gated by the canonical `Schema -> Rule ->
+  Interactive` permission cascade rather than the empty cascade `arcana demo`
+  used. The cascade is fail-closed, so a call is denied unless a layer allows
+  it: the operator is prompted on a terminal, and `ARCANA_PERMISSION_AUTO`
+  decides off one (default deny).
+- The default model policy now names real, priced, dispatching models in every
+  tier, so a fresh install dispatches without first being reconfigured.
+- Release notes are taken from this file rather than generated from commit
+  subjects.
+
 ### Fixed
 - The README opened with "Current release: `0.2.0`". No such release exists:
   `v0.1.0` (2026-07-26) is the only tag with a release behind it, and the only
@@ -82,19 +188,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it so the redirecting alias cannot come back. Not yet observable in
   production: the client is exported but not wired into the composition root,
   so this is fixed ahead of that wiring rather than in response to a failure.
-
-### Changed
-- Published doc comments no longer cite private tracker identifiers. 113 of them
-  across 21 source files carried ids that resolve only inside a tracker no reader
-  of the published crate can reach; in the crate tarball and on docs.rs each was
-  a reference to nowhere. Plain `//` comments, tests, and three ids inside string
-  literals are untouched -- the last of those are a fixture, an eval label and an
-  `incident:` field whose value is part of a contract. Where an id was the subject
-  of its sentence the sentence was rewritten rather than truncated; a dangling
-  verb or a bare section reference is the same dead end with fewer characters.
-
-### Fixed
-
 - `arcana models` showed 46 rows reading "price unknown" against 3 carrying a
   price, on a catalogue that holds 841 priced entries out of 987. Not a parsing
   defect and not a disagreement with billing -- both read the same data, and
@@ -272,86 +365,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query parameters were missing, and a 503 were all rendered as a number. The
   message now carries the server's own text, and a `Retry-After` header is
   reported instead of discarded.
-
-## [0.2.0] - 2026-08-31
-
-The first release you can actually drive. `0.1.0` shipped the capability core
-with the interactive session and sign-in still stubbed out; this release turns
-both into working commands, adds model selection and spend reporting, and
-splits provider credentials out of the agent process into a separate,
-privilege-separated broker.
-
-### Added
-
-- **Interactive session.** `arcana` with no subcommand now opens a session
-  instead of printing a placeholder. It builds one capability core — the same
-  driver, multi-model dispatch, tool dispatcher and audit log `arcana demo`
-  assembles — and runs each entered task against it, so a session shares one
-  append-only audit log and accumulates cost across turns. `exit`, `quit`,
-  `:q` and Ctrl-D end it. On a terminal the prompt is `rustyline`; when stdin
-  is not a terminal the same loop reads plain lines, so piped input is
-  predictable rather than hanging. `--live` routes the session through the
-  real Model Connector when `ARCANA_MC_TOKEN` is set.
-- **`arcana login`.** Sign-in through the OIDC device-authorization grant
-  (RFC 8628). Prints a short user code and a verification URL, polls the token
-  endpoint through `authorization_pending`, honours a `slow_down` back-off, and
-  on approval writes the credentials to the XDG state home with mode `0600`.
-  The access token is never echoed to the terminal. A provider that does not
-  offer the grant, an unreachable provider, a declined request, and a success
-  envelope carrying no token are each reported as distinct fail-closed errors
-  rather than a panic or a partially written credential.
-- **`arcana models` and `arcana models use <ID>`.** The model list comes from
-  the live Model Connector catalogue (`GET /connectors/catalog`), never a
-  hard-coded table, and shows the price per 1M tokens beside each model.
-  Capped at 10 per provider, cheapest first, with free models leading and
-  unpriced ones last — an unknown price is not a cheap price. The cap is
-  presentational: `use` accepts any id, including one the list does not show.
-  The choice persists in the XDG state home, defaults to `deepseek-v4-flash`,
-  and an explicit choice pins the model policy so it is honoured on task-typed
-  turns rather than only supplying the fallback arm.
-- **Spend reporting.** The interactive session prints tokens and cost for each
-  turn plus the session running total, and `arcana usage` reports what the
-  Model Connector has recorded. The per-turn figure is a delta — the session
-  cost tracker is cumulative, so echoing it would bill every later turn for
-  everything before it. Figures carry six decimals, because a cheap call costs
-  far less than a cent and two decimals would show `$0.00`. `arcana usage`
-  reads from the connector and refuses without a token rather than falling
-  back to a local tally that would look authoritative while disagreeing with
-  what was actually charged.
-- **Credential broker (`arcana-credential-broker`).** A privilege-separated
-  local broker that is the sole holder of provider credentials, shipped as a
-  second binary alongside `arcana`. Its library is protocol, policy, ledger and
-  audit only and contains no secret-loading code, so nothing that links it can
-  acquire provider authority. Platform packaging ships with the release: a
-  socket-activated systemd unit on Linux, a launchd agent on macOS, an example
-  capability policy, and a lifecycle helper for install, upgrade and rollback.
-- **Execution boundary (`arcana-execution-boundary`).** A typed, fail-closed
-  boundary for launching child processes in a clean environment with streaming
-  output quarantine, so a subprocess neither inherits ambient credentials nor
-  streams unvetted output back into the agent loop.
-- **Opt-in paired first-dispatch measurement** on `arcana demo --live`, behind
-  explicit flags and restricted to identifier-only metadata: the payload must
-  carry no prompt text, credentials, token counts, or authorization claims.
-- **Signed, attested release artefacts.** Releases now carry per-platform
-  archives for `linux-x86_64` and `macos-arm64` containing both binaries and
-  the packaging files, plus CycloneDX SBOMs, SHA-256 files, keyless Sigstore
-  bundles, and GitHub build-provenance attestations for every artefact. See
-  [docs/how-to/install.md](docs/how-to/install.md) for the verification recipe.
-
-### Changed
-
-- Interactive tool calls are gated by the canonical `Schema -> Rule ->
-  Interactive` permission cascade rather than the empty cascade `arcana demo`
-  used. The cascade is fail-closed, so a call is denied unless a layer allows
-  it: the operator is prompted on a terminal, and `ARCANA_PERMISSION_AUTO`
-  decides off one (default deny).
-- The default model policy now names real, priced, dispatching models in every
-  tier, so a fresh install dispatches without first being reconfigured.
-- Release notes are taken from this file rather than generated from commit
-  subjects.
-
-### Fixed
-
 - Connector failures say what went wrong. Every transport error used to render
   as `error sending request for url (...)` — the same eleven words for a
   connection refused in 8 ms and a stall that burned the full 120-second
@@ -442,7 +455,6 @@ privilege-separated broker.
   instead of reporting a generic error.
 
 ### Security
-
 - The runtime credential boundary is closed: secret loading lives exclusively
   in the broker binary, and security-sensitive crates, packaging, workflows and
   release controls now require review from a named code-owner group.
@@ -450,7 +462,6 @@ privilege-separated broker.
   (0.10.1 was yanked) and `h2` 0.4.19 (RUSTSEC-2026-0258).
 
 ### Known limitations
-
 - `arcana login` only works against an identity provider that offers the device
   grant. Until the provider side is rolled out, the command fails closed with a
   message saying exactly that and exits `2` — it does not hang, and it writes
@@ -463,7 +474,6 @@ privilege-separated broker.
   verified release archive or build from source.
 
 ### Stability (0.x caveat)
-
 This is still a `0.x` release and **the API may change between minor
 versions**. The provisional surfaces named in `0.1.0` — the skills schema, the
 MCP tool surface, and the connector-dispatch and configuration contracts —
