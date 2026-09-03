@@ -175,7 +175,7 @@ impl Tool for WhoamiProbe {
 
 /// Best-effort local OS identity (`$USER`, falling back to `$USERNAME`,
 /// then `"unknown"`). Not the Auth Arcana identity — `arcana login`
-/// (ARAS-0008) owns that surface once the upstream device-code endpoint
+/// owns that surface once the upstream device-code endpoint
 /// ships; this is a bootstrap-only placeholder.
 #[must_use]
 pub fn local_identity() -> String {

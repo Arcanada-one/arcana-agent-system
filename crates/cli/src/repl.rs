@@ -1,4 +1,4 @@
-//! `arcana` with no subcommand — the interactive REPL (ARAS-0059).
+//! `arcana` with no subcommand — the interactive REPL.
 //!
 //! This module owns the *interaction* only. The agent loop it drives is the
 //! existing one: it builds a single [`Session`](crate::demo::Session) — the

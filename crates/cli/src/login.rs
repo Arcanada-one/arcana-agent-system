@@ -1,11 +1,11 @@
 //! `arcana login` — Auth Arcana sign-in via the OIDC device-authorization
-//! grant, RFC 8628 (ARAS-0060).
+//! grant, RFC 8628.
 //!
 //! The device grant, rather than a loopback authorization-code redirect,
 //! because this CLI is normally used over SSH on a remote host: there is no
 //! local browser to open and binding a callback port helps nobody. The user
 //! reads a short code off the terminal and approves it wherever they already
-//! have a browser. ARAS-0069 enables the matching grant on the provider.
+//! have a browser. enables the matching grant on the provider.
 //!
 //! ## Fail-closed
 //!
@@ -13,7 +13,7 @@
 //! what was wrong — never a panic, and never a partial success that leaves a
 //! half-written credential behind. In particular, an identity provider that
 //! does not offer the device grant is reported as exactly that, because at the
-//! time of writing that is the live state of `auth.arcanada.*` until ARAS-0069
+//! time of writing that is the live state of `auth.arcanada.*` until
 //! is rolled out: discovery advertises no `device_authorization_endpoint`.
 
 use std::io::Write;
@@ -26,7 +26,7 @@ use serde::Deserialize;
 /// integration tests point at a mock provider.
 const DEFAULT_ISSUER: &str = "https://auth.arcanada.ai";
 
-/// The public client registered by ARAS-0069. A CLI cannot hold a secret, so
+/// The public client registered by. A CLI cannot hold a secret, so
 /// this client is registered with `token_endpoint_auth_method: none`.
 const CLIENT_ID: &str = "arcana";
 

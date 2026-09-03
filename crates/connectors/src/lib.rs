@@ -9,7 +9,7 @@
 //! subprocess wrapper (no HTTP involved) around the operator's local
 //! `coworker` CLI. `ops_bot` is the Phase 2 Ops Bot events emitter
 //! (fail-soft, see module docs); wiring it into the agent loop's
-//! composition root is a separate follow-up (`ARAS-0024`).
+//! composition root is a separate follow-up.
 
 pub mod auth_arcana;
 pub mod coworker;
