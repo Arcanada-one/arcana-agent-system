@@ -4,7 +4,7 @@
 //! skeleton plan fast — the "draft a missing skill quickly" entry point of the
 //! maturity ladder, as a deterministic emit (no LLM, no background loop). The
 //! full LLM-drafted builder and the background-improvement loop are deferred to
-//! ARAS-0046.
+//!.
 
 use serde_json::json;
 

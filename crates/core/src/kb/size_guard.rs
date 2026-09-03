@@ -10,7 +10,7 @@
 //! real model-aware BPE tokenizer (`tiktoken-rs`, `o200k_base` — the encoding
 //! for the current GPT-4o/4.1/5 families), so the size-guard fraction is
 //! measured in the same unit the model bills, eliminating the proxy over/under-
-//! fetch of the ARAS-0049 whitespace-word estimate. The encoder is lazily
+//! fetch of the whitespace-word estimate. The encoder is lazily
 //! initialised once (`OnceLock`) from a compile-time-embedded vocab — offline
 //! and deterministic. Untrusted evidence is tokenised with `encode_ordinary`,
 //! so `<|endoftext|>`-style byte sequences in the body are treated as ordinary
@@ -153,7 +153,7 @@ impl SizeGuard {
 /// The offset is server-derived and may land mid-UTF-8-codepoint; indexing
 /// `text[..clamped]` there would panic. We walk the clamp down to the nearest
 /// char boundary first (`str::floor_char_boundary` is still unstable on the
-/// pinned toolchain, so this is the manual equivalent — the ARAS-0049 H2 fix),
+/// pinned toolchain, so this is the manual equivalent — the fix),
 /// then accumulate per-token byte lengths until the clamped offset is covered.
 fn token_index_at_byte(enc: &CoreBPE, text: &str, byte: u64, tokens: &[Rank]) -> usize {
     let mut clamped = usize::try_from(byte).unwrap_or(usize::MAX).min(text.len());
