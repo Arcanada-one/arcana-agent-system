@@ -26,11 +26,20 @@ SENDER="$REPO_ROOT/packaging/tests/fixtures/linux-seqpacket-sender.c"
 @test "probe reports ancillary security-label availability without substituting sampled identity" {
     set -e
     grep -Fq 'credential_label_ancillary=' "$HARNESS"
-    ! grep -Fq '/proc/' "$HARNESS"
-    ! grep -Fq 'SO_PEERSEC' "$HARNESS"
+    if grep -Fq '/proc/' "$HARNESS"; then
+        echo "harness reads peer identity from /proc" >&2
+        return 1
+    fi
+    if grep -Fq 'SO_PEERSEC' "$HARNESS"; then
+        echo "harness uses SO_PEERSEC" >&2
+        return 1
+    fi
     grep -Fq 'cleanup || status=1' "$PROBE"
     grep -Fq 'apparmor_parser -R "$profile_file"' "$PROBE"
-    ! grep -Fq 'profile_loaded' "$PROBE"
+    if grep -Fq 'profile_loaded' "$PROBE"; then
+        echo "probe asserts profile_loaded" >&2
+        return 1
+    fi
     grep -Fq 'SEC0030_LINUX_ATTESTATION_CLEANUP_PASS' "$PROBE"
 }
 
