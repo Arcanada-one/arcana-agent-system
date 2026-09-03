@@ -224,12 +224,12 @@ impl ModelAllowlist {
 }
 
 /// The KB namespace a runnable skill document MUST be served from. Scrutator
-/// binds `trust_class == "skill"` to this namespace server-side (SRCH-0038 D5);
+/// binds `trust_class == "skill"` to this namespace server-side;
 /// the store checks both (defense in depth) in its pre-parse `trust_class`
 /// fence.
 pub const SKILLS_NAMESPACE: &str = "skills";
 
-/// The only `trust_class` a runnable skill document may carry (SRCH-0038 D5).
+/// The only `trust_class` a runnable skill document may carry.
 /// A non-`skill` document is rejected before the blake3 keystone and parse.
 pub const SKILL_TRUST_CLASS: &str = "skill";
 
@@ -239,7 +239,7 @@ pub const SKILL_TRUST_CLASS: &str = "skill";
 /// `trust_class` and `namespace` are Scrutator response-*envelope* fields
 /// derived server-side from the document's namespace — they are **never** the
 /// document body, so a plan whose body literally contains
-/// `"trust_class":"skill"` cannot forge them (SRCH-0038 S4).
+/// `"trust_class":"skill"` cannot forge them.
 #[derive(Debug, Clone)]
 pub struct FetchedContent {
     /// The exact document body bytes — the input to the blake3 keystone.
@@ -474,7 +474,7 @@ fn parse_and_validate(bytes: &[u8]) -> Result<SkillPlan, SkillError> {
 /// draft/validated skills never cross the seam. Discovery therefore never
 /// post-filters candidates client-side — the floor is a property of the search
 /// service, not of this crate (defence-in-depth: Scrutator also binds a runnable
-/// skill's `trust_class`/`namespace` server-side, per SRCH-0038 D5).
+/// skill's `trust_class`/`namespace` server-side).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscoverQuery {
     /// The free-text intent to rank skills against.

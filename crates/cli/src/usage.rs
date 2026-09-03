@@ -1,4 +1,4 @@
-//! Spend reporting (ARAS-0066).
+//! Spend reporting.
 //!
 //! Two surfaces: the per-turn line the interactive session prints, and
 //! `arcana usage`, which reports what the Model Connector has actually
@@ -7,7 +7,7 @@
 //! ## Why `usage` asks the connector instead of adding up locally
 //!
 //! The connector is where money is measured (`Request.costUsd`) and, since
-//! ARAS-0064, where it is charged. A second local tally would be a second
+//!, where it is charged. A second local tally would be a second
 //! source of truth that drifts the moment a request is retried, fails
 //! mid-flight, or is billed by a path the CLI never saw — and the number an
 //! operator is shown must be the number they were charged. So `usage` reports

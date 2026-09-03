@@ -1,6 +1,6 @@
 //! Dependency-free encoders/decoders for the closed transform set.
 //!
-//! The transform set is fixed by the SEC-0030 security consilium and MUST NOT be
+//! The transform set is fixed by the security consilium and MUST NOT be
 //! widened without security review plus regenerated benign-corpus identity
 //! evidence:
 //!

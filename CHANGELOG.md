@@ -8,6 +8,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The README opened with "Current release: `0.2.0`". No such release exists:
+  `v0.1.0` (2026-07-26) is the only tag with a release behind it, and the only
+  entry the Releases page serves. `0.2.0` is the workspace version on `main` --
+  written, reviewed, and waiting on a tag. A reader following that line would
+  have gone looking for a release that is not there, which is the most visible
+  claim in the file. Status now names the released version, says plainly that
+  `0.2.0` is unreleased, and points at the from-source build for anyone who
+  wants what is on `main` today.
+- Two entries under "Known limitations" in the README described states that no
+  longer hold. It said `arcana login` could not work "until the provider side is
+  rolled out" -- Auth Arcana now advertises `device_authorization_endpoint` in
+  discovery, the endpoint answers a protocol error rather than 404, and the
+  command prints a real verification URL and user code. And it said the model
+  list was "cheapest first", which was the ordering before priced providers were
+  sorted ahead and part of each cap reserved for rows that show a price. Both
+  now say what the shipped binary does. The login entry keeps the honest limit:
+  a completed sign-in needs a human at the verification URL and is not claimed.
+- The architecture reference still listed `crates/connectors` and `crates/tools`
+  as `(planned)`. Both ship: connectors carries the five modules that talk to
+  Auth Arcana, the Model Connector, Scrutator, Ops Bot and Coworker, and tools
+  carries eight tool implementations with their tests. The map now says so, and
+  adds the caveat it could not show -- only `arcana_search` is on a live path
+  today, inside `kb-read`; the other seven are implemented but not yet
+  registered with the interactive session or the MCP server. Vault and LTM,
+  named in the old line, have no module in either crate and are no longer
+  claimed.
+- The MCP reference said `tools/list` "returns exactly the capability-core tool
+  set". Measured against the shipped binary, it returns exactly one tool:
+  `whoami`, the placeholder the entrypoint exposes so the list is not empty. The
+  eight real tools are implemented in `arcana-tools` but not yet wired into the
+  server. A client reading that sentence would have expected a working toolbox
+  and found an identity probe. The document now states what is returned today,
+  names the tools that are not there yet, and keeps the part that was true --
+  `arcana.resume` is a control tool and never appears in the list.
+- The deployment guide's activate/verify/rollback commands could not run as
+  written. They invoked `sudo packaging/broker-lifecycle.sh …` — a relative
+  path into a repository checkout, where that file is committed mode 644.
+  Measured rather than assumed: a mode-644 script fails with "Permission
+  denied" when called directly and "command not found" under `sudo`; only an
+  explicit `bash` prefix runs it. The release workflow installs the helper with
+  `install -m 0755`, so the packaged copy is executable — and the same document
+  already required running "the packaged helper with absolute paths from that
+  verified root-only staging directory" ten lines earlier. These three commands
+  contradicted that rule as well as failing outright; they now use the staged
+  absolute path like the `install` step above them.
+- The install guide said publishing to crates.io was blocked because the
+  workspace crates depend on one another by path with no version requirement,
+  "which `cargo publish` rejects outright". That stopped being true once the
+  internal dependencies moved to `[workspace.dependencies]` with versions:
+  `cargo publish --workspace --dry-run` exits zero and packages all nine crates
+  in the required order. The guide now says what is actually true — publishing
+  is a decision about nine permanent public API surfaces, not a manifest defect
+  — and keeps the real objection, that `cargo install` cannot activate the
+  separately packaged credential broker.
+- The install guide still told readers the package was called
+  `arcana-agent-system` and presented the rename as a hypothetical the operator
+  might one day take -- while the rename had already shipped. Anyone following
+  it would have installed a crate that does not exist under that name. The
+  README named the same stale crate as the build source. Both now say
+  `arcana-agent`, and the guide states explicitly which name did NOT change:
+  the repository is still `Arcanada-one/arcana-agent-system`, so every URL and
+  clone path keeps that spelling. The collision table also carried two rows for
+  the same candidate once the rename merged them; deduplicated.
+- The Ops Bot connector defaulted to a host that redirects. `ops.arcanada.one`
+  answers `301 -> ops.arcanada.ai`, and a redirect that changes host makes
+  reqwest drop the `Authorization` header, so every authenticated emit would
+  have arrived unauthenticated and returned 401 -- which `emit` surfaces as a
+  real error rather than swallowing. Measured against an echo service: the
+  header survives a same-host redirect and does not survive a cross-host one.
+  A `curl -L` check cannot see this, because curl keeps the header across
+  hosts. The default now names the host that serves the API, and a test pins
+  it so the redirecting alias cannot come back. Not yet observable in
+  production: the client is exported but not wired into the composition root,
+  so this is fixed ahead of that wiring rather than in response to a failure.
+
+### Changed
+- Published doc comments no longer cite private tracker identifiers. 113 of them
+  across 21 source files carried ids that resolve only inside a tracker no reader
+  of the published crate can reach; in the crate tarball and on docs.rs each was
+  a reference to nowhere. Plain `//` comments, tests, and three ids inside string
+  literals are untouched -- the last of those are a fixture, an eval label and an
+  `incident:` field whose value is part of a contract. Where an id was the subject
+  of its sentence the sentence was rewritten rather than truncated; a dangling
+  verb or a bare section reference is the same dead end with fewer characters.
+
+### Fixed
+
+- `arcana models` showed 46 rows reading "price unknown" against 3 carrying a
+  price, on a catalogue that holds 841 priced entries out of 987. Not a parsing
+  defect and not a disagreement with billing -- both read the same data, and
+  production billing prices exactly what the catalogue prices. Two overlapping
+  biases in the shortlist produced it: the per-provider cap gave the same ten
+  slots to the twenty-one connectors that publish no per-token price as to the
+  three that do, and cheapest-first inside a provider let free tiers take every
+  slot, so openrouter showed ten "free" rows while 396 paid models went unshown.
+  Priced providers now sort first and each provider reserves part of its cap for
+  rows that actually show a price; unused reserved slots fall back, so a
+  provider with no prices still shows ten rows. Priced rows go 3 -> 13. The
+  remaining "price unknown" rows are providers that publish no price at all.
 
 - The CLI crate is named `arcana-agent` (was `arcana-agent-system`). Operator
   decision, taken before the first publish because a crates.io name is reserved
