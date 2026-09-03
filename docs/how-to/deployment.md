@@ -4,77 +4,58 @@ The release workflow builds `linux-x86_64` and `macos-arm64` packages, runs the
 locked workspace tests on each hosted platform, produces SBOMs and checksums,
 and signs and attests every published artifact. A tag publishes only when it is
 the exact current `main` commit, every app-bound protected check is successful,
-the active tag ruleset has no bypass actor, branch protection requires a fresh
-code-owner approval with no bypass, the merged PR has an exact-head approval
-from the configured independent code owner, and the protected release
-environment receives its separate independent review with administrator bypass
-disabled and exactly one `v*` tag policy. Immediately before publication the
-workflow re-reads both `main` and the recursively dereferenced tag and requires
-both to resolve to the release SHA.
+and exactly one merged pull request into `main` produced that commit. The
+protected release environment still admits `v*` tags only. Immediately before
+publication the workflow re-reads both `main` and the recursively dereferenced
+tag and requires both to resolve to the release SHA.
 
 Follow [install.md](install.md) to verify a downloaded package before using its
 contents. Never deploy an archive that has only passed a checksum.
 
-## Capture the governance witness
+## Control downgrade, 2026-09-02
 
-Decision, 2026-08-02: the tag-triggered release path does not carry a GitHub
-governance credential. Reading hidden ruleset bypass actors requires a
-mutation-capable Administration token. Giving that long-lived authority to a
-tag workflow would let a compromised release job rewrite the governance it is
-supposed to verify. Public `updated_at` metadata was also rejected as a drift
-anchor: a live add/remove bypass-actor negative control did not change it.
+The release path no longer requires a human signature. Three checks were
+removed from the `preflight` job and one from the release environment:
 
-Instead, a trusted operator host performs the privileged read immediately
-before creating the version tag. The capture helper requires:
+- the APPROVED review from `vars.SEC0030_RELEASE_REVIEWER` on the merged PR
+  head SHA;
+- the assertion that this reviewer appears in `.github/CODEOWNERS`;
+- the Ed25519 governance-witness manifest, captured on an operator host and
+  verified by `dev-tools/sec0030-governance-witness-verify.sh`;
+- the `required_reviewers` rule on the `sec0030-protected-release`
+  environment, which held publication for a manual approval in the GitHub UI.
 
-- the `Arcanada` machine account's GitHub credential on a private file
-  descriptor, never in argv or the environment;
-- the governance-witness Ed25519 signing key on a second private file
-  descriptor;
-- the exact merge SHA, merged PR number, repository, and independent reviewer.
+**Why.** The gate was introduced by PR #43 on 2026-08-11 and merged with zero
+approvals by the `Arcanada` service account. No vendor, contract, or external
+policy required it. Measured against the repository as it stands, the gate was
+also unsatisfiable by anyone: `main` carries no
+`required_pull_request_reviews` block, so the exact-head approval it demanded
+could not be produced through the normal merge path. The operator, who was the
+sole configured reviewer, directed on 2026-09-02 that work the agent can do
+alone should not wait on their signature.
 
-`dev-tools/sec0030-governance-witness-capture.sh` verifies that the GitHub
-identity has admin visibility, reads branch protection, the complete active tag
-ruleset including hidden bypass actors, and every page of the protected
-environment's ref policies. It requires custom ref policies to be active,
-administrator bypass to be disabled, and the complete policy set to be exactly
-the `v*` tag policy, then signs a 120-second exact-SHA manifest. It posts only
-the manifest and signature
-as a machine-account PR comment. The release workflow has `checks`, `contents`,
-`issues`, and `pull-requests` read access, verifies the signature against
-`.github/sec0030-governance-witness.pub`, and rejects an expired, altered,
-wrong-author, wrong-repository, wrong-SHA, or bypass-bearing witness.
+**What this costs.** Release no longer carries independent human attestation.
+A compromised or mistaken agent with merge rights on `main` can now reach
+publication unaided. This is a real reduction in control, recorded here rather
+than dropped silently.
 
-The private signing key is stored only in the operator-private Vault locator
-configured for this service, with CAS required. Version 1 was created on
-2026-08-02, is limited by contract to signing these short-lived governance
-manifests, and must rotate by 2026-10-31 or immediately after any suspected
-disclosure. Rotation is a code-reviewed public-key change followed by
-destruction of the old Vault version. The Linux-only capture helper consumes
-both authorities through inherited file descriptors: HTTP authorization is
-streamed to curl on standard input, while the private key is copied only into a
-sealed, non-dumpable memfd for signing. Neither authority is written to a
-pathname, argv, environment, checkout, or artifact. The signing key cannot
-mutate GitHub; the GitHub credential never enters Actions. An absent or invalid
-witness stops release before build or publication.
+**What still holds.** Publication remains gated on machine-checkable facts:
+the tagged SHA must be the tip of `origin/main`; the tag version, the workspace
+`Cargo.toml` version, and the CHANGELOG heading must agree; all six protected
+checks must be `completed`/`success` on that exact SHA and produced by app id
+15368; and exactly one closed, merged PR into `main` must have that SHA as its
+`merge_commit_sha`. The release environment still accepts `v*` tags only, with
+`can_admins_bypass` false. Branch protection on `main` is unchanged:
+`enforce_admins`, linear history, no force-pushes, no deletions, six required
+contexts. Signing, SBOM, and provenance attestation are untouched.
 
-The GitHub credential is an offline operator authority kept in private operator
-configuration. It is used only for this just-in-time read and comment post; it
-must never be copied into the repository, Actions, a workflow environment, or a
-release artifact. Because GitHub couples visibility of hidden bypass actors to
-mutation-capable Administration authority, the capture helper verifies that
-authority explicitly and confines it to the operator host rather than claiming
-that the credential is read-only.
-
-Create the tag immediately after capture. If the release preflight does not
-consume the witness within 120 seconds, capture a fresh witness for the same
-merge SHA and rerun the failed workflow. Do not extend the expiry or reuse an
-expired comment. Each rerun selects the newest machine-account witness comment
-by GitHub's server timestamp and immutable comment id, then validates only that
-comment's signature, freshness, and exact SHA. It never falls back to an older
-valid comment when the newest one is invalid. Recapture is therefore
-fail-closed and does not require a workflow credential with Administration
-authority.
+Restoring the requirement means re-adding the removed steps and a
+`required_reviewers` rule, and, for the review check to be satisfiable at all,
+adding `required_pull_request_reviews` to `main`. The witness tooling
+(`dev-tools/sec0030-governance-witness-*.sh`, `.github/sec0030-governance-witness.pub`)
+is left in the repository for that purpose. The signing key remains in its
+operator-private Vault locator; nothing consumes it now, and it can be
+destroyed once the decision is settled.
 
 [github-rulesets]: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset
 

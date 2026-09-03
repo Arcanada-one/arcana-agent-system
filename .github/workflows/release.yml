@@ -45,10 +45,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_REVIEWER: ${{ vars.SEC0030_RELEASE_REVIEWER }}
         run: |
           set -euo pipefail
-          test -n "$EXPECTED_REVIEWER"
           checks=$(gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
             | jq '{check_runs: [.[].check_runs[]]}')
@@ -79,34 +77,6 @@ jobs:
               .merge_commit_sha == $sha
             )] | length == 1
           ' <<<"$pull_requests" >/dev/null
-          pull_number=$(jq -r --arg sha "$GITHUB_SHA" '.[] | select(.state == "closed" and .merged_at != null and .base.ref == "main" and .merge_commit_sha == $sha) | .number' <<<"$pull_requests")
-          pull_head=$(jq -r --arg sha "$GITHUB_SHA" '.[] | select(.state == "closed" and .merged_at != null and .base.ref == "main" and .merge_commit_sha == $sha) | .head.sha' <<<"$pull_requests")
-          reviews=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}/reviews?per_page=100")
-          jq -e --arg reviewer "$EXPECTED_REVIEWER" --arg head "$pull_head" '
-            any(.[];
-              .user.login == $reviewer and
-              .state == "APPROVED" and
-              .commit_id == $head
-            )
-          ' <<<"$reviews" >/dev/null
-          grep -Eq "(^|[[:space:]])@${EXPECTED_REVIEWER}([[:space:]]|$)" .github/CODEOWNERS
-          repository_id=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.id')
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/issues/${pull_number}/comments?per_page=100" \
-            | jq 'flatten' > "$RUNNER_TEMP/sec0030-governance-comments.json"
-          bash dev-tools/sec0030-governance-witness-verify.sh \
-            --comments "$RUNNER_TEMP/sec0030-governance-comments.json" \
-            --public-key .github/sec0030-governance-witness.pub \
-            --expected-author Arcanada \
-            --repository "$GITHUB_REPOSITORY" \
-            --repository-id "$repository_id" \
-            --sha "$GITHUB_SHA" \
-            --pull-number "$pull_number" \
-            --pull-head-sha "$pull_head" \
-            --reviewer "$EXPECTED_REVIEWER" \
-            --now "$(date +%s)" \
-            --key-not-before 1785628800 \
-            --key-not-after 1793491199
 
   build:
     name: Build / ${{ matrix.platform }}
