@@ -1,10 +1,10 @@
-//! `arcana demo` — the Phase-C vertical-prototype composition root (ARAS-0032).
+//! `arcana demo` — the Phase-C vertical-prototype composition root.
 //!
 //! Assembles the SAME real capability core the `DoD` integration test uses —
-//! the [`Driver`](arcana_core::agent_loop::Driver) (ARAS-0030), the multi-model
-//! [`ModelPolicy`](arcana_core::dispatch::ModelPolicy) (ARAS-0031), and the
+//! the [`Driver`](arcana_core::agent_loop::Driver), the multi-model
+//! [`ModelPolicy`](arcana_core::dispatch::ModelPolicy), and the
 //! fused [`CapabilityExecutor`](arcana_core::execution::CapabilityExecutor)
-//! (ARAS-0033) that owns the `ToolDispatcher`, the `PermissionCascade`, an empty
+//! that owns the `ToolDispatcher`, the `PermissionCascade`, an empty
 //! post-cascade `HookChain`, and the `AuditLog` (audit is a field of the fused
 //! authorize→audit→execute transaction — single audit by construction) — and
 //! drives one attempt → check → conclusion loop, printing three labelled phases.
@@ -12,7 +12,7 @@
 //! ## Demo-only scaffolding (NOT capability core)
 //!
 //! Two pieces in THIS module are deliberately demo-only composition-root
-//! fixtures, explicitly permitted by ARAS-0032 V-AC-5 (which forbids *new*
+//! fixtures, explicitly permitted for this composition root (which forbids *new*
 //! `Tool`/`ModelConnector` impls only in `arcana-core` / `arcana-connectors`
 //! `src`):
 //!
@@ -241,7 +241,7 @@ const FALLBACK_STATE_DIR: &str = ".arcana-state";
 
 /// Resolve `arcana demo`'s audit directory.
 ///
-/// ARAS-0062: this used to be a FIXED path under the system temp dir. On a
+/// this used to be a FIXED path under the system temp dir. On a
 /// shared host that is another user's to read or pre-create, and it broke the
 /// command outright — a stale `/tmp/arcana-demo/audit.log` left by an earlier
 /// run under a different umask (mode 664) made every later `arcana demo` fail
@@ -703,7 +703,7 @@ fn measurement_evidence_json(
 /// tool-call turn (Code step) then a final answer (Summarize step) — so the
 /// default demo path is deterministic with no network and no `ARCANA_MC_TOKEN`.
 ///
-/// This is composition-root scaffolding permitted by ARAS-0032 V-AC-5; it is
+/// This is composition-root scaffolding, permitted here by design; it is
 /// NOT part of the capability core and does not reimplement `arcana-connectors`.
 struct DemoConnector {
     turns: Vec<ConnectorResponse>,
@@ -772,7 +772,7 @@ fn tool_call_fence(name: &str, input: &Value) -> String {
 /// genuine dispatch occurs through the real `ToolDispatcher`. The core
 /// `EchoTool` lives in `crates/core/tests/` and is unreachable from `src`, so
 /// this equivalent demo fixture is defined in the CLI composition root
-/// (permitted by ARAS-0032 V-AC-5). It is NOT a capability-core tool.
+/// (permitted for this prototype). It is NOT a capability-core tool.
 struct DemoEchoTool;
 
 #[async_trait]

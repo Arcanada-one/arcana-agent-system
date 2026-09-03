@@ -7,7 +7,7 @@
 //! path (never blind-emit unauthenticated). This mirrors the contract already
 //! established by the stub hook in `arcana_core::hooks::ops_bot`, which keeps
 //! the agent loop functional and observable until this connector is wired in
-//! at the composition root (tracked separately as `ARAS-0024`). A configured
+//! at the composition root (tracked separately). A configured
 //! token that the server rejects (e.g. HTTP 401) is a real error and is
 //! surfaced as `Err` — fail-soft applies only to the missing-token case.
 
@@ -18,7 +18,14 @@ use url::Url;
 
 use crate::model_connector::ApiKey;
 
-const DEFAULT_BASE_URL: &str = "https://ops.arcanada.one";
+// The host that SERVES the API, not one that redirects to it.
+// `ops.arcanada.one` answers 301 -> `ops.arcanada.ai`, and a redirect that
+// changes host makes reqwest drop the `Authorization` header (measured
+// against an echo service: survived=false across hosts, survived=true
+// within one). Every authenticated emit would therefore have arrived
+// unauthenticated and come back 401 -- which `emit` reports as a real
+// error, by design. A `curl -L` check hides this: curl keeps the header.
+const DEFAULT_BASE_URL: &str = "https://ops.arcanada.ai";
 const ENV_TOKEN: &str = "ARCANA_OPS_BOT_TOKEN";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -200,10 +207,27 @@ mod tests {
     #[test]
     fn events_url_appends_path_segment() {
         let client =
-            OpsBotClient::new(Url::parse("https://ops.arcanada.one").unwrap(), None).unwrap();
+            OpsBotClient::new(Url::parse("https://ops.arcanada.ai").unwrap(), None).unwrap();
         assert_eq!(
             client.events_url().unwrap().as_str(),
-            "https://ops.arcanada.one/events"
+            "https://ops.arcanada.ai/events"
+        );
+    }
+
+    /// The default host must serve the API directly, never redirect to it.
+    ///
+    /// A cross-host redirect is not a harmless convenience here: reqwest drops
+    /// `Authorization` when a redirect changes host, so a default pointing at a
+    /// redirecting alias turns every authenticated emit into a 401 that `emit`
+    /// then reports as a real error. The failure is invisible to a `curl -L`
+    /// check, which keeps the header, so it is pinned by a test instead.
+    #[test]
+    fn default_base_url_is_not_a_redirecting_alias() {
+        assert_eq!(DEFAULT_BASE_URL, "https://ops.arcanada.ai");
+        assert!(
+            !DEFAULT_BASE_URL.contains("arcanada.one"),
+            "ops.arcanada.one 301s to ops.arcanada.ai, and a cross-host \
+             redirect strips the Authorization header"
         );
     }
 }
