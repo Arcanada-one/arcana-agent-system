@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-09-02
+## [0.2.0] - unreleased
+
+Publication deferred on 2026-09-03: the agent is being substantially reworked
+-- resolver, watcher, and the surrounding architecture -- before anything is
+published. The notes below describe what is on `main` and are kept together
+under the version they belong to; they are not a shipped release. `v0.1.0`
+remains the latest tag. This heading takes a date when the tag is cut.
 
 
 The first release you can actually drive. `0.1.0` shipped the capability core
