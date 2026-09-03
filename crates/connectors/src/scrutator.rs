@@ -2,7 +2,7 @@
 //! search endpoint (`POST /v1/search`).
 //!
 //! The request/response shapes mirror the upstream Pydantic model
-//! `scrutator.db.models.SearchRequest` verbatim. Per SRCH-0031 there is no
+//! `scrutator.db.models.SearchRequest` verbatim. there is no
 //! rerank parameter on `/v1/search` — this client does not add one; it
 //! forwards the hybrid-search contract as-is.
 
@@ -42,7 +42,7 @@ pub struct SearchQuery {
     pub min_score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_content: Option<bool>,
-    /// ARAS-0050: the **server-side** maturity floor (`"production"`) for skill
+    /// The **server-side** maturity floor (`"production"`) for skill
     /// discovery. Additive with `skip_serializing_if` — omitted for every
     /// pre-existing caller, so the wire shape is unchanged unless discovery sets
     /// it. The server excludes any skill below this maturity before ranking, so
@@ -69,7 +69,7 @@ impl SearchQuery {
         }
     }
 
-    /// ARAS-0050: the skill-discovery query shape — scoped to the skills
+    /// the skill-discovery query shape — scoped to the skills
     /// namespace with a **server-side** `maturity` floor, ranked metadata only
     /// (no document bodies, since discovery only proposes). The returned hits'
     /// `metadata` carries `{name, version, maturity}` and their `content_hash`
@@ -109,12 +109,12 @@ pub struct SearchHit {
     pub project: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
-    /// SRCH-0038: the KB's SHA-256 ingest-bound content digest. A cache /
+    /// the KB's SHA-256 ingest-bound content digest. A cache /
     /// staleness signal only — **never** a run-path trust anchor. Additive with
-    /// `#[serde(default)]` for back-compat with pre-SRCH-0038 responses.
+    /// `#[serde(default)]` for back-compat with responses that predate it.
     #[serde(default)]
     pub content_hash: String,
-    /// SRCH-0038: the opaque `source_id` a caller can later pin and re-fetch
+    /// the opaque `source_id` a caller can later pin and re-fetch
     /// via `POST /v1/fetch`. Additive with `#[serde(default)]`.
     #[serde(default)]
     pub source_id: String,
@@ -127,17 +127,17 @@ pub struct SearchResponse {
     pub results: Vec<SearchHit>,
 }
 
-/// The `range` selector for `POST /v1/fetch` (SRCH-0038). Mirrors the upstream
+/// The `range` selector for `POST /v1/fetch`. Mirrors the upstream
 /// Pydantic union `Literal["full"] | ParentOfChunkRange`: serialises to either
 /// the bare string `"full"` (whole document) or the object
 /// `{"parent_of_chunk": "<chunk_uuid>"}` (the native server-side
-/// auto-merge-to-parent slice — ARAS-0052). `Serialize`-only, like [`FetchQuery`].
+/// auto-merge-to-parent slice —). `Serialize`-only, like [`FetchQuery`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchRangeSpec {
     /// Whole document. Wire form: the string literal `"full"`.
     Full,
     /// The whole parent document of the chunk `chunk_id` (native
-    /// auto-merge-to-parent, ARAS-0052). Wire form:
+    /// auto-merge-to-parent). Wire form:
     /// `{"parent_of_chunk": "<chunk_uuid>"}`.
     ParentOfChunk(String),
 }
@@ -159,9 +159,9 @@ impl Serialize for FetchRangeSpec {
     }
 }
 
-/// Request body for `POST /v1/fetch` (SRCH-0038). Fetches an exact document by
+/// Request body for `POST /v1/fetch`. Fetches an exact document by
 /// an opaque key (`source_id` / `document_id` / `chunk_id`) — never a path-like
-/// id (SRCH-0038 § S3). Field names mirror the SRCH-0038 endpoint spec.
+/// id. Field names mirror the endpoint spec.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FetchQuery {
     /// The key kind: `"source_id"`, `"document_id"`, or `"chunk_id"`.
@@ -189,9 +189,9 @@ impl FetchQuery {
         }
     }
 
-    /// ARAS-0052: a NATIVE server-side parent-of-chunk fetch. Pins the opaque
+    /// a NATIVE server-side parent-of-chunk fetch. Pins the opaque
     /// `source_id` and requests the whole parent document of `chunk_id` via the
-    /// SRCH-0038 `range: {parent_of_chunk}` selector — instead of a whole-document
+    /// `range: {parent_of_chunk}` selector — instead of a whole-document
     /// `range="full"` fetch windowed agent-side. The top-level `by`/`id` pin the
     /// source; the server resolves the parent from the `parent_of_chunk` chunk id
     /// (the selector is validated but the parent range overrides resolution).
@@ -214,7 +214,7 @@ pub struct ChunkManifestEntry {
     pub offset_end: u64,
 }
 
-/// `POST /v1/fetch` response envelope (SRCH-0038). All fields beyond
+/// `POST /v1/fetch` response envelope. All fields beyond
 /// `source_id` are `#[serde(default)]` so the shape tolerates a partial
 /// `include`. In Phase 1 the type only **deserialises** `trust_class` — the
 /// pre-parse `trust_class` fence (`WrongTrustClass`, V-AC-12) is Phase-2 scope.
@@ -246,7 +246,7 @@ pub struct FetchResponse {
     pub chunk_manifest: Vec<ChunkManifestEntry>,
     #[serde(default)]
     pub stale: bool,
-    /// SRCH-0038 1a: `true` when `content` is the EXACT stored source bytes
+    /// 1a: `true` when `content` is the EXACT stored source bytes
     /// (skills namespace — `sha256(content) == content_hash` by construction at
     /// `range="full"`); `false` when `content` is a best-effort, lossy
     /// reassembly of embedding chunks (evidence namespace). Additive, defaulted
@@ -380,7 +380,7 @@ impl ScrutatorClient {
     }
 
     /// Fetch one exact document by opaque id against `POST /v1/fetch`
-    /// (SRCH-0038). The run-path shape pins `source_id` and requests the whole
+    ///. The run-path shape pins `source_id` and requests the whole
     /// document; the returned `content` bytes are the input to the interpreter's
     /// local blake3 verify-before-parse keystone (in `arcana-skills`).
     ///
@@ -451,7 +451,7 @@ impl ScrutatorClient {
 }
 
 /// Why a production skills-store could not be constructed at composition time
-/// (ARAS-0051). Distinct arms so the driver can tell an operator-config error
+///. Distinct arms so the driver can tell an operator-config error
 /// (bad `ARCANA_SKILLS_SOURCE`) from a live-KB client build failure.
 #[derive(Debug, thiserror::Error)]
 pub enum SkillStoreInitError {
@@ -465,7 +465,7 @@ pub enum SkillStoreInitError {
     Client(#[from] ScrutatorError),
 }
 
-/// ARAS-0051 production cutover: build the skills byte-acquisition
+/// production cutover: build the skills byte-acquisition
 /// [`arcana_skills::SkillStore`] the agent driver loads plans from, selected by
 /// the `ARCANA_SKILLS_SOURCE` environment variable (see
 /// [`arcana_skills::SkillSourceMode`]).
@@ -501,7 +501,7 @@ pub fn skill_store_from_env() -> Result<Box<dyn arcana_skills::SkillStore>, Skil
 }
 
 /// Live adapter: bridges the `arcana-skills` `FetchConn` seam to the real
-/// `POST /v1/fetch` endpoint (SRCH-0038). A `ScrutatorStore` wraps an
+/// `POST /v1/fetch` endpoint. A `ScrutatorStore` wraps an
 /// `Arc<ScrutatorClient>` and drives the skill run path through this impl.
 ///
 /// The adapter is a pure transport + shape mapping: it pins the opaque
@@ -533,7 +533,7 @@ impl arcana_skills::FetchConn for ScrutatorClient {
 }
 
 /// Live adapter: bridges the `arcana-core` KB-cascade `EvidenceFetch` seam
-/// (ARAS-0049) to the real `POST /v1/fetch` endpoint (SRCH-0038). A `KbCascade`
+/// to the real `POST /v1/fetch` endpoint. A `KbCascade`
 /// wraps an `Arc<ScrutatorClient>` and drives the evidence read path through
 /// this impl.
 ///
@@ -544,17 +544,17 @@ impl arcana_skills::FetchConn for ScrutatorClient {
 /// never here) and maps every [`ScrutatorError`] to a fail-closed
 /// `FetchUnavailable`.
 ///
-/// **Native parent-range mapping (ARAS-0052).** `FetchRange::Full` issues a
+/// **Native parent-range mapping.** `FetchRange::Full` issues a
 /// whole-document fetch (`by_source_id`, `range="full"`); `FetchRange::ParentOfChunk`
 /// now issues the NATIVE server-side `range: {parent_of_chunk}` selector
-/// (SRCH-0038) so the KB — not the agent — scopes the parent, reducing over-fetch.
+/// so the KB — not the agent — scopes the parent, reducing over-fetch.
 /// For either range the answer offset is recovered from the response
 /// `chunk_manifest`, so rerank-to-edge still targets the right span within the
 /// returned body.
 ///
 /// **Backward compatibility.** An older index that cannot satisfy the object-form
 /// range rejects it with `422 Unprocessable Entity`; on exactly that status this
-/// adapter falls back to the ARAS-0049 path — a whole-document fetch windowed
+/// adapter falls back to the path — a whole-document fetch windowed
 /// agent-side via the size-guard. Every other failure — transport, `403`
 /// cross-namespace, `404`, `5xx` — fails closed to `FetchUnavailable` (never a
 /// silent empty document, never a fallback that masks a real error — F5). This is
@@ -617,7 +617,7 @@ impl arcana_core::kb::EvidenceFetch for ScrutatorClient {
     }
 }
 
-/// Live adapter: bridges the `arcana-skills` `SkillSearch` seam (ARAS-0050) to
+/// Live adapter: bridges the `arcana-skills` `SkillSearch` seam to
 /// the real `POST /v1/search` endpoint. A `SkillDiscovery` wraps an
 /// `Arc<ScrutatorClient>` and drives semantic skill discovery through this impl.
 ///

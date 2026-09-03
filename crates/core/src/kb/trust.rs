@@ -1,5 +1,5 @@
 //! `trust_class` dispatch — the sharpest cross-track control shared with the
-//! skills path (ARAS-0047).
+//! skills path.
 //!
 //! The KB is a shared supply chain for **behaviour** (`skill`-class documents,
 //! executable) AND **evidence** (`evidence`-class documents, inert). Both flow
@@ -19,7 +19,7 @@
 //! server-side response-envelope field, never the document body (a body
 //! containing `"trust_class":"skill"` cannot forge it).
 
-/// The `trust_class` value a runnable skill document carries (SRCH-0038 D5).
+/// The `trust_class` value a runnable skill document carries.
 pub const SKILL_TRUST_CLASS: &str = "skill";
 /// The `trust_class` value an inert evidence document carries.
 pub const EVIDENCE_TRUST_CLASS: &str = "evidence";
@@ -50,7 +50,7 @@ impl TrustClass {
 /// Which arcana-side handling path a document dispatches to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dispatch {
-    /// The signature-verified execution path (skills; ARAS-0047).
+    /// The signature-verified execution path (skills).
     SignedExec,
     /// The fenced / datamarked inert-data path (this cascade).
     FencedInert,
