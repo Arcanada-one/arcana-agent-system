@@ -80,7 +80,7 @@ jobs:
         run: bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
 
   security-audit:
-    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@939a72870815b039c8a57df804259a13aa72c508
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@1c45c0d06a0f5bcf1643bd48bdb0bf8eaebfc27b
     with:
       stack: rust_cargo
       # Public pull-request code must not execute on a persistent self-hosted
@@ -88,7 +88,7 @@ jobs:
       runner_labels: '["ubuntu-24.04"]'
 
   network-exposure-lint:
-    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@939a72870815b039c8a57df804259a13aa72c508
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@1c45c0d06a0f5bcf1643bd48bdb0bf8eaebfc27b
     with:
       compose_paths: ''
       datarim_ref: '939a72870815b039c8a57df804259a13aa72c508'
