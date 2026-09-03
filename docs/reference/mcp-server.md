@@ -92,9 +92,31 @@ adapter suspends the call instead of resolving it against a terminal prompt:
 3. `arcana.resume` returns the final envelope: `completed` (carrying the real
    `effective_args`) on `allow` / `replace_input`, or `denied` on `deny`.
 
-`arcana.resume` is a control tool: it is **never** listed by `tools/list`
-(which returns exactly the capability-core tool set). An unknown or expired
-token resolves to a `denied` envelope.
+`arcana.resume` is a control tool: it is **never** listed by `tools/list`,
+which returns the tool registry the server was assembled with. An unknown or
+expired token resolves to a `denied` envelope.
+
+### What `tools/list` returns today
+
+The production `arcana mcp serve` entrypoint currently exposes **one** tool,
+`whoami` — a side-effect-free identity probe, so that `tools/list` is not empty.
+Measured against the shipped binary, not inferred:
+
+```
+$ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize", ...}' \
+                 '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+                 '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | arcana mcp serve
+... "tools":[{"name":"whoami", ...}]
+```
+
+The eight real capability-core tools — `read`, `write`, `edit`, `grep`, `bash`,
+`webfetch`, `arcana_search`, `model_call` — are implemented and tested in
+`arcana-tools`, but the CLI does not yet wire them into this server; that
+happens through `ArcanaMcpServer::assemble` when the registry lands. Until then
+a client connecting over MCP gets the identity probe and nothing else. This
+document describes the adapter's contract, which is stable; the size of the
+tool set behind it is not yet.
 
 ### State model
 
