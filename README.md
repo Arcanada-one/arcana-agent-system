@@ -11,11 +11,16 @@ Scrutator KB.
 
 ## Status
 
-Current release: `0.2.0`. The capability core and its supporting subsystems
-ship alongside the interactive session (`arcana` with no subcommand),
-`arcana login`, model selection, spend reporting, and a separately packaged
-credential broker (see the [CHANGELOG](CHANGELOG.md) and
-[Known limitations](#known-limitations)).
+Latest release: [`v0.1.0`](https://github.com/Arcanada-one/arcana-agent-system/releases).
+The workspace is at `0.2.0` and its notes are written, but that version is not
+tagged or published yet, so `v0.1.0` is still what the Releases page serves.
+
+`0.2.0` on `main` carries the capability core and its supporting subsystems
+alongside the interactive session (`arcana` with no subcommand), `arcana login`,
+model selection, spend reporting, and a separately packaged credential broker
+(see the [CHANGELOG](CHANGELOG.md) and
+[Known limitations](#known-limitations)). To run it today, build from a reviewed
+checkout — see [Install](#from-source).
 
 ### Stability (0.x)
 
@@ -75,7 +80,7 @@ Requires Rust `1.88+`:
 cargo install --locked --path crates/cli
 ```
 
-This builds the `arcana` binary from the `arcana-agent-system` crate. It does
+This builds the `arcana` binary from the `arcana-agent` crate. It does
 not install or activate the separately packaged credential broker.
 
 A crates.io publish and a Homebrew tap are **not yet available**. Full detail,
@@ -113,10 +118,13 @@ Run `arcana --help` for the full command reference.
 
 ## Known limitations
 
-- `arcana login` is implemented (OIDC device grant, RFC 8628), but it only
-  works against an identity provider that offers that grant. Until the
-  provider side is rolled out, the command fails closed with a message saying
-  exactly that and exits `2` — it does not hang, and it writes no credential.
+- `arcana login` (OIDC device grant, RFC 8628) reaches a working provider:
+  Auth Arcana advertises `device_authorization_endpoint` in its discovery
+  document, and the command prints a real verification URL and user code. What
+  is not claimed here is a completed sign-in — that needs a human at the
+  verification URL, so the end-to-end flow is unverified rather than known
+  good. Against a provider without the grant it still fails closed and exits
+  `2`, writing no credential.
 - Tool calls in an interactive session are gated by the permission cascade,
   which is **fail-closed**. On a terminal you are prompted per call; without
   one, `ARCANA_PERMISSION_AUTO` decides and defaults to deny — so a piped or
@@ -125,9 +133,11 @@ Run `arcana --help` for the full command reference.
 - `arcana models` needs `ARCANA_MC_TOKEN`. The list is read from the live
   catalogue and is never hard-coded, so without a token there is nothing to
   show and the command says so rather than printing a stale table.
-- The model list is capped at 10 per provider, cheapest first. The cap is
-  presentational only — `arcana models use` accepts any id, including one the
-  list does not show.
+- The model list is capped at 10 per provider. Providers that publish prices
+  sort first, and part of each cap is reserved for rows that actually show a
+  price, so a provider's free tier cannot fill every slot and hide its paid
+  models. The cap is presentational only — `arcana models use` accepts any id,
+  including one the list does not show.
 - `mc-ping` is a hidden debug surface, not a supported command.
 
 ## Documentation

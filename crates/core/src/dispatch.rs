@@ -65,7 +65,7 @@ const CHEAP_MODEL_ID: &str = "deepseek-v4-flash";
 /// which is how tiered dispatch is proven to route at all. Both ids are also
 /// priced in `model_catalog`, so neither tier meters as `unpriced` — routing
 /// default traffic through an unpriced model would re-open the revenue leak
-/// CONN-0271 was opened to close.
+/// was opened to close.
 ///
 /// Note the name: `grok-3` (without the suffix) dispatches but is absent from
 /// the provider listing, so its catalogue row has no price. The suffixed
