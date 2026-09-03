@@ -1,5 +1,5 @@
-//! Cascade instrumentation — the two decisive rates ARAS-0049 deferred to a
-//! measured v2 (backlog ARAS-0054):
+//! Cascade instrumentation — the two decisive rates deferred to a
+//! measured v2 (backlog):
 //!
 //! * **`source_fetch_trigger_rate`** — fraction of retrievals that escalated
 //!   past the chunk to a `POST /v1/fetch` (parent-section or full-source)

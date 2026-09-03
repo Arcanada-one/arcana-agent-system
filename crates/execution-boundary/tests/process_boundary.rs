@@ -15,6 +15,26 @@ use nix::errno::Errno;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+/// Wait for the pid file to hold a PARSEABLE pid, not merely to exist.
+///
+/// `pid_file.exists()` returns true the instant the shell creates the file,
+/// which is before it has written anything into it. Reading in that window
+/// yields an empty string and `"pid": ParseIntError { kind: Empty }`. The
+/// window is narrow enough to pass indefinitely on one machine and fail on a
+/// faster one: this raced only on the macOS runner, while linux and every
+/// local run stayed green.
+async fn wait_for_pid(pid_file: &Path) -> i32 {
+    for _ in 0..100 {
+        if let Ok(text) = std::fs::read_to_string(pid_file) {
+            if let Ok(pid) = text.trim().parse::<i32>() {
+                return pid;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("pid file never held a parseable pid");
+}
+
 fn clean_env(dir: &TempDir) -> CleanEnv {
     CleanEnv::build(&dir.path().join("home"), SAFE_SYSTEM_PATH).expect("clean env")
 }
@@ -340,16 +360,7 @@ async fn dropping_execution_future_kills_the_owned_process_group() {
     let spec =
         ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir)).args(["-c".to_owned(), command]);
     let task = tokio::spawn(async move { spec.run(CancellationToken::new()).await });
-    for _ in 0..100 {
-        if pid_file.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let grandchild: i32 = std::fs::read_to_string(&pid_file)
-        .expect("pid file")
-        .parse()
-        .expect("pid");
+    let grandchild: i32 = wait_for_pid(&pid_file).await;
     task.abort();
     let _ = task.await;
     for _ in 0..100 {
@@ -378,19 +389,7 @@ fn runtime_shutdown_still_signals_the_owned_process_group() {
         .build()
         .expect("runtime");
     runtime.spawn(async move { spec.run(CancellationToken::new()).await });
-    runtime.block_on(async {
-        for _ in 0..100 {
-            if pid_file.exists() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("child did not start before runtime shutdown");
-    });
-    let grandchild: i32 = std::fs::read_to_string(&pid_file)
-        .expect("pid file")
-        .parse()
-        .expect("pid");
+    let grandchild: i32 = runtime.block_on(wait_for_pid(&pid_file));
 
     runtime.shutdown_timeout(Duration::from_secs(1));
     for _ in 0..100 {
@@ -415,16 +414,7 @@ async fn cancelling_natural_exit_finalization_cannot_strand_a_descendant() {
         &ProcessSpec::new(Path::new("/bin/sh"), clean_env(&dir)).args(["-c".to_owned(), command]),
     )
     .expect("spawn boundary child");
-    for _ in 0..100 {
-        if pid_file.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let grandchild: i32 = std::fs::read_to_string(&pid_file)
-        .expect("pid file")
-        .parse()
-        .expect("pid");
+    let grandchild: i32 = wait_for_pid(&pid_file).await;
     child.wait_for_exit().await.expect("observe leader exit");
 
     let finalizer = tokio::spawn(async move { child.finalize_after_exit().await });

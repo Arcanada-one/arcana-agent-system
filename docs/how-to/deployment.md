@@ -125,10 +125,14 @@ Hosted platform-contract tests are packaging evidence, not production proof.
 
 ## Activate, verify, and roll back
 
+Run the installed helper, exactly as for `install` above — an absolute path
+inside the verified staging root, never the relative path into a checkout:
+
 ```bash
-sudo packaging/broker-lifecycle.sh activate
-sudo packaging/broker-lifecycle.sh verify
-sudo packaging/broker-lifecycle.sh rollback "$PREVIOUS_GENERATION"
+BROKER=/var/lib/arcana-broker-stage/$GENERATION/packaging/broker-lifecycle.sh
+sudo "$BROKER" activate
+sudo "$BROKER" verify
+sudo "$BROKER" rollback "$PREVIOUS_GENERATION"
 ```
 
 An activation or rollback verification failure ends with both the service and
