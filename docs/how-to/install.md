@@ -21,16 +21,19 @@ Latest probe run (crate/package-name candidates):
 |---|---|---|
 | `arcana` | **taken** | free |
 | `arcana-cli` | **taken** | free |
-| `arcana-agent` | free | free |
-| `arcana-agent-system` (current `crates/cli` package name) | free | free |
+| `arcana-agent` (current `crates/cli` package name) | free | free |
 
 Both single-word ergonomic names from the original fallback list
 (`arcana` default, `arcana-cli` per OQ-4) are already occupied on
-crates.io. The workspace's current package name, `arcana-agent-system`,
-is unclaimed and requires no rename — it is the default install target
-below. `arcana-agent` remains available as a shorter alternative if a
-rename is ever wanted; that is a product-naming decision for the operator,
-not a mechanical follow-up.
+crates.io. The `crates/cli` package is named `arcana-agent`, renamed from
+`arcana-agent-system` before the first publish: a crates.io name is reserved
+by the first successful upload and cannot be given back, so the long name
+would have been burned permanently on a crate whose binary is called
+`arcana`. The command is unchanged — `[[bin]] name = "arcana"`.
+
+Note the two names that legitimately differ. The **repository** is still
+`Arcanada-one/arcana-agent-system`, so every URL and clone path below keeps
+that spelling; only the **package** was renamed.
 
 ## Install a verified GitHub release
 
@@ -81,12 +84,17 @@ gate; installation must not provision, print, or copy a provider credential.
 
 ## Developer install from a reviewed checkout
 
-The crates.io package is not published, and publishing is currently blocked:
-the workspace crates depend on one another by path with no version requirement,
-which `cargo publish` rejects outright. Publishing would first require version
-requirements on every internal dependency and then publishing all nine crates
-in dependency order. For development, check out a reviewed commit and build
-from source:
+The crates.io package is not published. That is now a decision rather than a
+defect: `cargo publish --workspace --dry-run` exits zero and packages all nine
+crates in the required dependency order, so nothing in the manifests stands in
+the way. What publishing would cost is nine permanent public API surfaces, each
+with its own release cadence and yank policy — and `cargo install` still could
+not activate the separately packaged credential broker, which the verified
+release path ships with its platform packaging. Revisit when `cargo install` is
+actually wanted, or when a downstream Rust project wants to depend on
+`arcana-core` as a library.
+
+For development, check out a reviewed commit and build from source:
 
 ```bash
 git clone https://github.com/Arcanada-one/arcana-agent-system.git
