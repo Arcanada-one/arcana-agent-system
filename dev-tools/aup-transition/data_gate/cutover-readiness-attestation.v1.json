@@ -1,0 +1,97 @@
+{
+ "schema": "CutoverReadinessAttestationSchema/v1",
+ "id": "cutover-readiness-attestation.v1",
+ "portion_id": "AUP-MIG-015:gate0",
+ "decision_ref": "DEC-AUP-0012",
+ "issued_at_utc": "2026-09-05T18:20:00Z",
+ "status": "NORMATIVE_DRAFT — binding for the AUP-MIG-015 gate and for whatever AUP-MIG-016 consumes as its cutover precondition. The two documents defined here are the ONLY admissible outputs of the gate: an attestation when both verifiers PASS, a block receipt otherwise. There is no third, weaker output.",
+ "document_schema_names": ["CutoverReadinessAttestation/v1", "BlockReceipt/v1"],
+ "producer": "tools/mig/data_gate/consume_data_gate.py (read-only; stdlib only; --selftest with a mutation battery)",
+ "purpose": "Consume the AUP-DAT-020 data verdict at an exact revision and, SEPARATELY, verify the authority that permits a production/general cutoff. The two halves are joined only at the end and only by conjunction: a clean data verdict is a statement about data and never a permission.",
+ "authority_model": {
+  "rule": "Under DEC-AUP-0010 and DEC-AUP-0012 the `AuthorizationDecision` of AUP-E25 § MIG-015 (a human approval, DEC-AUP-0002) is REPLACED by a program decision with an evidence gate. The authority ref is therefore `decision id + the digests of its gate receipts`, never a person and never a signature.",
+  "issuer": "the decision's `decided_by` / `authority` fields",
+  "action": "read from a versioned profile in the tool whose every assertion must be found verbatim in the decision or in a decision it incorporates by reference; an assertion that cannot be found is NOT_MEASURED and blocks",
+  "expiry": "the decision's `reverse_if` conditions, evaluated one by one; TRIGGERED ⇒ AUTHORITY_EXPIRED; a condition that only becomes measurable after a state the machine has not reached is typed NOT_YET_APPLICABLE and is neither pass nor fail",
+  "revocation": "any LATER decision whose `supersedes` / `supersedes_in_part` names this decision",
+  "permitted_target_generation": "the state machine of receipts/cutover/state.json must stand at or beyond `readiness_state_min` (ROLLBACK_DRILLED); no persisted state ⇒ the machine stands at FILES_AUTHORITATIVE and the cutover authority is not in effect",
+  "separation_of_duties": "the identity that signs the data half is compared against the authority issuer; equality is AUTHORITY_SIGNER_IS_DATA_SIGNER and blocks (spec: «Data signer не считается authority issuer»)"
+ },
+ "planes": {
+  "rule": "The gate reads active / planned / completed / cancelled, unindexed and conflicts through THREE planes. A plane that cannot answer is MISSING or UNKNOWN — never 'agrees'.",
+  "files": "occurrences read from git objects at the pinned SourceSetEpoch, classified through the HistoricalStatusMap revision OF RECORD",
+  "muneral": "the projections the work-item store actually holds (produced under the batch's map revision) plus its readback",
+  "index": "the KB/Scrutator freshness plane: what the history namespace acknowledges of those identities",
+  "class_rows": ["active", "planned", "completed", "cancelled", "archived"],
+  "archived_row": "`archived` is a row of its own and is NEVER folded into `completed` (DEC-AUP-0014 rule 3; I4 forbids the silent totalisation of an archive card into completion)",
+  "classification": "raw source values reach a class only through the versioned status map; the tool holds exactly one hand-written table (Muneral status → class) so it cannot invent a competing mapping. A raw value absent from the map is a typed UNMAPPED refusal, never a default."
+ },
+ "fields": {
+  "common_required": ["schema", "verdict", "captured_at_utc", "tool", "tool_version", "portion_id", "host", "read_only", "source_set_epoch", "source_set_epoch_observed_head", "writer_epoch", "class_map_rev", "authority_profile_rev", "negative_verdicts", "rule"],
+  "attestation_required": ["refs"],
+  "block_required": ["blocked_by", "not_measured", "refs_withheld"],
+  "refs": {
+   "cardinality": 2,
+   "rule": "exactly two refs, one of kind `data` and one of kind `authority`; a one-ref attestation is invalid",
+   "data": {"required": ["kind", "receipt", "digest", "signer"]},
+   "authority": {"required": ["kind", "decision_id", "decision_digest", "issuer", "gate_receipt_digests"]}
+  },
+  "writer_epoch": {
+   "required": ["changed", "rule"],
+   "invariant": "`changed` MUST be false — AUP-MIG-015 mints no authority and never changes the writer epoch (spec: «не меняет writer»); a document claiming otherwise is invalid under this contract"
+  },
+  "negative_verdicts": "every check that did not PASS, with its verifier, tri-valued verdict, reason code, question and detail — carried on the ATTESTATION too, so a PASS never hides what was merely not measured"
+ },
+ "reason_codes": {
+  "data": {
+   "DOSSIER_MISSING": "no AUP-DAT-020 acceptance receipt",
+   "DOSSIER_REVISION_UNPINNED": "the dossier is not pinned to an exact, resolvable revision",
+   "DOSSIER_NOT_CLEAN": "the dossier's own verdict is not PASS / not globally complete",
+   "UNPINNED_SOURCE_SET_EPOCH": "the SourceSetEpoch is not git-pinned to a workspace commit",
+   "EPOCH_DOSSIER_MISMATCH": "the epoch is not the corpus the dossier measured",
+   "STALE_SOURCE_SET_EPOCH": "the source set has moved past the pinned epoch — DAT-020/MIG-015 are invalidated and require revalidation",
+   "SOURCE_SET_HEAD_NOT_OBSERVED": "no observation of the source-set head was available (not measured)",
+   "MISSING_PLANE": "a plane cannot answer for the status classes",
+   "PLANE_UNKNOWN": "a plane answered UNKNOWN",
+   "PLANE_DISAGREEMENT": "the planes disagree on a status class",
+   "PLANE_COMPARISON_INCOMPLETE": "fewer than three planes could be compared (not measured)",
+   "UNMAPPED_STATUS_VALUE": "a raw or projected status value has no entry in the mapping of record",
+   "MAPPING_REVISION_BEHIND_RECORD": "the store projects under a superseded status-map revision",
+   "MAPPING_REVISION_NOT_MEASURED": "the store's or the record's map revision could not be read",
+   "UNINDEXED_NOT_MEASURED": "the number of unindexed identities cannot be established",
+   "CONFLICTS_PLANE_MISSING": "held conflicts are not visible through all three planes (not measured)",
+   "BYTE_COPY_UNPROVEN": "no snapshot/readback receipt proves the byte copy",
+   "RESTORE_NOT_MEASURED": "no restore of the target store has been drilled — a backup that was never restored is not a backup",
+   "CLEAN_READ_THROUGH_MISSING": "no clean-path probe for a host role",
+   "CLEAN_READ_THROUGH_NOT_DECLARED": "the probe ran without declaring a clean read-through",
+   "HIDDEN_MOUNT_OR_CACHE": "a source mount or cache was present on a probed host"
+  },
+  "authority": {
+   "AUTHORITY_DECISION_MISSING": "the authorising decision does not exist",
+   "AUTHORITY_SCOPE_NOT_CONFIRMED": "an action/resource/target-generation assertion of the profile is not found in the decision closure (not measured)",
+   "AUTHORITY_ISSUER_MISSING": "the decision records no issuer",
+   "AUTHORITY_SIGNER_IS_DATA_SIGNER": "the data signer and the authority issuer are the same identity",
+   "AUTHORITY_REVOKED": "a later decision supersedes the authorising decision",
+   "AUTHORITY_EXPIRED": "a `reverse_if` condition of the decision has fired",
+   "AUTHORITY_EXPIRY_NOT_MEASURED": "a `reverse_if` condition has no probe (not measured)",
+   "AUTHORITY_STATE_UNINITIALISED": "the cutover state machine has no persisted state",
+   "AUTHORITY_NOT_IN_EFFECT": "the state machine has not reached the state this attestation presupposes",
+   "AUTHORITY_EVIDENCE_GATE_INCOMPLETE": "one or more evidence-gate items of the decision are unsatisfied",
+   "AUTHORITY_EVIDENCE_GATE_NOT_MEASURED": "one or more evidence-gate items have no probe"
+  }
+ },
+ "invariants": [
+  "never a PASS by default: the verdict is PASS only if EVERY check answered PASS and at least one check ran",
+  "NOT_MEASURED is a third verdict and never opens the gate",
+  "an attestation is minted only when the data verifier AND the authority verifier both PASS",
+  "the attestation carries two refs; a data ref alone is not an attestation",
+  "`writer_epoch.changed` is false in every document this contract admits",
+  "the gate is read-only: its only writes are its own receipts"
+ ],
+ "rollback": "AUP-E25 § MIG-015: withdraw the attestation, keep the new-work freeze and owner-controlled legacy writes until revalidation. Withdrawal is itself a receipt: a later block receipt over the same portion supersedes an earlier attestation.",
+ "not_measured_by_this_contract": [
+  "whether the imported historical `done` values are true (I14: asserted, never verified here)",
+  "the semantics of the source documents behind the status values",
+  "any host, service or repository state that is not already carried by a receipt on program main"
+ ]
+}
