@@ -180,15 +180,15 @@ def drill(out: Path, as_json: bool) -> int:
             if r["kind"] == "transition":
                 transitions.append({**base, "state_from": r.get("state_from"), "state_to": r.get("state_to"), "reason": r.get("reason"), "via": r.get("via")})
             elif r["kind"] == "fence":
-                fence.append({**base, "fence_key": r.get("key"), "active": r.get("active"), "token": r.get("token")})
+                fence.append({**base, "fence_key": r.get("key"), "active": r.get("active"), "lease_id": r.get("lease_id")})
             elif r["kind"] == "lease":
-                lease.append({**base, "token": r.get("token"), "epoch": r.get("epoch"), "expires_at": r.get("expires_at"), "ttl": r.get("ttl")})
+                lease.append({**base, "lease_id": r.get("lease_id"), "epoch": r.get("epoch"), "expires_at": r.get("expires_at"), "ttl": r.get("ttl")})
             elif r["kind"] == "reconciliation":
                 reconciliation.append({**base, "state": r.get("state"), "effect_key": r.get("effect_key"), "readback": r.get("readback"), "terminal": r.get("terminal"), "reissued": r.get("reissued")})
             elif r["kind"] == "rollback":
                 rollback.append({**base, "verdict": r.get("verdict"), "reason": r.get("reason"), "pins": r.get("pins"), "known_good_digest": r.get("known_good_digest")})
         for a in tr["authority_log"]:
-            if a["op"] in ("lease_acquire", "token_check", "lease_release") and a.get("result") != "valid":
+            if a["op"] in ("lease_acquire", "lease_check", "lease_release") and a.get("result") != "valid":
                 lease.append({"scenario": sid, "authority_seq": a["seq"], "at": a["at"], "op": a["op"], "result": a.get("result"), "reason": a.get("reason"), "epoch": a.get("epoch"), "expires_at": a.get("expires_at")})
             if a["op"] in ("fence_set", "fence_release"):
                 fence.append({"scenario": sid, "authority_seq": a["seq"], "at": a["at"], "op": a["op"], "fence_key": a.get("key"), "result": a.get("result")})

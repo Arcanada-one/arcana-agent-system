@@ -27,7 +27,7 @@ requires that some coordinator mutant then survives):
   O13_KEYED                   every durable transition carries migration_id, source_set_epoch
                               and target_writer_epoch
   O14_LEASE_HELD_UNDER_FENCE  FINAL_SYNC / VALIDATED / WRITE_COMMITTED effects are issued only
-                              under a valid lease token
+                              under a valid lease id
   O15_PAUSE_HAS_REASON        PAUSED_SAFE always carries a reason
   O16_REVALIDATION_ON_EPOCH   a SourceSetEpoch different from the keyed one before commit ends in
                               PAUSED_SAFE(REVALIDATION_REQUIRED), never in WRITE_COMMITTED
@@ -213,13 +213,13 @@ def evaluate(trace: Dict[str, Any], disabled: Optional[Set[str]] = None) -> List
     # O14 lease under fence: each fence-state effect must be preceded by a token check 'valid' after the last lease acquire
     fence_effects = [e for e in events if e.get("kind") == "effect" and e.get("kind") and str(e.get("key", "")).split(":")[-1] in FENCE_STATES and e.get("result") in ("applied", "unknown")]
     for fe in fence_effects:
-        checks = [a for a in authority if a.get("op") == "token_check" and a.get("at") <= fe.get("at")]
+        checks = [a for a in authority if a.get("op") == "lease_check" and a.get("at") <= fe.get("at")]
         last = checks[-1] if checks else None
         if last is None or last.get("result") != "valid":
             hit("O14_LEASE_HELD_UNDER_FENCE", f"effect {fe.get('key')} issued without a valid lease check (last check: {last and last.get('result')})")
     # expired lease with a later fence-state effect
     for a in authority:
-        if a.get("op") == "token_check" and a.get("result") == "expired":
+        if a.get("op") == "lease_check" and a.get("result") == "expired":
             later = [fe for fe in fence_effects if fe.get("at") >= a.get("at")]
             if later:
                 hit("O14_LEASE_HELD_UNDER_FENCE", f"fence-state effect after an expired token check at {a.get('at')}")

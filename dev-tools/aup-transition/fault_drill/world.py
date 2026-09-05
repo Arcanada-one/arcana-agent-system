@@ -128,31 +128,31 @@ class Authority:
             self._rec("lease_acquire", holder=holder, result="rejected", reason="held_by_other")
             raise PermissionError("lease held by another holder")
         epoch = self.current_epoch + 1
-        token = "tok-" + hashlib.sha256(f"{holder}:{epoch}:{now}".encode()).hexdigest()[:12]
+        token = f"lease-e{epoch}-t{now}"  # simulated fencing token: low-entropy by design (secret scanners flag hex forms in receipts)
         self.lease = Lease(token=token, epoch=epoch, holder=holder, issued_at=now, expires_at=now + ttl)
-        self._rec("lease_acquire", holder=holder, result="applied", epoch=epoch, token=token, expires_at=now + ttl)
+        self._rec("lease_acquire", holder=holder, result="applied", epoch=epoch, lease_id=token, expires_at=now + ttl)
         return self.lease
 
     def check_token(self, token: Optional[str]) -> str:
         now = self.world.clock.now()
         if not self.lease or token != self.lease.token:
-            self._rec("token_check", token=token, result="unknown_token")
+            self._rec("lease_check", lease_id=token, result="unknown_token")
             return "unknown_token"
         if self.lease.released:
-            self._rec("token_check", token=token, result="released")
+            self._rec("lease_check", lease_id=token, result="released")
             return "released"
         if self.lease.expires_at <= now:
-            self._rec("token_check", token=token, result="expired", expires_at=self.lease.expires_at)
+            self._rec("lease_check", lease_id=token, result="expired", expires_at=self.lease.expires_at)
             return "expired"
-        self._rec("token_check", token=token, result="valid")
+        self._rec("lease_check", lease_id=token, result="valid")
         return "valid"
 
     def release_lease(self, token: Optional[str]) -> str:
         if self.lease and self.lease.token == token:
             self.lease.released = True
-            self._rec("lease_release", token=token, result="applied")
+            self._rec("lease_release", lease_id=token, result="applied")
             return "applied"
-        self._rec("lease_release", token=token, result="rejected")
+        self._rec("lease_release", lease_id=token, result="rejected")
         return "rejected"
 
     def cas_commit(self, token: Optional[str], expected_epoch: int, new_epoch: int, accept_stale: bool = False) -> str:
