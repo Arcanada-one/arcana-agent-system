@@ -185,7 +185,7 @@ class Coordinator:
                 if r["state_to"] == ABORTED:
                     self.paused_reason = r.get("reason")
             if r["kind"] == "lease":
-                self.lease_token = r["token"]
+                self.lease_token = r["lease_id"]
                 self.target_writer_epoch = r["epoch"]
             if r["kind"] == "meta":
                 self.keyed_epoch = r["keys"]["source_set_epoch"]
@@ -420,8 +420,8 @@ class Coordinator:
                     lease = a.acquire_lease(holder=m, ttl=LEASE_TTL)
                     self.lease_token = lease.token
                     self.target_writer_epoch = lease.epoch
-                    self._durable("lease", token=lease.token, epoch=lease.epoch, expires_at=lease.expires_at, ttl=LEASE_TTL)
-                    self._durable("fence", key=f"{m}:fence", active=True, token=lease.token)
+                    self._durable("lease", lease_id=lease.token, epoch=lease.epoch, expires_at=lease.expires_at, ttl=LEASE_TTL)
+                    self._durable("fence", key=f"{m}:fence", active=True, lease_id=lease.token)
                 return "applied"
             return fn
         if state == "FINAL_SYNC":
@@ -444,7 +444,7 @@ class Coordinator:
                 w.legacy_policy = "read-only"
                 a.release_fence(f"{m}:fence")
                 a.release_lease(self.lease_token)
-                self._durable("fence", key=f"{m}:fence", active=False, token=self.lease_token)
+                self._durable("fence", key=f"{m}:fence", active=False, lease_id=self.lease_token)
                 return "applied"
             return fn
         raise ValueError(state)
