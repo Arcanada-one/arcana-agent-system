@@ -22,11 +22,15 @@ phase whose ladder state has not been reached pauses safe, whatever the spec's o
 Where the two orders genuinely disagree the conflict is recorded (`ORDER_CONFLICTS`), not silently
 resolved.
 
-What this card (`AUP-MIG-016:coord0`) may write
------------------------------------------------
-`receipts/cutover/state.json` at `FILES_AUTHORITATIVE` **and nothing else**: `advance()` refuses
-every ladder transition unless a later card enables it *and* the gate evaluates to `PASS`. Today
-every gate refuses (`--gates`), which is the expected and receipted outcome.
+Who may write the ladder
+------------------------
+By default nobody: `advance()` refuses every ladder transition (`CARD_SCOPE_COORD0`) unless the
+running card enables it explicitly (`--enable-advance --portion <its portion id>`) *and* the gate for
+that transition evaluates to `PASS` over the real receipts. `AUP-MIG-016:coord0` created the state
+file at `FILES_AUTHORITATIVE` and nothing else. `AUP-MIG-016:coord1` took the first real transition,
+`FILES_AUTHORITATIVE → SHADOW_PROJECTION` — a dark-launch state that authorises no window phase — and
+added the way back: a ladder rollback inside the dark-launch band (`--rollback-to`), with a rehearsal
+(`--rollback-rehearsal`) that proves the reversal on a copy without touching the ladder.
 
 Python 3 stdlib only.
 """
@@ -50,7 +54,7 @@ import gates as gt  # noqa: E402
 from world import HOSTS, LEASE_TTL, PAUSED_SAFE, STEP_TICKS, World  # noqa: E402  (simulated environment)
 
 TOOL = "tools/mig/cutover/coordinator.py"
-VERSION = "1.0.0"
+VERSION = "1.1.0"   # 1.1.0 (COORD1): portion plumbing, relied-on evidence, ladder rollback
 MODEL = "claude-opus-5"
 PROGRAM_ROOT = _HERE.parents[2]
 STATE_PATH = PROGRAM_ROOT / "receipts/cutover/state.json"
@@ -156,7 +160,24 @@ MUTATIONS = {
     "N13_delta_checklist_mismatch_ignored": gt.GATE_MUTATIONS["N13_delta_checklist_mismatch_ignored"],
     "N14_derived_marker_ignores_in_place_rewrite": gt.GATE_MUTATIONS["N14_derived_marker_ignores_in_place_rewrite"],
     "N15_derived_marker_stale_accepted": gt.GATE_MUTATIONS["N15_derived_marker_stale_accepted"],
+    "N16_rollback_without_enable_flag": "a ladder rollback is applied although the running card did not "
+                                        "enable it (COORD1)",
+    "N17_rollback_state_before_receipt": "the state file is written back before the rollback receipt "
+                                         "exists on disk (COORD1)",
+    "N18_rollback_beyond_dark_launch": "a rollback is applied from a state above the dark-launch band, "
+                                       "whose external effects this coordinator cannot undo (COORD1)",
 }
+
+#: `AUP-MIG-016:coord1` is the card that performs the first real transition; the ladder records which
+#: portion wrote each entry, so a later reader never has to infer it from the commit that carries it.
+PORTION_DEFAULT = "AUP-MIG-016:coord0"
+
+#: The highest ladder state a rollback may *leave*. Up to and including SHADOW_PROJECTION the ladder is
+#: a dark launch — nothing outside `receipts/` has been activated, so returning is writing one file back.
+#: From FROZEN upwards a state has real external effects (freeze, fence, writer epoch) that this
+#: coordinator does not own; reversing those is the business of the DEC-AUP-0011 / DEC-AUP-0012 cards
+#: that activated them, and a rollback here is refused (`ROLLBACK_BEYOND_DARK_LAUNCH`).
+DARK_LAUNCH_TOP = "SHADOW_PROJECTION"
 
 
 def now_iso() -> str:
@@ -184,6 +205,54 @@ def digest(obj: Any) -> str:
     return "sha256:" + hashlib.sha256(canonical(obj).encode("utf-8")).hexdigest()
 
 
+def reconciliation_entry(ladder_state: str) -> Dict[str, Any]:
+    """The DEC-AUP-0012 ↔ AUP-E25 reconciliation as it applies to one ladder state, written into the
+    transition receipt: which spec phase (if any) the state corresponds to, which window phases it
+    authorises — for a dark-launch state, none — and the order conflicts that stay held (I4)."""
+    row = next((r for r in RECONCILIATION if r["ladder_state"] == ladder_state), None)
+    authorised = [p for p, need in AUTHORISING_LADDER_STATE.items()
+                  if LADDER.index(ladder_state) >= LADDER.index(need)]
+    return {
+        "decision_ref": "DEC-AUP-0012",
+        "spec_ref": "universal-program/specifications/AUP-E25-transition.md § AUP-MIG-016",
+        "entry": row,
+        "authorises_window_phases": authorised,
+        "dark_launch": not authorised,
+        "rule": "the decision wins on gating: a window phase whose authorising ladder state is not reached "
+                "pauses safe, whatever the spec's order suggests",
+        "conflicts_held": ORDER_CONFLICTS,
+    }
+
+
+def rollback_note(from_state: str, to_state: str) -> Dict[str, Any]:
+    """The reversal of one ladder transition, written into the transition receipt itself so the way
+    back is on record at the moment the way forward is taken (DEC-AUP-0010: reversible, with the
+    evidence that makes the reversal safe named up front)."""
+    reversible = LADDER.index(to_state) <= LADDER.index(DARK_LAUNCH_TOP)
+    return {
+        "reversible": reversible,
+        "returns_to": from_state,
+        "why_it_is_cheap" if reversible else "why_it_is_not_cheap":
+            ("up to and including SHADOW_PROJECTION the ladder is a dark launch: no freeze, no fence, no "
+             "single-writer switch, no writer epoch and no write to datarim/ or arcanada-workspace happened, "
+             "so the whole externally visible effect of the transition is the two files named below"
+             if reversible else
+             "this state has external effects (freeze / fence / writer epoch) that the coordinator does not own"),
+        "procedure": [
+            f"python3 {TOOL} --rollback-to {from_state} --enable-rollback --reason '<why>' "
+            f"--portion <the card doing it>  # writes a CutoverRollbackReceipt/v1, then the state file",
+            "or, equivalently and without the tool: `git revert` the commit that carries "
+            "receipts/cutover/state.json at this state — the transition receipt is kept either way "
+            "(the ladder history is append-only; a rollback is a new entry, never a deletion)",
+            "re-running `--gates` afterwards must read the ladder back at " + from_state,
+        ],
+        "not_undone_by_this": [
+            "the evidence receipts the gate rested on (they stay: the measurement happened)",
+            "the transition receipt itself (append-only history)",
+        ],
+    }
+
+
 # ================================================================== the readiness ladder
 class LadderCrash(RuntimeError):
     """Simulated process death inside a ladder transition (drill only). The files written before it
@@ -197,12 +266,16 @@ class LadderStore:
 
     SCHEMA = "CutoverLadderState/v1"
     RECEIPT_SCHEMA = "CutoverTransitionReceipt/v1"
+    ROLLBACK_SCHEMA = "CutoverRollbackReceipt/v1"
 
     def __init__(self, path: Path, receipt_dir: Optional[Path] = None, allow_advance: bool = False,
-                 mutations: FrozenSet[str] = frozenset(), crash_after: Optional[str] = None) -> None:
+                 mutations: FrozenSet[str] = frozenset(), crash_after: Optional[str] = None,
+                 portion_id: str = PORTION_DEFAULT, allow_rollback: bool = False) -> None:
         self.path = path
         self.receipt_dir = receipt_dir or path.parent
         self.allow_advance = allow_advance
+        self.allow_rollback = allow_rollback
+        self.portion_id = portion_id
         self.mutations = mutations
         self.crash_after = crash_after   # "receipt" | "state" — drill only
         self.journal: List[Dict[str, Any]] = []   # ordered record of what this process did (oracle input)
@@ -230,7 +303,7 @@ class LadderStore:
         return d
 
     def _write_receipt(self, from_state: Optional[str], to_state: str, keys: Dict[str, Any],
-                       gate: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+                       gate: Optional[Dict[str, Any]], extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Deterministic file name per transition. An existing receipt is reused verbatim: a resume
         after a crash must not produce a second, different receipt for the same transition."""
         idx = LADDER.index(to_state)
@@ -243,7 +316,7 @@ class LadderStore:
             return {"path": rel(path), "digest": d, "doc": doc, "reused": True}
         doc = {
             "schema": self.RECEIPT_SCHEMA,
-            "portion_id": "AUP-MIG-016:coord0",
+            "portion_id": self.portion_id,
             "migration_id": keys["migration_id"],
             "keys": keys,
             "from_state": from_state,
@@ -257,6 +330,7 @@ class LadderStore:
             "model": MODEL,
             "provisional_until_fable_review": True,
         }
+        doc.update(extra or {})
         if "N11_receipt_regenerated_on_resume" in self.mutations:
             doc["nonce"] = os.urandom(4).hex()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,7 +351,7 @@ class LadderStore:
         receipt = self._write_receipt(None, "FILES_AUTHORITATIVE", keys, gate=None)
         doc = {
             "schema": self.SCHEMA,
-            "portion_id": "AUP-MIG-016:coord0",
+            "portion_id": self.portion_id,
             "migration_id": migration_id,
             "keys": keys,
             "state": "FILES_AUTHORITATIVE",
@@ -286,7 +360,7 @@ class LadderStore:
             "updated_at_utc": now_iso(),
             "history": [{"from": None, "to": "FILES_AUTHORITATIVE", "at_utc": now_iso(),
                          "receipt": receipt["path"], "receipt_digest": receipt["digest"]}],
-            "written_by": {"tool": TOOL, "version": VERSION, "card": "AUP-MIG-016:coord0"},
+            "written_by": {"tool": TOOL, "version": VERSION, "card": self.portion_id},
             "rule": "the receipt is written before the state advances; every other transition is refused "
                     "unless its DEC-AUP-0012 gate receipt exists and verifies",
             "model": MODEL,
@@ -300,9 +374,17 @@ class LadderStore:
         doc = self.load()
         return doc["state"] if doc else "FILES_AUTHORITATIVE"  # no file ⇒ the machine stands at the baseline
 
-    def advance(self, to_state: str, gate_verdict: Dict[str, Any]) -> Dict[str, Any]:
+    def advance(self, to_state: str, gate_verdict: Dict[str, Any],
+                relied_on: Optional[List[Dict[str, Any]]] = None,
+                gate_report: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Advance one state. Refused unless: this card is allowed to advance, the target is the next
-        state, and the gate PASSes. The receipt is written first, the state after it."""
+        state, and the gate PASSes. The receipt is written first, the state after it.
+
+        `relied_on` (COORD1) is the complete, digested list of the receipts the gate rested on; it is
+        written into the transition receipt so the transition can be re-checked against the exact bytes
+        that authorised it. `gate_report`, when given, is the separately committed `--gates` document:
+        its recorded verdict for this transition must agree with the verdict computed here, or the
+        transition is refused (`GATE_REPORT_MISMATCH`) rather than quietly preferring one of them."""
         doc = self.load()
         current = doc["state"] if doc else "FILES_AUTHORITATIVE"
         if to_state not in LADDER:
@@ -311,21 +393,33 @@ class LadderStore:
             return self._refusal(current, to_state, "NOT_THE_NEXT_STATE")
         if not self.allow_advance and "N06_state_file_written_at_any_state" not in self.mutations:
             return self._refusal(current, to_state, "CARD_SCOPE_COORD0",
-                                 note="AUP-MIG-016:coord0 may write FILES_AUTHORITATIVE only; the first real "
-                                      "transition is the next card (coord1) under DEC-AUP-0012")
+                                 note="the default card scope (AUP-MIG-016:coord0) may write FILES_AUTHORITATIVE "
+                                      "only; a real transition needs a card that enables the advance explicitly "
+                                      "(--enable-advance) and a gate that PASSes (DEC-AUP-0012)")
         if gate_verdict.get("verdict") != gt.PASS:
             return self._refusal(current, to_state, "GATE_" + str(gate_verdict.get("verdict")),
                                  note=gate_verdict.get("reason_code"))
+        if gate_report is not None and gate_report.get("recorded_verdict") != gate_verdict.get("verdict"):
+            return self._refusal(current, to_state, "GATE_REPORT_MISMATCH",
+                                 note=f"{gate_report.get('path')} records "
+                                      f"{gate_report.get('recorded_verdict')} for {to_state}, this run computes "
+                                      f"{gate_verdict.get('verdict')}")
         if doc is None:
             return self._refusal(current, to_state, "NO_STATE_FILE")
         keys = doc["keys"]
+        extra = {
+            "relied_on": relied_on if relied_on is not None else "not_measured: the caller passed no evidence list",
+            "gate_report": gate_report,
+            "rollback": rollback_note(current, to_state),
+            "reconciliation": reconciliation_entry(to_state),
+        }
         if "N02_state_advances_before_receipt" in self.mutations:
             doc["state"] = to_state
             doc["updated_at_utc"] = now_iso()
             self._write_state(doc)
-            receipt = self._write_receipt(current, to_state, keys, gate_verdict)
+            receipt = self._write_receipt(current, to_state, keys, gate_verdict, extra)
         else:
-            receipt = self._write_receipt(current, to_state, keys, gate_verdict)
+            receipt = self._write_receipt(current, to_state, keys, gate_verdict, extra)
             if self.crash_after == "receipt":
                 raise LadderCrash(f"drill: crash after the receipt of {current} -> {to_state}")
             if gt.sha256_file(self.receipt_dir / Path(receipt["path"]).name) != receipt["digest"]:
@@ -336,13 +430,99 @@ class LadderStore:
             "from": current, "to": to_state, "at_utc": now_iso(),
             "receipt": receipt["path"], "receipt_digest": receipt["digest"],
             "gate_digest": digest(gate_verdict),
+            "direction": "forward", "by_portion": self.portion_id,
         })
         self._write_state(doc)
-        return {"advanced": True, "from": current, "to": to_state, "receipt": receipt["path"]}
+        return {"advanced": True, "from": current, "to": to_state, "receipt": receipt["path"],
+                "receipt_digest": receipt["digest"], "reused_receipt": receipt["reused"]}
 
-    def _refusal(self, current: str, to_state: str, reason: str, note: Optional[str] = None) -> Dict[str, Any]:
+    def rollback(self, to_state: str, reason: str, note: Optional[str] = None) -> Dict[str, Any]:
+        """Return the ladder one state backwards (COORD1). Refused unless: the running card enabled it,
+        the target is exactly the previous state, the state being left is inside the dark-launch band
+        (`DARK_LAUNCH_TOP`) and a reason is given. Same crash-safety as `advance()`: the rollback
+        receipt is on disk before the state file moves, and the history is appended to, never rewritten."""
+        doc = self.load()
+        current = doc["state"] if doc else "FILES_AUTHORITATIVE"
+        if to_state not in LADDER:
+            return self._refusal(current, to_state, "NO_SUCH_STATE", kind="rollback")
+        if LADDER.index(to_state) != LADDER.index(current) - 1:
+            return self._refusal(current, to_state, "NOT_THE_PREVIOUS_STATE", kind="rollback")
+        if not self.allow_rollback and "N16_rollback_without_enable_flag" not in self.mutations:
+            return self._refusal(current, to_state, "ROLLBACK_NOT_ENABLED",
+                                 note="a rollback is a deliberate act of a named card: pass --enable-rollback",
+                                 kind="rollback")
+        if (LADDER.index(current) > LADDER.index(DARK_LAUNCH_TOP)
+                and "N18_rollback_beyond_dark_launch" not in self.mutations):
+            return self._refusal(current, to_state, "ROLLBACK_BEYOND_DARK_LAUNCH",
+                                 note=f"{current} is above the dark-launch band; its external effects are "
+                                      f"reversed by the card that activated them, not here",
+                                 kind="rollback")
+        if not reason:
+            return self._refusal(current, to_state, "ROLLBACK_WITHOUT_REASON", kind="rollback")
+        if doc is None:
+            return self._refusal(current, to_state, "NO_STATE_FILE", kind="rollback")
+        receipt = None
+        if "N17_rollback_state_before_receipt" in self.mutations:
+            doc["state"] = to_state
+            doc["updated_at_utc"] = now_iso()
+            self._write_state(doc)
+        receipt = self._write_rollback_receipt(current, to_state, doc["keys"], reason, note)
+        if "N17_rollback_state_before_receipt" not in self.mutations:
+            doc["state"] = to_state
+            doc["updated_at_utc"] = now_iso()
+        doc.setdefault("history", []).append({
+            "from": current, "to": to_state, "at_utc": now_iso(),
+            "receipt": receipt["path"], "receipt_digest": receipt["digest"],
+            "direction": "backward", "by_portion": self.portion_id, "reason": reason,
+        })
+        self._write_state(doc)
+        return {"rolled_back": True, "from": current, "to": to_state, "receipt": receipt["path"],
+                "receipt_digest": receipt["digest"], "reused_receipt": receipt["reused"]}
+
+    def _write_rollback_receipt(self, from_state: str, to_state: str, keys: Dict[str, Any],
+                                reason: str, note: Optional[str]) -> Dict[str, Any]:
+        """Deterministic per (from, to), reused verbatim like a transition receipt: a crash between the
+        receipt and the state write resumes onto the same document, never a second one."""
+        name = f"rollback-{LADDER.index(from_state):02d}-{from_state}-to-{to_state}.json"
+        path = self.receipt_dir / name
+        if path.exists():
+            d = gt.sha256_file(path)
+            self._op("receipt_reused", state=to_state, path=rel(path), digest=d, kind="rollback")
+            return {"path": rel(path), "digest": d, "doc": json.loads(path.read_text(encoding="utf-8")),
+                    "reused": True}
+        doc = {
+            "schema": self.ROLLBACK_SCHEMA,
+            "portion_id": self.portion_id,
+            "migration_id": keys["migration_id"],
+            "keys": keys,
+            "from_state": from_state,
+            "to_state": to_state,
+            "direction": "backward",
+            "decision_ref": "DEC-AUP-0012",
+            "reason": reason,
+            "note": note,
+            "dark_launch_band": {"top": DARK_LAUNCH_TOP,
+                                 "claim": "no freeze, fence, writer epoch, single-writer switch or write to "
+                                          "datarim/ was activated by the state being left, so this rollback "
+                                          "reverses one file and nothing outside receipts/"},
+            "produced_by": {"tool": TOOL, "version": VERSION},
+            "captured_at_utc": now_iso(),
+            "host": os.uname().nodename,
+            "model": MODEL,
+            "provisional_until_fable_review": True,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, indent=1, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+        d = gt.sha256_file(path)
+        self._op("receipt_write", state=to_state, path=rel(path), digest=d, kind="rollback")
+        return {"path": rel(path), "digest": d, "doc": doc, "reused": False}
+
+    def _refusal(self, current: str, to_state: str, reason: str, note: Optional[str] = None,
+                 kind: str = "advance") -> Dict[str, Any]:
         rec = {"advanced": False, "from": current, "to": to_state, "reason_code": reason, "note": note}
-        self._op("advance_refused", **{k: v for k, v in rec.items() if k != "advanced"})
+        if kind == "rollback":
+            rec = {"rolled_back": False, "from": current, "to": to_state, "reason_code": reason, "note": note}
+        self._op(f"{kind}_refused", **{k: v for k, v in rec.items() if k not in ("advanced", "rolled_back")})
         return rec
 
 
@@ -927,7 +1107,7 @@ def cmd_reconciliation(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    store = LadderStore(STATE_PATH)
+    store = LadderStore(STATE_PATH, portion_id=args.portion)
     res = store.initialise(MIGRATION_ID, args.source_set_epoch, args.target_writer_epoch)
     print(json.dumps({"init": res, "journal": store.journal}, indent=1, ensure_ascii=False))
     return 0
@@ -935,7 +1115,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_gates(args: argparse.Namespace) -> int:
     idx = gt.EvidenceIndex(PROGRAM_ROOT)
-    store = LadderStore(STATE_PATH)
+    store = LadderStore(STATE_PATH, portion_id=args.portion)
     current = store.state()
     evals = gt.evaluate_all(idx)
     next_state = LADDER[LADDER.index(current) + 1] if current != LADDER[-1] else None
@@ -945,7 +1125,7 @@ def cmd_gates(args: argparse.Namespace) -> int:
         attempt = store.advance(next_state, gate)
     doc = {
         "schema": "CutoverGateEvaluation/v1",
-        "portion_id": "AUP-MIG-016:coord0",
+        "portion_id": args.portion,
         "producer": {"tool": TOOL, "version": VERSION},
         "captured_at_utc": now_iso(),
         "host": os.uname().nodename,
@@ -972,12 +1152,117 @@ def cmd_gates(args: argparse.Namespace) -> int:
 
 def cmd_advance(args: argparse.Namespace) -> int:
     idx = gt.EvidenceIndex(PROGRAM_ROOT)
-    store = LadderStore(STATE_PATH, allow_advance=args.enable_advance)
+    store = LadderStore(STATE_PATH, allow_advance=args.enable_advance, portion_id=args.portion)
     gate = gt.evaluate_gate(args.advance, idx)
-    res = store.advance(args.advance, gate)
-    print(json.dumps({"attempt": res, "gate": {"verdict": gate["verdict"], "reason_code": gate.get("reason_code")}},
+    relied_on = gt.relied_on_refs(gate, idx)
+    report = None
+    if args.gate_report:
+        rp = Path(args.gate_report)
+        rdoc = json.loads(rp.read_text(encoding="utf-8"))
+        report = {
+            "path": rel(rp), "digest": gt.sha256_file(rp),
+            "schema": rdoc.get("schema"), "captured_at_utc": rdoc.get("captured_at_utc"),
+            "recorded_verdict": (rdoc.get("summary") or {}).get(args.advance, {}).get("verdict"),
+        }
+    res = store.advance(args.advance, gate, relied_on=relied_on, gate_report=report)
+    print(json.dumps({"attempt": res, "gate": {"verdict": gate["verdict"], "reason_code": gate.get("reason_code")},
+                      "gate_report": report,
+                      "relied_on_counts": {r["check_id"]: r["documents_found"] for r in relied_on}},
                      indent=1, ensure_ascii=False))
     return 0 if res.get("advanced") else 3
+
+
+def rehearse_rollback(state_path: Path, portion: str, reason: str) -> Dict[str, Any]:
+    """COORD1: prove the way back **on a copy** of a ladder, leaving the ladder itself untouched.
+
+    The rehearsal copies the state file and its transition receipts into a temporary directory, rolls
+    the copy back one state and reports what happened — including the digest of the source state file
+    before and after, which must be identical (the proof that the rehearsal is not the thing itself).
+    `CutoverRollbackRehearsal/v1` is deliberately a different schema from `CutoverRollbackReceipt/v1`,
+    the same way the rehearsal barrier is a different schema from the production one."""
+    import shutil
+    import tempfile
+    src_doc = json.loads(state_path.read_text(encoding="utf-8"))
+    current = src_doc["state"]
+    before = gt.sha256_file(state_path)
+    target = LADDER[LADDER.index(current) - 1] if LADDER.index(current) > 0 else None
+    result: Dict[str, Any] = {
+        "schema": "CutoverRollbackRehearsal/v1",
+        "portion_id": portion,
+        "migration_id": src_doc.get("migration_id"),
+        "keys": src_doc.get("keys"),
+        "source_state_file": rel(state_path),
+        "source_state": current,
+        "target_state": target,
+        "reason": reason,
+        "produced_by": {"tool": TOOL, "version": VERSION},
+        "captured_at_utc": now_iso(),
+        "host": os.uname().nodename,
+        "model": MODEL,
+        "provisional_until_fable_review": True,
+    }
+    if target is None:
+        result.update({"verdict": "NOT_MEASURED",
+                       "reason_code": "LADDER_AT_BASELINE",
+                       "note": "the ladder stands at the first state; there is nothing to roll back"})
+        return result
+    with tempfile.TemporaryDirectory(prefix="mig016-coord1-rehearsal-") as td:
+        tmp = Path(td)
+        shutil.copy2(state_path, tmp / "state.json")
+        copied = []
+        for f in sorted(state_path.parent.glob("transition-*.json")):
+            shutil.copy2(f, tmp / f.name)
+            copied.append(f.name)
+        store = LadderStore(tmp / "state.json", allow_rollback=True, portion_id=portion)
+        attempt = store.rollback(target, reason)
+        after_doc = json.loads((tmp / "state.json").read_text(encoding="utf-8"))
+        journal = list(store.journal)
+        receipt_first = ([op["op"] for op in journal if op["op"] in ("receipt_write", "receipt_reused",
+                                                                    "state_write")][:1] or [None])[0]
+        kept = [n for n in copied if (tmp / n).exists()]
+    after = gt.sha256_file(state_path)
+    checks = {
+        "rolled_back": bool(attempt.get("rolled_back")),
+        "copy_returned_to_target": after_doc.get("state") == target,
+        "history_appended_not_rewritten": len(after_doc.get("history", [])) == len(src_doc.get("history", [])) + 1,
+        "receipt_written_before_state": receipt_first in ("receipt_write", "receipt_reused"),
+        "transition_receipts_kept": kept == copied,
+        "source_state_file_untouched": before == after,
+    }
+    result.update({
+        "attempt": attempt,
+        "journal": journal,
+        "copied_transition_receipts": copied,
+        "source_state_digest_before": before,
+        "source_state_digest_after": after,
+        "resulting_state_document": after_doc,
+        "checks": checks,
+        "failed_checks": sorted(k for k, v in checks.items() if not v),
+        "verdict": "PASS" if all(checks.values()) else "FAIL",
+    })
+    return result
+
+
+def cmd_rollback_rehearsal(args: argparse.Namespace) -> int:
+    doc = rehearse_rollback(STATE_PATH, args.portion,
+                            args.reason or "rehearsal: prove the recorded transition is reversible")
+    if args.out:
+        p = Path(args.out)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc, indent=1, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps({"written": str(p), "verdict": doc["verdict"],
+                          "checks": doc.get("checks"), "failed_checks": doc.get("failed_checks")},
+                         indent=1, ensure_ascii=False))
+    else:
+        print(json.dumps(doc, indent=1, ensure_ascii=False))
+    return 0 if doc["verdict"] == "PASS" else 3
+
+
+def cmd_rollback(args: argparse.Namespace) -> int:
+    store = LadderStore(STATE_PATH, allow_rollback=args.enable_rollback, portion_id=args.portion)
+    res = store.rollback(args.rollback_to, args.reason or "", note=args.note)
+    print(json.dumps({"attempt": res, "journal": store.journal}, indent=1, ensure_ascii=False))
+    return 0 if res.get("rolled_back") else 3
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -988,6 +1273,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--gates", action="store_true", help="evaluate every DEC-AUP-0012 gate against the real receipts")
     ap.add_argument("--advance", metavar="STATE", help="attempt one ladder transition (refused by card scope)")
     ap.add_argument("--enable-advance", action="store_true", help="(later cards) allow the ladder to advance")
+    ap.add_argument("--gate-report", help="the committed --gates document this advance rests on; its recorded "
+                                          "verdict must agree with the one computed now")
+    ap.add_argument("--rollback-to", metavar="STATE", help="return the ladder one state backwards")
+    ap.add_argument("--rollback-rehearsal", action="store_true",
+                    help="roll a *copy* of the ladder back one state and report; the ladder is untouched")
+    ap.add_argument("--enable-rollback", action="store_true", help="allow the rollback (deliberate act)")
+    ap.add_argument("--reason", help="why the rollback is being made (required by --rollback-to)")
+    ap.add_argument("--note", help="free-text note recorded in the rollback receipt")
+    ap.add_argument("--portion", default=PORTION_DEFAULT, help="the execution-state portion doing the write")
     ap.add_argument("--drill", action="store_true", help="run the MIG-014 fault matrix against this coordinator")
     ap.add_argument("--selftest", action="store_true", help="reference matrix + mutation battery + rule battery")
     ap.add_argument("--out", help="output file (--gates) or directory (--drill)")
@@ -1005,6 +1299,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_gates(args)
     if args.advance:
         return cmd_advance(args)
+    if args.rollback_rehearsal:
+        return cmd_rollback_rehearsal(args)
+    if args.rollback_to:
+        return cmd_rollback(args)
     return cmd_status(args)
 
 
