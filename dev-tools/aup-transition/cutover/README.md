@@ -1,4 +1,4 @@
-# AUP-MIG-016 `coord0` — the cutover coordinator
+# AUP-MIG-016 `coord0` / `coord1` — the cutover coordinator
 
 The real, crash-safe coordinator of AUP-E25 § AUP-MIG-016 and DEC-AUP-0012. It replaces the
 *simulated* coordinator of the MIG-014 fault drill (`tools/mig/fault_drill/`), which called itself
@@ -10,7 +10,7 @@ and host-activation backends are interfaces with a simulated implementation only
 
 | file | role |
 |---|---|
-| `coordinator.py` | the two machines and the CLI: the durable **ladder** (`receipts/cutover/state.json`, DEC-AUP-0012) and the crash-safe **window** (`QUIESCING → … → COMPLETE`, AUP-E25), plus the vocabulary map and the 30 switchable mutants |
+| `coordinator.py` | the two machines and the CLI: the durable **ladder** (`receipts/cutover/state.json`, DEC-AUP-0012) and the crash-safe **window** (`QUIESCING → … → COMPLETE`, AUP-E25), plus the vocabulary map, the ladder rollback and the 33 switchable mutants |
 | `gates.py` | one evidence evaluator per ladder transition, tri-valued (`PASS` / `BLOCK` / `NOT_MEASURED`), read-only over `receipts/` |
 | `backends.py` | `FenceBackend`, `LeaseBackend`, `HostActivationBackend`, `BarrierStore` + the simulated implementations; `ProductionCutoverBarrier/v1` and its schema-distinctness proof against the DAT-018 `CandidateBarrierReceipt` |
 | `gate_oracle.py` | the independent oracle of everything this card adds (rules `G01..G10`); shares no code with `coordinator.py` |
@@ -38,11 +38,32 @@ authorises it, and **the decision wins on gating**:
 Three order/vocabulary conflicts between the two documents are **recorded and held**, not resolved by
 a silent default (`ORDER_CONFLICTS`, printed by `--reconciliation`).
 
-## What this card may write
+## Who may write the ladder
 
-`receipts/cutover/state.json` at `FILES_AUTHORITATIVE`, with its transition receipt — **and nothing
-else**. `advance()` refuses every transition (`CARD_SCOPE_COORD0`) even when handed a passing gate;
-the first real transition is the next card under DEC-AUP-0012.
+By default nobody: `advance()` refuses every transition (`CARD_SCOPE_COORD0`) even when handed a
+passing gate. A transition is taken only by a card that says so explicitly — `--enable-advance` plus
+`--portion <its execution-state portion>` — and only when that transition's gate reads `PASS` over the
+real receipts. `coord0` created the state file at `FILES_AUTHORITATIVE` and nothing else.
+
+**`coord1` took the first real transition, `FILES_AUTHORITATIVE → SHADOW_PROJECTION`** (2026-09-06,
+gate report `receipts/cutover/gates-20260906T033704Z.json`, `E1.1`/`E1.2`/`E1.3` all `PASS`). It is a
+**dark launch**: the state authorises no window phase at all (`reconciliation.dark_launch`), so no
+freeze, no fence, no single-writer switch, no writer epoch and no write to `datarim/` follows from it.
+Its transition receipt carries the complete digested list of the receipts the gate rested on
+(`relied_on`, 43 documents over three classes), the gate report it agrees with, the reconciliation
+entry for the state entered, and the rollback note that says how to undo it.
+
+## The way back
+
+Inside the **dark-launch band** (up to and including `SHADOW_PROJECTION`, `DARK_LAUNCH_TOP`) a
+transition is reversed by the coordinator itself: `--rollback-to <previous state> --enable-rollback
+--reason '<why>'` writes a `CutoverRollbackReceipt/v1` **before** the state file moves and appends to
+the history (never rewrites it). It refuses without the flag, without a reason, for anything but the
+immediately preceding state, and — the load-bearing one — from any state above the band, whose
+external effects (freeze, fence, writer epoch) belong to the cards that activated them
+(`ROLLBACK_BEYOND_DARK_LAUNCH`). `--rollback-rehearsal --out <file>` proves the way back on a *copy*
+of the ladder and writes a `CutoverRollbackRehearsal/v1` that includes the source state file's digest
+before and after — identical, or the rehearsal fails.
 
 ## Commands
 
@@ -50,7 +71,11 @@ the first real transition is the next card under DEC-AUP-0012.
     coordinator.py --reconciliation          # the two-vocabulary map + the held conflicts
     coordinator.py --init                    # create the state file at FILES_AUTHORITATIVE (idempotent)
     coordinator.py --gates --out <file>      # evaluate every gate against the real receipts
-    coordinator.py --advance <STATE>         # attempt a transition (refused: card scope, then the gate)
+    coordinator.py --advance <STATE> --enable-advance --portion <id> [--gate-report <file>]
+                                             # take a transition: refused unless enabled, next, and PASS
+    coordinator.py --rollback-to <STATE> --enable-rollback --reason '<why>' --portion <id>
+                                             # the way back, inside the dark-launch band only
+    coordinator.py --rollback-rehearsal --out <file>   # prove the way back on a copy; ladder untouched
     coordinator.py --drill --out <dir>       # the fault matrix + gate refusal + ladder drills
     coordinator.py --selftest                # reference + replay + mutation battery + rule battery
 
@@ -76,16 +101,20 @@ scenario per phase for it (120 reused + 8 = 128).
   effect for an unauthorised phase (9 positions);
 * the ladder refuses to advance under card scope, refuses a blocking gate, survives a crash between
   the receipt and the state write, and finishes that transition on resume — exactly once;
+* the ladder rollback returns a dark-launch transition to its baseline state document (history aside),
+  keeps the transition receipt, writes its own receipt first, and refuses in all four unsafe cases; the
+  rehearsal proves the same on a copy while leaving the source state file byte-identical;
 * the live gates over the program's real receipts produce no oracle violation, and a fixture in which
   the measurable requirements pass reads `NOT_MEASURED`, never `PASS`;
-* every one of the 30 mutants is killed and every one of the 28 oracle rules fires on some mutant (four
-  of the 30 mutants — the delta-batch checklist normaliser's, COORD-FIX0, and the derived-marker
-  requirement's, SHADOW-MARKER0 — are killed by a dedicated fixture comparison, not by the shared gate
-  oracle: see `gates.py::_delta_batch` / `gates.py::_derived_marker`);
+* every one of the 33 mutants is killed and every one of the 28 oracle rules fires on some mutant (six
+  of the 33 — the delta-batch checklist normaliser's, COORD-FIX0; the derived-marker requirement's,
+  SHADOW-MARKER0; and two of the rollback's, COORD1 — are killed by a dedicated fixture/outcome
+  comparison rather than by the shared gate oracle, because each still leaves a structurally valid
+  record behind: see `gates.py::_delta_batch`, `gates.py::_derived_marker`, `drill.py::ladder_rollback`);
 * the selftest's own negative controls go red.
 
 ## Not measured here
 
 Real hosts, the real Muneral writer authority, the real GitHub ruleset, real tmux lanes — all
-simulated. The live ladder is never advanced by the drill. Whether the *evidence* the gates ask for is
+simulated. The live ladder is never advanced or rolled back by the drill or by the rehearsal. Whether the *evidence* the gates ask for is
 true of the world is the producing cards' job; this tool only reads what they wrote.
