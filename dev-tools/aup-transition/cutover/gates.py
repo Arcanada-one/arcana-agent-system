@@ -30,6 +30,10 @@ GATE_MUTATIONS = {
     "N05_gate_passes_with_missing_receipt": "a requirement whose evidence is missing is reported PASS",
     "N09_not_measured_counts_as_pass": "a NOT_MEASURED requirement is folded into the PASS majority",
     "N10_gate_omits_missing_receipts": "the verdict lists the receipts that exist and hides the missing ones",
+    "N12_delta_checklist_list_shape_dropped": "the delta-batch normaliser drops the list-of-items checklist "
+                                              "shape, treating a real (list-shaped) checklist as unrecognised",
+    "N13_delta_checklist_mismatch_ignored": "an unrecognised delta-batch checklist shape is treated as an "
+                                            "empty checklist instead of a typed BLOCK (COORD-FIX0)",
 }
 
 
@@ -301,10 +305,63 @@ DELTA_CONDITIONS = [
 ]
 
 
-def _delta_batch(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any]]:
+#: the list-shape checklist (e.g. receipts/delta/importer-scope0-*.json) names each condition by a
+#: free-text `check` label rather than the DELTA_CONDITIONS slug; this is the map from the label as
+#: minted by the real producing cards to the canonical slug. A label that matches no condition (after
+#: the punctuation-insensitive fallback below) is recorded as an *additional* condition, not dropped.
+DELTA_CONDITION_ALIASES: Dict[str, str] = {
+    "sourceSetEpoch git-pinned": "sourceSetEpoch_git_pinned",
+    "capturedAt pinned": "capturedAt_pinned",
+    "unmappedCount = 0": "unmappedCount_0",
+    "statusMapRevision unchanged or bumped by decision": "statusMapRevision_unchanged_or_bumped_by_decision",
+    "rerun converges to one occurrenceDigest": "rerun_converges_to_one_occurrenceDigest",
+    "epoch-1 occurrenceDigest unchanged": "epoch1_occurrenceDigest_unchanged",
+    "new conflicts projected under DEC-AUP-0014": "new_conflicts_projected_under_DEC_AUP_0014",
+    "verify_import.py PASS under the batch's epoch": "verify_import_passes_under_batch_epoch",
+}
+
+
+def _slug(s: str) -> str:
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
+_ALIAS_BY_SLUG = {_slug(k): v for k, v in DELTA_CONDITION_ALIASES.items()}
+_CONDITION_BY_SLUG = {_slug(c): c for c in DELTA_CONDITIONS}
+
+
+def _match_delta_condition(label: str) -> Optional[str]:
+    slug = _slug(label)
+    return _CONDITION_BY_SLUG.get(slug) or _ALIAS_BY_SLUG.get(slug)
+
+
+def _normalize_delta_checklist(block: Any, mutations: frozenset = frozenset()
+                                ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Turns either known checklist shape into (condition_map, extra_map): `condition_map` keys are
+    DELTA_CONDITIONS slugs, `extra_map` holds everything reported beyond the eight. Returns (None,
+    None) for any other shape — the caller turns that into a typed BLOCK, never an exception."""
+    if isinstance(block, dict):
+        condition_map = {c: block[c] for c in DELTA_CONDITIONS if c in block}
+        extra_map = {k: v for k, v in block.items() if k not in DELTA_CONDITIONS}
+        return condition_map, extra_map
+    if isinstance(block, list) and "N12_delta_checklist_list_shape_dropped" not in mutations:
+        condition_map, extra_map = {}, {}
+        for item in block:
+            if not isinstance(item, dict) or not isinstance(item.get("check"), str):
+                return None, None
+            matched = _match_delta_condition(item["check"])
+            (condition_map if matched else extra_map)[matched or item["check"]] = item.get("verdict")
+        return condition_map, extra_map
+    if "N13_delta_checklist_mismatch_ignored" in mutations:
+        return {}, {}
+    return None, None
+
+
+def _delta_batch(idx: EvidenceIndex, mutations: frozenset = frozenset()) -> Tuple[str, Optional[str], Dict[str, Any]]:
     """Reads the delta-import card's own checklist wherever it wrote it (any receipt carrying a
     `delta_imported_checklist*` block), and re-aggregates the eight conditions here — the gate never
-    inherits the producer's summary verdict."""
+    inherits the producer's summary verdict. The block may be a dict keyed by condition or a list of
+    `{check, verdict}` items (both shapes seen in real receipts); any other shape is a typed BLOCK,
+    never an exception (COORD-FIX0)."""
     docs = [d for d in idx.of("ReadinessReceipt/v1")
             if isinstance(d.doc, dict) and any(k.startswith("delta_imported_checklist") for k in d.doc)]
     imports = [d for d in idx.of("ReadinessReceipt/v1") if d.path.startswith("receipts/import/verify-")]
@@ -323,13 +380,21 @@ def _delta_batch(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any]
         return BLOCK, "DELTA_BATCH_NOT_ADMITTED", detail
     latest = docs[-1]
     block = next((v for k, v in latest.doc.items() if k.startswith("delta_imported_checklist")), {})
+    condition_map, extra_map = _normalize_delta_checklist(block, mutations)
+    if condition_map is None:
+        detail.update({
+            "checklist_source": latest.ref(),
+            "offending_shape": type(block).__name__,
+            "missing": [f"delta_imported_checklist at {latest.path} is neither a dict keyed by condition nor "
+                        "a list of {check, verdict} items"],
+        })
+        return BLOCK, "DELTA_CHECKLIST_SCHEMA_MISMATCH", detail
     conditions: Dict[str, str] = {}
     for cond in DELTA_CONDITIONS:
-        raw = block.get(cond)
+        raw = condition_map.get(cond)
         verdict = raw.get("verdict") if isinstance(raw, dict) else raw
         conditions[cond] = str(verdict).upper() if verdict is not None else "NOT_REPORTED"
-    extra = {k: (v.get("verdict") if isinstance(v, dict) else v) for k, v in block.items()
-             if k not in DELTA_CONDITIONS}
+    extra = {k: (v.get("verdict") if isinstance(v, dict) else v) for k, v in extra_map.items()}
     failed = [c for c, v in conditions.items() if v not in ("PASS", "NOT_MEASURED", "NOT_REPORTED")]
     unmeasured = [c for c, v in conditions.items() if v in ("NOT_MEASURED", "NOT_REPORTED")]
     detail.update({
@@ -519,7 +584,9 @@ def evaluate_gate(target_state: str, idx: EvidenceIndex, mutations: frozenset = 
         return {"target_state": target_state, "verdict": BLOCK, "reason_code": "NO_SUCH_TRANSITION", "checks": []}
     checks: List[Dict[str, Any]] = []
     for req in gate["requirements"]:
-        verdict, reason, detail = req.check(idx)
+        # E5.1 (_delta_batch) is the only check whose own normaliser has switchable mutants
+        # (N12/N13); every other requirement takes only the evidence index.
+        verdict, reason, detail = req.check(idx, mutations) if req.id == "E5.1" else req.check(idx)
         if "N05_gate_passes_with_missing_receipt" in mutations and verdict == BLOCK:
             verdict, reason = PASS, None
         if "N10_gate_omits_missing_receipts" in mutations:
