@@ -34,6 +34,10 @@ GATE_MUTATIONS = {
                                               "shape, treating a real (list-shaped) checklist as unrecognised",
     "N13_delta_checklist_mismatch_ignored": "an unrecognised delta-batch checklist shape is treated as an "
                                             "empty checklist instead of a typed BLOCK (COORD-FIX0)",
+    "N14_derived_marker_ignores_in_place_rewrite": "a DerivedMarkerAudit/v1 reporting >=1 in-place rewrite "
+                                                   "still PASSes the derived-marker requirement (SHADOW-MARKER0)",
+    "N15_derived_marker_stale_accepted": "the derived-marker requirement PASSes an audit whose tree_digest "
+                                         "does not match the stable ShadowProjectionReceipt/v1 run (SHADOW-MARKER0)",
 }
 
 
@@ -137,7 +141,10 @@ def _refs(docs: List[Doc], limit: int = 12) -> List[Dict[str, Any]]:
 
 
 # ------------------------------------------------------------------ individual requirements
-def _shadow_stable(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any]]:
+def _shadow_runs(idx: EvidenceIndex) -> Tuple[List[Doc], List[Tuple[str, int]]]:
+    """Shared by `_shadow_stable` and `_derived_marker`: every ShadowProjectionReceipt/v1 carrying an
+    `output_digest`, in index order (captured_at_utc, then path), reduced to consecutive-run lengths
+    per digest."""
     docs = [d for d in idx.of("ShadowProjectionReceipt/v1") if isinstance(d.doc, dict) and d.doc.get("output_digest")]
     runs: List[Tuple[str, int]] = []
     for d in docs:
@@ -146,11 +153,24 @@ def _shadow_stable(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, An
             runs[-1] = (dig, runs[-1][1] + 1)
         else:
             runs.append((dig, 1))
-    longest = max((n for _, n in runs), default=0)
+    return docs, runs
+
+
+def _longest_stable_run(runs: List[Tuple[str, int]]) -> Tuple[Optional[str], int]:
+    if not runs:
+        return None, 0
+    dig, n = max(runs, key=lambda r: r[1])
+    return dig, n
+
+
+def _shadow_stable(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    docs, runs = _shadow_runs(idx)
+    longest_digest, longest = _longest_stable_run(runs)
     detail = {
         "required": "≥ 10 consecutive regenerations byte-stable on the projected fields (DEC-AUP-0012 rule 2)",
         "receipts_found": len(docs),
         "longest_stable_run": longest,
+        "longest_stable_run_output_digest": longest_digest,
         "runs": [{"output_digest": dig, "consecutive": n} for dig, n in runs],
         "present": _refs(docs),
         "missing": [] if longest >= 10 else [f"{10 - longest} further consecutive ShadowProjectionReceipt/v1 with the same output_digest"],
@@ -180,18 +200,70 @@ def _parity_pairs(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any
     return (PASS, None, detail) if len(good) >= 2 else (BLOCK, "PARITY_INSUFFICIENT", detail)
 
 
-def _derived_marker(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any]]:
-    docs = idx.of("ShadowProjectionReceipt/v1")
-    marked = [d for d in docs if d.doc.get("derived_marker") or d.doc.get("rule_rev") is not None]
-    detail = {
-        "required": "every derived row carries `<!-- derived: muneral <batch> rule_rev <n> -->`, no raw status "
-                    "rewritten in place, held identities render both raw values (DEC-AUP-0012 rule 2)",
-        "receipts_carrying_rule_rev": len(marked),
-        "present": _refs(marked),
-        "missing": ["a receipt that asserts the marker rule per row (the shadow receipts record rule_rev and "
-                    "typed findings, not a per-row marker audit)"],
+def _derived_marker(idx: EvidenceIndex, mutations: frozenset = frozenset()) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    """AUP-MIG-016 SHADOW-MARKER0: reads `DerivedMarkerAudit/v1` (tools/projection/marker_audit.py),
+    the real per-row audit `ShadowProjectionReceipt/v1` never asserted. PASS requires: an audit exists,
+    its `tree_digest` matches the digest of the longest byte-stable ShadowProjectionReceipt/v1 run
+    (never a stale revision), 0 unmarked derived rows, 0 malformed markers, 0 in-place rewrites, and
+    every held identity renders every raw value it has (`held_both_values_count == held_total`)."""
+    docs = idx.of("DerivedMarkerAudit/v1")
+    _, runs = _shadow_runs(idx)
+    stable_digest, stable_len = _longest_stable_run(runs)
+    detail: Dict[str, Any] = {
+        "required": "every derived row carries `<!-- derived: muneral <batch> rule_rev <n> -->`, 0 raw statuses "
+                    "rewritten in place, held identities render every raw value seen, audited over every row, "
+                    "no sampling (DEC-AUP-0012 rule 2, I4)",
+        "receipts_found": len(docs),
+        "present": _refs(docs),
+        "stable_run_output_digest": stable_digest,
+        "stable_run_length": stable_len,
     }
-    return NOT_MEASURED, "DERIVED_MARKER_NOT_MEASURED", detail
+    if not docs:
+        detail["missing"] = ["a DerivedMarkerAudit/v1 receipt (tools/projection/marker_audit.py has not been run "
+                             "against a shadow-branch revision yet)"]
+        return NOT_MEASURED, "DERIVED_MARKER_NOT_MEASURED", detail
+
+    latest = docs[-1]
+    a = latest.doc if isinstance(latest.doc, dict) else {}
+    audited_digest = a.get("tree_digest")
+    unmarked = a.get("unmarked_derived") or []
+    malformed = a.get("malformed_markers") or []
+    in_place = a.get("in_place_rewrites") or []
+    held_total = a.get("held_total")
+    held_both = a.get("held_both_values_count")
+    detail.update({
+        "latest_audit": latest.ref(),
+        "audited_tree_digest": audited_digest,
+        "rows_total": a.get("rows_total"),
+        "derived_eligible_rows": a.get("derived_eligible_rows"),
+        "derived_marked_count": a.get("derived_marked_count"),
+        "unmarked_derived_count": len(unmarked),
+        "malformed_marker_count": len(malformed),
+        "in_place_rewrite_count": len(in_place),
+        "held_total": held_total,
+        "held_both_values_count": held_both,
+    })
+
+    stale = stable_digest is None or audited_digest != stable_digest
+    if stale and "N15_derived_marker_stale_accepted" not in mutations:
+        detail["missing"] = [f"a DerivedMarkerAudit/v1 whose tree_digest matches the stable "
+                             f"ShadowProjectionReceipt/v1 run's output_digest ({stable_digest!r}); the latest "
+                             f"audit measured {audited_digest!r}"]
+        return BLOCK, "MARKER_AUDIT_STALE", detail
+
+    violations: List[str] = []
+    if unmarked:
+        violations.append(f"{len(unmarked)} unmarked derived row(s): {[u.get('legacyId') for u in unmarked][:10]}")
+    if malformed:
+        violations.append(f"{len(malformed)} malformed derived marker(s): {[m.get('legacyId') for m in malformed][:10]}")
+    if in_place and "N14_derived_marker_ignores_in_place_rewrite" not in mutations:
+        violations.append(f"{len(in_place)} identity(ies) with a raw status rewritten in place: {[i.get('legacyId') for i in in_place][:10]}")
+    if held_total is not None and held_both is not None and held_both != held_total:
+        violations.append(f"held identities render every raw value on {held_both}/{held_total}, not {held_total}/{held_total}")
+    detail["missing"] = violations
+    if violations:
+        return BLOCK, "DERIVED_MARKER_VIOLATION", detail
+    return PASS, None, detail
 
 
 def _freeze_activation(idx: EvidenceIndex) -> Tuple[str, Optional[str], Dict[str, Any]]:
@@ -586,7 +658,9 @@ def evaluate_gate(target_state: str, idx: EvidenceIndex, mutations: frozenset = 
     for req in gate["requirements"]:
         # E5.1 (_delta_batch) is the only check whose own normaliser has switchable mutants
         # (N12/N13); every other requirement takes only the evidence index.
-        verdict, reason, detail = req.check(idx, mutations) if req.id == "E5.1" else req.check(idx)
+        # E5.1 (_delta_batch) and E1.3 (_derived_marker) are the only checks whose own logic has
+        # switchable mutants; every other requirement takes only the evidence index.
+        verdict, reason, detail = req.check(idx, mutations) if req.id in ("E5.1", "E1.3") else req.check(idx)
         if "N05_gate_passes_with_missing_receipt" in mutations and verdict == BLOCK:
             verdict, reason = PASS, None
         if "N10_gate_omits_missing_receipts" in mutations:

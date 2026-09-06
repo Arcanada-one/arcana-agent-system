@@ -83,6 +83,10 @@ GATE_MUTANTS = ["N05_gate_passes_with_missing_receipt", "N09_not_measured_counts
 #: still emit a structurally valid tri-valued verdict with `missing` correctly named, so no G0x rule
 #: fires on them; only the *wrong* verdict for a known-good fixture proves the bug.
 DELTA_CHECKLIST_MUTANTS = ["N12_delta_checklist_list_shape_dropped", "N13_delta_checklist_mismatch_ignored"]
+#: the derived-marker requirement's own mutants (SHADOW-MARKER0) — killed the same way as N12/N13:
+#: a dedicated fixture-verdict comparison, since both still emit a structurally valid tri-valued
+#: verdict with `missing` correctly named (no G0x rule fires on them by itself).
+DERIVED_MARKER_MUTANTS = ["N14_derived_marker_ignores_in_place_rewrite", "N15_derived_marker_stale_accepted"]
 #: the reused matrix knows four injection points; the real coordinator has a fifth durable step
 #: (the transition receipt), so the drill adds one crash scenario per phase for it.
 RECEIPT_POINT_SCENARIOS = [("crash", _p, "after_receipt") for _p in
@@ -374,6 +378,48 @@ def delta_checklist_fixtures(tmp: Path) -> Dict[str, gt.EvidenceIndex]:
     }
 
 
+def derived_marker_fixture(tmp: Path, label: str, audit_overrides: Dict[str, Any]) -> gt.EvidenceIndex:
+    """One isolated evidence tree carrying a 10-tick byte-stable ShadowProjectionReceipt/v1 run (so
+    E1.1/E1.2 stay measurable) plus exactly one DerivedMarkerAudit/v1, so `_derived_marker` (E1.3)
+    reads it unambiguously (SHADOW-MARKER0 fixtures: clean, in-place-only, held-under-disclosed,
+    unmarked, malformed, stale)."""
+    root = tmp / f"derived-marker-{label}"
+    proj = root / "receipts" / "projection"
+    proj.mkdir(parents=True, exist_ok=True)
+    dig = "sha256:" + "c" * 64
+    for i in range(10):
+        (proj / f"shadow-fixture-{i:02d}.json").write_text(json.dumps({
+            "schema": "ShadowProjectionReceipt/v1", "captured_at_utc": f"2026-09-05T{10 + i:02d}:00:00Z",
+            "output_digest": dig, "rows_total": 1382, "rows_identical": 1382, "finding_count": 0,
+            "fixture": "AUP-MIG-016 coord0/shadow-marker0 drill — synthetic, never program evidence",
+        }, indent=1), encoding="utf-8")
+    audit = {
+        "schema": "DerivedMarkerAudit/v1", "captured_at_utc": "2026-09-05T21:00:00Z",
+        "tree_digest": dig, "rows_total": 4, "row_missing_count": 0, "derived_eligible_rows": 4,
+        "derived_marked_count": 4, "unmarked_derived": [], "malformed_markers": [],
+        "held_total": 2, "held_both_values_count": 2, "in_place_rewrites": [],
+        "fixture": "AUP-MIG-016 coord0/shadow-marker0 drill — synthetic, never program evidence",
+    }
+    audit.update(audit_overrides)
+    (proj / f"marker-audit-{label}-fixture.json").write_text(json.dumps(audit, indent=1), encoding="utf-8")
+    return gt.EvidenceIndex(root)
+
+
+def derived_marker_fixtures(tmp: Path) -> Dict[str, gt.EvidenceIndex]:
+    return {
+        "clean": derived_marker_fixture(tmp, "clean", {}),
+        "in_place_only": derived_marker_fixture(tmp, "in-place", {
+            "in_place_rewrites": [{"legacyId": "ZZZ-0001", "files": ["backlog.md"]}]}),
+        "unmarked": derived_marker_fixture(tmp, "unmarked", {
+            "derived_marked_count": 3, "unmarked_derived": [{"legacyId": "ZZZ-0002", "file": "backlog.md"}]}),
+        "malformed": derived_marker_fixture(tmp, "malformed", {
+            "derived_marked_count": 3,
+            "malformed_markers": [{"legacyId": "ZZZ-0003", "file": "backlog.md", "detail": "wrong batch"}]}),
+        "held_under_disclosed": derived_marker_fixture(tmp, "held-under-disclosed", {"held_both_values_count": 1}),
+        "stale": derived_marker_fixture(tmp, "stale", {"tree_digest": "sha256:" + "d" * 64}),
+    }
+
+
 def evaluate_gates(idx: gt.EvidenceIndex, mutations: FrozenSet[str] = frozenset()) -> List[Dict[str, Any]]:
     return gt.evaluate_all(idx, mutations)
 
@@ -549,6 +595,48 @@ def selftest(as_json: bool = True) -> int:
     }
     ok &= req("mutant_killed:N12_delta_checklist_list_shape_dropped@delta_checklist_fixture", killed_n12)
     ok &= req("mutant_killed:N13_delta_checklist_mismatch_ignored@delta_checklist_fixture", killed_n13)
+
+    # 6c. the derived-marker requirement (SHADOW-MARKER0): clean, each BLOCK cause, stale, N14/N15
+    with tempfile.TemporaryDirectory(prefix="mig016-coord0-derived-marker-") as td:
+        dmf = derived_marker_fixtures(Path(td))
+        clean_ref = gt._derived_marker(dmf["clean"])
+        inplace_ref = gt._derived_marker(dmf["in_place_only"])
+        unmarked_ref = gt._derived_marker(dmf["unmarked"])
+        malformed_ref = gt._derived_marker(dmf["malformed"])
+        held_ref = gt._derived_marker(dmf["held_under_disclosed"])
+        stale_ref = gt._derived_marker(dmf["stale"])
+        inplace_n14 = gt._derived_marker(dmf["in_place_only"], frozenset(["N14_derived_marker_ignores_in_place_rewrite"]))
+        stale_n15 = gt._derived_marker(dmf["stale"], frozenset(["N15_derived_marker_stale_accepted"]))
+    report["derived_marker_fixtures"] = {
+        "clean": {"verdict": clean_ref[0], "reason_code": clean_ref[1]},
+        "in_place_only": {"verdict": inplace_ref[0], "reason_code": inplace_ref[1]},
+        "unmarked": {"verdict": unmarked_ref[0], "reason_code": unmarked_ref[1]},
+        "malformed": {"verdict": malformed_ref[0], "reason_code": malformed_ref[1]},
+        "held_under_disclosed": {"verdict": held_ref[0], "reason_code": held_ref[1]},
+        "stale": {"verdict": stale_ref[0], "reason_code": stale_ref[1]},
+        "in_place_only_under_N14": {"verdict": inplace_n14[0], "reason_code": inplace_n14[1]},
+        "stale_under_N15": {"verdict": stale_n15[0], "reason_code": stale_n15[1]},
+    }
+    ok &= req("derived_marker_clean_fixture_reads_pass", clean_ref[0] == gt.PASS)
+    ok &= req("derived_marker_each_block_cause_is_typed_DERIVED_MARKER_VIOLATION",
+              all(r[0] == gt.BLOCK and r[1] == "DERIVED_MARKER_VIOLATION"
+                  for r in (inplace_ref, unmarked_ref, malformed_ref, held_ref)))
+    ok &= req("derived_marker_stale_fixture_blocks_typed",
+              stale_ref[0] == gt.BLOCK and stale_ref[1] == "MARKER_AUDIT_STALE")
+    killed_n14 = inplace_n14[0] != inplace_ref[0]
+    killed_n15 = stale_n15[0] != stale_ref[0]
+    mutants["N14_derived_marker_ignores_in_place_rewrite"] = {
+        "harness": "derived-marker fixture (in-place-only, reference vs mutant verdict)",
+        "killed": killed_n14, "killed_by": ["fixture:in_place_only_verdict_changed"] if killed_n14 else [],
+        "description": co.MUTATIONS["N14_derived_marker_ignores_in_place_rewrite"],
+    }
+    mutants["N15_derived_marker_stale_accepted"] = {
+        "harness": "derived-marker fixture (stale, reference vs mutant verdict)",
+        "killed": killed_n15, "killed_by": ["fixture:stale_verdict_changed"] if killed_n15 else [],
+        "description": co.MUTATIONS["N15_derived_marker_stale_accepted"],
+    }
+    ok &= req("mutant_killed:N14_derived_marker_ignores_in_place_rewrite@derived_marker_fixture", killed_n14)
+    ok &= req("mutant_killed:N15_derived_marker_stale_accepted@derived_marker_fixture", killed_n15)
 
     report["mutation_battery"] = {"mutants": mutants, "killed": sum(1 for x in mutants.values() if x["killed"]),
                                   "total": len(mutants)}
