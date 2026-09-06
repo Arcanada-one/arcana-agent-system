@@ -1,5 +1,3 @@
-> **Proposal landing.** The program of record for this tool is `Arcanada-one/arcanada-universal-program` (`tools/mig/cutover/`). This copy is a proposal for the repository that will host the runtime; nothing here activates anything, builds into the binary or runs in CI. It is stacked on the `fault_drill/` landing (PR #151), whose matrix and oracle it imports from the sibling directory.
-
 # AUP-MIG-016 `coord0` — the cutover coordinator
 
 The real, crash-safe coordinator of AUP-E25 § AUP-MIG-016 and DEC-AUP-0012. It replaces the
@@ -12,7 +10,7 @@ and host-activation backends are interfaces with a simulated implementation only
 
 | file | role |
 |---|---|
-| `coordinator.py` | the two machines and the CLI: the durable **ladder** (`receipts/cutover/state.json`, DEC-AUP-0012) and the crash-safe **window** (`QUIESCING → … → COMPLETE`, AUP-E25), plus the vocabulary map and the 26 switchable mutants |
+| `coordinator.py` | the two machines and the CLI: the durable **ladder** (`receipts/cutover/state.json`, DEC-AUP-0012) and the crash-safe **window** (`QUIESCING → … → COMPLETE`, AUP-E25), plus the vocabulary map and the 28 switchable mutants |
 | `gates.py` | one evidence evaluator per ladder transition, tri-valued (`PASS` / `BLOCK` / `NOT_MEASURED`), read-only over `receipts/` |
 | `backends.py` | `FenceBackend`, `LeaseBackend`, `HostActivationBackend`, `BarrierStore` + the simulated implementations; `ProductionCutoverBarrier/v1` and its schema-distinctness proof against the DAT-018 `CandidateBarrierReceipt` |
 | `gate_oracle.py` | the independent oracle of everything this card adds (rules `G01..G10`); shares no code with `coordinator.py` |
@@ -80,7 +78,9 @@ scenario per phase for it (120 reused + 8 = 128).
   the receipt and the state write, and finishes that transition on resume — exactly once;
 * the live gates over the program's real receipts produce no oracle violation, and a fixture in which
   the measurable requirements pass reads `NOT_MEASURED`, never `PASS`;
-* every one of the 26 mutants is killed and every one of the 28 oracle rules fires on some mutant;
+* every one of the 28 mutants is killed and every one of the 28 oracle rules fires on some mutant (two
+  of the 28 mutants — the delta-batch checklist normaliser's, COORD-FIX0 — are killed by a dedicated
+  fixture comparison, not by the shared gate oracle: see `gates.py::_delta_batch`);
 * the selftest's own negative controls go red.
 
 ## Not measured here

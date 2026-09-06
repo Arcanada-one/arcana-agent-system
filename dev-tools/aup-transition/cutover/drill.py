@@ -78,6 +78,11 @@ LADDER_MUTANTS = ["N02_state_advances_before_receipt", "N06_state_file_written_a
                   "N11_receipt_regenerated_on_resume"]
 GATE_MUTANTS = ["N05_gate_passes_with_missing_receipt", "N09_not_measured_counts_as_pass",
                 "N10_gate_omits_missing_receipts"]
+#: the delta-checklist normaliser's own mutants (COORD-FIX0) — killed by a dedicated fixture
+#: comparison (reference verdict vs mutated verdict), not by the generic gate oracle: both mutants
+#: still emit a structurally valid tri-valued verdict with `missing` correctly named, so no G0x rule
+#: fires on them; only the *wrong* verdict for a known-good fixture proves the bug.
+DELTA_CHECKLIST_MUTANTS = ["N12_delta_checklist_list_shape_dropped", "N13_delta_checklist_mismatch_ignored"]
 #: the reused matrix knows four injection points; the real coordinator has a fifth durable step
 #: (the transition receipt), so the drill adds one crash scenario per phase for it.
 RECEIPT_POINT_SCENARIOS = [("crash", _p, "after_receipt") for _p in
@@ -343,6 +348,32 @@ def fixture_index(tmp: Path) -> gt.EvidenceIndex:
     return gt.EvidenceIndex(root)
 
 
+def delta_checklist_fixture(tmp: Path, label: str, block: Any) -> gt.EvidenceIndex:
+    """One isolated evidence tree carrying exactly one `delta_imported_checklist_<label>` block, so
+    `_delta_batch`'s `docs[-1]` picks it unambiguously (COORD-FIX0 fixtures: dict shape, list shape,
+    malformed shape)."""
+    root = tmp / f"delta-checklist-{label}"
+    d = root / "receipts" / "import"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"checklist-{label}-fixture.json").write_text(json.dumps({
+        "schema": "ReadinessReceipt/v1", "portion_id": f"drill:delta-checklist-{label}-fixture",
+        "captured_at_utc": "2026-01-01T00:00:00Z",
+        f"delta_imported_checklist_{label}_fixture": block,
+    }), encoding="utf-8")
+    return gt.EvidenceIndex(root)
+
+
+def delta_checklist_fixtures(tmp: Path) -> Dict[str, gt.EvidenceIndex]:
+    dict_block = {cond: {"verdict": "PASS", "evidence": "fixture"} for cond in gt.DELTA_CONDITIONS}
+    list_block = [{"check": label, "verdict": "PASS", "evidence": "fixture"}
+                  for label in gt.DELTA_CONDITION_ALIASES]
+    return {
+        "dict": delta_checklist_fixture(tmp, "dict", dict_block),
+        "list": delta_checklist_fixture(tmp, "list", list_block),
+        "malformed": delta_checklist_fixture(tmp, "malformed", "not-a-valid-checklist-block"),
+    }
+
+
 def evaluate_gates(idx: gt.EvidenceIndex, mutations: FrozenSet[str] = frozenset()) -> List[Dict[str, Any]]:
     return gt.evaluate_all(idx, mutations)
 
@@ -485,6 +516,40 @@ def selftest(as_json: bool = True) -> int:
                       "killed_by": sorted(rules), "description": co.MUTATIONS[m]}
         kill_g[m] = rules
         ok &= req(f"mutant_killed:{m}@gates", rules)
+    # 6b. the delta-checklist normaliser (COORD-FIX0): dict shape, list shape, malformed shape
+    with tempfile.TemporaryDirectory(prefix="mig016-coord0-delta-checklist-") as td:
+        fx = delta_checklist_fixtures(Path(td))
+        dict_ref = gt._delta_batch(fx["dict"])
+        list_ref = gt._delta_batch(fx["list"])
+        malformed_ref = gt._delta_batch(fx["malformed"])
+        list_n12 = gt._delta_batch(fx["list"], frozenset(["N12_delta_checklist_list_shape_dropped"]))
+        malformed_n13 = gt._delta_batch(fx["malformed"], frozenset(["N13_delta_checklist_mismatch_ignored"]))
+    report["delta_checklist_fixtures"] = {
+        "dict_shape": {"verdict": dict_ref[0], "reason_code": dict_ref[1]},
+        "list_shape": {"verdict": list_ref[0], "reason_code": list_ref[1]},
+        "malformed_shape": {"verdict": malformed_ref[0], "reason_code": malformed_ref[1]},
+        "list_shape_under_N12": {"verdict": list_n12[0], "reason_code": list_n12[1]},
+        "malformed_shape_under_N13": {"verdict": malformed_n13[0], "reason_code": malformed_n13[1]},
+    }
+    ok &= req("delta_checklist_dict_shape_reads_pass", dict_ref[0] == gt.PASS)
+    ok &= req("delta_checklist_list_shape_reads_pass", list_ref[0] == gt.PASS)
+    ok &= req("delta_checklist_malformed_shape_blocks_typed",
+              malformed_ref[0] == gt.BLOCK and malformed_ref[1] == "DELTA_CHECKLIST_SCHEMA_MISMATCH")
+    killed_n12 = list_n12[0] != list_ref[0]
+    killed_n13 = malformed_n13[0] != malformed_ref[0]
+    mutants["N12_delta_checklist_list_shape_dropped"] = {
+        "harness": "delta-checklist normaliser fixture (list shape, reference vs mutant verdict)",
+        "killed": killed_n12, "killed_by": ["fixture:list_shape_verdict_changed"] if killed_n12 else [],
+        "description": co.MUTATIONS["N12_delta_checklist_list_shape_dropped"],
+    }
+    mutants["N13_delta_checklist_mismatch_ignored"] = {
+        "harness": "delta-checklist normaliser fixture (malformed shape, reference vs mutant verdict)",
+        "killed": killed_n13, "killed_by": ["fixture:malformed_shape_verdict_changed"] if killed_n13 else [],
+        "description": co.MUTATIONS["N13_delta_checklist_mismatch_ignored"],
+    }
+    ok &= req("mutant_killed:N12_delta_checklist_list_shape_dropped@delta_checklist_fixture", killed_n12)
+    ok &= req("mutant_killed:N13_delta_checklist_mismatch_ignored@delta_checklist_fixture", killed_n13)
+
     report["mutation_battery"] = {"mutants": mutants, "killed": sum(1 for x in mutants.values() if x["killed"]),
                                   "total": len(mutants)}
     ok &= req("every_declared_mutation_has_a_harness", len(mutants) == len(co.MUTATIONS))
