@@ -68,7 +68,7 @@ import gate_oracle as go  # noqa: E402
 
 assert sc.Coordinator is not co.CutoverWindow, "the drill must swap the system under test, not reuse it"
 
-VERSION = "coord0/1.0.0"
+VERSION = "coord0/1.1.0"
 FULL_LADDER = "MUNERAL_AUTHORITATIVE"
 PASS_GATE = {"verdict": "PASS", "reason_code": None, "target_state": "SHADOW_PROJECTION",
              "note": "drill fixture: a synthetic PASS, never a real gate verdict"}
@@ -83,6 +83,12 @@ GATE_MUTANTS = ["N05_gate_passes_with_missing_receipt", "N09_not_measured_counts
 #: still emit a structurally valid tri-valued verdict with `missing` correctly named, so no G0x rule
 #: fires on them; only the *wrong* verdict for a known-good fixture proves the bug.
 DELTA_CHECKLIST_MUTANTS = ["N12_delta_checklist_list_shape_dropped", "N13_delta_checklist_mismatch_ignored"]
+#: the ladder rollback's own mutants (COORD1) — N17 (state before receipt) is killed by the gate
+#: oracle's G01 over the rollback invocation's own journal; N16 and N18 are refusal-policy bugs that
+#: leave a structurally valid record behind, so they are killed by comparing the drill's outcome with
+#: the reference run's, the same way N12–N15 are.
+ROLLBACK_MUTANTS = ["N16_rollback_without_enable_flag", "N17_rollback_state_before_receipt",
+                    "N18_rollback_beyond_dark_launch"]
 #: the derived-marker requirement's own mutants (SHADOW-MARKER0) — killed the same way as N12/N13:
 #: a dedicated fixture-verdict comparison, since both still emit a structurally valid tri-valued
 #: verdict with `missing` correctly named (no G0x rule fires on them by itself).
@@ -326,6 +332,100 @@ def ladder_crash_safety(tmp: Path, mutations: FrozenSet[str] = frozenset()) -> D
         mismatches.append("the transition appears more than once in the history")
     return {"steps": steps, "journal": journal, "state_file": final, "state_after_crash": state_after_crash,
             "mismatches": mismatches, "verdict": "PASS" if not mismatches else "FAIL"}
+
+
+def ladder_rollback(tmp: Path, mutations: FrozenSet[str] = frozenset()) -> Dict[str, Any]:
+    """COORD1: the way back. A transition inside the dark-launch band must be reversible by a named
+    card — and the reversal must refuse in exactly the cases that make it unsafe: no enable flag, no
+    reason, not the previous state, and (the load-bearing one) a state above the dark-launch band,
+    whose external effects this coordinator does not own.
+
+    Each phase runs in a *fresh* `LadderStore` — a rollback is its own invocation, so its journal must
+    show the rollback receipt before the state write on its own (gate-oracle G01), not because an
+    earlier step in the same process happened to write a receipt for that state."""
+    root = tmp / "rollback"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "state.json"
+    steps: List[Dict[str, Any]] = []
+
+    s0 = co.LadderStore(path, allow_advance=True, mutations=mutations, portion_id="AUP-MIG-016:drill")
+    steps.append({"step": "initialise", "result": s0.initialise("AUP-MIG-016", "sse-drill", 8)})
+    state_at_baseline = json.loads(path.read_text())
+    steps.append({"step": "advance_to_shadow", "result": s0.advance("SHADOW_PROJECTION", PASS_GATE)})
+
+    s1 = co.LadderStore(path, allow_rollback=False, mutations=mutations)
+    steps.append({"step": "rollback_without_enable_flag",
+                  "result": s1.rollback("FILES_AUTHORITATIVE", "drill")})
+    s2 = co.LadderStore(path, allow_rollback=True, mutations=mutations)
+    steps.append({"step": "rollback_without_reason", "result": s2.rollback("FILES_AUTHORITATIVE", "")})
+    steps.append({"step": "rollback_two_states_at_once", "result": s2.rollback("FROZEN", "drill")})
+
+    s3 = co.LadderStore(path, allow_rollback=True, mutations=mutations, portion_id="AUP-MIG-016:drill")
+    steps.append({"step": "rollback", "result": s3.rollback(
+        "FILES_AUTHORITATIVE", "drill: prove the dark-launch transition is reversible")})
+    rollback_journal = list(s3.journal)
+    after = json.loads(path.read_text())
+    s4 = co.LadderStore(path, allow_rollback=True, mutations=mutations)
+    steps.append({"step": "rollback_again", "result": s4.rollback("FILES_AUTHORITATIVE", "drill")})
+
+    # a second ladder, driven above the dark-launch band, where the rollback must refuse
+    deep_path = root / "deep-state.json"
+    d0 = co.LadderStore(deep_path, allow_advance=True, allow_rollback=True, mutations=mutations)
+    d0.initialise("AUP-MIG-016", "sse-drill", 8)
+    d0.advance("SHADOW_PROJECTION", PASS_GATE)
+    d0.advance("FROZEN", dict(PASS_GATE, target_state="FROZEN"))
+    d1 = co.LadderStore(deep_path, allow_rollback=True, mutations=mutations)
+    steps.append({"step": "rollback_from_above_the_dark_launch_band",
+                  "result": d1.rollback("SHADOW_PROJECTION", "drill")})
+    deep_after = json.loads(deep_path.read_text())
+
+    outcomes = {
+        "rollback_without_enable_flag_accepted": bool(steps[2]["result"].get("rolled_back")),
+        "rollback_without_reason_accepted": bool(steps[3]["result"].get("rolled_back")),
+        "rollback_two_states_at_once_accepted": bool(steps[4]["result"].get("rolled_back")),
+        "rollback_accepted": bool(steps[5]["result"].get("rolled_back")),
+        "rollback_again_accepted": bool(steps[6]["result"].get("rolled_back")),
+        "beyond_dark_launch_accepted": bool(steps[7]["result"].get("rolled_back")),
+        "state_after_rollback": after["state"],
+        "state_after_deep_refusal": deep_after["state"],
+        "history_entries": len(after.get("history", [])),
+        "transition_receipt_kept": (root / "transition-01-SHADOW_PROJECTION.json").exists(),
+        "rollback_receipt_written": (root / "rollback-01-SHADOW_PROJECTION-to-FILES_AUTHORITATIVE.json").exists(),
+    }
+    mismatches: List[str] = []
+    if outcomes["rollback_without_enable_flag_accepted"] and "N16_rollback_without_enable_flag" not in mutations:
+        mismatches.append("a rollback was applied although the card did not enable it")
+    if steps[2]["result"].get("reason_code") not in ("ROLLBACK_NOT_ENABLED",) \
+            and "N16_rollback_without_enable_flag" not in mutations:
+        mismatches.append(f"unexpected refusal reason {steps[2]['result'].get('reason_code')}")
+    if outcomes["rollback_without_reason_accepted"]:
+        mismatches.append("a rollback without a durable reason was applied")
+    if outcomes["rollback_two_states_at_once_accepted"]:
+        mismatches.append("a rollback skipping a state was applied")
+    if not outcomes["rollback_accepted"]:
+        mismatches.append(f"the enabled rollback was refused: {steps[5]['result']}")
+    if outcomes["rollback_again_accepted"]:
+        mismatches.append("a repeated rollback below the baseline was accepted")
+    if outcomes["beyond_dark_launch_accepted"] and "N18_rollback_beyond_dark_launch" not in mutations:
+        mismatches.append("a rollback above the dark-launch band was applied")
+    if outcomes["state_after_rollback"] != "FILES_AUTHORITATIVE":
+        mismatches.append(f"state after the rollback is {outcomes['state_after_rollback']}")
+    if outcomes["state_after_deep_refusal"] != "FROZEN" and "N18_rollback_beyond_dark_launch" not in mutations:
+        mismatches.append("the refused rollback moved the deep ladder anyway")
+    if outcomes["history_entries"] != 3:
+        mismatches.append(f"the ladder history has {outcomes['history_entries']} entries, expected 3 "
+                          "(append-only: init, forward, backward)")
+    if not outcomes["transition_receipt_kept"]:
+        mismatches.append("the rollback deleted the transition receipt")
+    if not outcomes["rollback_receipt_written"]:
+        mismatches.append("no CutoverRollbackReceipt/v1 was written")
+    # the reversal returns the ladder to the *same* state document, history and timestamps aside
+    ignore = ("history", "updated_at_utc")
+    if {k: v for k, v in after.items() if k not in ignore} != \
+            {k: v for k, v in state_at_baseline.items() if k not in ignore}:
+        mismatches.append("the rolled-back state document differs from the baseline beyond its history")
+    return {"steps": steps, "outcomes": outcomes, "rollback_journal": rollback_journal,
+            "state_file": after, "mismatches": mismatches, "verdict": "PASS" if not mismatches else "FAIL"}
 
 
 # ------------------------------------------------------------------ gate evaluation (live + fixture)
@@ -637,6 +737,55 @@ def selftest(as_json: bool = True) -> int:
     }
     ok &= req("mutant_killed:N14_derived_marker_ignores_in_place_rewrite@derived_marker_fixture", killed_n14)
     ok &= req("mutant_killed:N15_derived_marker_stale_accepted@derived_marker_fixture", killed_n15)
+
+    # 6d. the ladder rollback (COORD1): the way back, its four refusals and its three mutants
+    with tempfile.TemporaryDirectory(prefix="mig016-coord1-rollback-") as td:
+        rb_ref = ladder_rollback(Path(td) / "ref")
+        rb_mut = {m: ladder_rollback(Path(td) / f"mut-{m}", frozenset([m])) for m in ROLLBACK_MUTANTS}
+    ref_journal_viol = go.evaluate({"card": "coord1-drill", "ladder_journal": rb_ref["rollback_journal"]})
+    report["ladder_rollback"] = {"outcomes": rb_ref["outcomes"], "mismatches": rb_ref["mismatches"],
+                                 "verdict": rb_ref["verdict"],
+                                 "refusals": {st["step"]: st["result"].get("reason_code")
+                                              for st in rb_ref["steps"] if not st["result"].get("rolled_back")
+                                              and st["step"].startswith("rollback")},
+                                 "gate_oracle_violations": ref_journal_viol}
+    ok &= req("ladder_rollback_reversible_and_refusing", rb_ref["verdict"] == "PASS")
+    ok &= req("ladder_rollback_journal_oracle_clean", not ref_journal_viol)
+    for m in ROLLBACK_MUTANTS:
+        run = rb_mut[m]
+        rules = {v["rule"] for v in go.evaluate({"card": "coord1-drill", "ladder_journal": run["rollback_journal"]})}
+        rules -= {v["rule"] for v in ref_journal_viol}
+        changed = [k for k, v in run["outcomes"].items() if rb_ref["outcomes"].get(k) != v]
+        killed_by = sorted(rules) + [f"outcome:{k}" for k in changed]
+        mutants[m] = {"harness": "ladder rollback drill (reference run vs mutant: refusal outcomes + "
+                                 "gate-oracle G01 over the rollback invocation's own journal)",
+                      "killed": bool(killed_by), "killed_by": killed_by, "description": co.MUTATIONS[m]}
+        kill_g[m] = rules
+        ok &= req(f"mutant_killed:{m}@ladder_rollback", killed_by)
+
+    # 6e. the rollback rehearsal (COORD1): it must prove the way back without being the way back
+    with tempfile.TemporaryDirectory(prefix="mig016-coord1-rehearse-") as td:
+        rp = Path(td) / "state.json"
+        st = co.LadderStore(rp, allow_advance=True, portion_id="AUP-MIG-016:drill")
+        baseline_rehearsal = None
+        st.initialise("AUP-MIG-016", "sse-drill", 8)
+        baseline_rehearsal = co.rehearse_rollback(rp, "AUP-MIG-016:drill", "selftest: nothing to roll back")
+        st.advance("SHADOW_PROJECTION", PASS_GATE)
+        before_digest = gt.sha256_file(rp)
+        reh = co.rehearse_rollback(rp, "AUP-MIG-016:drill", "selftest")
+        after_digest = gt.sha256_file(rp)
+        source_state_after = json.loads(rp.read_text())["state"]
+    report["rollback_rehearsal"] = {"verdict": reh["verdict"], "checks": reh["checks"],
+                                    "failed_checks": reh["failed_checks"],
+                                    "source_state_after": source_state_after,
+                                    "at_baseline": {"verdict": baseline_rehearsal["verdict"],
+                                                    "reason_code": baseline_rehearsal.get("reason_code")}}
+    ok &= req("rollback_rehearsal_passes_on_a_real_transition", reh["verdict"] == "PASS")
+    ok &= req("rollback_rehearsal_leaves_the_source_ladder_alone",
+              before_digest == after_digest and source_state_after == "SHADOW_PROJECTION")
+    ok &= req("rollback_rehearsal_at_the_baseline_is_not_measured",
+              baseline_rehearsal["verdict"] == "NOT_MEASURED"
+              and baseline_rehearsal.get("reason_code") == "LADDER_AT_BASELINE")
 
     report["mutation_battery"] = {"mutants": mutants, "killed": sum(1 for x in mutants.values() if x["killed"]),
                                   "total": len(mutants)}
