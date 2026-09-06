@@ -10,7 +10,7 @@ and host-activation backends are interfaces with a simulated implementation only
 
 | file | role |
 |---|---|
-| `coordinator.py` | the two machines and the CLI: the durable **ladder** (`receipts/cutover/state.json`, DEC-AUP-0012) and the crash-safe **window** (`QUIESCING → … → COMPLETE`, AUP-E25), plus the vocabulary map and the 28 switchable mutants |
+| `coordinator.py` | the two machines and the CLI: the durable **ladder** (`receipts/cutover/state.json`, DEC-AUP-0012) and the crash-safe **window** (`QUIESCING → … → COMPLETE`, AUP-E25), plus the vocabulary map and the 30 switchable mutants |
 | `gates.py` | one evidence evaluator per ladder transition, tri-valued (`PASS` / `BLOCK` / `NOT_MEASURED`), read-only over `receipts/` |
 | `backends.py` | `FenceBackend`, `LeaseBackend`, `HostActivationBackend`, `BarrierStore` + the simulated implementations; `ProductionCutoverBarrier/v1` and its schema-distinctness proof against the DAT-018 `CandidateBarrierReceipt` |
 | `gate_oracle.py` | the independent oracle of everything this card adds (rules `G01..G10`); shares no code with `coordinator.py` |
@@ -78,9 +78,10 @@ scenario per phase for it (120 reused + 8 = 128).
   the receipt and the state write, and finishes that transition on resume — exactly once;
 * the live gates over the program's real receipts produce no oracle violation, and a fixture in which
   the measurable requirements pass reads `NOT_MEASURED`, never `PASS`;
-* every one of the 28 mutants is killed and every one of the 28 oracle rules fires on some mutant (two
-  of the 28 mutants — the delta-batch checklist normaliser's, COORD-FIX0 — are killed by a dedicated
-  fixture comparison, not by the shared gate oracle: see `gates.py::_delta_batch`);
+* every one of the 30 mutants is killed and every one of the 28 oracle rules fires on some mutant (four
+  of the 30 mutants — the delta-batch checklist normaliser's, COORD-FIX0, and the derived-marker
+  requirement's, SHADOW-MARKER0 — are killed by a dedicated fixture comparison, not by the shared gate
+  oracle: see `gates.py::_delta_batch` / `gates.py::_derived_marker`);
 * the selftest's own negative controls go red.
 
 ## Not measured here

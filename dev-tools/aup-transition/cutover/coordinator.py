@@ -154,6 +154,8 @@ MUTATIONS = {
     "N11_receipt_regenerated_on_resume": "a transition receipt is regenerated (non-deterministically) on resume",
     "N12_delta_checklist_list_shape_dropped": gt.GATE_MUTATIONS["N12_delta_checklist_list_shape_dropped"],
     "N13_delta_checklist_mismatch_ignored": gt.GATE_MUTATIONS["N13_delta_checklist_mismatch_ignored"],
+    "N14_derived_marker_ignores_in_place_rewrite": gt.GATE_MUTATIONS["N14_derived_marker_ignores_in_place_rewrite"],
+    "N15_derived_marker_stale_accepted": gt.GATE_MUTATIONS["N15_derived_marker_stale_accepted"],
 }
 
 
