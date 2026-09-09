@@ -470,10 +470,9 @@ pub fn run_kb_read(query: String) -> i32 {
                 return 1;
             }
         };
-        let audit_dir: PathBuf = xdg::BaseDirectories::with_prefix("arcana").map_or_else(
-            |_| PathBuf::from(".arcana-state"),
-            |base| base.get_state_home(),
-        );
+        let audit_dir: PathBuf = xdg::BaseDirectories::with_prefix("arcana")
+            .get_state_home()
+            .unwrap_or_else(|| PathBuf::from(".arcana-state"));
         let interrupt = crate::interrupt::Interrupt::install();
         let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
         let result =
