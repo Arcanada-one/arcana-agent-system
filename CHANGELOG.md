@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RuleLayer::xdg_user_path()` now returns `Option<PathBuf>` directly instead
   of `Result<PathBuf, xdg::BaseDirectoriesError>`, matching how its three
   callers already used it (`.ok()`).
+- **rmcp 3.2.** Upgraded from 2.2.0. `model::Meta` was renamed to
+  `model::MetaObject`, and `ServerHandler::call_tool` now returns
+  `CallToolResponse` (an enum covering complete/task/input-required outcomes)
+  instead of `CallToolResult` directly. Converted at the trait boundary via
+  the provided `From<CallToolResult>` impl; internal helpers still return
+  `CallToolResult` unchanged.
 
 ## [0.2.0] - unreleased
 
