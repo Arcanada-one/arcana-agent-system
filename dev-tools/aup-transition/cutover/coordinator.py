@@ -152,6 +152,8 @@ MUTATIONS = {
     "N09_not_measured_counts_as_pass": gt.GATE_MUTATIONS["N09_not_measured_counts_as_pass"],
     "N10_gate_omits_missing_receipts": gt.GATE_MUTATIONS["N10_gate_omits_missing_receipts"],
     "N11_receipt_regenerated_on_resume": "a transition receipt is regenerated (non-deterministically) on resume",
+    "N12_delta_checklist_list_shape_dropped": gt.GATE_MUTATIONS["N12_delta_checklist_list_shape_dropped"],
+    "N13_delta_checklist_mismatch_ignored": gt.GATE_MUTATIONS["N13_delta_checklist_mismatch_ignored"],
 }
 
 
