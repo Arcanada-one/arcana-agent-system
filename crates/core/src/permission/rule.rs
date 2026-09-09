@@ -135,13 +135,11 @@ impl RuleLayer {
 
     /// Resolve the canonical user-level path via XDG.
     ///
-    /// # Errors
-    ///
-    /// Propagates the underlying `xdg::BaseDirectoriesError` when the
-    /// XDG layout cannot be initialised (e.g. unreadable `$HOME`).
-    pub fn xdg_user_path() -> Result<PathBuf, xdg::BaseDirectoriesError> {
-        let base = xdg::BaseDirectories::with_prefix("arcana")?;
-        Ok(base.get_config_file("permissions.toml"))
+    /// Returns `None` when the XDG layout cannot be resolved (e.g. no
+    /// writable `$XDG_CONFIG_HOME`).
+    #[must_use]
+    pub fn xdg_user_path() -> Option<PathBuf> {
+        xdg::BaseDirectories::with_prefix("arcana").get_config_file("permissions.toml")
     }
 
     fn match_tool(&self, tool: &str, input: &Value) -> Option<LayerDecision> {

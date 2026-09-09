@@ -28,10 +28,9 @@ const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
 
 /// Resolve the XDG state directory (the audit sink), mirroring the CLI.
 fn state_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("arcana").map_or_else(
-        |_| PathBuf::from(".arcana-state"),
-        |base| base.get_state_home(),
-    )
+    xdg::BaseDirectories::with_prefix("arcana")
+        .get_state_home()
+        .unwrap_or_else(|| PathBuf::from(".arcana-state"))
 }
 
 /// Serve the default production server over stdio until the peer disconnects.
