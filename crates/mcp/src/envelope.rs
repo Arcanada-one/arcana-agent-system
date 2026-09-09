@@ -7,7 +7,7 @@
 //! and the `_meta` fast-flags — so a plain MCP client still parses `content`
 //! while an arcana-aware client reads the structured extension.
 
-use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Meta};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, MetaObject};
 use serde_json::{Value, json};
 
 /// Status of a capability attempt as seen at the MCP boundary.
@@ -69,13 +69,13 @@ fn structured(
 }
 
 /// Build the `_meta` fast-routing flags.
-fn fast_meta(status: EnvelopeStatus, token: Option<&str>) -> Meta {
+fn fast_meta(status: EnvelopeStatus, token: Option<&str>) -> MetaObject {
     let mut obj = JsonObject::new();
     obj.insert("arcana.status".to_owned(), json!(status.as_str()));
     if let Some(token) = token {
         obj.insert("arcana.interaction_token".to_owned(), json!(token));
     }
-    Meta(obj)
+    MetaObject(obj)
 }
 
 /// Completed call: `content` carries the tool output, `effective_args` the
