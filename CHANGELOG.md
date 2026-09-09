@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata, when it exceeds the 1 MiB UTF-8 byte cap, or when it exceeds Model
   Connector's own 100,000 UTF-16-code-unit limit.
 
+### Changed
+- **sha2 0.11.** Upgraded from 0.10.9. `Sha256::digest` now returns
+  `digest::Array`, which no longer implements `LowerHex`; hex-formatting
+  call sites format the digest bytes manually instead of via `{:x}`.
+
 ## [0.2.0] - unreleased
 
 Publication deferred on 2026-09-03: the agent is being substantially reworked
