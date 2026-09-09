@@ -98,7 +98,7 @@ impl ArcanaMcpServer {
                 .register(tool.clone())
                 .map_err(|err| AssembleError::Dispatch(err.to_string()))?;
         }
-        let user_rules = RuleLayer::xdg_user_path().ok();
+        let user_rules = RuleLayer::xdg_user_path();
         let rule_layer = RuleLayer::load(user_rules.as_deref(), Some(project_rules))?;
         let upstream: Vec<Arc<dyn PermissionLayer>> = vec![
             Arc::new(SchemaLayer::new(Arc::new(schema_dispatcher))),
