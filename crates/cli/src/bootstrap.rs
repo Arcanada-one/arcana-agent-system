@@ -91,10 +91,9 @@ impl Bootstrap {
 /// # Errors
 /// See [`assemble_at`].
 pub fn assemble() -> Result<Bootstrap, BootstrapError> {
-    let state_dir = xdg::BaseDirectories::with_prefix("arcana").map_or_else(
-        |_| PathBuf::from(".arcana-state"),
-        |base| base.get_state_home(),
-    );
+    let state_dir = xdg::BaseDirectories::with_prefix("arcana")
+        .get_state_home()
+        .unwrap_or_else(|| PathBuf::from(".arcana-state"));
     let project_rules_path = PathBuf::from(PROJECT_RULES_RELATIVE);
     assemble_at(&state_dir, &project_rules_path)
 }
@@ -120,7 +119,7 @@ pub fn assemble_at(
     let _ = dispatcher.register(Arc::new(WhoamiProbe));
     let dispatcher = Arc::new(dispatcher);
 
-    let user_rules_path = RuleLayer::xdg_user_path().ok();
+    let user_rules_path = RuleLayer::xdg_user_path();
     let rule_layer = RuleLayer::load(user_rules_path.as_deref(), Some(project_rules_path))?;
 
     let interactive: Arc<dyn PermissionLayer> = if std::io::stdin().is_terminal() {

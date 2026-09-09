@@ -44,10 +44,9 @@ const FALLBACK_STATE_DIR: &str = ".arcana-state";
 /// race between concurrent sessions: an earlier revision of this module used
 /// one, and ten parallel integration tests promptly raced on it.
 fn audit_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("arcana").map_or_else(
-        |_| PathBuf::from(FALLBACK_STATE_DIR),
-        |base| base.get_state_home(),
-    )
+    xdg::BaseDirectories::with_prefix("arcana")
+        .get_state_home()
+        .unwrap_or_else(|| PathBuf::from(FALLBACK_STATE_DIR))
 }
 
 /// Connector id recorded on interactive turns.

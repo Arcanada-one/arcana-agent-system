@@ -143,10 +143,9 @@ pub struct ModelPreference {
 /// Where the choice is stored: the per-user XDG state home, beside the audit
 /// log and credentials.
 fn state_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("arcana").map_or_else(
-        |_| PathBuf::from(".arcana-state"),
-        |base| base.get_state_home(),
-    )
+    xdg::BaseDirectories::with_prefix("arcana")
+        .get_state_home()
+        .unwrap_or_else(|| PathBuf::from(".arcana-state"))
 }
 
 #[must_use]
