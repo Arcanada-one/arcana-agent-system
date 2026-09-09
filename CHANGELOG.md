@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`arcana demo --first-dispatch-prompt-stdin`.** The exact prompt for a
+  measured live first dispatch can now be handed to the demo on stdin instead
+  of argv, so a baseline or compiled corpus prompt never appears in a process
+  listing. The prompt is carried through the driver as a bounded, redacted
+  type, applied only to the first `ModelConnector::execute` request (later
+  tool-loop turns keep the ordinary history-derived prompt), and redacted again
+  at the downstream request `Debug` boundary. It is rejected before any
+  connector I/O when it arrives without the paired first-dispatch measurement
+  metadata, when it exceeds the 1 MiB UTF-8 byte cap, or when it exceeds Model
+  Connector's own 100,000 UTF-16-code-unit limit.
+
 ## [0.2.0] - unreleased
 
 Publication deferred on 2026-09-03: the agent is being substantially reworked
