@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **sha2 0.11.** Upgraded from 0.10.9. `Sha256::digest` now returns
   `digest::Array`, which no longer implements `LowerHex`; hex-formatting
   call sites format the digest bytes manually instead of via `{:x}`.
+- **xdg 3.0.** Upgraded from 2.5.2. `BaseDirectories::with_prefix` is now
+  infallible, and `get_state_home`/`get_config_file` return `Option<PathBuf>`
+  instead of an unconditional `PathBuf`. Updated every call site;
+  `RuleLayer::xdg_user_path()` now returns `Option<PathBuf>` directly instead
+  of `Result<PathBuf, xdg::BaseDirectoriesError>`, matching how its three
+  callers already used it (`.ok()`).
 
 ## [0.2.0] - unreleased
 

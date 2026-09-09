@@ -269,10 +269,8 @@ const FALLBACK_STATE_DIR: &str = ".arcana-state";
 #[must_use]
 pub fn demo_audit_dir() -> PathBuf {
     xdg::BaseDirectories::with_prefix("arcana")
-        .map_or_else(
-            |_| PathBuf::from(FALLBACK_STATE_DIR),
-            |base| base.get_state_home(),
-        )
+        .get_state_home()
+        .unwrap_or_else(|| PathBuf::from(FALLBACK_STATE_DIR))
         .join(DEMO_AUDIT_DIR)
 }
 
@@ -307,7 +305,7 @@ fn interactive_cascade() -> PermissionCascade {
         vec![Arc::new(SchemaLayer::new(Arc::new(schema_dispatcher)))];
 
     match RuleLayer::load(
-        RuleLayer::xdg_user_path().ok().as_deref(),
+        RuleLayer::xdg_user_path().as_deref(),
         Some(Path::new(PROJECT_RULES_RELATIVE)),
     ) {
         Ok(rules) => layers.push(Arc::new(rules)),
