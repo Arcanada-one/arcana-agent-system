@@ -18,6 +18,7 @@
 //! non-panicking outcome, never a silent empty proposal.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use arcana_connectors::auth_arcana::{AuthTokenError, BearerTokenProvider};
@@ -201,7 +202,11 @@ async fn live_production_skill_discover_and_exact_fetch() {
     // ---- locally computed SHA-256 trust anchor ----
     let expected_hash = {
         let digest = Sha256::digest(ARTIFACT_BYTES);
-        format!("sha256:{digest:x}")
+        let hex = digest.iter().fold(String::new(), |mut hex, b| {
+            let _ = write!(hex, "{b:02x}");
+            hex
+        });
+        format!("sha256:{hex}")
     };
 
     // ---- build client with restrictive credential-file checks ----
