@@ -134,6 +134,11 @@ class Requirement:
     receipt_class: str
     producer: str            # the card / decision that has to mint the evidence
     check: Callable[[EvidenceIndex], Tuple[str, Optional[str], Dict[str, Any]]]
+    #: further receipt classes the check reads besides its primary one (COORD1). `receipt_class`
+    #: names what the requirement is *about*; a check that cross-checks a second class (E1.3 reads
+    #: the audit and the shadow receipts it must not be stale against) names it here, so the list of
+    #: evidence a transition rested on is complete rather than only representative.
+    also_reads: Tuple[str, ...] = ()
 
 
 def _refs(docs: List[Doc], limit: int = 12) -> List[Dict[str, Any]]:
@@ -570,7 +575,9 @@ GATES: List[Dict[str, Any]] = [
             Requirement("E1.2", "are there two identical ProjectionParity/v1 receipts ≥ 1 h apart?",
                         "ProjectionParity/v1", "PROJ-SHADOW1", _parity_pairs),
             Requirement("E1.3", "is the derived-row marker rule audited per row?",
-                        "ShadowProjectionReceipt/v1", "PROJ-SHADOW1 / PROJ-RULE0", _derived_marker),
+                        "DerivedMarkerAudit/v1",
+                        "AUP-MIG-016 shadow-marker0 (tools/projection/marker_audit.py)", _derived_marker,
+                        also_reads=("ShadowProjectionReceipt/v1",)),
         ],
     },
     {
@@ -687,6 +694,39 @@ def evaluate_gate(target_state: str, idx: EvidenceIndex, mutations: frozenset = 
         "checks": checks,
         "evidence_index": idx.summary(),
     }
+
+
+def relied_on_refs(gate: Dict[str, Any], idx: EvidenceIndex) -> List[Dict[str, Any]]:
+    """AUP-MIG-016 `coord1`: the *complete* list of receipts a gate verdict rests on, with digests —
+    every indexed document of every receipt class the gate's requirements name, not the truncated
+    `present` sample a check embeds for readability. A transition receipt carries this list so the
+    transition can be re-checked later against the exact bytes that authorised it.
+
+    `_refs` caps its sample at 12 documents; this function never samples, and states per class how
+    many documents it found, so a reader can tell a complete list from a truncated one (I4)."""
+    by_id = {r.id: r for g in GATES for r in g["requirements"]}
+    out: List[Dict[str, Any]] = []
+    for check in gate.get("checks", []):
+        req = by_id.get(check.get("id"))
+        classes = [c for c in ([check.get("receipt_class")] + list(req.also_reads if req else ()))
+                   if isinstance(c, str)]
+        refs: List[Dict[str, Any]] = []
+        seen = set()
+        for cls in classes:
+            for d in idx.of(cls):
+                if d.path in seen:
+                    continue
+                seen.add(d.path)
+                refs.append(dict(d.ref(), receipt_class=cls))
+        out.append({
+            "check_id": check.get("id"),
+            "receipt_classes": classes,
+            "verdict": check.get("verdict"),
+            "documents_found": len(refs),
+            "sampled": False,
+            "refs": refs,
+        })
+    return out
 
 
 def evaluate_all(idx: EvidenceIndex, mutations: frozenset = frozenset()) -> List[Dict[str, Any]]:
