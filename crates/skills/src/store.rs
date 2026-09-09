@@ -343,8 +343,7 @@ impl BlakeCache {
     /// Returns an [`std::io::Error`] if the XDG base directories cannot be
     /// resolved or the cache directory cannot be created.
     pub fn open() -> std::io::Result<Self> {
-        let base =
-            xdg::BaseDirectories::with_prefix("arcana/skills").map_err(std::io::Error::other)?;
+        let base = xdg::BaseDirectories::with_prefix("arcana/skills");
         let root = base.create_cache_directory("blake3")?;
         Ok(Self { root })
     }

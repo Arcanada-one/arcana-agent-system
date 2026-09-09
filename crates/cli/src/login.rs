@@ -108,10 +108,9 @@ fn issuer() -> String {
 /// Directory credentials live in: the per-user XDG state home, the same place
 /// the interactive session writes its audit log.
 fn state_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("arcana").map_or_else(
-        |_| PathBuf::from(".arcana-state"),
-        |base| base.get_state_home(),
-    )
+    xdg::BaseDirectories::with_prefix("arcana")
+        .get_state_home()
+        .unwrap_or_else(|| PathBuf::from(".arcana-state"))
 }
 
 /// Path of the credential file.
