@@ -1,6 +1,7 @@
 //! Permissioned local IPC and scoped provider adapter.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -666,7 +667,12 @@ fn fingerprint_request(
         &request.payload,
     ))
     .map_err(|error| format!("fingerprint request: {error}"))?;
-    Ok(RequestFingerprint(format!("{:x}", Sha256::digest(encoded))))
+    let digest = Sha256::digest(encoded);
+    let hex = digest.iter().fold(String::new(), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    });
+    Ok(RequestFingerprint(hex))
 }
 
 impl Adapter {

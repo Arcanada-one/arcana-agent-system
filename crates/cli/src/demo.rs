@@ -28,6 +28,7 @@
 //! [`ModelConnectorClient`](arcana_connectors::ModelConnectorClient) when
 //! `ARCANA_MC_TOKEN` is present, and falls back to the offline path otherwise.
 
+use std::fmt::Write as _;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -645,7 +646,11 @@ fn canonical_receipt_digest(value: &Value) -> Result<String, String> {
     object.remove("receiptDigestSha256");
     let encoded = serde_json_canonicalizer::to_vec(&claims)
         .map_err(|_| "canonicalization failed".to_owned())?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
+    let digest = Sha256::digest(encoded);
+    Ok(digest.iter().fold(String::new(), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    }))
 }
 
 fn validated_observation(
