@@ -274,13 +274,14 @@ impl ServerHandler for ArcanaMcpServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
         let input = Value::Object(request.arguments.unwrap_or_default());
-        if request.name == RESUME_TOOL {
+        let result = if request.name == RESUME_TOOL {
             self.handle_resume(&input).await
         } else {
             self.handle_capability(&request.name, input).await
-        }
+        };
+        result.map(Into::into)
     }
 }
 
