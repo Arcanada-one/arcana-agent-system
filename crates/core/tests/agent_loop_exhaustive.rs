@@ -17,8 +17,11 @@
 
 use arcana_core::agent_loop::{ContinueReason, TerminalReason, TurnOutcome};
 
-const CONTINUE_VARIANTS: usize = 6;
-const TERMINAL_VARIANTS: usize = 8;
+const CONTINUE_VARIANTS: usize = 7;
+// Was 8 while the enum had 9 variants, and the `all` array below simply left
+// `AuditFatal` out — a test named "exhaustive" that had stopped being so. Both
+// are corrected here rather than only extended for `NoAction`.
+const TERMINAL_VARIANTS: usize = 10;
 
 fn classify_continue(reason: ContinueReason) -> &'static str {
     match reason {
@@ -28,6 +31,7 @@ fn classify_continue(reason: ContinueReason) -> &'static str {
         ContinueReason::CollapseDrainRetry => "collapse_drain_retry",
         ContinueReason::HookContinuation => "hook_continuation",
         ContinueReason::MicrocompactCompleted => "microcompact_completed",
+        ContinueReason::NoActionRetry => "no_action_retry",
     }
 }
 
@@ -42,6 +46,7 @@ fn classify_terminal(reason: TerminalReason) -> &'static str {
         TerminalReason::ContextWindowExhausted => "context_window_exhausted",
         TerminalReason::ConnectorFatal => "connector_fatal",
         TerminalReason::AuditFatal => "audit_fatal",
+        TerminalReason::NoAction => "no_action",
     }
 }
 
@@ -61,6 +66,7 @@ fn all_continue_variants_are_distinct() {
         ContinueReason::CollapseDrainRetry,
         ContinueReason::HookContinuation,
         ContinueReason::MicrocompactCompleted,
+        ContinueReason::NoActionRetry,
     ];
     assert_eq!(all.len(), CONTINUE_VARIANTS);
 
@@ -81,6 +87,8 @@ fn all_terminal_variants_are_distinct() {
         TerminalReason::PermissionDenied,
         TerminalReason::ContextWindowExhausted,
         TerminalReason::ConnectorFatal,
+        TerminalReason::AuditFatal,
+        TerminalReason::NoAction,
     ];
     assert_eq!(all.len(), TERMINAL_VARIANTS);
 

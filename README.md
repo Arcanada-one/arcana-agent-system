@@ -113,7 +113,8 @@ arcana run --cwd DIR --prompt-stdin
                           #   (read/write/edit/grep/shell), confined to DIR by
                           #   policy instead of by an interactive prompt.
                           #   Always live; last stdout line is the done-marker
-                          #   ARCANA_RUN_DONE <json>
+                          #   ARCANA_RUN_DONE <json>, which reports tool_calls
+                          #   and is never completed:true with zero of them
 arcana mcp serve [--bind 127.0.0.1:PORT]
                           # expose the capability core as an MCP server
                           #   (stdio by default; --bind starts a loopback-only
@@ -151,6 +152,12 @@ Run `arcana --help` for the full command reference.
   reach outside the working directory. Run it in a disposable checkout.
 - `arcana run` has no offline mode and registers no network-reaching tool
   (`webfetch`, `arcana_search`, `model_call` are all absent from it).
+- `arcana run` judges a run by executed tool calls, not by what the model
+  says. A run that ends without one is `NoAction` — `completed:false`, exit
+  `1` — even when the model's answer claims the work is done. The consequence
+  is that a task genuinely needing no change must still prove it with a tool
+  call (read the file, grep the tree); prose alone cannot end a run
+  successfully.
 - `mc-ping` is a hidden debug surface, not a supported command.
 
 ## Documentation

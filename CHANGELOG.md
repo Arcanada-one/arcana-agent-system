@@ -26,6 +26,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   encoding, and no surface had ever told a model so. `run` states the wire
   format and the tool catalogue in its system prompt, built from the tools
   that are actually registered.
+
+  The marker carries `tool_calls` — the number of tool calls the executor
+  actually carried out — and a run that executed none of them is `NoAction`:
+  `"completed":false`, exit `1`. Told in plain language to create a file, a
+  model answered `The file has been created successfully.` in a single turn,
+  called nothing, created nothing, and the run reported `"completed":true` and
+  exited `0`. Judging a run by its own sentence was the last way this command
+  could still hand a runner a receipt for work nobody did.
+- **The loop asks once for an action.** When a run that requires an action gets
+  a first answer with no tool call, the driver tells the model that nothing was
+  executed and asks it to act, buying exactly one more dispatch
+  (`ContinueReason::NoActionRetry`). Off by default — an interactive turn may
+  legitimately be a question answered in prose — and switched on by
+  `DriverConfig::require_action`, which `arcana run` sets.
+
+  Measured, 10 live runs per arm, same prompt and same model
+  (`deepseek-v4-flash`), judged by the file on disk: **without** the nudge 4/10
+  runs produced the file, and all 6 that did not reported `"completed":false`
+  with `"tool_calls":0` and exit `1` — honest, but a 40% success rate.
+  **With** it, 10/10 produced the file; the nudge fired in 5 of those 10 and
+  the model acted every time. The verdict alone stops the lie; the nudge is
+  what makes the command usable.
 - **Explicit workspace roots for the built-in tools.** `ReadTool`,
   `WriteTool` and `EditTool` gain `with_root`, `GrepTool` gains `with_root`
   and `BashTool` gains `in_directory`. Each still defaults to the process

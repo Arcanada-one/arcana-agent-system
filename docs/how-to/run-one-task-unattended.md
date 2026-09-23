@@ -36,17 +36,47 @@ work that never happened.
 The last line of stdout is always the done-marker:
 
 ```
-ARCANA_RUN_DONE {"completed":true,"reason":"Completed","turns":3,"cost_usd_micros":59,"workspace":"/path/to/worktree","error":null}
+ARCANA_RUN_DONE {"completed":true,"reason":"Completed","turns":3,"tool_calls":2,"cost_usd_micros":59,"workspace":"/path/to/worktree","error":null}
 ```
 
 It is printed even when the run never started, so a runner never has to
 interpret its absence — which looks identical to a crash.
 
+| Field | Meaning |
+|-------|---------|
+| `completed` | The run did the work. Never `true` with `tool_calls` at `0`. |
+| `reason` | The terminal verdict (`Completed`, `NoAction`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
+| `turns` | Connector attempts consumed. |
+| `tool_calls` | Tool calls the executor **actually carried out**. Not intent: a call the policy refused, or one the model only described in prose, is not counted. |
+| `cost_usd_micros` | Spend for the run, in micro-USD. |
+
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | The run completed. `completed` is `true`. |
-| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`). |
+| `0` | The run completed and executed at least one tool call. `completed` is `true`. |
+| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`. |
 | `130` | The operator interrupted it. The spend line above the marker is what the interrupted dispatch cost. |
+
+### A run that claimed to have done the work
+
+`tool_calls` exists because a claim is not evidence. Asked in plain language to
+create a file, a model answered `The file has been created successfully.` in
+one turn, called no tool, created no file — and the run printed
+`"completed":true` and exited `0`. Three runs in five did this.
+
+Two things stop it now:
+
+* When the first answer contains no tool call, the loop tells the model once
+  that nothing was executed and asks it to act. This costs one extra dispatch
+  and recovers most such runs.
+* If the model still answers without acting, the run ends on `NoAction`:
+  `"completed":false`, exit `1`. The final text is still printed — it is paid
+  for — but it is not a verdict.
+
+A run that legitimately needs no change ("check whether X is true") must
+therefore still demonstrate it with a tool call, for example by reading the
+file it is reporting on. That is the intended trade: the command exists to
+change a working directory, and an unattended run that changed nothing and was
+read as success is the failure this whole surface is for.
 
 Every tool call, allowed or denied, is appended to the audit log named on the
 second line of stdout (`~/.local/state/arcana/run/audit.log`, mode 0600).

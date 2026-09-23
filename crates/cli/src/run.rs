@@ -34,7 +34,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arcana_core::agent_loop::{DriverConfig, RunOutput};
+use arcana_core::agent_loop::{DriverConfig, RunOutput, TerminalReason};
 use arcana_core::connector::ModelConnector;
 use arcana_core::cost::CostTracker;
 use arcana_core::dispatch::ModelPolicy;
@@ -181,6 +181,8 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
         config.model = Some(model);
     }
     config.system_prompt = Some(system_prompt(tools, root));
+    // Nobody reads the prose of a headless run, so prose alone cannot end it.
+    config.require_action = true;
     config
 }
 
@@ -371,6 +373,21 @@ block.",
     )
 }
 
+/// The marker's verdict for a run that reached the driver.
+///
+/// The driver already refuses to call a no-action run `Completed` — `run` sets
+/// [`DriverConfig::require_action`]. This says it a second time at the one line
+/// a runner reads, because that is where the damage happens: `"completed":true`
+/// beside `"tool_calls":0` is a receipt for work with no evidence that anything
+/// did it, and the marker must be unable to print that pair whatever the layer
+/// above decided.
+fn verdict(out: &RunOutput) -> (bool, String) {
+    if out.reason.is_success() && out.tool_calls == 0 {
+        return (false, format!("{:?}", TerminalReason::NoAction));
+    }
+    (out.reason.is_success(), format!("{:?}", out.reason))
+}
+
 /// Print the outcome, the done-marker, and return the exit code.
 fn report(out: &RunOutput, root: &Path) -> i32 {
     match out.final_text.as_deref() {
@@ -382,21 +399,30 @@ fn report(out: &RunOutput, root: &Path) -> i32 {
         "{}",
         crate::usage::turn_line(&spend, out.cost.total_cost_usd_micros)
     );
-    if !out.reason.is_success() {
-        eprintln!("arcana run: {} ({:?})", out.reason, out.reason);
+    let (completed, reason) = verdict(out);
+    if !completed {
+        eprintln!("arcana run: {} ({reason})", out.reason);
     }
     println!(
         "{DONE_MARKER} {}",
         done_marker_body(
-            out.reason.is_success(),
-            &format!("{:?}", out.reason),
+            completed,
+            &reason,
             out.turns,
+            out.tool_calls,
             out.cost.total_cost_usd_micros,
             root,
             None,
         )
     );
-    crate::interrupt::exit_code(out.reason)
+    let code = crate::interrupt::exit_code(out.reason);
+    // `exit_code` maps the driver's reason; a marker that says the run did not
+    // complete must never be paired with a `0` a wrapper script reads as go.
+    if code == 0 && !completed {
+        1
+    } else {
+        code
+    }
 }
 
 /// Report a run that never reached the driver, and return exit code `1`.
@@ -407,7 +433,7 @@ fn exit_failed(error: &str, root: &Path) -> i32 {
     eprintln!("arcana run: {error}");
     println!(
         "{DONE_MARKER} {}",
-        done_marker_body(false, "NotStarted", 0, 0, root, Some(error))
+        done_marker_body(false, "NotStarted", 0, 0, 0, root, Some(error))
     );
     1
 }
@@ -417,6 +443,7 @@ fn done_marker_body(
     completed: bool,
     reason: &str,
     turns: u32,
+    tool_calls: u32,
     cost_usd_micros: u64,
     root: &Path,
     error: Option<&str>,
@@ -425,6 +452,7 @@ fn done_marker_body(
         "completed": completed,
         "reason": reason,
         "turns": turns,
+        "tool_calls": tool_calls,
         "cost_usd_micros": cost_usd_micros,
         "workspace": root.display().to_string(),
         "error": error,
@@ -452,19 +480,67 @@ mod tests {
 
     #[test]
     fn the_done_marker_is_one_json_object_after_a_fixed_prefix() {
-        let body = done_marker_body(true, "Completed", 2, 59, Path::new("/tmp"), None);
+        let body = done_marker_body(true, "Completed", 2, 1, 59, Path::new("/tmp"), None);
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], true);
         assert_eq!(parsed["reason"], "Completed");
         assert_eq!(parsed["turns"], 2);
+        assert_eq!(parsed["tool_calls"], 1);
         assert_eq!(parsed["cost_usd_micros"], 59);
     }
 
     #[test]
     fn a_run_that_never_started_is_not_reported_as_completed() {
-        let body = done_marker_body(false, "NotStarted", 0, 0, Path::new("/tmp"), Some("boom"));
+        let body = done_marker_body(
+            false,
+            "NotStarted",
+            0,
+            0,
+            0,
+            Path::new("/tmp"),
+            Some("boom"),
+        );
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], false);
         assert_eq!(parsed["error"], "boom");
+    }
+
+    /// One `RunOutput` for the verdict tests; only the two fields it reads.
+    fn outcome(reason: TerminalReason, tool_calls: u32) -> RunOutput {
+        RunOutput {
+            reason,
+            final_text: Some("The file has been created successfully.".to_owned()),
+            turns: 1,
+            tool_calls,
+            cost: arcana_core::cost::CostTracker::new().snapshot(),
+            selected_models: Vec::new(),
+            first_dispatch_observation: None,
+        }
+    }
+
+    #[test]
+    fn a_completed_run_that_executed_nothing_is_not_reported_as_completed() {
+        // The live failure verbatim: one turn, zero tool calls, a confident
+        // sentence. Even if the layer below said `Completed`, the marker does
+        // not.
+        let (completed, reason) = verdict(&outcome(TerminalReason::Completed, 0));
+        assert!(!completed);
+        assert_eq!(reason, "NoAction");
+    }
+
+    #[test]
+    fn a_completed_run_with_an_executed_tool_call_is_reported_as_completed() {
+        // The green half: the same check must be able to say yes, or it is
+        // just a constant.
+        let (completed, reason) = verdict(&outcome(TerminalReason::Completed, 1));
+        assert!(completed);
+        assert_eq!(reason, "Completed");
+    }
+
+    #[test]
+    fn a_failure_keeps_its_own_reason_rather_than_becoming_no_action() {
+        let (completed, reason) = verdict(&outcome(TerminalReason::PermissionDenied, 0));
+        assert!(!completed);
+        assert_eq!(reason, "PermissionDenied");
     }
 }

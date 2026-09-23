@@ -42,13 +42,20 @@ message instead:
 
 | Code | Condition |
 |------|-----------|
-| `0` | The run reached `Completed`. |
-| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, or any non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `0` | The run reached `Completed` **and** executed at least one tool call. |
+| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
 | `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
 
 The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when
 the run never started — a runner reads the marker rather than interpreting its
 absence, which is indistinguishable from a crash.
+
+`NoAction` is its own verdict because the failure it names is invisible
+otherwise. Asked in plain language to create a file, a model answered `The file
+has been created successfully.` in one turn, called nothing, created nothing —
+and the run reported `"completed":true` and exited `0`. The marker now carries
+`tool_calls`, the number of tool calls the executor actually carried out, and
+`"completed":true` with `"tool_calls":0` cannot be printed.
 
 ### `mcp serve` exit codes
 
