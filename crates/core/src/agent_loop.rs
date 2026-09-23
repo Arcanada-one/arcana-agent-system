@@ -2428,3 +2428,171 @@ mod terminal_reason_tests {
         assert!(explained.contains("shorten"), "{explained}");
     }
 }
+
+/// Pins the *exact* recoverable-denial policy against every layer name a
+/// shipped cascade (or the executor itself) can hand to the agent loop as a
+/// denial.
+///
+/// The constant this checks is a fail-closed default: a name that is not on
+/// it is terminal. That is the safe direction, but it is also silent. A future
+/// edit could add `hook_bridge` or `rule` to the set and make an
+/// operator-owned refusal retryable without any test turning red. Measured on
+/// `92a4a7a`, before this test existed: adding `destructive_command_floor`
+/// broke three tests, adding `hook_bridge` or `rule` broke none.
+///
+/// The table below is that decision written down once: every name, the site
+/// that emits it, and whether folding it back to the model is intended. The
+/// set of recoverable names is compared against this table, not against a copy
+/// of the constant, so an edit on either side — in the constant or in the
+/// layer that produces the name — fails here.
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod recoverable_denial_layer_tests {
+    use super::{denial_is_recoverable, RECOVERABLE_DENIAL_LAYERS};
+
+    /// One layer name that can reach `denial_is_recoverable`.
+    struct EmittedLayer {
+        /// The exact string carried in `EvaluatedCapability::Denied::layer`.
+        name: &'static str,
+        /// Where the string is produced (or, for the executor's own literals,
+        /// where the denial is built).
+        emitted_at: &'static str,
+        /// Whether `denial_is_recoverable(name)` must be true.
+        recoverable: bool,
+    }
+
+    /// Every layer name the cascade can emit, and the decision for each.
+    ///
+    /// A name belongs here as soon as some code can hand it to the agent loop
+    /// as a denial: a `PermissionLayer::name`, the executor's `registry` or
+    /// `schema` literals, the fail-closed `cascade` tail, or the audited `hook`
+    /// abort. Marking a layer recoverable is a claim that a corrected call
+    /// exists; the operator-owned layers below are terminal because their
+    /// answer does not change on a retry, and retrying one is a probe of a
+    /// safety hook.
+    const EMITTED_LAYERS: &[EmittedLayer] = &[
+        EmittedLayer {
+            name: "schema",
+            emitted_at: "crates/core/src/execution.rs:146,154; permission/schema.rs:30",
+            recoverable: true,
+        },
+        EmittedLayer {
+            name: "registry",
+            emitted_at: "crates/core/src/execution.rs:143",
+            recoverable: true,
+        },
+        EmittedLayer {
+            name: "workspace_boundary",
+            emitted_at: "crates/cli/src/workspace.rs:486",
+            recoverable: true,
+        },
+        EmittedLayer {
+            name: "destructive_command_floor",
+            emitted_at: "crates/cli/src/workspace.rs:455",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "workspace_auto_allow",
+            emitted_at: "crates/cli/src/workspace.rs:517",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "hook_bridge",
+            emitted_at: "crates/core/src/permission/hook_bridge.rs:50",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "rule",
+            emitted_at: "crates/core/src/permission/rule.rs:169",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "interactive_auto",
+            emitted_at: "crates/core/src/permission/interactive.rs:84",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "interactive_readline",
+            emitted_at: "crates/cli/src/permission_prompt.rs:281",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "kb-read-canonical-input",
+            emitted_at: "crates/cli/src/kb_read.rs:252",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "kb-read-exact-allow",
+            emitted_at: "crates/cli/src/kb_read.rs:271",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "cascade",
+            emitted_at: "crates/core/src/permission/mod.rs:121; execution.rs:215",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "hook",
+            emitted_at: "crates/core/src/execution.rs:269",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "suspend",
+            emitted_at: "crates/mcp/src/suspend.rs:84",
+            recoverable: false,
+        },
+        EmittedLayer {
+            name: "mcp_proceed",
+            emitted_at: "crates/mcp/src/server.rs:325",
+            recoverable: false,
+        },
+    ];
+
+    #[test]
+    fn recoverable_denial_layers_are_exactly_pinned() {
+        // 1. Every name the cascade can emit has the decided answer.
+        for layer in EMITTED_LAYERS {
+            assert_eq!(
+                denial_is_recoverable(layer.name),
+                layer.recoverable,
+                "layer `{}` (emitted at {}) must be {} but `denial_is_recoverable` says {}",
+                layer.name,
+                layer.emitted_at,
+                if layer.recoverable {
+                    "recoverable"
+                } else {
+                    "terminal"
+                },
+                if denial_is_recoverable(layer.name) {
+                    "recoverable"
+                } else {
+                    "terminal"
+                },
+            );
+        }
+
+        // 2. The constant holds exactly the names this table marks recoverable:
+        //    not one fewer (a layer silently made terminal) and not one more
+        //    (a layer silently made retryable — the hole this test closes).
+        let mut actual: Vec<&str> = RECOVERABLE_DENIAL_LAYERS.to_vec();
+        actual.sort_unstable();
+        let mut expected: Vec<&str> = EMITTED_LAYERS
+            .iter()
+            .filter(|layer| layer.recoverable)
+            .map(|layer| layer.name)
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(
+            actual, expected,
+            "RECOVERABLE_DENIAL_LAYERS and the pinned table disagree"
+        );
+
+        // 3. The default stays closed: a name nobody decided on is terminal.
+        for unknown in ["", "Schema", "hook-bridge", "no_such_layer"] {
+            assert!(
+                !denial_is_recoverable(unknown),
+                "unknown layer `{unknown}` must be terminal, not recoverable"
+            );
+        }
+    }
+}
