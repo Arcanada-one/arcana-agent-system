@@ -26,9 +26,10 @@
 //! reports one of two things.
 //!
 //! * [`DialectMatch::Call`] — the attempt is unambiguous and complete, so it is
-//!   translated into the canonical call. Only `DSML`/`invoke` markup reaches this
-//!   arm: its tags exist for no other purpose, so finding a closed one is not a
-//!   guess about intent.
+//!   translated into the canonical call. Two markups reach this arm —
+//!   `DSML`/`invoke`, and the `<tool_call>` XML wrapper — because their tags
+//!   exist for no other purpose, so finding a closed one whose body names a
+//!   tool is not a guess about intent.
 //! * [`DialectMatch::Attempt`] — the attempt is recognisable but not something
 //!   we are willing to dispatch. The driver folds a correction back to the
 //!   model naming the expected format, bounded, and nothing executes.
@@ -38,6 +39,45 @@
 //! plausibly be prose. A bare JSON object shaped like an `OpenAI` tool call is
 //! the other common near-miss, and it *can* appear inside an explanation of
 //! tool calling — so it is corrected, never executed.
+//!
+//! # The `<tool_call>` XML wrapper (A2-218)
+//!
+//! The second dialect measured in the field, and it cost a run the same way.
+//! On 2026-09-23, again on `deepseek-flash` through Model Connector, the last
+//! reply of a long task was
+//!
+//! ```text
+//! <tool_call>
+//! {"name":"bash","input":{"command":"cd aras && cat rust-toolchain.toml; …","timeout_seconds":120}}
+//! </tool_call>
+//! </tool_call>
+//! ```
+//!
+//! — a complete call, correct tool, correct arguments, in the wrapper instead
+//! of the fence. The scan for the canonical fence found nothing, nothing here
+//! knew the tags, and the run ended `Completed` with that text delivered to
+//! the operator as the answer (`/home/dev/aup/arc2/runs/A2-216/live.log:9-12`,
+//! ARAS `92a4a7a`).
+//!
+//! The wrapper is not this model's invention. It is what the Hermes/Qwen
+//! function-calling chat template instructs: *"For each function call, return
+//! a json object with function name and arguments within
+//! `<tool_call></tool_call>` XML tags"*, followed by the literal shape
+//! `{"name": <function-name>, "arguments": <args-json-object>}`
+//! (`Qwen/Qwen2.5-7B-Instruct`, `tokenizer_config.json` → `chat_template`,
+//! read 2026-09-23). So both spellings of the argument key occur in the wild —
+//! the template's `arguments`, and this runner's own `input` when the system
+//! prompt has taught it that name — and [`arguments_of`] already accepts
+//! either.
+//!
+//! Dispatching it is safe for the same reason `<invoke>` is: the tag pair
+//! exists only to carry a tool call. The bar is not the tag alone but a
+//! *closed* wrapper whose body is a JSON object naming a tool — an unclosed
+//! one, or one wrapped around an apology, is an
+//! [`DialectMatch::Attempt`] and costs a correction instead. A `<tool_call>`
+//! written inside backticks is prose about the format, and is skipped: a model
+//! explaining the encoding it was told to use has answered, and an answer must
+//! not cost a turn.
 
 use serde_json::{Map, Value};
 
@@ -55,6 +95,13 @@ const INPUT_KEYS: [&str; 4] = ["input", "arguments", "parameters", "args"];
 pub const DSML_DIALECT: &str = "DeepSeek `invoke` markup";
 /// Label for a bare JSON object shaped like an `OpenAI` tool call.
 pub const OPENAI_JSON_DIALECT: &str = "a bare OpenAI-style JSON tool call";
+/// Label for the Hermes/Qwen `<tool_call>` XML wrapper.
+pub const TOOL_CALL_TAG_DIALECT: &str = "a `<tool_call>` XML wrapper";
+
+/// Opening tag of the `<tool_call>` wrapper.
+const TAG_OPEN: &str = "<tool_call>";
+/// Closing tag of the `<tool_call>` wrapper.
+const TAG_CLOSE: &str = "</tool_call>";
 
 /// The sentinel `DeepSeek` wraps its markup tag names in.
 ///
@@ -95,7 +142,9 @@ pub enum DialectMatch {
 /// permission cascade downstream, exactly like a canonical one.
 #[must_use]
 pub fn recognise(reply: &str) -> Option<DialectMatch> {
-    invoke_markup(reply).or_else(|| openai_style_json(reply))
+    invoke_markup(reply)
+        .or_else(|| tool_call_wrapper(reply))
+        .or_else(|| openai_style_json(reply))
 }
 
 /// Read the arguments out of a parsed tool-call object.
@@ -239,6 +288,85 @@ fn attribute(head: &str, key: &str) -> Option<String> {
         return None;
     }
     Some(value.to_owned())
+}
+
+// ---------------------------------------------------------------------------
+// `<tool_call>` XML wrapper
+// ---------------------------------------------------------------------------
+
+/// Read a call out of a Hermes/Qwen `<tool_call>…</tool_call>` wrapper.
+///
+/// Only the first wrapper is read. This runner dispatches one call per turn,
+/// and a model that emitted several has already been answered by the first —
+/// silently running the rest would execute commands no turn ever reported.
+fn tool_call_wrapper(reply: &str) -> Option<DialectMatch> {
+    let attempt = |detail: &str| {
+        Some(DialectMatch::Attempt {
+            dialect: TOOL_CALL_TAG_DIALECT,
+            detail: detail.to_owned(),
+        })
+    };
+    let open = unquoted_open_tag(reply)?;
+    let rest = reply.get(open + TAG_OPEN.len()..)?;
+    let Some(close) = rest.find(TAG_CLOSE) else {
+        return attempt(
+            "your `<tool_call>` was never closed with `</tool_call>`, so the call is incomplete",
+        );
+    };
+    let Some(body) = rest.get(..close) else {
+        return attempt("the `<tool_call>` wrapper is malformed and its body could not be read");
+    };
+    // The body is usually bare JSON, but a model that reaches for the wrapper
+    // sometimes also fences the object inside it; `json_candidates` covers
+    // both without letting an object buried in a paragraph count.
+    for candidate in json_candidates(body) {
+        let Ok(value) = serde_json::from_str::<Value>(candidate) else {
+            continue;
+        };
+        let Some(name) = value.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(input) = arguments_of(&value) else {
+            return Some(DialectMatch::Attempt {
+                dialect: TOOL_CALL_TAG_DIALECT,
+                detail: format!(
+                    "your `<tool_call>` wrapper named `{name}` but carried no arguments; put \
+                     them in an `input` object (send `\"input\": {{}}` if the tool genuinely \
+                     takes none)"
+                ),
+            });
+        };
+        return Some(DialectMatch::Call {
+            dialect: TOOL_CALL_TAG_DIALECT,
+            name: name.to_owned(),
+            input,
+        });
+    }
+    attempt(
+        "the body of your `<tool_call>` wrapper is not a JSON object with a `name` string, \
+         so no tool was named",
+    )
+}
+
+/// Offset of the first `<tool_call>` that is not quoted as inline code.
+///
+/// The negative control lives here. `` `<tool_call>` `` inside a sentence is a
+/// model talking *about* the format — typically because the system prompt just
+/// taught it a different one — and reading that as a call would charge an
+/// answer a correction turn. A backtick immediately before the tag is the
+/// whole test: it is how Markdown marks the tag as a name rather than a use.
+fn unquoted_open_tag(reply: &str) -> Option<usize> {
+    let mut from = 0;
+    loop {
+        let found = reply.get(from..)?.find(TAG_OPEN)? + from;
+        if !reply
+            .get(..found)
+            .is_some_and(|before| before.ends_with('`'))
+        {
+            return Some(found);
+        }
+        from = found + TAG_OPEN.len();
+    }
 }
 
 // ---------------------------------------------------------------------------

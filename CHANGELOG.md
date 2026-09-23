@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A tool call wrapped in `<tool_call>` XML no longer ends the run as an
+  answer.** Measured 2026-09-23 on `deepseek-flash` through Model Connector
+  (`runs/A2-216/live.log:9-12`, ARAS `92a4a7a`): the last reply of a real task
+  was a complete, correct call —
+  `<tool_call>{"name":"bash","input":{"command":…}}</tool_call>` — in the
+  wrapper the Hermes/Qwen function-calling template teaches (*"return a json
+  object with function name and arguments within `<tool_call></tool_call>` XML
+  tags"*, `Qwen/Qwen2.5-7B-Instruct` `tokenizer_config.json` → `chat_template`).
+  Nothing in `arcana_core::tool_dialect` knew those tags, the loop read the
+  whole thing as prose, and the run printed `ARCANA_RUN_DONE
+  {"completed":true,"reason":"Completed"}` with that text delivered as the
+  operator's answer, the command never run.
+
+  A closed `<tool_call>` wrapper whose body is a JSON object naming a tool is
+  now translated and dispatched, like `<invoke>` markup and through the same
+  permission cascade; the argument key may be the template's `arguments` or
+  this runner's `input`. Anything that looks like the wrapper but cannot be
+  read as a call — unclosed, or wrapped around an apology — is a
+  `MalformedToolCall` that costs the model one correction naming the format
+  that works, never a `Completed`. A `` `<tool_call>` `` written inside
+  backticks stays prose: a model explaining the encoding has answered, and an
+  answer must not cost a turn.
+- **`arcana run --context-budget <units>`** sets the ceiling the serialized
+  transcript is held under (1..=100000; default unchanged at 90 000), and the
+  run prints the number it is working to. Two things needed it: a model whose
+  own context window is below Model Connector's 100 000-unit field limit had no
+  way to be given the lower ceiling, and the compaction path shipped in the
+  previous entry could not be exercised by a live run at all — no ordinary task
+  grows a transcript past 90 000 units cheaply, so its only evidence was
+  offline. A value above the connector's limit is refused before the run starts
+  rather than after it has paid for every turn up to the `HTTP 400`.
 - **A long run no longer dies when its transcript outgrows the request
   contract.** Model Connector's `/execute` caps `prompt` and `systemPrompt` at
   100 000 UTF-16 code units *each*
