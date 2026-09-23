@@ -200,6 +200,30 @@ pub trait ModelConnector: Send + Sync {
     /// [`ConnectorError`]; an upstream logical error (HTTP 201 with
     /// `status: "error"`) also maps to [`ConnectorError::Logical`].
     async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError>;
+
+    /// How long ONE dispatch may legitimately take upstream, end to end, as
+    /// this connector has configured it.
+    ///
+    /// Not a client-side patience setting: it is what the caller has already
+    /// told the upstream it may spend. For Model Connector that is the
+    /// `ExecuteRequest.timeout` we send, multiplied by the server's own
+    /// attempts and widened by its queue slack — the same number the CLI
+    /// prints as "waiting up to Ns for a reply".
+    ///
+    /// The agent loop needs it for one decision, and it is the decision pilot
+    /// A2-240 got wrong: when an edge cuts the socket and Model Connector goes
+    /// on computing the answer, how long is it honest to wait for a result
+    /// that has already been paid for? A count of re-dispatches cannot answer
+    /// that, because it is unrelated to how long the request may run.
+    ///
+    /// `None` — the default, and what an offline or scripted connector gets —
+    /// means the connector states nothing and the loop falls back to
+    /// [`crate::agent_loop::ASSUMED_UPSTREAM_DISPATCH_BUDGET`]. Understating
+    /// it abandons turns that are still being produced, which is the whole
+    /// defect, so a real client states its own.
+    fn upstream_dispatch_budget(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Request body for `POST /execute`.

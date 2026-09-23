@@ -34,6 +34,7 @@ use arcana_core::agent_loop::{
 };
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, IdempotencyKey, ModelConnector,
+    NON_CONTRACT_BODY_HEADLINE,
 };
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
@@ -134,7 +135,7 @@ fn config() -> DriverConfig {
     config
 }
 
-async fn drive(connector: &KeyRecordingConnector, config: DriverConfig) -> RunOutput {
+async fn drive(connector: &dyn ModelConnector, config: DriverConfig) -> RunOutput {
     let (executor, _audit_dir) = common::test_executor(
         ToolDispatcher::new(),
         common::allow_cascade(),
@@ -155,7 +156,7 @@ async fn drive(connector: &KeyRecordingConnector, config: DriverConfig) -> RunOu
 /// A conflict is retried under the SAME key, which is the only response that
 /// does not pay twice. Model Connector says so in the refusal itself: "do not
 /// reissue it under a new key or it will be dispatched and charged twice."
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_in_flight_conflict_is_retried_under_the_same_key() {
     let connector = KeyRecordingConnector::new(2, conflict);
     let out = drive(&connector, config()).await;
@@ -178,27 +179,40 @@ async fn an_in_flight_conflict_is_retried_under_the_same_key() {
     );
 }
 
-/// A conflict gets the patient budget, not the flat two a connector-authored
-/// envelope gets. The difference is what the wait is FOR: an envelope Model
-/// Connector wrote has its server-side attempts already behind it, while a
-/// conflict means an answer we have paid for is still being produced.
-#[tokio::test]
+/// A conflict gets the patient treatment, not the flat two a
+/// connector-authored envelope gets. The difference is what the wait is FOR:
+/// an envelope Model Connector wrote has its server-side attempts already
+/// behind it, while a conflict means an answer we have paid for is still being
+/// produced.
+///
+/// A2-234 pinned "patient" as `DEFAULT_EDGE_RETRY_LIMIT + 1` dispatches, which
+/// A2-240 then showed to be the wrong shape of bound entirely — a count, spent
+/// in 41 s, on a turn the upstream needed more than 100 s for. Patient now
+/// means the clock, and the assertion says so.
+#[tokio::test(start_paused = true)]
 async fn an_in_flight_conflict_is_waited_out_on_the_patient_budget() {
     let connector = KeyRecordingConnector::new(usize::MAX, conflict);
     let out = drive(&connector, config()).await;
 
     assert_eq!(out.reason, TerminalReason::ConnectorFatal);
-    assert_eq!(
-        u32::try_from(connector.calls()).unwrap(),
-        DEFAULT_EDGE_RETRY_LIMIT + 1,
-        "a conflict was given the flat connector budget ({DEFAULT_CONNECTOR_RETRY_LIMIT}) \
-         instead of the patient one"
+    assert!(
+        u32::try_from(connector.calls()).unwrap() > DEFAULT_EDGE_RETRY_LIMIT + 1,
+        "a conflict was given a counted budget — the flat connector one \
+         ({DEFAULT_CONNECTOR_RETRY_LIMIT}) or the edge one ({DEFAULT_EDGE_RETRY_LIMIT}) — \
+         instead of the upstream's own clock: {} dispatch(es)",
+        connector.calls()
     );
     let detail = out.terminal_detail.unwrap_or_default();
     assert!(
         detail.contains("still in flight"),
         "the verdict must say a paid-for answer was abandoned, not just that something failed: \
          {detail}"
+    );
+    // The connector states no budget, so the assumed one applies.
+    assert!(
+        detail.contains("150s"),
+        "the verdict must name the clock that ran out — 120s assumed upstream budget plus \
+         the 30s settle margin: {detail}"
     );
 }
 
@@ -271,7 +285,7 @@ async fn an_answer_too_large_to_replay_stops_the_run_and_says_it_was_already_cha
 /// Every dispatch carries a key. A turn dispatched without one has no
 /// at-most-once guarantee at all, and the failure is silent: the run looks
 /// identical and the bill does not.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn every_dispatch_of_a_run_carries_a_key() {
     let connector = KeyRecordingConnector::new(0, conflict);
     let out = drive(&connector, config()).await;
@@ -280,4 +294,240 @@ async fn every_dispatch_of_a_run_carries_a_key() {
     let keys = connector.keys();
     assert!(!keys.is_empty());
     assert!(keys.iter().all(Option::is_some), "{keys:?}");
+}
+
+// ---------------------------------------------------------------------------
+// A2-241: the wait for a turn the upstream is still computing.
+
+/// Pilot A2-240, turn 24, replayed on a virtual clock.
+///
+/// 144k input tokens went to `deepseek-flash`; Cloudflare cut the socket at
+/// its ~100 s origin timeout with HTTP 524 while Model Connector went on
+/// computing the answer. `arcana` re-dispatched under the same key — which is
+/// correct, and the only response that does not pay twice — and was refused
+/// `idempotency_conflict` four times before ending the run `ConnectorFatal`
+/// "after 6 attempt(s) over 41s". The answer it abandoned was already bought.
+///
+/// The upstream here behaves exactly as Model Connector does: one provider
+/// execution, held while it runs, replayable once it settles.
+struct CutThenStillComputing {
+    /// How long the intent stays `held` after the first dispatch.
+    computing_for: Duration,
+    /// What this connector states one dispatch may legitimately take.
+    dispatch_budget: Option<Duration>,
+    /// Executions that reached the provider. The whole point is that there is
+    /// exactly one, however many times the client asks for its result.
+    provider_calls: AtomicUsize,
+    conflicts: AtomicUsize,
+    first_dispatch: Mutex<Option<tokio::time::Instant>>,
+}
+
+impl CutThenStillComputing {
+    fn new(computing_for: Duration, dispatch_budget: Option<Duration>) -> Self {
+        Self {
+            computing_for,
+            dispatch_budget,
+            provider_calls: AtomicUsize::new(0),
+            conflicts: AtomicUsize::new(0),
+            first_dispatch: Mutex::new(None),
+        }
+    }
+
+    fn provider_calls(&self) -> usize {
+        self.provider_calls.load(Ordering::SeqCst)
+    }
+
+    fn conflicts(&self) -> usize {
+        self.conflicts.load(Ordering::SeqCst)
+    }
+}
+
+/// The 16-byte Cloudflare body, in the shape `is_edge_gateway_failure` reads.
+fn edge_524() -> ConnectorError {
+    ConnectorError::Http {
+        status: 524,
+        message: format!("{NON_CONTRACT_BODY_HEADLINE} (16 bytes): error code: 524"),
+        retry_after: None,
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelConnector for CutThenStillComputing {
+    async fn execute(&self, _req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
+        let mut first = self.first_dispatch.lock().unwrap();
+        let Some(started) = *first else {
+            // The one and only provider execution. The edge cuts the socket
+            // before its answer can come back; upstream, it keeps running.
+            *first = Some(tokio::time::Instant::now());
+            self.provider_calls.fetch_add(1, Ordering::SeqCst);
+            return Err(edge_524());
+        };
+        drop(first);
+        if started.elapsed() < self.computing_for {
+            self.conflicts.fetch_add(1, Ordering::SeqCst);
+            return Err(conflict());
+        }
+        Ok(response("the answer this turn had already paid for", 0.0))
+    }
+
+    fn upstream_dispatch_budget(&self) -> Option<Duration> {
+        self.dispatch_budget
+    }
+}
+
+/// The in-flight schedule needs real pauses to be a schedule; the clock they
+/// run against is virtual (`start_paused`), so none of it is dead time.
+fn waiting_config() -> DriverConfig {
+    let mut config = DriverConfig::new("scripted");
+    config.max_turns = 128;
+    config
+}
+
+/// The defect, stated as the outcome an operator cares about: a turn whose
+/// answer is still being produced upstream is waited out, not abandoned, and
+/// the provider is asked exactly once.
+///
+/// 100 s of upstream work against a 110 s stated dispatch budget. Before the
+/// fix the run died `ConnectorFatal` after ~41 s of it — five re-dispatches
+/// out of a counter it shared with the edge schedule, on a budget that was a
+/// COUNT and so had nothing to do with how long the request may legitimately
+/// run.
+#[tokio::test(start_paused = true)]
+async fn a_turn_the_upstream_is_still_computing_is_waited_out_not_abandoned() {
+    let connector =
+        CutThenStillComputing::new(Duration::from_secs(100), Some(Duration::from_secs(110)));
+    let out = drive(&connector, waiting_config()).await;
+
+    assert_eq!(
+        out.reason,
+        TerminalReason::Completed,
+        "a paid-for answer was abandoned while it was still being produced: {:?}",
+        out.terminal_detail
+    );
+    assert_eq!(
+        out.final_text.as_deref(),
+        Some("the answer this turn had already paid for"),
+        "the run did not replay the answer it waited for"
+    );
+    assert_eq!(
+        connector.provider_calls(),
+        1,
+        "the turn was dispatched to the provider more than once"
+    );
+    assert!(
+        connector.conflicts() > 0,
+        "the fixture never exercised the in-flight path"
+    );
+}
+
+/// The in-flight wait is bounded by the upstream's own budget, not by a count
+/// of polls — and it does not wait forever either.
+#[tokio::test(start_paused = true)]
+async fn the_in_flight_wait_stops_at_the_upstream_budget_and_says_so() {
+    // Never settles: past any honest bound on how long this request may run.
+    let connector =
+        CutThenStillComputing::new(Duration::from_secs(10 * 60), Some(Duration::from_secs(110)));
+    let out = drive(&connector, waiting_config()).await;
+
+    assert_eq!(out.reason, TerminalReason::ConnectorFatal);
+    let detail = out.terminal_detail.unwrap_or_default();
+    assert!(
+        detail.contains("140s"),
+        "the verdict must name the wait it spent — 110s upstream budget plus the \
+         settle margin: {detail}"
+    );
+    assert!(
+        detail.contains("re-dispatch"),
+        "the verdict must also name the counted budget it did NOT spend: {detail}"
+    );
+    // A count-shaped budget would have given up around the sixth attempt; a
+    // deadline-shaped one polls until the upstream's budget is gone.
+    assert!(
+        connector.conflicts() >= 8,
+        "the wait was cut short by a count rather than by the clock: {} conflict(s)",
+        connector.conflicts()
+    );
+}
+
+/// The wait has to fit inside the budget the run actually ships with.
+///
+/// `arcana run` caps a run at 24 connector attempts by default
+/// (`crates/cli/src/main.rs:135`), and the client's own dispatch budget spans
+/// more polls than that. Measured before this was handled: the same fixture
+/// under `max_turns = 10` ended `MaxTurns` — a different verdict on the same
+/// abandoned, already-paid-for answer. A poll asks no question and is charged
+/// nothing, so it does not spend the run's allowance of questions.
+#[tokio::test(start_paused = true)]
+async fn polling_for_an_answer_already_paid_for_does_not_spend_the_runs_turns() {
+    let connector =
+        CutThenStillComputing::new(Duration::from_secs(100), Some(Duration::from_secs(110)));
+    let mut config = waiting_config();
+    // Two questions' worth: the one turn this run has, and room to prove the
+    // cap is still enforced rather than removed.
+    config.max_turns = 2;
+    let out = drive(&connector, config).await;
+
+    assert_eq!(
+        out.reason,
+        TerminalReason::Completed,
+        "the turn budget cut short a wait for an answer already bought: {:?}",
+        out.terminal_detail
+    );
+    assert!(
+        out.turns > 2,
+        "the polls are not being reported at all, which hides what the run did: {}",
+        out.turns
+    );
+}
+
+/// And the cap is still a cap: polls are exempt, dispatches are not.
+#[tokio::test(start_paused = true)]
+async fn the_turn_cap_still_stops_a_run_that_keeps_asking_new_questions() {
+    // Never answers, and never conflicts: every attempt is a fresh failed
+    // dispatch of the ordinary kind.
+    let connector = KeyRecordingConnector::new(usize::MAX, key_reused);
+    let mut config = config();
+    config.max_turns = 3;
+    let out = drive(&connector, config).await;
+
+    assert!(
+        matches!(
+            out.reason,
+            TerminalReason::MaxTurns | TerminalReason::ConnectorFatal
+        ),
+        "a run that keeps asking must still hit a bound: {:?}",
+        out.reason
+    );
+    assert!(
+        out.turns <= 3,
+        "the cap was removed, not narrowed: {}",
+        out.turns
+    );
+}
+
+/// Defect 1 of A2-240, on its own: the patient in-flight wait shared its
+/// counter with the edge-retry schedule, so a 524 that had already spent "1 of
+/// 5" left the conflicts starting at "2 of 5". Counters that measure different
+/// upstream facts must not subtract from each other.
+#[tokio::test(start_paused = true)]
+async fn waiting_out_an_in_flight_turn_does_not_spend_the_edge_budget() {
+    let connector =
+        CutThenStillComputing::new(Duration::from_secs(100), Some(Duration::from_secs(110)));
+    let out = drive(&connector, waiting_config()).await;
+
+    assert_eq!(
+        out.reason,
+        TerminalReason::Completed,
+        "{:?}",
+        out.terminal_detail
+    );
+    // The edge budget is five. The run made one edge re-dispatch (the 524) and
+    // then polled far more than four times; had the two shared a counter, the
+    // run could not have reached the answer at all.
+    assert!(
+        connector.conflicts() > usize::try_from(DEFAULT_EDGE_RETRY_LIMIT).unwrap(),
+        "the in-flight wait fitted inside the edge budget, so the two are still \
+         sharing it: {} conflict(s)",
+        connector.conflicts()
+    );
 }
