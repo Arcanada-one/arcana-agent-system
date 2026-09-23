@@ -1,0 +1,4355 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; admitted_with_exemptions requires every non-verified entity to have an unexpired exemption with an owner; failed without exemption => refused; not_measured without exemption => paused_safe or refused",
+  "verdict": "admitted_with_exemptions"
+ },
+ "captured_at_utc": "2026-09-23T11:16:44Z",
+ "change_set": {
+  "base": "6f7abb5259b8220fd63868cee193e0ef68e278e4",
+  "files": [
+   {
+    "kind": "other",
+    "path": ".gitignore",
+    "status": "M",
+    "uncovered": true
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:README.md",
+    "node_ids": [
+     "document:README.md"
+    ],
+    "path": "README.md",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/demo.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/demo.rs"
+    ],
+    "path": "crates/cli/src/demo.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/lib.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/lib.rs"
+    ],
+    "path": "crates/cli/src/lib.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/main.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/main.rs"
+    ],
+    "path": "crates/cli/src/main.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/run.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/run.rs"
+    ],
+    "path": "crates/cli/src/run.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/workspace.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/workspace.rs"
+    ],
+    "path": "crates/cli/src/workspace.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/demo_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/demo_smoke.rs"
+    ],
+    "path": "crates/cli/tests/demo_smoke.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/run_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/run_smoke.rs"
+    ],
+    "path": "crates/cli/tests/run_smoke.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/run_tool_execution.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/run_tool_execution.rs"
+    ],
+    "path": "crates/cli/tests/run_tool_execution.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/src/agent_loop.rs",
+    "node_ids": [
+     "code_unit:crates/core/src/agent_loop.rs"
+    ],
+    "path": "crates/core/src/agent_loop.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+    "node_ids": [
+     "code_unit:crates/core/tests/agent_loop_exhaustive.rs"
+    ],
+    "path": "crates/core/tests/agent_loop_exhaustive.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/bash.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/bash.rs"
+    ],
+    "path": "crates/tools/src/bash.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/edit.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/edit.rs"
+    ],
+    "path": "crates/tools/src/edit.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/grep.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/grep.rs"
+    ],
+    "path": "crates/tools/src/grep.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/path_guard.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/path_guard.rs"
+    ],
+    "path": "crates/tools/src/path_guard.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/read.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/read.rs"
+    ],
+    "path": "crates/tools/src/read.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/write.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/write.rs"
+    ],
+    "path": "crates/tools/src/write.rs",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/how-to/README.md",
+    "node_ids": [
+     "document:docs/how-to/README.md"
+    ],
+    "path": "docs/how-to/README.md",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/how-to/run-one-task-unattended.md",
+    "node_ids": [
+     "document:docs/how-to/run-one-task-unattended.md"
+    ],
+    "path": "docs/how-to/run-one-task-unattended.md",
+    "status": "A"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/reference/cli-exit-codes.md",
+    "node_ids": [
+     "document:docs/reference/cli-exit-codes.md"
+    ],
+    "path": "docs/reference/cli-exit-codes.md",
+    "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-a2-003.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-a2-003.json"
+    ],
+    "path": "receipts/graph/change-admission-a2-003.json",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "path": "receipts/graph/change-admission-a2-003b.json",
+    "status": "A"
+   }
+  ],
+  "head": "ec97c73a5e6d01e483ba18f9f5b8d11005a8e9b4",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [
+  {
+   "entity": "code_unit:crates/cli/src/demo.rs",
+   "expires_at_utc": "2026-10-23T11:16:44Z",
+   "owner": "Arcanada-one/arcana-agent-system maintainers",
+   "reason": "Two verifiers produced no verdict and neither is something this change can supply. v-config-schema: the repository declares no env source (.env.example / env.schema / compose environment) \u2014 it is a Rust CLI that reads configuration from XDG state and process env, so there is nothing to compare against. v-canary: INFERRED_BOUNDARY_WITHOUT_CANARY \u2014 the deploy canary is AUP-GRAPH-008 and no live contour exists for this binary. The file is not touched by this commit; it is reached as an importer of agent_loop.rs, and its compile and test coverage ARE measured (v-cargo-check, v-cargo-test). not_measured is kept as the third verdict, never read as a pass.",
+   "ref": "https://github.com/Arcanada-one/arcana-agent-system/pull/182",
+   "verdict_kept": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "expires_at_utc": "2026-10-23T11:16:44Z",
+   "owner": "Arcanada-one/arcana-agent-system maintainers",
+   "reason": "A historical receipt is asserted, never re-verified (I14) \u2014 and this one is superseded rather than merely old: change-admission-a2-003.json was written for base..00465e7 by the earlier pass on this pull request, and THIS receipt covers the same range extended to the head. Re-verifying it would mean re-running the verifiers of a range that no longer ends where it did.",
+   "ref": "https://github.com/Arcanada-one/arcana-agent-system/pull/182",
+   "verdict_kept": "not_measured"
+  }
+ ],
+ "graph": {
+  "builder_version": "1.0.0",
+  "built_at_utc": "2026-09-23T11:16:12Z",
+  "graph_digest": "sha256:119d63b87877d0cb0c306d3445ea38c56cbaf7f6e74cc0f9103033f10957e790",
+  "source_commit": "6f7abb5259b8220fd63868cee193e0ef68e278e4"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:8ee7de28f1949c5497d37dbc228dcee9b6d94ed94722b136c9a41059d13d6169",
+  "path": "/tmp/a2003b-v2/receipt.d/graph-head-ec97c73a5e6d.json",
+  "source_commit": "ec97c73a5e6d01e483ba18f9f5b8d11005a8e9b4",
+  "staleness": {
+   "checked_at_utc": "2026-09-23T11:16:14Z",
+   "checked_nodes": 272,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/interrupt.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/interrupt.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/interrupt.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/interrupt.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/interrupt.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/interrupt.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/kb_read.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/kb_read.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/kb_read.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/kb_read.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/kb_read.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/kb_read.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/repl.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/repl.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/demo.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/repl.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/repl.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/demo.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/repl.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/repl.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/demo.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/src/dispatch.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/src/dispatch.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/src/dispatch.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/dispatch_policy.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/dispatch_policy.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/dispatch_policy.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/dispatch_policy.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/dispatch_policy.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/dispatch_policy.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/dispatch_request_model.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/dispatch_request_model.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/dispatch_request_model.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/dispatch_request_model.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/dispatch_request_model.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/dispatch_request_model.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_config_validation.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_config_validation.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_config_validation.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_config_validation.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_config_validation.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_config_validation.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_context_window.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_context_window.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_context_window.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_context_window.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_context_window.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_context_window.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_interpret.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_interpret.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_interpret.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_interpret.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_interpret.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_interpret.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_operator_abort.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_operator_abort.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_operator_abort.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_operator_abort.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_operator_abort.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_operator_abort.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/src/interpreter.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/src/interpreter.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/src/interpreter.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/src/interpreter.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/skills/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/src/interpreter.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/skills/src/interpreter.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 3,
+      "entity": "code_unit:crates/skills/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/skills/src/interpreter.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 3,
+      "entity": "code_unit:crates/skills/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/skills/src/interpreter.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/skills/src/store.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/src/interpreter.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/src/store.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/skills/src/interpreter.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 3,
+      "entity": "code_unit:crates/skills/src/store.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/store.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/skills/src/interpreter.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 3,
+      "entity": "code_unit:crates/skills/src/store.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/store.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/skills/src/interpreter.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/audit.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/audit.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/audit.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/audit.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/audit.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/audit.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/builder.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/builder.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/builder.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/builder.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/builder.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/builder.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/interpreter.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/interpreter.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/interpreter.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/interpreter.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/maturity_gate.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/maturity_gate.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/maturity_gate.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/maturity_gate.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/maturity_gate.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/maturity_gate.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/multi_model.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/multi_model.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/multi_model.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/multi_model.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/multi_model.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/multi_model.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/production_artifact.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/production_artifact.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/production_artifact.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/production_artifact.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/production_artifact.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/production_artifact.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/reload.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/reload.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/reload.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/reload.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/reload.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/reload.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/source.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/source.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/source.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/source.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/source.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/skills/tests/store.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/store.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/store.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/store.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/skills/tests/store.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/tests/store.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/bash.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/bash.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/bash.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/bash_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/bash.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/bash_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/bash.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/bash_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/bash.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/edit_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/edit_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/edit.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/edit_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/edit_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/edit.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/edit_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/edit_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/edit.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/grep_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/grep_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/grep.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/grep_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/grep_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/grep.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/grep_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/grep_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/grep.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/path_guard.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/path_guard.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/edit.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/path_guard.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/path_guard.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/edit.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/path_guard.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/path_guard.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/edit.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/read_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/read_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/read.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/read_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/read_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/read.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/read_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/read_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/read.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/schema_validation.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/bash.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/schema_validation.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/bash.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/schema_validation.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/bash.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/write_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/write_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/write.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/write_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/write_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/write.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/tools/tests/write_tool.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/tools/tests/write_tool.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/tools/src/write.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/demo.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/demo.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/demo.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/core",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/core/src/agent_loop.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/core",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/core",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/core/src/agent_loop.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/core",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/core",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/core/src/agent_loop.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/core",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "deployable_unit:crates/skills",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/src/interpreter.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/dispatch.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/skills/src/interpreter.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/skills",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 3,
+      "entity": "deployable_unit:crates/skills",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       },
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/skills",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 3,
+      "entity": "deployable_unit:crates/skills",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/core/src/dispatch.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-crate-path"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/dispatch.rs",
+        "via": "rust-use-workspace-crate"
+       },
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/skills/src/interpreter.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/skills",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/tools",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/tools/src/bash.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/tools",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/tools",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/tools/src/bash.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/tools",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/tools",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/tools/src/bash.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/tools",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 45
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.0.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = \u22c3 edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i\u2026",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none",
+  "A2-003b. 67 entities: 65 verified, 2 not_measured under unexpired exemptions. What `verified` means here is stated rather than assumed: verify.py discharges the matrix's mandatory `type_check` for every non-TypeScript node, so the tool's own run measured fitness_rules / doc_reference / config_schema / canary over a Rust tree and nothing compiled. The compile and test evidence is v-cargo-check and v-cargo-test, run locally on tree.commit, transcripts at output_ref. The live behaviour this change is about is v-live-acceptance \u2014 10 runs per arm, judged by the file on disk."
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.0.1"
+ },
+ "receipt_id": "car-a2-003b-20260923T111644Z",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/demo.rs",
+   "code_unit:crates/cli/src/interrupt.rs",
+   "code_unit:crates/cli/src/kb_read.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/repl.rs",
+   "code_unit:crates/cli/tests/demo_smoke.rs",
+   "code_unit:crates/core/src/agent_loop.rs",
+   "code_unit:crates/core/src/dispatch.rs",
+   "code_unit:crates/core/src/lib.rs",
+   "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+   "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+   "code_unit:crates/core/tests/dispatch_multi_model.rs",
+   "code_unit:crates/core/tests/dispatch_policy.rs",
+   "code_unit:crates/core/tests/dispatch_request_model.rs",
+   "code_unit:crates/core/tests/driver_audit_inherited.rs",
+   "code_unit:crates/core/tests/driver_completes_small_task.rs",
+   "code_unit:crates/core/tests/driver_config_validation.rs",
+   "code_unit:crates/core/tests/driver_context_window.rs",
+   "code_unit:crates/core/tests/driver_cost_accounting.rs",
+   "code_unit:crates/core/tests/driver_interpret.rs",
+   "code_unit:crates/core/tests/driver_operator_abort.rs",
+   "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+   "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+   "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+   "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+   "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+   "code_unit:crates/skills/src/interpreter.rs",
+   "code_unit:crates/skills/src/lib.rs",
+   "code_unit:crates/skills/src/store.rs",
+   "code_unit:crates/skills/tests/audit.rs",
+   "code_unit:crates/skills/tests/builder.rs",
+   "code_unit:crates/skills/tests/interpreter.rs",
+   "code_unit:crates/skills/tests/maturity_gate.rs",
+   "code_unit:crates/skills/tests/multi_model.rs",
+   "code_unit:crates/skills/tests/production_artifact.rs",
+   "code_unit:crates/skills/tests/reload.rs",
+   "code_unit:crates/skills/tests/source.rs",
+   "code_unit:crates/skills/tests/store.rs",
+   "code_unit:crates/tools/src/bash.rs",
+   "code_unit:crates/tools/src/edit.rs",
+   "code_unit:crates/tools/src/grep.rs",
+   "code_unit:crates/tools/src/lib.rs",
+   "code_unit:crates/tools/src/path_guard.rs",
+   "code_unit:crates/tools/src/read.rs",
+   "code_unit:crates/tools/src/write.rs",
+   "code_unit:crates/tools/tests/bash_tool.rs",
+   "code_unit:crates/tools/tests/edit_tool.rs",
+   "code_unit:crates/tools/tests/grep_tool.rs",
+   "code_unit:crates/tools/tests/path_guard.rs",
+   "code_unit:crates/tools/tests/read_tool.rs",
+   "code_unit:crates/tools/tests/schema_validation.rs",
+   "code_unit:crates/tools/tests/write_tool.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/core",
+   "deployable_unit:crates/skills",
+   "deployable_unit:crates/tools",
+   "document:CHANGELOG.md",
+   "document:README.md",
+   "document:docs/how-to/README.md",
+   "document:docs/reference/cli-exit-codes.md"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/demo.rs",
+   "code_unit:crates/cli/src/interrupt.rs",
+   "code_unit:crates/cli/src/kb_read.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/repl.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/workspace.rs",
+   "code_unit:crates/cli/tests/demo_smoke.rs",
+   "code_unit:crates/cli/tests/run_smoke.rs",
+   "code_unit:crates/cli/tests/run_tool_execution.rs",
+   "code_unit:crates/core/src/agent_loop.rs",
+   "code_unit:crates/core/src/dispatch.rs",
+   "code_unit:crates/core/src/lib.rs",
+   "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+   "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+   "code_unit:crates/core/tests/dispatch_multi_model.rs",
+   "code_unit:crates/core/tests/dispatch_policy.rs",
+   "code_unit:crates/core/tests/dispatch_request_model.rs",
+   "code_unit:crates/core/tests/driver_audit_inherited.rs",
+   "code_unit:crates/core/tests/driver_completes_small_task.rs",
+   "code_unit:crates/core/tests/driver_config_validation.rs",
+   "code_unit:crates/core/tests/driver_context_window.rs",
+   "code_unit:crates/core/tests/driver_cost_accounting.rs",
+   "code_unit:crates/core/tests/driver_interpret.rs",
+   "code_unit:crates/core/tests/driver_operator_abort.rs",
+   "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+   "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+   "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+   "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+   "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+   "code_unit:crates/skills/src/interpreter.rs",
+   "code_unit:crates/skills/src/lib.rs",
+   "code_unit:crates/skills/src/store.rs",
+   "code_unit:crates/skills/tests/audit.rs",
+   "code_unit:crates/skills/tests/builder.rs",
+   "code_unit:crates/skills/tests/interpreter.rs",
+   "code_unit:crates/skills/tests/maturity_gate.rs",
+   "code_unit:crates/skills/tests/multi_model.rs",
+   "code_unit:crates/skills/tests/production_artifact.rs",
+   "code_unit:crates/skills/tests/reload.rs",
+   "code_unit:crates/skills/tests/source.rs",
+   "code_unit:crates/skills/tests/store.rs",
+   "code_unit:crates/tools/src/bash.rs",
+   "code_unit:crates/tools/src/edit.rs",
+   "code_unit:crates/tools/src/grep.rs",
+   "code_unit:crates/tools/src/lib.rs",
+   "code_unit:crates/tools/src/path_guard.rs",
+   "code_unit:crates/tools/src/read.rs",
+   "code_unit:crates/tools/src/write.rs",
+   "code_unit:crates/tools/tests/bash_tool.rs",
+   "code_unit:crates/tools/tests/edit_tool.rs",
+   "code_unit:crates/tools/tests/grep_tool.rs",
+   "code_unit:crates/tools/tests/path_guard.rs",
+   "code_unit:crates/tools/tests/read_tool.rs",
+   "code_unit:crates/tools/tests/schema_validation.rs",
+   "code_unit:crates/tools/tests/write_tool.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/core",
+   "deployable_unit:crates/skills",
+   "deployable_unit:crates/tools",
+   "document:CHANGELOG.md",
+   "document:README.md",
+   "document:docs/how-to/README.md",
+   "document:docs/how-to/run-one-task-unattended.md",
+   "document:docs/reference/cli-exit-codes.md",
+   "receipt:receipts/graph/change-admission-a2-003.json"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-09-23T11:16:14Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "tree": {
+  "commit": "ec97c73a5e6d01e483ba18f9f5b8d11005a8e9b4",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/demo.rs",
+   "reason": "v-config-schema: the repository declares no env source (.env.example / env.schema / compose environment); v-canary: INFERRED_BOUNDARY_WITHOUT_CANARY: no canary result lists this entity (matrix P6, observed-edges-and-deploy-gate.v1 rule C1)",
+   "verdict": "not_measured",
+   "verifier_ids": [
+    "v-canary",
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-config-schema",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/interrupt.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/kb_read.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/main.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/repl.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/run.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness",
+    "v-live-acceptance"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/workspace.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/demo_smoke.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/run_smoke.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/run_tool_execution.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness",
+    "v-live-acceptance"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/agent_loop.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness",
+    "v-live-acceptance"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/dispatch.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/dispatch_multi_model.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/dispatch_policy.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/dispatch_request_model.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_audit_inherited.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_completes_small_task.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_config_validation.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_context_window.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_interpret.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_operator_abort.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/src/interpreter.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/src/store.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/audit.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/builder.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/interpreter.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/maturity_gate.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/multi_model.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/production_artifact.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/reload.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/source.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/store.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/bash.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/edit.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/grep.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/path_guard.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/read.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/write.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/edit_tool.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/grep_tool.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/path_guard.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/read_tool.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/write_tool.rs",
+   "reason": "v-fitness: no new fitness violation; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness",
+    "v-live-acceptance"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/core",
+   "reason": "v-fitness: no new violation in crates/core; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness",
+    "v-live-acceptance"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/skills",
+   "reason": "v-fitness: no new violation in crates/skills; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/tools",
+   "reason": "v-fitness: no new violation in crates/tools; v-cargo-check: compiles clean under -D warnings; v-cargo-test: the workspace suite is green",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-cargo-check",
+    "v-cargo-test",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 2 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:README.md",
+   "reason": "v-doc-reference: 1 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/how-to/README.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/how-to/run-one-task-unattended.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/reference/cli-exit-codes.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  }
+ ],
+ "verifiers": [
+  {
+   "command": "verify.py config_schema: keys read at head \u2286 declared keys",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/demo.rs"
+   ],
+   "exit_code": 0,
+   "id": "v-config-schema",
+   "kind": "config_schema",
+   "output_ref": "/tmp/a2003b-v2/receipt.d/v-config-schema.json",
+   "started_at_utc": "2026-09-23T11:16:14Z",
+   "summary": "0 source(s), 0 new / 0 frozen undeclared reads, 0 failed"
+  },
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/interrupt.rs",
+    "code_unit:crates/cli/src/kb_read.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/src/workspace.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/cli/tests/run_smoke.rs",
+    "code_unit:crates/cli/tests/run_tool_execution.rs",
+    "code_unit:crates/core/src/agent_loop.rs",
+    "code_unit:crates/core/src/dispatch.rs",
+    "code_unit:crates/core/src/lib.rs",
+    "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+    "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+    "code_unit:crates/core/tests/dispatch_multi_model.rs",
+    "code_unit:crates/core/tests/dispatch_policy.rs",
+    "code_unit:crates/core/tests/dispatch_request_model.rs",
+    "code_unit:crates/core/tests/driver_audit_inherited.rs",
+    "code_unit:crates/core/tests/driver_completes_small_task.rs",
+    "code_unit:crates/core/tests/driver_config_validation.rs",
+    "code_unit:crates/core/tests/driver_context_window.rs",
+    "code_unit:crates/core/tests/driver_cost_accounting.rs",
+    "code_unit:crates/core/tests/driver_interpret.rs",
+    "code_unit:crates/core/tests/driver_operator_abort.rs",
+    "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+    "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+    "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+    "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+    "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+    "code_unit:crates/skills/src/interpreter.rs",
+    "code_unit:crates/skills/src/lib.rs",
+    "code_unit:crates/skills/src/store.rs",
+    "code_unit:crates/skills/tests/audit.rs",
+    "code_unit:crates/skills/tests/builder.rs",
+    "code_unit:crates/skills/tests/interpreter.rs",
+    "code_unit:crates/skills/tests/maturity_gate.rs",
+    "code_unit:crates/skills/tests/multi_model.rs",
+    "code_unit:crates/skills/tests/production_artifact.rs",
+    "code_unit:crates/skills/tests/reload.rs",
+    "code_unit:crates/skills/tests/source.rs",
+    "code_unit:crates/skills/tests/store.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/core",
+    "deployable_unit:crates/skills",
+    "deployable_unit:crates/tools"
+   ],
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/tmp/a2003b-v2/receipt.d/v-fitness.json",
+   "started_at_utc": "2026-09-23T11:16:14Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md",
+    "document:README.md",
+    "document:docs/how-to/README.md",
+    "document:docs/how-to/run-one-task-unattended.md",
+    "document:docs/reference/cli-exit-codes.md"
+   ],
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/tmp/a2003b-v2/receipt.d/v-doc-reference.txt",
+   "started_at_utc": "2026-09-23T11:16:14Z",
+   "summary": "5 document(s), 0 failed"
+  },
+  {
+   "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/demo.rs"
+   ],
+   "exit_code": 0,
+   "id": "v-canary",
+   "kind": "canary",
+   "output_ref": "/tmp/a2003b-v2/receipt.d/v-canary.json",
+   "started_at_utc": "2026-09-23T11:16:14Z",
+   "summary": "0 canary result(s); 0 verified / 0 failed / 1 not_measured of 1 entities"
+  },
+  {
+   "command": "cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all -- --check",
+   "entities": [
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/interrupt.rs",
+    "code_unit:crates/cli/src/kb_read.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/src/workspace.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/cli/tests/run_smoke.rs",
+    "code_unit:crates/cli/tests/run_tool_execution.rs",
+    "code_unit:crates/core/src/agent_loop.rs",
+    "code_unit:crates/core/src/dispatch.rs",
+    "code_unit:crates/core/src/lib.rs",
+    "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+    "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+    "code_unit:crates/core/tests/dispatch_multi_model.rs",
+    "code_unit:crates/core/tests/dispatch_policy.rs",
+    "code_unit:crates/core/tests/dispatch_request_model.rs",
+    "code_unit:crates/core/tests/driver_audit_inherited.rs",
+    "code_unit:crates/core/tests/driver_completes_small_task.rs",
+    "code_unit:crates/core/tests/driver_config_validation.rs",
+    "code_unit:crates/core/tests/driver_context_window.rs",
+    "code_unit:crates/core/tests/driver_cost_accounting.rs",
+    "code_unit:crates/core/tests/driver_interpret.rs",
+    "code_unit:crates/core/tests/driver_operator_abort.rs",
+    "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+    "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+    "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+    "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+    "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+    "code_unit:crates/skills/src/interpreter.rs",
+    "code_unit:crates/skills/src/lib.rs",
+    "code_unit:crates/skills/src/store.rs",
+    "code_unit:crates/skills/tests/audit.rs",
+    "code_unit:crates/skills/tests/builder.rs",
+    "code_unit:crates/skills/tests/interpreter.rs",
+    "code_unit:crates/skills/tests/maturity_gate.rs",
+    "code_unit:crates/skills/tests/multi_model.rs",
+    "code_unit:crates/skills/tests/production_artifact.rs",
+    "code_unit:crates/skills/tests/reload.rs",
+    "code_unit:crates/skills/tests/source.rs",
+    "code_unit:crates/skills/tests/store.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/core",
+    "deployable_unit:crates/skills",
+    "deployable_unit:crates/tools"
+   ],
+   "exit_code": 0,
+   "id": "v-cargo-check",
+   "kind": "type_check",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-003b/verifiers/v-cargo-check.txt",
+   "started_at_utc": "2026-09-23T11:16:44Z",
+   "summary": "the type-check this repository actually has. verify.py 1.0.1 discharges the matrix's mandatory `type_check` for every non-TypeScript node (AUP-GRAPH-009 polyglot2), so without a compiler named here the `verified` verdicts below would rest on fitness_rules alone: clippy compiles every crate AND every test target under -D warnings, exit 0"
+  },
+  {
+   "command": "cargo test --workspace",
+   "entities": [
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/interrupt.rs",
+    "code_unit:crates/cli/src/kb_read.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/src/workspace.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/cli/tests/run_smoke.rs",
+    "code_unit:crates/cli/tests/run_tool_execution.rs",
+    "code_unit:crates/core/src/agent_loop.rs",
+    "code_unit:crates/core/src/dispatch.rs",
+    "code_unit:crates/core/src/lib.rs",
+    "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+    "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
+    "code_unit:crates/core/tests/dispatch_multi_model.rs",
+    "code_unit:crates/core/tests/dispatch_policy.rs",
+    "code_unit:crates/core/tests/dispatch_request_model.rs",
+    "code_unit:crates/core/tests/driver_audit_inherited.rs",
+    "code_unit:crates/core/tests/driver_completes_small_task.rs",
+    "code_unit:crates/core/tests/driver_config_validation.rs",
+    "code_unit:crates/core/tests/driver_context_window.rs",
+    "code_unit:crates/core/tests/driver_cost_accounting.rs",
+    "code_unit:crates/core/tests/driver_interpret.rs",
+    "code_unit:crates/core/tests/driver_operator_abort.rs",
+    "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+    "code_unit:crates/core/tests/driver_tool_results_feedback.rs",
+    "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+    "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+    "code_unit:crates/core/tests/first_dispatch_measurement.rs",
+    "code_unit:crates/skills/src/interpreter.rs",
+    "code_unit:crates/skills/src/lib.rs",
+    "code_unit:crates/skills/src/store.rs",
+    "code_unit:crates/skills/tests/audit.rs",
+    "code_unit:crates/skills/tests/builder.rs",
+    "code_unit:crates/skills/tests/interpreter.rs",
+    "code_unit:crates/skills/tests/maturity_gate.rs",
+    "code_unit:crates/skills/tests/multi_model.rs",
+    "code_unit:crates/skills/tests/production_artifact.rs",
+    "code_unit:crates/skills/tests/reload.rs",
+    "code_unit:crates/skills/tests/source.rs",
+    "code_unit:crates/skills/tests/store.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/core",
+    "deployable_unit:crates/skills",
+    "deployable_unit:crates/tools"
+   ],
+   "exit_code": 0,
+   "id": "v-cargo-test",
+   "kind": "targeted_test",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-003b/verifiers/v-cargo-test.txt",
+   "started_at_utc": "2026-09-23T11:16:44Z",
+   "summary": "121 test targets ok, 0 failed. Includes the 4 tests that are RED on the parent commit and green here (crates/cli/tests/run_tool_execution.rs) and the corrected crates/core/tests/agent_loop_exhaustive.rs. Whole-suite, not spec-restricted: the matrix's jest/vitest restriction has no cargo equivalent"
+  },
+  {
+   "command": "verify-a2-003b-rate.sh \u2014 10 live runs per arm on the natural-language prompt, deepseek-v4-flash via the production Model Connector",
+   "entities": [
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/tests/run_tool_execution.rs",
+    "code_unit:crates/core/src/agent_loop.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/core"
+   ],
+   "exit_code": 0,
+   "id": "v-live-acceptance",
+   "kind": "other",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-003b/verifiers/v-live-acceptance.txt",
+   "started_at_utc": "2026-09-23T11:16:44Z",
+   "summary": "judged by the file on disk, never by the model's text: 10/10 runs left verified.txt with the right token, every one completed:true with tool_calls>=1. A/B arm with the one-answer nudge disabled: 4/10, and all 6 misses reported completed:false, tool_calls:0, exit 1. $0.080 total"
+  }
+ ],
+ "verify": {
+  "events": [],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/demo.rs": [
+    "canary",
+    "config_schema",
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/interrupt.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/kb_read.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/main.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/repl.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/run.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/workspace.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/demo_smoke.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/run_smoke.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/run_tool_execution.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/agent_loop.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/dispatch.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/agent_loop_exhaustive.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/capstone_vertical_prototype.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/dispatch_multi_model.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/dispatch_policy.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/dispatch_request_model.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_audit_inherited.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_completes_small_task.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_config_validation.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_context_window.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_cost_accounting.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_interpret.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_operator_abort.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_terminal_mapping.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_tool_results_feedback.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/execution_invariant_replaceinput.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/execution_invariant_single_audit.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/first_dispatch_measurement.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/src/interpreter.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/src/store.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/audit.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/builder.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/interpreter.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/maturity_gate.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/multi_model.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/production_artifact.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/reload.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/source.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/store.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/bash.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/edit.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/grep.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/path_guard.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/read.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/write.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/bash_tool.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/edit_tool.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/grep_tool.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/path_guard.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/read_tool.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/schema_validation.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/write_tool.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/core": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/skills": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/tools": [
+    "fitness_rules"
+   ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
+   "document:README.md": [
+    "doc_reference"
+   ],
+   "document:docs/how-to/README.md": [
+    "doc_reference"
+   ],
+   "document:docs/how-to/run-one-task-unattended.md": [
+    "doc_reference"
+   ],
+   "document:docs/reference/cli-exit-codes.md": [
+    "doc_reference"
+   ],
+   "receipt:receipts/graph/change-admission-a2-003.json": []
+  },
+  "seconds": {
+   "prepare": 0.8,
+   "total": 1.72,
+   "verifiers": 0.01
+  }
+ },
+ "work_item": "A2-003b"
+}
