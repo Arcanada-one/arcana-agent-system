@@ -1,0 +1,1701 @@
+ Downloading crates ...
+  Downloaded pkg-config v0.3.34
+  Downloaded aws-lc-rs v1.18.1
+  Downloaded rustls v0.23.45
+  Downloaded aws-lc-sys v0.45.0
+   Compiling unicode-ident v1.0.24
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling libc v0.2.186
+   Compiling pin-project-lite v0.2.17
+   Compiling cfg-if v1.0.4
+   Compiling futures-core v0.3.32
+   Compiling memchr v2.8.0
+   Compiling bytes v1.11.1
+   Compiling once_cell v1.21.4
+   Compiling serde_core v1.0.229
+   Compiling futures-sink v0.3.32
+   Compiling itoa v1.0.18
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling smallvec v1.15.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling bitflags v2.11.1
+   Compiling serde v1.0.229
+   Compiling slab v0.4.12
+   Compiling futures-channel v0.3.32
+   Compiling pkg-config v0.3.34
+   Compiling fs_extra v1.3.0
+   Compiling dunce v1.0.5
+   Compiling thiserror v2.0.20
+   Compiling zmij v1.0.23
+   Compiling futures-task v0.3.32
+   Compiling futures-io v0.3.32
+   Compiling zeroize v1.8.2
+   Compiling rustix v1.1.4
+   Compiling tracing-core v0.1.36
+   Compiling equivalent v1.0.2
+   Compiling linux-raw-sys v0.12.1
+   Compiling serde_json v1.0.151
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling writeable v0.6.3
+   Compiling litemap v0.8.2
+   Compiling aws-lc-rs v1.18.1
+   Compiling icu_properties_data v2.2.0
+   Compiling percent-encoding v2.3.2
+   Compiling http v1.4.0
+   Compiling utf8_iter v1.0.4
+   Compiling icu_normalizer_data v2.2.0
+   Compiling rustls-pki-types v1.14.1
+   Compiling autocfg v1.5.0
+   Compiling httparse v1.10.1
+   Compiling tower-service v0.3.3
+   Compiling atomic-waker v1.1.2
+   Compiling try-lock v0.2.5
+   Compiling hashbrown v0.17.1
+   Compiling rustls v0.23.45
+   Compiling fnv v1.0.7
+   Compiling untrusted v0.9.0
+   Compiling want v0.3.1
+   Compiling form_urlencoded v1.2.2
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.2
+   Compiling base64 v0.22.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.4
+   Compiling httpdate v1.0.3
+   Compiling subtle v2.6.1
+   Compiling log v0.4.29
+   Compiling cpufeatures v0.3.0
+   Compiling num-traits v0.2.19
+   Compiling ipnet v2.12.0
+   Compiling sync_wrapper v1.0.2
+   Compiling tower-layer v0.3.3
+   Compiling openssl-probe v0.2.1
+   Compiling ryu v1.0.23
+   Compiling webpki-roots v1.0.7
+   Compiling rustls-native-certs v0.8.3
+   Compiling http-body v1.0.1
+   Compiling jobserver v0.1.34
+   Compiling regex-syntax v0.8.11
+   Compiling winnow v1.0.4
+   Compiling aho-corasick v1.1.4
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling http-body-util v0.1.3
+   Compiling ref-cast v1.0.25
+   Compiling cc v1.2.62
+   Compiling fastrand v2.4.1
+   Compiling zerocopy v0.8.48
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling version_check v0.9.5
+   Compiling getrandom v0.3.4
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.3
+   Compiling mio v1.2.0
+   Compiling signal-hook-registry v1.4.8
+   Compiling num-integer v0.1.46
+   Compiling lazy_static v1.5.0
+   Compiling ahash v0.8.12
+   Compiling parking_lot_core v0.9.12
+   Compiling heck v0.5.0
+   Compiling bit-vec v0.8.0
+   Compiling num-complex v0.4.6
+   Compiling num-bigint v0.4.8
+   Compiling num-iter v0.1.45
+   Compiling bit-set v0.8.0
+   Compiling scopeguard v1.2.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling cmake v0.1.58
+   Compiling lock_api v0.4.14
+   Compiling borrow-or-share v0.2.4
+   Compiling indexmap v2.14.0
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling unicode-general-category v1.1.0
+   Compiling num-conv v0.2.2
+   Compiling time-core v0.1.9
+   Compiling anyhow v1.0.103
+   Compiling parking_lot v0.12.5
+   Compiling toml v1.1.5+spec-1.1.0
+   Compiling time-macros v0.2.32
+   Compiling sharded-slab v0.1.7
+   Compiling regex-automata v0.4.18
+   Compiling thread_local v1.1.9
+   Compiling bytecount v0.6.9
+   Compiling aws-lc-sys v0.45.0
+   Compiling blake3 v1.8.7
+   Compiling num-rational v0.4.2
+   Compiling num-cmp v0.1.0
+   Compiling powerfmt v0.2.0
+   Compiling micromap v0.3.0
+   Compiling num v0.4.3
+   Compiling fraction v0.17.0
+   Compiling vsimd v0.8.0
+   Compiling outref v0.5.2
+   Compiling deranged v0.5.8
+   Compiling tracing-subscriber v0.3.23
+   Compiling uuid-simd v0.8.0
+   Compiling jsonschema-regex v0.53.0
+   Compiling crossbeam-channel v0.5.15
+   Compiling symlink v0.1.0
+   Compiling rustc-hash v2.1.2
+   Compiling arrayvec v0.7.6
+   Compiling constant_time_eq v0.4.2
+   Compiling synstructure v0.13.2
+   Compiling data-encoding v2.11.1
+   Compiling xdg v3.0.0
+   Compiling cfg_aliases v0.2.1
+   Compiling secrecy v0.10.3
+   Compiling nix v0.31.3
+   Compiling typenum v1.20.1
+   Compiling num_cpus v1.17.0
+   Compiling time v0.3.55
+   Compiling deadpool-runtime v0.1.4
+   Compiling tempfile v3.27.0
+   Compiling const-oid v0.10.2
+   Compiling serde_derive_internals v0.29.1
+   Compiling chacha20 v0.10.2
+   Compiling dyn-clone v1.0.20
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling async-trait v0.1.92
+   Compiling rmcp v3.2.0
+   Compiling rand v0.10.2
+   Compiling uuid v1.26.0
+   Compiling pastey v0.2.3
+   Compiling base64 v0.23.1
+   Compiling hybrid-array v0.4.14
+   Compiling anstyle v1.0.14
+   Compiling utf8parse v0.2.2
+   Compiling regex v1.13.1
+   Compiling bstr v1.12.1
+   Compiling fancy-regex v0.17.0
+   Compiling fancy-regex v0.19.0
+   Compiling anstyle-parse v1.0.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling anstyle-query v1.1.5
+   Compiling nibble_vec v0.1.0
+   Compiling clap_lex v1.1.0
+   Compiling anstream v1.0.0
+   Compiling strsim v0.11.1
+   Compiling endian-type v0.2.0
+   Compiling radix_trie v0.3.0
+   Compiling tokio-macros v2.7.0
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.5
+   Compiling futures-macro v0.3.32
+   Compiling tracing-attributes v0.1.31
+   Compiling ref-cast-impl v1.0.25
+   Compiling tokio v1.53.1
+   Compiling strum_macros v0.28.0
+   Compiling tracing-appender v0.2.5
+   Compiling tiktoken-rs v0.12.0
+   Compiling digest v0.11.3
+   Compiling futures-util v0.3.32
+   Compiling sha2 v0.11.0
+   Compiling schemars_derive v1.2.1
+   Compiling clap_builder v4.6.6
+   Compiling clap_derive v4.6.4
+   Compiling zerofrom v0.1.8
+   Compiling unicode-segmentation v1.13.2
+   Compiling yoke v0.8.2
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling tracing v0.1.44
+   Compiling arcana-agent v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/cli)
+   Compiling ryu-js v1.0.3
+   Compiling unicode-width v0.2.2
+   Compiling home v0.5.12
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling predicates-core v1.0.10
+   Compiling icu_collections v2.2.0
+   Compiling rustyline v18.0.1
+   Compiling icu_locale_core v2.2.0
+warning: arcana-agent@0.2.0: building from a working tree with uncommitted changes; this binary will NOT correspond to any commit
+   Compiling float-cmp v0.10.0
+   Compiling assert_cmd v2.2.2
+   Compiling termtree v0.5.1
+   Compiling normalize-line-endings v0.3.0
+   Compiling difflib v0.4.0
+   Compiling predicates-tree v1.0.13
+   Compiling wait-timeout v0.2.1
+   Compiling predicates v3.1.4
+   Compiling serde_urlencoded v0.7.1
+   Compiling fluent-uri v0.4.1
+   Compiling email_address v0.2.9
+   Compiling assert-json-diff v2.0.2
+   Compiling jsonschema-value v0.53.0
+   Compiling chrono v0.4.45
+   Compiling serde_json_canonicalizer v0.3.2
+   Compiling strum v0.28.0
+   Compiling icu_provider v2.2.0
+   Compiling referencing v0.53.0
+   Compiling clap v4.6.6
+   Compiling icu_properties v2.2.0
+   Compiling icu_normalizer v2.2.0
+   Compiling listenfd v1.0.2
+   Compiling futures-executor v0.3.32
+   Compiling sse-stream v0.2.5
+   Compiling futures v0.3.32
+   Compiling schemars v1.2.1
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling tokio-util v0.7.19
+   Compiling tower v0.5.3
+   Compiling deadpool v0.12.3
+   Compiling tokio-stream v0.1.19
+   Compiling h2 v0.4.19
+   Compiling tower-http v0.6.10
+   Compiling arcana-execution-boundary v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/execution-boundary)
+   Compiling hyper v1.11.1
+   Compiling hyper-util v0.1.20
+   Compiling wiremock v0.6.5
+   Compiling rustls-webpki v0.103.15
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.6.2
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.13.1
+   Compiling jsonschema v0.53.0
+   Compiling arcana-credential-broker v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/credential-broker)
+   Compiling arcana-core v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/core)
+   Compiling arcana-skills v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/skills)
+   Compiling arcana-mcp v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/mcp)
+   Compiling arcana-supervisor v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/supervisor)
+   Compiling arcana-connectors v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/connectors)
+   Compiling arcana-tools v0.2.0 (/home/dev/aup/arc2/runs/A2-106/src/crates/tools)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 13s
+     Running unittests src/lib.rs (target/debug/deps/arcana_cli-ea9a74d048aeb2fd)
+
+running 95 tests
+test bootstrap::tests::local_identity_is_never_empty ... ok
+test demo::tests::parses_the_closed_identifier_only_measurement_input ... ok
+test demo::tests::driver_config_carries_the_parsed_measurement_to_the_real_driver_seam ... ok
+test demo::tests::canonical_receipt_numbers_match_ecmascript_json_stringify ... ok
+test demo::tests::rejects_an_invented_field_and_out_of_manifest_replays ... ok
+test http_error::tests::a_nest_envelope_yields_its_message ... ok
+test http_error::tests::a_non_json_body_is_reported_verbatim ... ok
+test http_error::tests::a_validation_array_keeps_every_field_it_names ... ok
+test http_error::tests::an_empty_body_adds_nothing ... ok
+test http_error::tests::multiline_bodies_are_flattened_onto_one_line ... ok
+test http_error::tests::truncate_leaves_short_text_alone ... ok
+test http_error::tests::the_connectors_separate_errors_array_is_not_dropped ... ok
+test interrupt::tests::a_second_interrupt_of_the_same_turn_leaves ... ok
+test interrupt::tests::an_interrupt_after_the_turn_finished_leaves ... ok
+test interrupt::tests::an_interrupt_with_no_turn_running_leaves ... ok
+test interrupt::tests::an_operator_abort_exits_130_and_nothing_else_does ... ok
+test interrupt::tests::arming_hands_out_a_fresh_token_each_turn ... ok
+test interrupt::tests::dropping_the_guard_disarms_the_slot ... ok
+test interrupt::tests::the_first_interrupt_of_a_turn_cancels_it_instead_of_exiting ... ok
+test http_error::tests::an_html_error_page_cannot_flood_the_terminal ... ok
+test kb_read::tests::internal_error_variant_names_are_stripped_from_the_cause ... ok
+test login::tests::blank_issuer_override_falls_back_to_the_default ... ok
+test login::tests::issuer_defaults_when_unset ... ok
+test demo::tests::emits_one_validated_json_record_for_a_closed_receipt ... ok
+test login::tests::issuer_override_drops_a_trailing_slash ... ok
+test models::tests::a_bare_array_is_no_longer_what_we_decode ... ok
+test models::tests::a_catalogued_free_model_is_labelled_free ... ok
+test models::tests::a_pinned_model_survives_a_provider_full_of_cheaper_ones ... ok
+test models::tests::a_sentinel_tariff_does_not_win_the_cheapest_first_ranking ... ok
+test models::tests::a_sentinel_tariff_is_never_rendered_as_money ... ok
+test models::tests::an_entry_missing_its_identity_fails_loudly ... ok
+test models::tests::an_unpriced_model_is_not_shown_as_free ... ok
+test models::tests::a_small_provider_is_not_crowded_out_by_a_large_one ... ok
+test models::tests::cheapest_first_within_a_provider ... ok
+test models::tests::every_model_the_policy_routes_to_can_be_pinned ... ok
+test models::tests::caps_each_provider_independently ... ok
+test models::tests::pinning_an_absent_model_changes_nothing ... ok
+test models::tests::no_row_in_the_live_catalogue_renders_a_negative_price ... ok
+test models::tests::price_label_distinguishes_free_from_unknown ... ok
+test models::tests::priced_providers_lead_the_shortlist ... ok
+test models::tests::the_live_catalogue_body_decodes ... ok
+test out::tests::a_closed_reader_is_recognised ... ok
+test models::tests::unpriced_models_sort_last_not_first ... ok
+test out::tests::other_io_errors_are_not_treated_as_a_closed_reader ... ok
+test permission_prompt::tests::a_typo_in_the_override_keeps_the_bound_rather_than_removing_it ... ok
+test demo::tests::rejects_malformed_mismatched_or_leaky_receipts ... ok
+test permission_prompt::tests::classify_answer_non_affirmative_denies ... ok
+test permission_prompt::tests::classify_answer_yes_variants_allow ... ok
+test permission_prompt::tests::prompt_timeout_reads_the_override ... ok
+test permission_prompt::tests::a_zero_budget_is_the_documented_unbounded_escape_hatch ... ok
+test permission_prompt::tests::an_idle_terminal_denies_instead_of_hanging ... ok
+test permission_prompt::tests::readline_prompt_allows_when_mock_returns_yes ... ok
+test permission_prompt::tests::readline_prompt_denies_on_empty_line ... ok
+test permission_prompt::tests::render_prompt_includes_tool_name ... ok
+test permission_prompt::tests::readline_prompt_denies_on_eof_when_queue_drained ... ok
+test permission_prompt::tests::readline_prompt_denies_on_no_then_allows_on_yes ... ok
+test repl::tests::a_mistyped_command_is_refused_rather_than_charged ... ok
+test repl::tests::a_task_that_merely_begins_with_a_slash_is_still_a_task ... ok
+test repl::tests::a_task_that_merely_contains_an_exit_word_is_not_an_exit ... ok
+test repl::tests::blank_and_whitespace_lines_are_skipped ... ok
+test repl::tests::exit_words_end_the_session_case_insensitively ... ok
+test repl::tests::ordinary_input_is_a_task_and_is_trimmed ... ok
+test repl::tests::slash_commands_are_handled_locally_and_never_billed ... ok
+test repl::tests::surrounding_whitespace_never_changes_what_a_line_means ... ok
+test usage::tests::a_backwards_window_is_refused_before_the_request_is_sent ... ok
+test usage::tests::a_counter_going_backwards_reports_zero_not_a_huge_number ... ok
+test usage::tests::a_body_missing_a_report_field_fails_loudly_instead_of_reading_as_zero ... ok
+test usage::tests::a_date_that_does_not_exist_is_refused ... ok
+test usage::tests::a_window_wider_than_the_server_cap_is_refused_locally ... ok
+test usage::tests::a_malformed_date_names_the_flag_it_came_from ... ok
+test usage::tests::an_explicit_since_keeps_until_at_today ... ok
+test usage::tests::civil_date_conversion_round_trips_across_boundaries ... ok
+test usage::tests::exactly_the_cap_is_allowed ... ok
+test usage::tests::folding_nothing_yields_no_days_and_zero_totals ... ok
+test usage::tests::reports_the_delta_not_the_running_total ... ok
+test usage::tests::many_model_rows_fold_into_one_line_per_day ... ok
+test usage::tests::rows_are_deserialized_from_the_shape_the_route_actually_sends ... ok
+test usage::tests::sub_cent_spend_is_not_rounded_away_to_zero ... ok
+test usage::tests::the_default_window_is_thirty_days_ending_today ... ok
+test usage::tests::the_fixed_today_constant_is_the_date_it_claims ... ok
+test usage::tests::the_line_shows_both_this_turn_and_the_session_total ... ok
+test permission_prompt::tests::the_bound_does_not_cut_off_an_answer_that_arrives ... ok
+test kb_read::tests::a_search_the_model_never_issues_is_reported_as_a_dispatch_problem ... ok
+test bootstrap::tests::assemble_at_denies_unregistered_tool_at_schema_layer ... ok
+test bootstrap::tests::assemble_at_tolerates_missing_permissions_toml ... ok
+test kb_read::tests::rejects_any_capability_except_arcana_search ... ok
+test kb_read::tests::a_zero_hit_run_discards_the_models_ungrounded_prose ... ok
+test kb_read::tests::grounded_loop_fixes_query_and_namespace_and_cites_a_source ... ok
+test kb_read::tests::a_search_that_never_completes_is_reported_as_a_failed_search ... ok
+test kb_read::tests::a_search_that_matches_nothing_is_a_result_not_a_failure ... ok
+test bootstrap::tests::assemble_at_wires_audit_log_at_state_dir ... ok
+test kb_read::tests::rejects_grounded_hits_when_final_answer_omits_source_path ... ok
+test kb_read::tests::rejects_more_than_one_successful_search ... ok
+test kb_read::tests::failed_first_search_still_consumes_the_only_attempt ... ok
+test kb_read::tests::two_different_failures_do_not_produce_the_same_message ... ok
+
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running unittests src/main.rs (target/debug/deps/arcana-5a691181f593c2ee)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/demo_smoke.rs (target/debug/deps/demo_smoke-0f8816fa88408004)
+
+running 5 tests
+test demo_completes_its_loop_when_the_tool_call_is_approved ... ok
+test live_requested_without_a_token_falls_back_and_still_claims_no_charge ... ok
+test an_offline_demo_states_that_nothing_was_charged ... ok
+test demo_writes_its_audit_log_under_the_per_user_state_home ... ok
+test demo_still_refuses_when_the_tool_call_is_not_approved ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/first_dispatch_measurement_smoke.rs (target/debug/deps/first_dispatch_measurement_smoke-5a70e006cae0482a)
+
+running 5 tests
+test measurement_option_requires_an_explicit_live_run ... ok
+test measurement_requires_an_explicit_connector_and_model_route ... ok
+test measurement_never_falls_back_to_the_offline_demo ... ok
+test prompt_stdin_is_consumed_without_echo_before_live_token_gate ... ok
+test prompt_stdin_requires_measurement_mode ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/kb_read_smoke.rs (target/debug/deps/kb_read_smoke-e0db5281c201e937)
+
+running 3 tests
+test kb_read_requires_a_query ... ok
+test kb_read_has_no_offline_model_fallback ... ok
+test kb_read_rejects_model_connector_replay_override ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_smoke.rs (target/debug/deps/login_smoke-368132112820508c)
+
+running 6 tests
+test an_unreachable_issuer_is_reported_not_panicked ... ok
+test a_provider_without_the_device_grant_fails_closed ... ok
+test a_declined_request_stores_nothing ... ok
+test a_success_envelope_without_a_token_is_a_failure ... ok
+test an_expired_code_tells_the_operator_to_get_a_new_one ... ok
+test polls_through_pending_then_stores_credentials ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests/mc_ping_smoke.rs (target/debug/deps/mc_ping_smoke-7fe1ec2367c97f12)
+
+running 2 tests
+test mc_ping_exits_0_on_healthy_result_via_base_url_override ... ok
+test mc_ping_exits_2_on_empty_result_via_base_url_override ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/models_smoke.rs (target/debug/deps/models_smoke-f221ceb8a176456c)
+
+running 12 tests
+test a_missing_token_says_so_rather_than_showing_a_stale_list ... ok
+test an_unreachable_connector_is_reported_not_panicked ... ok
+test lists_models_with_prices_and_marks_the_default ... ok
+test a_model_the_connector_cannot_dispatch_is_not_offered ... ok
+test a_bare_array_is_reported_not_silently_accepted ... ok
+test prices_from_the_real_nested_shape_reach_the_screen ... ok
+test an_empty_catalogue_is_an_error_not_a_blank_success ... ok
+test a_saved_choice_persists_and_is_marked ... ok
+test use_accepts_a_model_the_curated_list_does_not_show ... ok
+test caps_the_list_at_ten_per_provider ... ok
+test a_reader_that_stops_early_does_not_crash_the_command ... ok
+test the_chosen_model_reaches_the_agent_loop ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/permission_prompt_smoke.rs (target/debug/deps/permission_prompt_smoke-7d94fbe6a0bfb942)
+
+running 3 tests
+test earlier_deny_short_circuits_before_prompt_fires ... ok
+test readline_prompt_terminates_deferring_cascade_with_allow ... ok
+test readline_prompt_terminates_deferring_cascade_with_deny_on_eof ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/repl_smoke.rs (target/debug/deps/repl_smoke-b8a10209f8e2eb9d)
+
+running 16 tests
+test a_session_with_no_turns_exits_zero ... ok
+test bare_invocation_opens_a_session ... ok
+test bare_invocation_is_no_longer_a_stub ... ok
+test end_of_input_exits_cleanly_without_an_exit_word ... ok
+test input_after_an_exit_word_is_not_executed ... ok
+test every_exit_word_ends_the_session ... ok
+test a_session_whose_turn_failed_exits_non_zero ... ok
+test a_failed_turn_is_explained_in_words_not_just_a_variant_name ... ok
+test a_session_whose_turns_all_completed_exits_zero ... ok
+test without_an_approval_directive_the_tool_call_is_denied ... ok
+test an_explicit_deny_directive_is_honoured ... ok
+test a_task_line_runs_the_agent_loop_and_prints_the_result ... ok
+test one_failed_turn_among_several_still_exits_non_zero ... ok
+test blank_lines_are_skipped_without_ending_the_session ... ok
+test the_verdict_line_is_no_longer_a_bare_variant_name ... ok
+test successive_tasks_run_against_one_session ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+     Running tests/sigint_prompt_smoke.rs (target/debug/deps/sigint_prompt_smoke-9ea08e4527334365)
+
+running 1 test
+test an_interrupt_at_the_prompt_ends_the_session_with_130 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/sigint_real_signal.rs (target/debug/deps/sigint_real_signal-787b539f0e040d1d)
+
+running 1 test
+test a_real_sigint_cancels_the_armed_turn_without_killing_the_process ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/usage_smoke.rs (target/debug/deps/usage_smoke-f77fb43fa2adf0fe)
+
+running 9 tests
+test an_impossible_window_is_refused_without_calling_the_server ... ok
+test usage_without_a_token_refuses_rather_than_guessing_locally ... ok
+test the_default_window_is_sent_even_when_the_user_passes_nothing ... ok
+test usage_reports_an_unreachable_connector_rather_than_panicking ... ok
+test usage_always_sends_the_window_the_route_requires ... ok
+test a_server_rejection_shows_what_the_server_said ... ok
+test usage_reports_the_connectors_numbers ... ok
+test successive_turns_each_report_their_own_spend ... ok
+test the_session_prints_spend_for_each_turn ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/version.rs (target/debug/deps/version-5841ea00a575f20f)
+
+running 8 tests
+test build_script_resolves_git_paths_instead_of_guessing_them ... ok
+test a_dirty_build_says_so_and_a_clean_one_does_not ... ok
+test version_flag_prints_clap_version_line ... ok
+test help_is_written_for_the_person_reading_it ... ok
+test version_subcommand_prints_version_sha_and_license ... ok
+test login_subcommand_is_no_longer_a_stub ... ok
+test login_output_omits_internal_task_ids ... ok
+test bare_invocation_no_longer_shows_a_stub_banner ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/whoami_smoke.rs (target/debug/deps/whoami_smoke-c278f96137cd43a9)
+
+running 3 tests
+test whoami_allow_prints_identity_and_not_denied ... ok
+test whoami_deny_exits_2_and_audits_denied_layer ... ok
+test whoami_allow_creates_audit_log_with_whoami_and_allowed_records ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_connectors-5b631d1adf6c2386)
+
+running 37 tests
+test coworker::tests::build_ask_args_omits_paths_flag_when_empty ... ok
+test coworker::tests::build_stats_args_structural ... ok
+test coworker::tests::build_write_args_omits_absent_optionals ... ok
+test coworker::tests::build_ask_args_preserves_heredoc_question_as_single_unchanged_element ... ok
+test coworker::tests::build_write_args_orders_flags_and_includes_context_and_target ... ok
+test coworker::tests::build_write_args_preserves_heredoc_spec_as_single_unchanged_element ... ok
+test coworker::tests::resolve_bin_path_blank_override_falls_back_to_home ... ok
+test coworker::tests::resolve_bin_path_falls_back_to_absolute_when_home_missing ... ok
+test coworker::tests::resolve_bin_path_falls_back_to_home_default ... ok
+test coworker::tests::resolve_bin_path_prefers_override ... ok
+test coworker::tests::with_bin_path_sets_bin_path_verbatim ... ok
+test model_connector::tests::api_key_debug_and_display_are_redacted ... ok
+test model_connector::tests::embedded_carriage_return_is_rejected ... ok
+test model_connector::tests::embedded_newline_is_rejected_by_name_and_offset ... ok
+test model_connector::tests::invalid_credential_error_never_echoes_the_credential ... ok
+test model_connector::tests::production_constructor_rejects_loopback_base_override ... ok
+test model_connector::tests::try_from_env_errors_when_var_empty ... ok
+test model_connector::tests::surrounding_whitespace_is_trimmed_off_the_credential ... ok
+test model_connector::tests::try_from_env_errors_when_var_missing ... ok
+test ops_bot::tests::event_category_serializes_snake_case ... ok
+test scrutator::tests::search_query_new_leaves_optionals_unset ... ok
+test scrutator::tests::search_response_default_is_empty_results ... ok
+test ops_bot::tests::default_base_url_is_not_a_redirecting_alias ... ok
+test scrutator::tests::search_query_new_omits_maturity_on_the_wire ... ok
+test scrutator::tests::try_from_env_falls_back_to_default_mesh_url_when_unset ... ok
+test scrutator::tests::fetch_query_by_source_id_matches_f1_shape ... ok
+test scrutator::tests::fetch_query_parent_of_chunk_serialises_native_range_object ... ok
+test scrutator::tests::skill_hit_from_drops_incomplete_metadata ... ok
+test scrutator::tests::for_skill_discovery_carries_namespace_and_production_floor ... ok
+test scrutator::tests::try_from_env_rejects_nonproduction_override ... ok
+test scrutator::tests::skill_hit_from_maps_server_side_metadata ... ok
+test model_connector::tests::execute_url_appends_path_segment ... ok
+test model_connector::tests::connection_refused_names_the_cause_not_just_the_url ... ok
+test scrutator::tests::search_url_appends_v1_search_segments ... ok
+test ops_bot::tests::events_url_appends_path_segment ... ok
+test scrutator::tests::fetch_url_appends_v1_fetch_on_the_approved_mesh_host ... ok
+test model_connector::tests::a_stalled_response_reports_the_timeout_and_its_budget ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/auth_arcana_client_credentials.rs (target/debug/deps/auth_arcana_client_credentials-fd4a5171ced9060a)
+
+running 7 tests
+test production_config_pins_the_ai_issuer_token_endpoint_and_rejects_one ... ok
+test production_config_rejects_unapproved_https_token_endpoint ... ok
+test token_mint_does_not_follow_redirects ... ok
+test endpoint_failure_never_echoes_client_secret ... ok
+test rejects_symlinked_secret_file_before_network ... ok
+test rejects_insecure_secret_file_before_network ... ok
+test mints_exact_client_credentials_profile_and_caches_singleflight ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/coworker_subprocess.rs (target/debug/deps/coworker_subprocess-89c6baba01d68701)
+
+running 7 tests
+test stats_smoke_test_against_real_binary_if_present ... ignored, opt-in: only runs against a real, locally-installed coworker binary
+test ask_args_dod_heredoc_question_survives_as_single_unchanged_argv_element ... ok
+test stats_args_are_structurally_flat_flag_value_pairs ... ok
+test write_args_dod_heredoc_spec_survives_as_single_unchanged_argv_element ... ok
+test spawn_error_is_reported_when_binary_does_not_exist ... ok
+test ask_spawns_via_argv_and_captures_stdout ... ok
+test write_spawns_via_literal_argv_and_echo_roundtrips_heredoc_spec ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/fetch_contract.rs (target/debug/deps/fetch_contract-f3fe456a2cca99de)
+
+running 3 tests
+test search_hit_deserializes_f4_new_fields ... ok
+test fetch_403_surfaces_as_typed_http_error ... ok
+test fetch_by_source_id_round_trips_f1_f2 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/fetch_parent_range.rs (target/debug/deps/fetch_parent_range-3c67b34fbf89c4d0)
+
+running 4 tests
+test parent_escalation_issues_native_range_not_whole_doc ... ok
+test parent_range_unsupported_falls_back_to_whole_doc ... ok
+test full_source_escalation_still_issues_whole_doc_range ... ok
+test parent_range_403_fails_closed_no_fallback ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/live_scrutator.rs (target/debug/deps/live_scrutator-bc97c6f270dda9e2)
+
+running 3 tests
+test live_production_skill_discover_and_exact_fetch ... ignored, live: requires configured OAuth credentials + running Scrutator + indexed artifact
+test live_search_then_fetch_by_id_roundtrip ... ignored, live: requires a running Scrutator + ARCANA_SCRUTATOR_TOKEN
+test live_skills_discover_production_arm ... ignored, live: requires a running Scrutator + ARCANA_SCRUTATOR_TOKEN
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/model_connector_contract.rs (target/debug/deps/model_connector_contract-e3784b5bfeb8a2b5)
+
+running 11 tests
+test http_201_unknown_envelope_status_fails_closed ... ok
+test case_c_http_503_returns_err_http ... ok
+test case_d_http_200_returns_err_unexpected_status ... ok
+test http_429_logical_error_retains_status_and_observation ... ok
+test opted_in_first_dispatch_context_reaches_the_exact_http_boundary ... ok
+test malformed_error_body_is_never_copied_into_the_error_message ... ok
+test http_429_unknown_envelope_status_fails_closed_without_body_fallback ... ok
+test case_b_http_503_logical_error_retains_observation ... ok
+test partial_json_error_body_is_never_treated_as_a_nest_exception ... ok
+test http_201_timeout_retains_observation ... ok
+test case_a_http_201_success_returns_ok ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/model_connector_error_reporting.rs (target/debug/deps/model_connector_error_reporting-f914496ec7ee9893)
+
+running 6 tests
+test a_transport_failure_never_reads_as_a_bare_url ... ok
+test a_rate_limit_reports_how_long_to_wait ... ok
+test an_unreachable_connector_names_the_refusal ... ok
+test a_nest_exception_body_surfaces_its_message ... ok
+test out_of_credit_tells_the_customer_where_to_top_up ... ok
+test a_logical_error_on_201_renders_the_same_way_as_on_4xx ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/ops_bot_contract.rs (target/debug/deps/ops_bot_contract-32709ba41d691f23)
+
+running 3 tests
+test fail_soft_without_token_makes_zero_requests_and_returns_ok ... ok
+test error_path_401_surfaces_as_err_never_swallowed ... ok
+test success_path_posts_bearer_auth_and_category_payload ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/scrutator_contract.rs (target/debug/deps/scrutator_contract-7128dd6965611600)
+
+running 10 tests
+test base_url_policy_rejects_every_other_plain_http_endpoint ... ok
+test search_503_becomes_err_http ... ok
+test search_sends_only_query_when_optionals_unset ... ok
+test search_does_not_follow_redirects ... ok
+test search_empty_results_is_ok_not_error ... ok
+test search_200_returns_results ... ok
+test search_rejects_unauthenticated_fallback_and_refreshes_once_on_401 ... ok
+test search_422_becomes_err_http_with_detail_message ... ok
+test search_forwards_optional_fields ... ok
+test base_url_policy_allows_https_loopback_and_the_exact_mesh_endpoint ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/scrutator_fetchconn.rs (target/debug/deps/scrutator_fetchconn-bc56ff2f9ccbda15)
+
+running 5 tests
+test scrutator_store_loads_pinned_skill_over_fetch ... ok
+test scrutator_store_maps_fetch_failure_to_store_unavailable ... ok
+test adapter_maps_403_to_fetch_unavailable ... ok
+test adapter_returns_content_and_trust_metadata ... ok
+test scrutator_store_rejects_evidence_trust_class ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/skill_store_cutover.rs (target/debug/deps/skill_store_cutover-ef32cfd9cf94c8a6)
+
+running 3 tests
+test bootstrap_selector_yields_file_store_offline ... ok
+test production_default_fails_closed_without_credentials ... ok
+test unknown_selector_is_a_hard_error ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_core-b727c6f0450d145f)
+
+running 70 tests
+test agent_loop::terminal_reason_tests::completed_is_the_only_success ... ok
+test agent_loop::terminal_reason_tests::display_matches_explain ... ok
+test agent_loop::terminal_reason_tests::every_variant_explains_itself_in_prose ... ok
+test agent_loop::terminal_reason_tests::explanations_are_distinct ... ok
+test agent_loop::terminal_reason_tests::the_context_window_verdict_tells_the_user_what_to_do ... ok
+test connector::tests::connector_response_parses_logical_error_payload ... ok
+test connector::tests::execute_request_omits_unset_optionals ... ok
+test connector::tests::connector_response_round_trips ... ok
+test connector::tests::execute_request_renames_camel_case_wire_fields ... ok
+test connector::tests::logical_display_omits_an_absent_recommendation_cleanly ... ok
+test connector::tests::logical_display_leads_with_the_message_not_the_wire_enum ... ok
+test connector::tests::logical_display_shows_the_recommendation ... ok
+test connector::tests::logical_display_shows_the_retry_interval ... ok
+test connector::tests::transport_display_carries_no_redundant_prefix ... ok
+test connector::tests::two_upstream_sentences_do_not_run_together ... ok
+test hooks::audit::tests::file_owner_mismatch_is_rejected ... ok
+test kb::cache::tests::changed_content_hash_is_a_miss_staleness ... ok
+test kb::cache::tests::different_source_id_is_a_miss ... ok
+test kb::cache::tests::different_range_key_is_a_miss ... ok
+test kb::cache::tests::put_then_get_same_key_hits ... ok
+test hooks::audit::tests::secure_open_persists_mode_and_directory_entry_transitions ... ok
+test kb::envelope::tests::datamark_folds_case_variant_markers ... ok
+test kb::envelope::tests::case_fold_preserves_multibyte_payload ... ok
+test kb::envelope::tests::datamark_neutralizes_chat_role_markers ... ok
+test kb::cascade::tests::fetch_failure_fails_closed ... ok
+test kb::cascade::tests::skill_trust_class_is_refused_no_cross_promotion ... ok
+test kb::envelope::tests::case_fold_does_not_corrupt_surrounding_payload_casing ... ok
+test kb::envelope::tests::fenced_wraps_content_between_matching_nonce_fences ... ok
+test kb::envelope::tests::datamark_neutralizes_forged_open_fence ... ok
+test kb::envelope::tests::nonce_varies_between_envelopes ... ok
+test kb::envelope::tests::provenance_is_out_of_band_not_in_injectable ... ok
+test kb::envelope::tests::datamark_neutralizes_forged_close_fence ... ok
+test kb::eval::tests::empty_contexts_and_empty_answer_score_zero ... ok
+test kb::eval::tests::fixture_corpus_has_at_least_eight_items ... ok
+test kb::envelope::tests::extended_markers_cannot_reach_injectable_context_raw ... ok
+test kb::envelope::tests::datamark_neutralizes_extended_template_markers ... ok
+test kb::eval::tests::mock_judge_is_pluggable_and_gives_exact_fractions ... ok
+test kb::metrics::tests::cache_hit_escalation_is_a_trigger_but_not_a_fetch ... ok
+test kb::eval::tests::lexical_judge_supports_paraphrase_but_rejects_distractor ... ok
+test kb::metrics::tests::chunk_served_moves_only_chunk_counter ... ok
+test kb::metrics::tests::empty_metrics_report_zero_rates_without_dividing_by_zero ... ok
+test kb::metrics::tests::escalated_network_fetch_counts_as_trigger_and_fetch ... ok
+test kb::metrics::tests::mixed_workload_computes_expected_rates ... ok
+test kb::metrics::tests::over_cap_fetch_moves_over_fetch_counter ... ok
+test kb::size_guard::tests::cap_is_floor_of_window_times_fraction ... ok
+test kb::eval::tests::unfaithful_item_is_detected ... ok
+test kb::eval::tests::harness_scores_fixture_corpus_in_expected_ranges ... ok
+test execution::tests::execute_surfaces_replaceinput_transformed_input ... ok
+test kb::trust::tests::admit_evidence_accepts_evidence ... ok
+test kb::trust::tests::admit_evidence_refuses_skill_no_cross_promotion ... ok
+test kb::trust::tests::admit_evidence_refuses_unknown ... ok
+test kb::trust::tests::evidence_routes_to_fenced_inert ... ok
+test kb::trust::tests::skill_routes_to_signed_exec ... ok
+test kb::trust::tests::unknown_class_fails_closed ... ok
+test tests::marker_returns_bootstrap_string ... ok
+test kb::cascade::tests::cache_hit_skips_second_fetch ... ok
+test kb::cascade::tests::chunk_sufficient_does_not_fetch ... ok
+test kb::cascade::tests::changed_content_hash_misses_and_refetches ... ok
+test kb::size_guard::tests::mid_codepoint_offset_does_not_panic_and_clamps_down ... ok
+test kb::cascade::tests::boundary_misaligned_escalates_to_parent ... ok
+test kb::cascade::tests::high_sibling_coverage_escalates_to_full_source ... ok
+test kb::size_guard::tests::under_cap_body_passes_through_unchanged ... ok
+test kb::size_guard::tests::over_cap_body_is_windowed_under_cap ... ok
+test kb::cascade::tests::dispatch_uses_server_field_not_body ... ok
+test kb::size_guard::tests::cjk_body_capped_by_real_tokens_when_word_count_is_one ... ok
+test kb::cascade::tests::admitted_envelope_fences_kb_bytes_and_gate_is_out_of_band ... ok
+test kb::size_guard::tests::punctuation_dense_body_capped_by_real_tokens_not_words ... ok
+test kb::size_guard::tests::windowing_over_cap_multibyte_body_mid_codepoint_does_not_panic ... ok
+test kb::cascade::tests::size_guard_windows_large_fetched_source ... ok
+test kb::metrics::tests::cascade_instrumentation_tracks_chunk_escalation_and_overfetch ... ok
+
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/agent_loop_exhaustive.rs (target/debug/deps/agent_loop_exhaustive-ea81ca4c3461cc01)
+
+running 4 tests
+test all_continue_variants_are_distinct ... ok
+test all_terminal_variants_are_distinct ... ok
+test driver_handles_both_outcome_branches ... ok
+test turn_outcome_is_terminal_and_is_continue_reflect_branch ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/capability_executor_security.rs (target/debug/deps/capability_executor_security-1ad97c0ab19b5994)
+
+running 8 tests
+test audit_sync_failure_executes_zero_tools ... ok
+test post_cascade_replaceinput_hook_aborts_and_executes_zero_tools ... ok
+test all_defer_cascade_denies_and_executes_zero_tools ... ok
+test decision_audit_failure_latches_executor_closed ... ok
+test pre_audit_failure_executes_zero_tools ... ok
+test post_audit_failure_is_fatal_and_latches_executor_closed ... ok
+test transformed_input_is_revalidated_immediately_before_execution ... ok
+test concurrent_attempts_have_unique_correlated_audit_pairs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/capstone_vertical_prototype.rs (target/debug/deps/capstone_vertical_prototype-f1b7e451b0e0c569)
+
+running 1 test
+test capstone_vertical_prototype_attempt_check_conclusion ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/cost_budget.rs (target/debug/deps/cost_budget-7b6ed36a7981f316)
+
+running 6 tests
+test budget_exceeded_carries_observed_and_cap ... ok
+test check_budget_none_cap_is_always_ok ... ok
+test check_budget_returns_err_when_cap_exceeded ... ok
+test check_budget_returns_ok_when_below_cap ... ok
+test snapshot_aggregates_total_tokens_and_cost ... ok
+test concurrent_record_calls_are_atomic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dispatch_multi_model.rs (target/debug/deps/dispatch_multi_model-548d261377371a53)
+
+running 1 test
+test dispatch_two_distinct_models_in_one_run ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/dispatch_policy.rs (target/debug/deps/dispatch_policy-1c3372e7abae36d9)
+
+running 6 tests
+test a_single_model_policy_reports_exactly_one_id ... ok
+test dispatch_cost_tier_distinct ... ok
+test dispatch_classify_task_type ... ok
+test policy_select_by_task_type ... ok
+test routed_ids_cover_every_tier_without_duplicates ... ok
+test single_model_policy_pins_every_task_class_to_one_model ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dispatch_request_model.rs (target/debug/deps/dispatch_request_model-a4ccdfd59a86ff21)
+
+running 1 test
+test dispatch_request_carries_selected_model ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/driver_audit_inherited.rs (target/debug/deps/driver_audit_inherited-39fd354224c61b87)
+
+running 1 test
+test driver_audit_inherited ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/driver_completes_small_task.rs (target/debug/deps/driver_completes_small_task-a819749ab5e5bff0)
+
+running 1 test
+test driver_completes_small_task ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/driver_config_validation.rs (target/debug/deps/driver_config_validation-5eb36ba6d03165f0)
+
+running 5 tests
+test driver_rejects_zero_context_budget_before_call ... ok
+test driver_rejects_non_finite_cost_cap_before_call ... ok
+test driver_rejects_negative_cost_cap_before_call ... ok
+test driver_rejects_zero_turn_cap_before_call ... ok
+test driver_rejects_infinite_cost_cap_before_call ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/driver_context_window.rs (target/debug/deps/driver_context_window-4705eabc0985a15e)
+
+running 3 tests
+test driver_context_window ... ok
+test driver_context_window_irreducible_terminates ... ok
+test driver_compaction_consumes_no_turn ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/driver_cost_accounting.rs (target/debug/deps/driver_cost_accounting-c3ce7413a86be6cb)
+
+running 5 tests
+test driver_cost_cap_terminates ... ok
+test driver_cost_cap_precedes_tool_interpretation ... ok
+test driver_propagates_remaining_cost_budget ... ok
+test driver_cost_breaker_replay_transcript_terminates_on_maxcost ... ok
+test driver_cost_accounting ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/driver_interpret.rs (target/debug/deps/driver_interpret-fd1128ff6eee799a)
+
+running 1 test
+test driver_interpret ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/driver_operator_abort.rs (target/debug/deps/driver_operator_abort-1b7fd7f2130ba30c)
+
+running 7 tests
+test an_abort_that_could_not_be_recorded_is_not_reported_as_a_clean_abort ... ok
+test a_run_nobody_interrupted_writes_no_abort_record ... ok
+test an_answer_that_already_arrived_is_delivered_but_the_run_is_still_an_abort ... ok
+test a_cancel_landing_during_the_dispatch_stops_before_the_tool_runs ... ok
+test an_abort_before_the_first_dispatch_is_still_recorded ... ok
+test the_recorded_cost_is_the_session_total_and_says_so ... ok
+test the_abort_is_written_to_the_audit_log_with_what_it_cost ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/driver_terminal_mapping.rs (target/debug/deps/driver_terminal_mapping-9536c6906923bef1)
+
+running 1 test
+test driver_terminal_mapping ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+
+     Running tests/driver_tool_results_feedback.rs (target/debug/deps/driver_tool_results_feedback-c2bc714c32b6490a)
+
+running 2 tests
+test driver_tool_results_feedback_hook_continuation ... ok
+test driver_tool_results_feedback ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/execution_invariant_replaceinput.rs (target/debug/deps/execution_invariant_replaceinput-d8dc74bc2f1ae3eb)
+
+running 2 tests
+test audited_hash_equals_executed_hash ... ok
+test replaced_input_is_the_executed_input ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/execution_invariant_single_audit.rs (target/debug/deps/execution_invariant_single_audit-cf063112a1a38031)
+
+running 1 test
+test exactly_one_pre_and_one_post_per_execution ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/first_dispatch_measurement.rs (target/debug/deps/first_dispatch_measurement-5b7c1c19697bf6e6)
+
+running 9 tests
+test execute_request_debug_redacts_prompt_and_system_prompt ... ok
+test measurement_rejects_unsafe_or_ambiguous_identifiers_and_zero_replay ... ok
+test measurement_serializes_as_closed_identifier_only_wire_contract ... ok
+test first_dispatch_prompt_is_bounded_and_debug_redacted ... ok
+test driver_rejects_first_dispatch_prompt_over_context_budget_before_io ... ok
+test driver_retains_receipt_from_a_logical_error ... ok
+test driver_rejects_prompt_without_measurement_before_connector_io ... ok
+test driver_attaches_measurement_only_to_the_real_first_dispatch ... ok
+test driver_applies_exact_prompt_only_to_the_real_first_dispatch ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/hook_bridge_layer.rs (target/debug/deps/hook_bridge_layer-ebf766c011c5d62a)
+
+running 4 tests
+test stop_execution_maps_to_deny_with_reason ... ok
+test continue_chain_maps_to_defer ... ok
+test pre_cancelled_token_yields_deny_cancelled ... ok
+test replace_input_surfaces_as_replace_input ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hooks_audit.rs (target/debug/deps/hooks_audit-b9f9eb797cb6c087)
+
+running 6 tests
+test audit_log_rejects_existing_insecure_mode ... ok
+test audit_log_rejects_symlink_target ... ok
+test audit_path_is_private_regular_and_owned_by_the_caller ... ok
+test audit_record_event ... ok
+test successful_attempt_writes_correlated_decision_and_result ... ok
+test denied_attempt_writes_terminal_result_without_execution_payload ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/hooks_cancel.rs (target/debug/deps/hooks_cancel-f30d44a8a0f2ea65)
+
+running 2 tests
+test pre_existing_cancellation_short_circuits_immediately ... ok
+test cancellation_between_hooks_stops_chain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/hooks_chain.rs (target/debug/deps/hooks_chain-78ea9e14b37cd690)
+
+running 3 tests
+test inject_context_in_pre_phase_is_rejected ... ok
+test first_stop_short_circuits ... ok
+test replace_input_propagates_through_chain ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hooks_cost_budget.rs (target/debug/deps/hooks_cost_budget-6d1cede864d0e689)
+
+running 3 tests
+test under_cap_continues ... ok
+test over_cap_stops_with_documented_reason ... ok
+test no_cap_continues_unconditionally ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hooks_ops_bot.rs (target/debug/deps/hooks_ops_bot-112fdb743ad55ec0)
+
+running 3 tests
+test stub_post_returns_continue_without_api_key ... ok
+test stub_with_key_still_returns_continue_no_http ... ok
+test stub_pre_returns_continue_without_api_key ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hooks_trait.rs (target/debug/deps/hooks_trait-e64e87b874c83ac8)
+
+running 2 tests
+test nop_hook_post_continues ... ok
+test nop_hook_pre_continues ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/interactive_layer.rs (target/debug/deps/interactive_layer-00a8c28762b2ff20)
+
+running 5 tests
+test parse_directive_lowercases_and_falls_back ... ok
+test deny_directive_resolves_to_deny ... ok
+test allow_directive_resolves_to_allow ... ok
+test ask_directive_without_terminal_denies ... ok
+test directive_unaffected_by_tool_name_or_input ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/permission_cascade.rs (target/debug/deps/permission_cascade-fc1d43186e484470)
+
+running 8 tests
+test all_defer_denies_closed_without_an_authority ... ok
+test builtin_tool_without_rules_falls_through_to_interactive_allow ... ok
+test first_deny_short_circuits_downstream_layers ... ok
+test first_deny_short_circuit_sweep ... ok
+test layer_order_schema_prehook_rule_interactive ... ok
+test replace_input_propagates_to_downstream_layers ... ok
+test schema_deny_short_circuits_entire_cascade ... ok
+test v_ac_15_default_deny_unknown_mcp_tool ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rule_layer.rs (target/debug/deps/rule_layer-ad873b58d4d1ca28)
+
+running 14 tests
+test empty_layer_defers_builtin_tools ... ok
+test empty_layer_denies_mcp_tools ... ok
+test missing_files_tolerated ... ok
+test bad_regex_surfaces_diagnostic ... ok
+test bad_regex_through_symlink_reports_canonical_path ... ok
+test schema_version_mismatch_rejected ... ok
+test rule_file_size_cap_enforced ... ok
+test allow_commands_missing_match_denies ... ok
+test deny_command_short_circuits_before_allow ... ok
+test project_rules_extend_user_deny_patterns ... ok
+test project_path_via_symlink_loads_correctly ... ok
+test path_deny_overrides_path_allow ... ok
+test host_allowlist_filters_webfetch ... ok
+test mcp_allow_pattern_grants_access ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/schema_layer.rs (target/debug/deps/schema_layer-6bdf9b47f21ac6f8)
+
+running 4 tests
+test denies_unknown_tool ... ok
+test defers_when_payload_satisfies_schema ... ok
+test cascade_short_circuits_on_schema_deny ... ok
+test denies_when_required_field_missing ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_credential_broker-6e43f55330e180df)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/arcana-credential-broker.rs (target/debug/deps/arcana_credential_broker-ba639671dacfc3bd)
+
+running 4 tests
+test broker_runtime::tests::post_provider_errors_retain_the_durable_outcome_identity ... ok
+test broker_runtime::tests::inherited_listener_requires_exact_seqpacket_path ... ok
+test tests::credential_loader_uses_owner_only_nofollow_descriptor ... ok
+test tests::policy_loader_rejects_symlink_and_oversize_before_parse ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/authorization.rs (target/debug/deps/authorization-6745a5827c570a1a)
+
+running 24 tests
+test denied_request_never_reaches_the_ledger ... ok
+test disallowed_operation_fails_closed ... ok
+test empty_fields_fail_closed ... ok
+test deserialized_ledger_rejects_inconsistent_quota_and_outcome_state ... ok
+test duplicate_request_replays_without_repeating_side_effect ... ok
+test expired_request_fails_closed ... ok
+test future_generation_fails_closed ... ok
+test malformed_or_oversized_idempotency_key_fails_closed ... ok
+test missing_idempotency_key_fails_closed ... ok
+test over_quota_fails_closed ... ok
+test quota_accumulates_and_then_refuses ... ok
+test reused_key_with_different_fingerprint_fails_closed ... ok
+test policy_refuses_missing_or_zero_trusted_quota_cost ... ok
+test replay_succeeds_even_when_quota_is_exhausted ... ok
+test scoped_request_succeeds ... ok
+test wildcard_fields_fail_closed ... ok
+test wrong_peer_uid_fails_closed ... ok
+test wrong_executable_fails_closed ... ok
+test wrong_profile_fails_closed ... ok
+test wrong_model_fails_closed ... ok
+test wrong_provider_fails_closed ... ok
+test wrong_session_fails_closed ... ok
+test stale_generation_fails_closed ... ok
+test wrong_upstream_fails_closed ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ipc_broker.rs (target/debug/deps/ipc_broker-dc2089faeda9d911)
+
+running 8 tests
+test credentialed_mode_refuses_sampled_stream_identity_before_reading_a_secret ... ok
+test denied_caller_scope_is_not_persisted_in_the_audit_log ... ok
+test self_reported_peer_fields_and_wrong_scope_fail_closed ... ok
+test reused_idempotency_key_with_changed_payload_is_denied ... ok
+test committed_cache_without_matching_outcome_id_fails_closed_on_restart ... ok
+test permissioned_ipc_attests_peer_and_replays_without_second_provider_call ... ok
+test committed_reservation_without_cached_outcome_audits_replay_pending ... ok
+test idempotent_response_survives_broker_restart_without_second_provider_call ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/packaging.rs (target/debug/deps/packaging-d6b44a1a69120df1)
+
+running 8 tests
+test both_platform_assets_exist ... ok
+test systemd_socket_is_group_scoped_not_world ... ok
+test systemd_unit_declares_no_environment_secret ... ok
+test tmpfiles_requires_restrictive_credential_source ... ok
+test policy_example_contains_no_credential ... ok
+test launchd_plist_is_separately_accounted_and_env_free ... ok
+test systemd_unit_declares_required_isolation ... ok
+test lifecycle_script_covers_install_verify_disable_rollback ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/separation.rs (target/debug/deps/separation-38500950810e5e12)
+
+running 9 tests
+test audit_record_has_no_free_form_payload ... ok
+test audit_record_renders_required_causal_ids ... ok
+test execution_boundary_does_not_depend_on_broker ... ok
+test broker_binary_is_declared_separately ... ok
+test provider_failures_have_distinct_terminal_audit_kinds ... ok
+test lease_carries_no_credential_field ... ok
+test broker_binary_never_prints_the_credential ... ok
+test library_contains_no_secret_loading_code ... ok
+test audit_writer_is_owner_only_and_rejects_forged_labels ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_execution_boundary-21c35047d0b8f977)
+
+running 4 tests
+test process::lifecycle_tests::absent_group_is_safe_only_after_disappearance_proof ... ok
+test process::lifecycle_tests::cached_final_signal_is_never_reissued_against_a_numeric_pgid ... ok
+test process::lifecycle_tests::refused_final_signal_never_promotes_to_success ... ok
+test process::lifecycle_tests::observer_capacity_and_fatal_state_fail_closed ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/clean_env.rs (target/debug/deps/clean_env-fe7a13185a88db4a)
+
+running 11 tests
+test all_values_are_constructed_not_inherited ... ok
+test allowlist_contains_no_credential_shaped_name ... ok
+test caller_declared_variables_are_always_rejected ... ok
+test apply_clears_before_setting ... ok
+test credential_name_heuristic_covers_observed_shapes ... ok
+test no_sentinel_reaches_a_constructed_value ... ok
+test debug_redacts_values ... ok
+test real_user_home_is_rejected ... ok
+test path_components_must_be_absolute_and_non_empty ... ok
+test relative_and_traversing_homes_are_rejected ... ok
+test term_must_be_in_the_allowed_set ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/process_boundary.rs (target/debug/deps/process_boundary-637617054af2875e)
+
+running 18 tests
+test relative_programs_and_sentinel_bearing_argv_fail_closed ... ok
+test child_receives_only_the_constructed_environment ... ok
+test child_cannot_inherit_a_descriptor_even_when_cloexec_was_cleared ... ok
+test quarantine_blocks_a_sentinel_before_output_release ... ok
+test successful_leader_exit_kills_a_pipe_closing_background_descendant ... ok
+test quarantine_is_independent_of_cross_stream_scheduler_order ... ok
+test completed_cleanup_refuses_repeated_numeric_group_signals ... ok
+test exited_leader_cannot_hold_the_boundary_open_via_background_pipe ... ok
+test target_and_group_anchor_close_every_ambient_descriptor ... ok
+test cancelling_natural_exit_finalization_cannot_strand_a_descendant ... ok
+test dropping_execution_future_kills_the_owned_process_group ... ok
+test process_boundary_persists_only_through_restrictive_transcript_writer ... ok
+test runtime_shutdown_still_signals_the_owned_process_group ... ok
+test cancellation_and_signal_exit_are_reported_without_ambiguity ... ok
+test quarantine_preserves_observation_order_across_streams ... ok
+test shared_exit_observer_handles_bounded_mass_concurrency ... ok
+test self_stopped_child_does_not_block_the_timeout_watchdog ... ok
+test timeout_terminates_the_whole_process_group ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/pty_lifecycle.rs (target/debug/deps/pty_lifecycle-c8fb64c621163200)
+
+running 2 tests
+test pty_refuses_output_policy_it_cannot_enforce ... ok
+test child_has_a_real_tty_and_observes_resize ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/quarantine.rs (target/debug/deps/quarantine-a0991829d3d21f7b)
+
+running 22 tests
+test benign_corpus_identity_is_pinned ... ok
+test empty_sentinel_set_is_a_construction_error ... ok
+test buffer_exhaustion_fails_closed ... ok
+test depth_two_nesting_is_blocked ... ok
+test retention_larger_than_buffer_is_rejected ... ok
+test poisoned_scanner_latches ... ok
+test sha256_matches_known_vectors ... ok
+test hex_forms_are_blocked ... ok
+test split_across_stdout_and_stderr_is_blocked ... ok
+test nested_form_split_across_streams_is_blocked_independent_of_schedule ... ok
+test base64_forms_are_blocked ... ok
+test raw_bearer_and_json_forms_are_blocked ... ok
+test line_wrapped_base64_is_blocked ... ok
+test base64_embedded_at_every_phase_is_blocked ... ok
+test line_wrapped_base64_with_embedded_sentinel_is_blocked ... ok
+test separated_hex_dumps_are_blocked ... ok
+test percent_and_json_escape_forms_are_blocked ... ok
+test oversized_decoded_window_fails_closed_and_releases_nothing ... ok
+test every_split_position_is_blocked ... ok
+test sentinel_beyond_retention_is_blocked_at_every_split ... ok
+test benign_corpus_is_released_byte_identically ... ok
+test nested_forms_are_blocked_at_every_chunk_size ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.45s
+
+     Running tests/spawn_gate.rs (target/debug/deps/spawn_gate-aaec75c7356a43b8)
+
+running 4 tests
+test api_route_cannot_spawn ... ok
+test gate_detects_aliases_multiline_and_comments_without_false_hits ... ok
+test spawn_inventory_matches_the_pinned_classification ... ok
+test migration_set_does_not_gain_members ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+     Running tests/transcript.rs (target/debug/deps/transcript-1c7863eab4a99025)
+
+running 9 tests
+test distributed_cross_stream_sentinel_creates_no_transcript ... ok
+test invalid_identifier_and_zero_retention_fail_closed ... ok
+test preexisting_no_sync_markers_require_regular_files_and_exact_content ... ok
+test sentinel_or_encoded_sentinel_creates_no_transcript ... ok
+test byte_limit_is_checked_before_destination_creation ... ok
+test root_and_destination_symlinks_are_rejected ... ok
+test ancestor_replacement_cannot_redirect_creation_or_pruning ... ok
+test writes_only_after_quarantine_with_restrictive_owner_only_modes ... ok
+test retention_keeps_only_the_newest_bounded_set ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_mcp-9e3b5b6087d8d4ad)
+
+running 4 tests
+test bind_guard::tests::accepts_ipv4_loopback ... ok
+test bind_guard::tests::rejects_mesh_ip ... ok
+test bind_guard::tests::accepts_ipv6_loopback ... ok
+test bind_guard::tests::rejects_unspecified ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/loopback_contract.rs (target/debug/deps/loopback_contract-203de0e2dece7f64)
+
+running 7 tests
+test tools_list_returns_registered_tool_set ... ok
+test replaceinput_rule_makes_effective_args_differ ... ok
+test deny_is_not_rescued_by_proceed_layer ... ok
+test tools_call_carries_effective_args ... ok
+test defer_suspends_and_resume_completes ... ok
+test resume_with_replace_input_sets_effective_args ... ok
+test executed_capability_emits_exactly_one_audit_pair ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/no_broker_dep.rs (target/debug/deps/no_broker_dep-a4cdf55a11e042cd)
+
+running 1 test
+test no_broker_dep ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_skills-7e94d1272595882f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/audit.rs (target/debug/deps/audit-3453fa7f3f2367f0)
+
+running 1 test
+test skill_stage_single_audit_via_executor ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/builder.rs (target/debug/deps/builder-d1204f689b821258)
+
+running 1 test
+test skill_builder_draft_stub ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/discover.rs (target/debug/deps/discover-f49f17c3ef3c8551)
+
+running 6 tests
+test discover_query_pins_production_floor_and_namespace ... ok
+test discover_backend_down_fails_closed ... ok
+test discover_returns_only_production ... ok
+test draft_skill_not_discoverable ... ok
+test discovered_candidate_cannot_construct_pin ... ok
+test discovery_quality_bar_precision_recall ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/interpreter.rs (target/debug/deps/interpreter-b9369ea70639e26a)
+
+running 2 tests
+test unregistered_capability_is_typed_error_not_panic ... ok
+test skill_load_and_run ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/maturity_gate.rs (target/debug/deps/maturity_gate-38d518856dc0b4a9)
+
+running 1 test
+test skill_maturity_and_template_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/multi_model.rs (target/debug/deps/multi_model-ae5b601b5e1cf458)
+
+running 1 test
+test skill_per_stage_multi_model ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/production_artifact.rs (target/debug/deps/production_artifact-204205718212109d)
+
+running 2 tests
+test deserialises_and_validates_skills_kb_discovery_probe ... ok
+test captured_execution_dispatches_exact_arcana_search_input ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/reload.rs (target/debug/deps/reload-83d81afec90a0501)
+
+running 1 test
+test skill_new_version_picked_up_next_run ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/schema.rs (target/debug/deps/schema-8ee3af85c8950c92)
+
+running 2 tests
+test skill_plan_rejects_invalid ... ok
+test skill_plan_schema_roundtrip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/smoke.rs (target/debug/deps/smoke-2e88edf64edb25fe)
+
+running 1 test
+test skill_smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/source.rs (target/debug/deps/source-f3c6c0e9b1e6748e)
+
+running 6 tests
+test source_mode_from_str_is_fail_closed ... ok
+test bootstrap_mode_selects_file_store ... ok
+test production_mode_store_unavailable_fails_closed_no_file_fallback ... ok
+test production_mode_selects_scrutator_store ... ok
+test production_store_keeps_full_gate_chain ... ok
+test production_store_loads_and_runs_pinned_skill ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/store.rs (target/debug/deps/store-3716173b1f6327bd)
+
+running 12 tests
+test hash_pin_rejects_before_parse ... ok
+test candidate_cannot_construct_pin ... ok
+test wrong_namespace_rejected ... ok
+test wrong_trust_class_rejected_before_blake3 ... ok
+test filestore_verbatim ... ok
+test wrong_trust_class_runs_zero_stages ... ok
+test store_unavailable_never_falls_back ... ok
+test model_spec_allowlist ... ok
+test hash_pin_accepts_matching_bytes ... ok
+test run_wrapper_still_executes ... ok
+test tool_ceiling_cannot_widen ... ok
+test cache_hit_no_network ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_supervisor-56754a19e808249f)
+
+running 2 tests
+test supervisor::lifecycle_reason_tests::classifies_normal_exit_and_composite_cleanup_phases ... ok
+test supervisor::lifecycle_reason_tests::wait_failure_preserves_primary_only_when_cleanup_did_not_fail ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/heartbeat-child.rs (target/debug/deps/heartbeat_child-1b407b41ab5251ec)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/supervisor_budgets.rs (target/debug/deps/supervisor_budgets-0b3544c14f9b89d1)
+
+running 1 test
+test supervisor_budgets ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/supervisor_chaos.rs (target/debug/deps/supervisor_chaos-144ea71e9c356a44)
+
+running 2 tests
+test supervisor_chaos_sigkill_within_budget ... ok
+test supervisor_chaos_sigstop ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/supervisor_heartbeat.rs (target/debug/deps/supervisor_heartbeat-787fc4e73624f0a3)
+
+running 1 test
+test supervisor_heartbeat_watchdog ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/supervisor_process_group.rs (target/debug/deps/supervisor_process_group-b7d2afa172048fe7)
+
+running 1 test
+test supervisor_process_group_ownership ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/supervisor_restart.rs (target/debug/deps/supervisor_restart-57edf15531ba9adb)
+
+running 1 test
+test supervisor_restart_escalation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/supervisor_smoke.rs (target/debug/deps/supervisor_smoke-a12b83cc4c5291d6)
+
+running 1 test
+test supervisor_smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/supervisor_terminate.rs (target/debug/deps/supervisor_terminate-5cee567cc7f397eb)
+
+running 2 tests
+test leader_exit_during_grace_still_kills_sigterm_ignoring_grandchild ... ok
+test supervisor_sigterm_then_sigkill ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/supervisor_wall_clock.rs (target/debug/deps/supervisor_wall_clock-148ff61ac3b89c53)
+
+running 1 test
+test supervisor_wall_clock_timeout ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running unittests src/lib.rs (target/debug/deps/arcana_tools-3efc20129ab3401f)
+
+running 17 tests
+test arcana_search::tests::render_summary_empty_results ... ok
+test arcana_search::tests::render_summary_lists_source_and_score ... ok
+test arcana_search::tests::truncate_adds_ellipsis_past_cap ... ok
+test arcana_search::tests::truncate_leaves_short_text_untouched ... ok
+test model_call::tests::schema_has_no_credential_or_redirect_property ... ok
+test path_guard::tests::check_permissive_default_allows_any ... ok
+test path_guard::tests::resolve_existing_absolute ... ok
+test path_guard::tests::resolve_existing_traversal_collapses ... ok
+test path_guard::tests::resolve_nonexisting_in_existing_parent ... ok
+test path_guard::tests::resolve_root_parent_edge ... ok
+test path_guard::tests::check_allow_required_fail ... ok
+test path_guard::tests::check_allow_required_pass ... ok
+test path_guard::tests::check_deny_blocks_direct ... ok
+test path_guard::tests::check_deny_blocks_via_traversal ... ok
+test path_guard::tests::check_deny_message_carries_pattern ... ok
+test model_call::tests::schema_rejects_missing_model ... ok
+test model_call::tests::schema_rejects_unknown_field ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/arcana_search_tool.rs (target/debug/deps/arcana_search_tool-82dc11adb4c5d4d8)
+
+running 6 tests
+test arcana_search_schema_rejects_out_of_range_limit ... ok
+test arcana_search_schema_rejects_missing_query ... ok
+test arcana_search_200_renders_summary_and_metadata ... ok
+test arcana_search_upstream_error_becomes_execution_failed ... ok
+test arcana_search_empty_results_says_no_results ... ok
+test arcana_search_forwards_optional_params ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/bash_tool.rs (target/debug/deps/bash_tool-6181f2c47e8e3bd5)
+
+running 8 tests
+test bash_schema_rejects_missing_command ... ok
+test bash_with_rules_denies_configured_deny_command ... ok
+test bash_rejects_values_even_under_benign_environment_names ... ok
+test bash_rejects_shell_and_loader_control_environment_names ... ok
+test bash_non_zero_exit_becomes_execution_failed ... ok
+test bash_exit_zero_captures_stdout ... ok
+test bash_with_rules_allows_non_matching_command ... ok
+test bash_timeout_aborts_long_command ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+     Running tests/edit_tool.rs (target/debug/deps/edit_tool-a91eab9da1cef1fc)
+
+running 4 tests
+test edit_fails_when_file_missing ... ok
+test edit_fails_when_old_string_not_unique ... ok
+test edit_unique_substring_succeeds ... ok
+test edit_fails_when_old_string_not_found ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/grep_tool.rs (target/debug/deps/grep_tool-61562d9b3db7471b)
+
+running 5 tests
+test grep_schema_rejects_missing_pattern ... ok
+test grep_no_match_returns_empty ... ok
+test grep_matches_single_line_in_file ... ok
+test grep_recursive_walks_subdirs ... ok
+test grep_case_insensitive_flag_works ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/model_call_capability.rs (target/debug/deps/model_call_capability-0fa26f3ea2edeab8)
+
+running 2 tests
+test t1_unallowed_model_denied_at_rule_layer ... ok
+test t2_allowed_model_emits_audit_and_cost ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/path_guard.rs (target/debug/deps/path_guard-c5d19c9ab9f0e407)
+
+running 5 tests
+test read_rejects_direct_etc_passwd ... ok
+test read_rejects_canonicalized_traversal ... ok
+test read_allows_when_no_deny_match ... ok
+test edit_rejects_etc_passwd_variants ... ok
+test write_rejects_etc_passwd_variants ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/read_tool.rs (target/debug/deps/read_tool-7480ecc6e2431234)
+
+running 4 tests
+test read_schema_rejects_missing_path ... ok
+test read_existing_file_returns_content ... ok
+test read_rejects_oversized_file ... ok
+test read_missing_file_returns_execution_failed ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/schema_validation.rs (target/debug/deps/schema_validation-c994b1e60cb1b210)
+
+running 4 tests
+test cascade_denies_unknown_tool ... ok
+test cascade_denies_malformed_payload_per_tool ... ok
+test cascade_allows_valid_payload_for_every_tool ... ok
+test every_tool_schema_compiles ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/webfetch_tool.rs (target/debug/deps/webfetch_tool-974e0d69cbbd3c8e)
+
+running 10 tests
+test env_var_fallback_allows_when_host_included_child ... ignored, invoked as a subprocess by webfetch_env_var_fallback_gates_when_no_rule_layer
+test env_var_fallback_denies_when_host_excluded_child ... ignored, invoked as a subprocess by webfetch_env_var_fallback_gates_when_no_rule_layer
+
+running 1 test
+test env_var_fallback_denies_when_host_excluded_child ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.05s
+
+
+running 1 test
+test env_var_fallback_allows_when_host_included_child ... test webfetch_schema_rejects_missing_url ... ok
+test webfetch_non_get_method_rejected ... ok
+test webfetch_rule_layer_denies_host_outside_allowlist ... ok
+test webfetch_rule_layer_allows_matching_host ... ok
+test webfetch_body_over_cap_rejected ... ok
+test webfetch_200_returns_body ... ok
+test webfetch_404_becomes_execution_failed ... ok
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.08s
+
+test webfetch_env_var_fallback_gates_when_no_rule_layer ... ok
+
+test result: ok. 8 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/write_tool.rs (target/debug/deps/write_tool-d611550b5e9f11f8)
+
+running 4 tests
+test write_schema_rejects_missing_content ... ok
+test write_creates_new_file ... ok
+test write_overwrites_existing_file ... ok
+test write_creates_parent_dirs_when_requested ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+   Doc-tests arcana_cli
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arcana_connectors
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arcana_core
+
+running 3 tests
+test crates/core/src/hooks/mod.rs - hooks::PreToolGate (line 115) - compile fail ... ok
+test crates/core/src/tool.rs - tool::ToolInvocation (line 79) - compile fail ... ok
+test crates/core/src/tool.rs - tool::ToolDispatcher::get (line 157) - compile fail ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+   Doc-tests arcana_credential_broker
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arcana_execution_boundary
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arcana_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arcana_skills
+
+running 1 test
+test crates/skills/src/store.rs - store::SkillCandidate (line 91) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+   Doc-tests arcana_supervisor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arcana_tools
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

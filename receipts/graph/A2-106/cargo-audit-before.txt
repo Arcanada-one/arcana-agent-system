@@ -1,0 +1,14 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1266 security advisories (from /home/dev/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (383 crate dependencies)
+Crate:     rustls
+Version:   0.23.40
+Title:     TLS 1.3 handshake messages incorrectly accepted across encryption level boundaries
+Date:      2026-09-14
+ID:        RUSTSEC-2026-0285
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0285
+Severity:  5.3 (medium)
+Solution:  Upgrade to >=0.23.45
+
+error: 1 vulnerability found!
