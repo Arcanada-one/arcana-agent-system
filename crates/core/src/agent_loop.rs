@@ -140,6 +140,65 @@ pub enum ContinueReason {
     /// [`DriverConfig::connector_retry_limit`] and paid for out of the same
     /// `--max-turns` and cost budget as any other attempt.
     ConnectorRetry,
+    /// The permission cascade refused the call at a layer whose refusal is a
+    /// correctable mistake in the call itself (a schema violation, an unknown
+    /// tool name, a path outside the workspace). The reason was handed back as
+    /// a tool result so the model can correct it; nothing was executed.
+    ToolCallRejected,
+}
+
+/// Cascade layers whose refusal is a defect in the model's own tool call, and
+/// is therefore handed back to it as a tool result instead of ending the run.
+///
+/// The discriminator is not severity, it is **agency**: does a corrected call
+/// exist that the model could write on its next turn, and does naming the
+/// violated constraint tell it anything it should not have?
+///
+/// | layer | produced by | folded back | why |
+/// |---|---|---|---|
+/// | `schema` | [`crate::execution::CapabilityExecutor::prepare`] and `SchemaLayer` | yes | The arguments did not match the tool's published JSON schema. The schema is already in the model's tool list, so the reason discloses nothing new, and the corrected call is a one-token edit. |
+/// | `registry` | `CapabilityExecutor::prepare`, unknown tool | yes | The model named a tool that does not exist. Same disclosure argument: the tool list is already in its prompt. |
+/// | `workspace_boundary` | `arcana-cli`'s workspace policy, path half | yes | "that path is outside the working directory" names a directory the model was given as its cwd. The correct recovery — work inside — is the behaviour we want, and cannot be reached by a model that is never told. |
+/// | `destructive_command_floor` | `arcana-cli`'s workspace policy, command half | **no** | A closed list of refused commands (`sudo`, `dd`, `git push --force`, …). Naming the refused word to a model that wants the effect invites a hunt for a synonym the list does not carry, which is a bypass of a safety control conducted through our own error message. |
+/// | `hook_bridge` | an operator-installed pre-tool hook | **no** | A considered refusal by operator-owned code. It is policy, not a typo. |
+/// | `rule` | the operator's `permissions.toml` | **no** | Same: the operator wrote this rule down. A model arguing with it is not recovery. |
+/// | `interactive_auto` | `ARCANA_PERMISSION_AUTO=deny`, or no terminal to ask at | **no** | This layer's answer does not depend on the call. Every retry gets the same denial, so folding back buys nothing and spends the operator's money to prove it. |
+/// | `workspace_auto_allow` | allow-only half of the workspace policy | **no** | Cannot deny; listed so the table covers the shipped cascade. |
+/// | `cascade` | the fail-closed tail: no layer allowed | **no** | Nothing about the call was wrong; nothing about it was authorized either. There is no corrected form. |
+/// | `hook` | audited name for a pre-tool hook abort | **no** | Reaches the loop as [`CapabilityError::HookAborted`], never as a denial; listed for completeness. |
+///
+/// Anything not on this list is terminal. The default is the safe one on
+/// purpose: a layer added later — by this crate or by a downstream cascade —
+/// is treated as a policy refusal until somebody decides otherwise, rather
+/// than becoming recoverable by omission.
+const RECOVERABLE_DENIAL_LAYERS: [&str; 3] = ["schema", "registry", "workspace_boundary"];
+
+/// Consecutive folded-back denials a run may accumulate before it ends on
+/// [`TerminalReason::PermissionDenied`].
+///
+/// The counter resets on any tool call that actually executes, so this bounds
+/// a model hammering one wall, not a long run that makes occasional mistakes.
+/// Without it, "fold the denial back" would be an unbounded retry against a
+/// refusal that never changes, paid for one dispatch at a time up to
+/// `max_turns`.
+///
+/// It is executed work that clears the streak, and nothing else — in particular
+/// **not** a [`ContinueReason::ConnectorRetry`] in the middle of it. The two
+/// budgets are independent: `RunState::connector_retries` asks "is the upstream
+/// answering", this asks "is the model writing callable calls", and a run that
+/// is failing at both must still stop. The reverse direction is deliberately
+/// not symmetric: any reply resets the retry budget, including a reply the
+/// cascade then refused, because a refused call is still proof the upstream is
+/// up. Pinned by `crates/core/tests/driver_retry_denial_independence.rs`.
+pub const MAX_CONSECUTIVE_DENIALS: u32 = 3;
+
+/// Whether a cascade denial at `layer` is handed back to the model.
+///
+/// See [`RECOVERABLE_DENIAL_LAYERS`] for the per-layer justification. Unknown
+/// layers are terminal.
+#[must_use]
+pub fn denial_is_recoverable(layer: &str) -> bool {
+    RECOVERABLE_DENIAL_LAYERS.contains(&layer)
 }
 
 /// Reasons a turn terminates the run.
@@ -585,6 +644,8 @@ struct RunState {
     nudge_spent: bool,
     /// Consecutive transient connector failures since the last response.
     connector_retries: u32,
+    /// Folded-back denials since the last tool call that actually executed.
+    consecutive_denials: u32,
 }
 
 impl RunState {
@@ -597,6 +658,7 @@ impl RunState {
             tool_calls: 0,
             nudge_spent: false,
             connector_retries: 0,
+            consecutive_denials: 0,
         }
     }
 }
@@ -950,16 +1012,63 @@ impl<'a> Driver<'a> {
         })
     }
 
+    /// Decide what a cascade denial does to the run.
+    ///
+    /// A denial used to be terminal at every layer, including `schema` — which
+    /// only ever means the arguments did not match the tool's published JSON
+    /// schema. Measured on 2026-09-23 with `deepseek-flash`: turn 1 called
+    /// `bash` with arguments the schema rejected, the run ended on
+    /// `PermissionDenied` with `tool_calls: 0` and `rc 1`, and the model was
+    /// never told what was wrong, so it had no way to be right. The doc comment
+    /// on [`Self::run_tool_turn`] already promised that a dispatch error folds
+    /// back as a recoverable tool result; a malformed call is the same kind of
+    /// mistake and now follows the same rule.
+    ///
+    /// Two bounds keep that from becoming an unbounded retry against a wall:
+    /// only [`RECOVERABLE_DENIAL_LAYERS`] fold back at all, and a run may
+    /// accumulate at most [`MAX_CONSECUTIVE_DENIALS`] of them in a row.
+    ///
+    /// Nothing executed either way: `tool_calls` is not incremented here, so a
+    /// run whose every call was refused still reports zero work done.
+    fn fold_denial(
+        state: &mut RunState,
+        name: &str,
+        layer: &'static str,
+        reason: &str,
+    ) -> StepResult {
+        if !denial_is_recoverable(layer) {
+            return StepResult::Terminal(TerminalReason::PermissionDenied, None);
+        }
+        state.consecutive_denials = state.consecutive_denials.saturating_add(1);
+        if state.consecutive_denials >= MAX_CONSECUTIVE_DENIALS {
+            return StepResult::Terminal(TerminalReason::PermissionDenied, None);
+        }
+        let remaining = MAX_CONSECUTIVE_DENIALS - state.consecutive_denials;
+        // Phrased as a fact about the machine, like `NO_ACTION_NUDGE`: what did
+        // not happen, why, and how many attempts are left. The budget is stated
+        // because a model that does not know it is on a counter cannot choose
+        // to spend its last attempt on a different approach.
+        state.history.push(HistoryEntry::ToolResult {
+            name: name.to_owned(),
+            content: format!(
+                "REJECTED at the {layer} layer — the call was NOT executed and nothing happened: \
+{reason}. Fix the call itself and send exactly one corrected `tool_call` block. \
+{remaining} rejected call(s) remain before this run is stopped."
+            ),
+        });
+        StepResult::Continue(ContinueReason::ToolCallRejected)
+    }
+
     /// Reuse-only tool turn: cascade → `pre_tool` → dispatch → `post_tool`, folding
     /// results into `history`. A dispatch error folds back as a tool-result
-    /// string (recoverable, bounded by `max_turns`) rather than terminating.
+    /// string (recoverable, bounded by `max_turns`) rather than terminating,
+    /// and so does a denial at one of the [`RECOVERABLE_DENIAL_LAYERS`].
     async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
-        let history = &mut state.history;
         let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
         let capability = match self.executor.execute(&ctx, name, input).await {
             Ok(capability) => capability,
-            Err(CapabilityError::Denied { .. }) => {
-                return StepResult::Terminal(TerminalReason::PermissionDenied, None);
+            Err(CapabilityError::Denied { layer, reason }) => {
+                return Self::fold_denial(state, name, layer, &reason);
             }
             Err(CapabilityError::HookAborted) => {
                 return StepResult::Terminal(TerminalReason::AbortedByHook, None);
@@ -974,7 +1083,7 @@ impl<'a> Driver<'a> {
                 return StepResult::Terminal(TerminalReason::AuditFatal, None);
             }
             Err(CapabilityError::Tool(err)) => {
-                history.push(HistoryEntry::ToolResult {
+                state.history.push(HistoryEntry::ToolResult {
                     name: name.to_owned(),
                     content: format!("dispatch error: {err}"),
                 });
@@ -986,6 +1095,10 @@ impl<'a> Driver<'a> {
         // dispatch error folds back as a tool result without reaching this
         // line, because a tool that failed to dispatch did no work either.
         state.tool_calls = state.tool_calls.saturating_add(1);
+        // The streak counts consecutive refusals, so a call that ran clears it.
+        // Otherwise a long, mostly-healthy run would accumulate three scattered
+        // typos over twenty turns and die on the third.
+        state.consecutive_denials = 0;
         state.history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
             content: capability.output.content,
@@ -1002,11 +1115,6 @@ impl<'a> Driver<'a> {
     }
 }
 
-/// Exhaustive reduction of a [`TurnOutcome`] to a loop directive.
-///
-/// Delegates to per-branch matchers so that adding a `ContinueReason` or a
-/// `TerminalReason` variant is a compile error the driver must resolve
-/// (D-REQ-02).
 /// How long to wait before re-dispatching a transient failure.
 ///
 /// An upstream that named a `retryAfter` knows better than we do — up to
@@ -1018,6 +1126,11 @@ fn retry_pause(error: &ConnectorError, fallback: Duration) -> Duration {
     })
 }
 
+/// Exhaustive reduction of a [`TurnOutcome`] to a loop directive.
+///
+/// Delegates to per-branch matchers so that adding a `ContinueReason` or a
+/// `TerminalReason` variant is a compile error the driver must resolve
+/// (D-REQ-02).
 fn reduce(outcome: TurnOutcome) -> LoopControl {
     match outcome {
         TurnOutcome::Continue(reason) => reduce_continue(reason),
@@ -1025,7 +1138,7 @@ fn reduce(outcome: TurnOutcome) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 8 `ContinueReason` variants.
+/// Exhaustive over all 9 `ContinueReason` variants.
 fn reduce_continue(reason: ContinueReason) -> LoopControl {
     match reason {
         ContinueReason::ToolResultsReady
@@ -1033,7 +1146,8 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
         | ContinueReason::ReactiveCompactRetry
         | ContinueReason::MicrocompactCompleted
         | ContinueReason::NoActionRetry
-        | ContinueReason::ConnectorRetry => LoopControl::Reloop,
+        | ContinueReason::ConnectorRetry
+        | ContinueReason::ToolCallRejected => LoopControl::Reloop,
         // Inert under the unary Phase-C connector (no streaming, no token
         // cursor): a documented no-op re-loop — never
         // `unreachable!`/`panic!` (clippy `panic = warn` under `-D warnings`).

@@ -52,7 +52,9 @@ use arcana_tools::{
 };
 
 use crate::demo::Session;
-use crate::workspace::{WorkspaceAutoAllow, WorkspaceBoundary, WorkspacePolicy};
+use crate::workspace::{
+    DestructiveCommandFloor, WorkspaceAutoAllow, WorkspaceBoundary, WorkspacePolicy,
+};
 
 /// Connector the headless run dispatches through. A CONNECTOR id, not a route
 /// label — it goes straight onto the wire.
@@ -284,6 +286,10 @@ fn assemble_executor(
 
     let mut layers: Vec<Arc<dyn PermissionLayer>> = vec![
         Arc::new(SchemaLayer::new(schema_dispatcher)),
+        // The floor precedes the boundary: both are deny-or-defer, so the
+        // order cannot widen the gate-set, and a call that trips both is then
+        // reported under the refusal the agent loop treats as terminal.
+        Arc::new(DestructiveCommandFloor::new(Arc::clone(policy))),
         Arc::new(WorkspaceBoundary::new(Arc::clone(policy))),
     ];
     // An explicit `ARCANA_PERMISSION_AUTO=deny` means the operator wants
