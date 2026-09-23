@@ -135,6 +135,15 @@ pub struct ExecuteRequest {
     pub max_turns: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "maxBudgetUsd")]
     pub max_budget_usd: Option<f64>,
+    /// Upstream per-attempt budget in milliseconds, wire name `timeout`.
+    ///
+    /// Model Connector accepts `5_000..=600_000` and falls back to the
+    /// connector's own default when the field is absent — 30 s for every
+    /// `BaseApiConnector` that does not override it (deepseek among them),
+    /// 120 s for orq. Those defaults are what a long turn actually runs into,
+    /// so the client states the budget instead of inheriting it.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "timeout")]
+    pub timeout_ms: Option<u64>,
     /// Opt-in, metadata-only context for the real first model dispatch.
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -156,6 +165,7 @@ impl std::fmt::Debug for ExecuteRequest {
             )
             .field("max_turns", &self.max_turns)
             .field("max_budget_usd", &self.max_budget_usd)
+            .field("timeout_ms", &self.timeout_ms)
             .field(
                 "first_dispatch_measurement",
                 &self.first_dispatch_measurement,
@@ -175,6 +185,7 @@ impl ExecuteRequest {
             system_prompt: None,
             max_turns: None,
             max_budget_usd: None,
+            timeout_ms: None,
             first_dispatch_measurement: None,
         }
     }
@@ -276,7 +287,19 @@ pub enum ConnectorError {
     /// itself — only a description of the offending byte and its position.
     #[error("{reason}")]
     InvalidApiKey { reason: String },
-    /// Transport-level failure (DNS, TLS, connect, timeout, body read).
+    /// The request ran out of time: no response arrived within the client's
+    /// budget, or the connection stalled mid-body.
+    ///
+    /// Split out of [`Self::Transport`] because it is the one transport class
+    /// that says nothing about whether the request was bad — the server may
+    /// simply still be working. Measured 2026-09-23 against the production
+    /// Model Connector: a `deepseek` dispatch is given 30 s per attempt and
+    /// retried once, and `connector.arcanada.ai` sits behind a Cloudflare edge
+    /// that cuts every `/execute` at ~125 s. A client budget under either
+    /// number turns a slow-but-healthy turn into a dead run.
+    #[error("{0}")]
+    Timeout(String),
+    /// Transport-level failure (DNS, TLS, connect, body read).
     ///
     /// The payload already leads with its own headline ("could not connect",
     /// "timed out after 120s", …) followed by the `reqwest`/`hyper` cause
@@ -370,6 +393,49 @@ impl ConnectorError {
                 first_dispatch_observation,
                 ..
             } => first_dispatch_observation.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// True when the same request, sent again, could plausibly succeed.
+    ///
+    /// The distinction is about the REQUEST, not about the caller's patience:
+    /// a missing key, a 404 connector id or a policy refusal will fail
+    /// identically forever, while a timeout, a gateway status or an envelope
+    /// the upstream itself marked `retryable` are all statements about this
+    /// attempt. Callers use it to decide between another dispatch and
+    /// [`crate::agent_loop::TerminalReason::ConnectorFatal`].
+    ///
+    /// `Transport` stays non-transient: a refused connection or a TLS failure
+    /// is a configuration fact, and retrying it three times only delays the
+    /// message the operator needs.
+    #[must_use]
+    pub const fn is_transient(&self) -> bool {
+        match self {
+            Self::Timeout(_) => true,
+            // 408/425 are the request's own clock; 429 and 5xx are the
+            // server's. 520..=524 are Cloudflare's edge verdicts — 524 is
+            // exactly what the production origin returns when a long model
+            // turn outlives the edge budget.
+            Self::Http { status, .. } => matches!(
+                *status,
+                408 | 425 | 429 | 500 | 502 | 503 | 504 | 520..=524 | 529
+            ),
+            Self::Logical { retryable, .. } => *retryable,
+            Self::MissingApiKey
+            | Self::InvalidApiKey { .. }
+            | Self::Transport(_)
+            | Self::UpstreamNonJson { .. }
+            | Self::UnexpectedStatus(_)
+            | Self::UnexpectedEnvelopeStatus => false,
+        }
+    }
+
+    /// How long the upstream asked the caller to wait before trying again.
+    #[must_use]
+    pub const fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::Http { retry_after, .. } | Self::Logical { retry_after, .. } => *retry_after,
             _ => None,
         }
     }

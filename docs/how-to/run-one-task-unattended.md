@@ -23,6 +23,7 @@ TASK
 | `--max-turns <n>` | Connector-attempt cap (default `24`). |
 | `--max-cost-usd <n>` | Spend cap for the run. |
 | `--model <id>` | Pin a model instead of the saved `arcana models use` choice. |
+| `--request-timeout <secs>` | How long one model turn may take upstream, `5`..`600` (default `120`). `ARCANA_MC_TIMEOUT_SECS` sets the same number. |
 
 Exactly one of `--prompt` and `--prompt-stdin` is required.
 
@@ -135,3 +136,37 @@ built from the tools that are actually registered, so the description cannot
 drift from the dispatcher. If you are adding a surface that drives the agent
 loop, do the same, and test it by the file on disk rather than by what the
 model said it did.
+
+## Slow turns
+
+A reasoning model writing a long file takes minutes, and a run used to die on
+the first turn that did: the client waited a fixed 120 s, and any turn slower
+than that ended the whole run as `ConnectorFatal` — an hour of work lost to one
+slow answer.
+
+Two numbers govern a turn now, and both come from `--request-timeout`
+(default `120`, or `ARCANA_MC_TIMEOUT_SECS`):
+
+* the **model budget** travels with the request, so the Model Connector gives
+  the dispatch that long. Without it the server applies the connector's own
+  default, which is 30 s for most API connectors — no client-side patience can
+  widen that;
+* the **wait** is the budget plus what the server may spend around it: up to
+  60 s of queue, a second server-side attempt, and backoff. At the default
+  that is 310 s. The client never gives up on a turn the server is still
+  working on.
+
+A turn that still fails in a way that says nothing about the request — a
+timeout, a gateway status, an upstream envelope marked `retryable` — is
+re-dispatched up to twice before the run ends. Each re-dispatch is an ordinary
+attempt: it consumes a turn from `--max-turns` and is charged against
+`--max-cost-usd`, so a connector that is down cannot quietly spend the run's
+whole budget. Errors that will fail identically forever — a missing key, an
+unknown connector id, a policy refusal — are not retried.
+
+Raising the budget above 120 s only helps where the Model Connector is reached
+directly. The public origin sits behind an edge proxy that cuts any single
+request at about 125 s (measured 2026-09-23: three `/execute` calls cut at
+125.1 s, 125.2 s and 125.3 s with HTTP 524), and no client setting moves that
+ceiling. A turn that genuinely needs longer than the edge allows needs a
+different shape of request, not a longer timeout.

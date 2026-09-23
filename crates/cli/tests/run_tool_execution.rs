@@ -112,6 +112,10 @@ async fn drive_out(root: &Path, audit: &Path, replies: &[&str]) -> RunOutput {
         max_turns: 6,
         max_cost_usd: None,
         model: Some("scripted-model".to_owned()),
+        // The scripted connector in this test is not the HTTP client, so the
+        // budget is inert here; stated rather than defaulted so a future
+        // change to the default cannot silently change this fixture.
+        request_timeout: None,
     };
     let config = driver_config(&request, &workspace.tools, root);
     workspace

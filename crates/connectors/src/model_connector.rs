@@ -13,8 +13,51 @@ const ENV_API_KEY: &str = "ARCANA_MC_TOKEN";
 /// Optional base-URL override — lets a smoke harness point the probe at a
 /// loopback replay fixture (`http://127.0.0.1:PORT`) without a live mesh.
 const ENV_BASE_URL: &str = "ARCANA_MC_BASE_URL";
+/// Optional per-attempt model budget override, in whole seconds.
+const ENV_REQUEST_TIMEOUT: &str = "ARCANA_MC_TIMEOUT_SECS";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Per-attempt budget this client asks Model Connector to spend on the model,
+/// sent as `ExecuteRequest.timeout` (ms) and used to size the HTTP wait.
+///
+/// 120 s, from what the server actually does (measured 2026-09-23 against
+/// production, and read off model-connector `main` 3911773):
+///
+/// * `src/connectors/dto/execute.dto.ts:62` — `/execute` accepts `timeout`
+///   between `5_000` and `600_000` ms. Absent, the connector's own default
+///   applies: `src/connectors/base-api.connector.ts:131` returns `30_000` for
+///   every API connector that does not override it — `deepseek` does not —
+///   and `src/connectors/orq/orq.connector.ts:88` returns `120_000`.
+///   A live dispatch of a 3000-word essay with no `timeout` field came back
+///   `latencyMs: 30002`, `attempt: 2 of 2`, `network_error`: the 30 s default
+///   is the wall a long turn hits first, and no client-side budget can move
+///   it. Naming the budget is therefore part of the fix, not a nicety.
+/// * `nginx` in front of the origin allows 600 s
+///   (`deploy/nginx/connector.arcanada.ai.conf:24-26`), but the public origin
+///   also sits behind Cloudflare, which cut three separate `/execute` calls at
+///   125.1 s, 125.2 s and 125.3 s with HTTP 524. 120 s is the largest
+///   per-attempt budget whose FIRST attempt can still return through that
+///   edge; anything above it buys nothing on `connector.arcanada.ai` and is
+///   available for deployments reached without the edge in the path.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Lower/upper bounds the upstream Zod schema accepts for `timeout`
+/// (`src/connectors/dto/execute.dto.ts:62`). Refused here rather than sent and
+/// bounced as a 400 in the middle of a run.
+const MIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Longest a dispatch may sit in Model Connector's per-connector queue before
+/// it starts (`CONNECTOR_QUEUE_TIMEOUT_MS`, default `60_000` —
+/// `src/config/env.schema.ts:38`). Queue time is invisible to the caller and
+/// is not part of the model budget, so the HTTP wait has to carry it.
+const UPSTREAM_QUEUE_SLACK: Duration = Duration::from_secs(60);
+
+/// Attempts Model Connector makes before it answers
+/// (`CONNECTOR_MAX_RETRIES`, default 1 → two attempts,
+/// `src/config/env.schema.ts:39`), plus its exponential backoff between them.
+const UPSTREAM_ATTEMPTS: u32 = 2;
+const UPSTREAM_BACKOFF: Duration = Duration::from_secs(10);
 
 /// An API key wrapper whose `Debug`/`Display` redact the secret so it can never
 /// leak into logs or error chains.
@@ -51,6 +94,10 @@ pub struct ModelConnectorClient {
     http: reqwest::Client,
     base_url: Url,
     api_key: ApiKey,
+    /// Per-attempt model budget sent upstream and used to size the HTTP wait.
+    request_timeout: Duration,
+    /// How long this client waits for the response.
+    http_wait: Duration,
 }
 
 impl ModelConnectorClient {
@@ -67,6 +114,25 @@ impl ModelConnectorClient {
     /// illegal in an HTTP header, or [`ConnectorError::Transport`] if the base
     /// URL fails to parse or the client fails to build.
     pub fn try_from_env() -> Result<Self, ConnectorError> {
+        Self::try_from_env_with_timeout(None)
+    }
+
+    /// Build the production client with an explicit per-attempt budget.
+    ///
+    /// `request_timeout` is the operator's flag; `None` falls back to
+    /// [`ENV_REQUEST_TIMEOUT`] and then to [`DEFAULT_REQUEST_TIMEOUT`].
+    ///
+    /// # Errors
+    /// Returns the same credential and URL errors as [`Self::try_from_env`],
+    /// plus [`ConnectorError::Transport`] when the budget — from either source
+    /// — is outside the range `/execute` accepts.
+    pub fn try_from_env_with_timeout(
+        request_timeout: Option<Duration>,
+    ) -> Result<Self, ConnectorError> {
+        let request_timeout = match request_timeout {
+            Some(explicit) => explicit,
+            None => request_timeout_from_env()?,
+        };
         let api_key = read_api_key()?;
         let base = std::env::var(ENV_BASE_URL)
             .ok()
@@ -81,7 +147,7 @@ impl ModelConnectorClient {
                 "Model Connector production base URL is not approved".into(),
             ));
         }
-        Self::new(base_url, api_key)
+        Self::with_request_timeout(base_url, api_key, request_timeout)
     }
 
     /// Build the hidden diagnostic probe client, allowing the explicit
@@ -92,6 +158,7 @@ impl ModelConnectorClient {
     /// Returns the same credential, URL parsing, and HTTP-client errors as the
     /// production constructor.
     pub fn try_from_probe_env() -> Result<Self, ConnectorError> {
+        let request_timeout = request_timeout_from_env()?;
         let api_key = read_api_key()?;
         let base = std::env::var(ENV_BASE_URL)
             .ok()
@@ -99,7 +166,7 @@ impl ModelConnectorClient {
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
         let base_url =
             Url::parse(&base).map_err(|err| ConnectorError::Transport(err.to_string()))?;
-        Self::new(base_url, api_key)
+        Self::with_request_timeout(base_url, api_key, request_timeout)
     }
 
     /// Build a client with an explicit base `URL` and key (used by tests and
@@ -109,21 +176,85 @@ impl ModelConnectorClient {
     /// Returns [`ConnectorError::Transport`] if the underlying `reqwest` client
     /// fails to build.
     pub fn new(base_url: Url, api_key: ApiKey) -> Result<Self, ConnectorError> {
+        Self::with_request_timeout(base_url, api_key, DEFAULT_REQUEST_TIMEOUT)
+    }
+
+    /// Build a client whose upstream budget is `request_timeout`.
+    ///
+    /// Two numbers come out of the one the operator chose. The budget itself
+    /// travels on the wire as `ExecuteRequest.timeout`, telling Model
+    /// Connector how long the model may take. The HTTP client waits
+    /// [`http_wait`] — that budget plus what the server may spend around it
+    /// (queue, its own second attempt, backoff), because a client that gives
+    /// up first turns a turn the server is still working on into a dead run,
+    /// which is the whole defect this constructor exists for.
+    ///
+    /// # Errors
+    /// [`ConnectorError::Transport`] when `request_timeout` is outside the
+    /// 5 s..=600 s range `/execute` accepts, or when the HTTP client fails to
+    /// build.
+    pub fn with_request_timeout(
+        base_url: Url,
+        api_key: ApiKey,
+        request_timeout: Duration,
+    ) -> Result<Self, ConnectorError> {
+        let wait = http_wait(request_timeout);
+        Self::with_timeouts(base_url, api_key, request_timeout, wait)
+    }
+
+    /// Build a client whose HTTP wait is stated instead of derived.
+    ///
+    /// The derived wait in [`Self::with_request_timeout`] assumes the server's
+    /// documented worst case is reachable. A deployment that knows its own
+    /// ceiling — a proxy that cuts every request at a fixed point, a loopback
+    /// replay with no queue at all — states the wait it actually has.
+    ///
+    /// # Errors
+    /// [`ConnectorError::Transport`] when `request_timeout` is outside the
+    /// 5 s..=600 s range `/execute` accepts, or when the client fails to build.
+    pub fn with_timeouts(
+        base_url: Url,
+        api_key: ApiKey,
+        request_timeout: Duration,
+        wait: Duration,
+    ) -> Result<Self, ConnectorError> {
+        if request_timeout < MIN_REQUEST_TIMEOUT || request_timeout > MAX_REQUEST_TIMEOUT {
+            return Err(ConnectorError::Transport(format!(
+                "request timeout {}s is outside the {}s..{}s the Model Connector accepts",
+                request_timeout.as_secs(),
+                MIN_REQUEST_TIMEOUT.as_secs(),
+                MAX_REQUEST_TIMEOUT.as_secs(),
+            )));
+        }
         let http = reqwest::Client::builder()
             .https_only(base_url.scheme() == "https")
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(wait)
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|err| {
-                ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, REQUEST_TIMEOUT))
+                ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, wait))
             })?;
         Ok(Self {
             http,
             base_url,
             api_key,
+            request_timeout,
+            http_wait: wait,
         })
+    }
+
+    /// The per-attempt model budget this client sends upstream.
+    #[must_use]
+    pub const fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
+
+    /// How long this client waits for a response before giving up.
+    #[must_use]
+    pub const fn http_wait(&self) -> Duration {
+        self.http_wait
     }
 
     fn execute_url(&self) -> Result<Url, ConnectorError> {
@@ -133,6 +264,43 @@ impl ModelConnectorClient {
             .push("execute");
         Ok(url)
     }
+}
+
+/// How long the HTTP client waits for one `/execute` response.
+///
+/// The server may legitimately spend more than the model budget: up to
+/// [`UPSTREAM_QUEUE_SLACK`] queueing before the first attempt starts, then
+/// [`UPSTREAM_ATTEMPTS`] attempts of that budget with backoff between them.
+/// Measured at the default 120 s budget this is 310 s — against the 120 s the
+/// client used to allow while the server's own worst case was already ~121 s,
+/// which is how a healthy slow turn became `ConnectorFatal`.
+fn http_wait(request_timeout: Duration) -> Duration {
+    UPSTREAM_QUEUE_SLACK
+        .saturating_add(request_timeout.saturating_mul(UPSTREAM_ATTEMPTS))
+        .saturating_add(UPSTREAM_BACKOFF)
+}
+
+/// Read the optional per-attempt budget from [`ENV_REQUEST_TIMEOUT`].
+///
+/// # Errors
+/// [`ConnectorError::Transport`] when the value is not a whole number of
+/// seconds. A mistyped budget is reported rather than silently replaced by the
+/// default, because the run it governs may cost money either way.
+fn request_timeout_from_env() -> Result<Duration, ConnectorError> {
+    let Some(raw) = std::env::var(ENV_REQUEST_TIMEOUT)
+        .ok()
+        .filter(|raw| !raw.trim().is_empty())
+    else {
+        return Ok(DEFAULT_REQUEST_TIMEOUT);
+    };
+    raw.trim()
+        .parse::<u64>()
+        .map(Duration::from_secs)
+        .map_err(|_| {
+            ConnectorError::Transport(format!(
+                "{ENV_REQUEST_TIMEOUT} must be a whole number of seconds"
+            ))
+        })
 }
 
 /// Read and validate `ARCANA_MC_TOKEN`.
@@ -188,6 +356,21 @@ fn read_api_key() -> Result<ApiKey, ConnectorError> {
 /// constants so the emitted duration is always the one the failing client was
 /// actually built with — a test that injects a 100 ms budget must not be told
 /// the request timed out after 120 s.
+/// Map a `reqwest` failure to the error class the driver reasons about.
+///
+/// A timeout is the one transport failure that says nothing about the request
+/// — the server may still be working on it — so it gets its own variant and
+/// becomes retryable. Connect refusals, TLS and DNS failures stay
+/// [`ConnectorError::Transport`] and stay fatal.
+fn classify_reqwest(err: &reqwest::Error, connect: Duration, request: Duration) -> ConnectorError {
+    let described = describe_reqwest(err, connect, request);
+    if err.is_timeout() {
+        ConnectorError::Timeout(described)
+    } else {
+        ConnectorError::Transport(described)
+    }
+}
+
 fn describe_reqwest(err: &reqwest::Error, connect: Duration, request: Duration) -> String {
     let headline = if err.is_timeout() {
         let budget = if err.is_connect() { connect } else { request };
@@ -220,6 +403,14 @@ fn describe_reqwest(err: &reqwest::Error, connect: Duration, request: Duration) 
 impl ModelConnector for ModelConnectorClient {
     async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
         let url = self.execute_url()?;
+        let mut req = req;
+        // The caller may state its own budget; otherwise the client's applies.
+        // Left unset, the server silently uses the connector's default — 30 s
+        // for deepseek — and no client-side timeout can widen it.
+        if req.timeout_ms.is_none() {
+            req.timeout_ms = u64::try_from(self.request_timeout.as_millis()).ok();
+        }
+        let wait = self.http_wait;
         let resp = self
             .http
             .post(url)
@@ -228,9 +419,7 @@ impl ModelConnector for ModelConnectorClient {
             .json(&req)
             .send()
             .await
-            .map_err(|err| {
-                ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, REQUEST_TIMEOUT))
-            })?;
+            .map_err(|err| classify_reqwest(&err, CONNECT_TIMEOUT, wait))?;
 
         let status = resp.status().as_u16();
         let content_type = resp
@@ -238,9 +427,10 @@ impl ModelConnector for ModelConnectorClient {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        let bytes = resp.bytes().await.map_err(|err| {
-            ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, REQUEST_TIMEOUT))
-        })?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|err| classify_reqwest(&err, CONNECT_TIMEOUT, wait))?;
 
         match status {
             201 => parse_success_envelope(&bytes, content_type),

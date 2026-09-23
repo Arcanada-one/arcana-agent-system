@@ -15,12 +15,13 @@
 //! consumed through its existing signature.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::connector::{
-    ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
+    ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
     UnverifiedFirstDispatchObservationV0,
 };
 use crate::cost::{CostSnapshot, CostTracker};
@@ -32,6 +33,29 @@ use crate::hooks::HookContext;
 pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
 /// Upstream Model Connector prompt limit, measured as JavaScript UTF-16 code units.
 pub const MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS: usize = 100_000;
+
+/// Re-dispatches allowed after a transient connector failure, per turn.
+///
+/// Two, because the failure this exists for is a slow turn, and Model
+/// Connector has already spent its own attempts by the time the client sees
+/// one: measured 2026-09-23, a `deepseek` dispatch is tried twice server-side
+/// (30 s each) before the caller is told anything. A third client attempt
+/// after that is a genuine second chance; a tenth is a way to spend an hour
+/// and a budget on an upstream that is simply down.
+pub const DEFAULT_CONNECTOR_RETRY_LIMIT: u32 = 2;
+
+/// Pause before re-dispatching when the upstream named no `retryAfter`.
+pub const DEFAULT_CONNECTOR_RETRY_BACKOFF: Duration = Duration::from_secs(2);
+
+/// Ceiling on an upstream-named `retryAfter`, so a hostile or mistaken value
+/// cannot park an unattended run for hours.
+///
+/// Not hypothetical: measured 2026-09-23, an open circuit breaker upstream
+/// answers `retryAfter: 15681` for a cooldown of 15.7 SECONDS — the value is
+/// milliseconds on that path while the field is read as seconds everywhere
+/// else. Without this cap a run would wait four hours on a route that heals in
+/// half a minute.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// Bounded prompt bytes for an explicitly measured first dispatch.
 ///
@@ -110,6 +134,12 @@ pub enum ContinueReason {
     /// action. It has been told once that nothing was executed and asked to
     /// act; this buys it exactly one more dispatch.
     NoActionRetry,
+    /// The connector attempt failed in a way that says nothing about the
+    /// request — a timeout, a gateway status, or an envelope the upstream
+    /// itself marked retryable. The turn is re-dispatched, bounded by
+    /// [`DriverConfig::connector_retry_limit`] and paid for out of the same
+    /// `--max-turns` and cost budget as any other attempt.
+    ConnectorRetry,
 }
 
 /// Reasons a turn terminates the run.
@@ -420,6 +450,17 @@ pub struct DriverConfig {
     /// answered in prose. Headless runs set it, because there nobody reads the
     /// prose and the only thing downstream sees is the exit code.
     pub require_action: bool,
+    /// Consecutive transient connector failures the loop will re-dispatch
+    /// before it gives up with [`TerminalReason::ConnectorFatal`].
+    ///
+    /// Bounded on purpose, and reset by any attempt that returns a response:
+    /// an upstream that is down stays down, and burning the whole turn budget
+    /// on it would replace one honest error with a slow one. Each retry
+    /// consumes a turn and is checked against the cost cap like any other
+    /// attempt, so neither budget can be exceeded by retrying.
+    pub connector_retry_limit: u32,
+    /// Pause before a re-dispatch when the upstream named no `retryAfter`.
+    pub connector_retry_backoff: Duration,
 }
 
 impl DriverConfig {
@@ -439,6 +480,8 @@ impl DriverConfig {
             first_dispatch_prompt: None,
             policy: ModelPolicy::new(),
             require_action: false,
+            connector_retry_limit: DEFAULT_CONNECTOR_RETRY_LIMIT,
+            connector_retry_backoff: DEFAULT_CONNECTOR_RETRY_BACKOFF,
         }
     }
 
@@ -540,6 +583,8 @@ struct RunState {
     tool_calls: u32,
     /// Whether the one no-action nudge has been used.
     nudge_spent: bool,
+    /// Consecutive transient connector failures since the last response.
+    connector_retries: u32,
 }
 
 impl RunState {
@@ -551,6 +596,7 @@ impl RunState {
             first_dispatch_observation: None,
             tool_calls: 0,
             nudge_spent: false,
+            connector_retries: 0,
         }
     }
 }
@@ -726,13 +772,16 @@ impl<'a> Driver<'a> {
             .call_connector(prompt, Some(choice.model_id), first_dispatch)
             .await
         {
-            Ok(resp) => resp,
-            Err((reason, observation)) => {
-                if first_dispatch {
-                    state.first_dispatch_observation = observation;
-                }
-                return StepResult::Terminal(reason, None);
+            Ok(resp) => {
+                // A response — of any shape — means the upstream is answering
+                // again, so the retry budget starts over. Counting retries
+                // across a whole run would let three slow turns spread over an
+                // hour end it as if the connector had failed three times in a
+                // row.
+                state.connector_retries = 0;
+                resp
             }
+            Err(error) => return self.recover_or_stop(state, &error, first_dispatch).await,
         };
         if first_dispatch {
             state
@@ -794,15 +843,67 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// Build the request, call the connector, and record its cost. Maps a
-    /// connector error to [`TerminalReason::ConnectorFatal`].
+    /// Decide what a failed connector attempt means for the run: another
+    /// dispatch, or the end of it.
+    ///
+    /// Retrying is safe here because a `/execute` dispatch has no local side
+    /// effect — the tools run on this side of the wire, and the only thing a
+    /// second attempt can spend twice is money, which the cost cap already
+    /// bounds. It is NOT a guarantee about the upstream: a connector that runs
+    /// tools server-side could act twice on a request whose answer never
+    /// arrived, which is why the retry is bounded and the upstream's own
+    /// `retryable` flag is respected rather than second-guessed.
+    async fn recover_or_stop(
+        &self,
+        state: &mut RunState,
+        error: &ConnectorError,
+        first_dispatch: bool,
+    ) -> StepResult {
+        if first_dispatch {
+            state.first_dispatch_observation = error.first_dispatch_observation().cloned();
+        }
+        // The connector's own message is the diagnosis — `ConnectorError`
+        // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
+        // "arcana-repl" not found`. Mapping to `ConnectorFatal` without it left
+        // the operator a verdict and no evidence, and cost a four-commit bisect
+        // and two wrong root causes to recover what this one line says.
+        // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
+        // a log line here is discarded.
+        eprintln!("arcana: connector dispatch failed: {error}");
+        if !error.is_transient() || state.connector_retries >= self.config.connector_retry_limit {
+            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+        }
+        state.connector_retries = state.connector_retries.saturating_add(1);
+        let wait = retry_pause(error, self.config.connector_retry_backoff);
+        eprintln!(
+            "arcana: retrying this turn in {}s ({} of {})",
+            wait.as_secs(),
+            state.connector_retries,
+            self.config.connector_retry_limit
+        );
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+        // The next step re-checks it too, but an operator who pressed Ctrl-C
+        // during the pause should not then watch another dispatch go out.
+        if self.cancel.is_cancelled() {
+            return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
+        }
+        StepResult::Continue(ContinueReason::ConnectorRetry)
+    }
+
+    /// Build the request, call the connector, and record its cost.
+    ///
+    /// The error is returned whole rather than pre-mapped to a terminal
+    /// reason: only the caller knows how many re-dispatches this turn has
+    /// already had, and the decision between a retry and
+    /// [`TerminalReason::ConnectorFatal`] needs both facts.
     async fn call_connector(
         &self,
         prompt: String,
         model: Option<String>,
         first_dispatch: bool,
-    ) -> Result<ConnectorResponse, (TerminalReason, Option<UnverifiedFirstDispatchObservationV0>)>
-    {
+    ) -> Result<ConnectorResponse, ConnectorError> {
         let mut req = ExecuteRequest::new(self.config.connector_id.clone(), prompt);
         req.model = model;
         req.system_prompt = self.config.system_prompt.clone();
@@ -834,20 +935,7 @@ impl<'a> Driver<'a> {
                     .record_llm_call(&resp.model, tokens_in, tokens_out, resp.usage.cost_usd);
                 Ok(resp)
             }
-            Err(error) => {
-                // The connector's own message is the diagnosis — `ConnectorError`
-                // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
-                // "arcana-repl" not found`. Mapping to `ConnectorFatal` without
-                // it left the operator a verdict and no evidence, and cost a
-                // four-commit bisect and two wrong root causes to recover what
-                // this one line says.  rather than : the
-                // CLI installs no subscriber, so a log line here is discarded.
-                eprintln!("arcana: connector dispatch failed: {error}");
-                Err((
-                    TerminalReason::ConnectorFatal,
-                    error.first_dispatch_observation().cloned(),
-                ))
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -919,6 +1007,17 @@ impl<'a> Driver<'a> {
 /// Delegates to per-branch matchers so that adding a `ContinueReason` or a
 /// `TerminalReason` variant is a compile error the driver must resolve
 /// (D-REQ-02).
+/// How long to wait before re-dispatching a transient failure.
+///
+/// An upstream that named a `retryAfter` knows better than we do — up to
+/// [`MAX_RETRY_AFTER`], past which an unattended run would be parked for
+/// longer than any operator expects a single turn to take.
+fn retry_pause(error: &ConnectorError, fallback: Duration) -> Duration {
+    error.retry_after_secs().map_or(fallback, |secs| {
+        Duration::from_secs(secs).min(MAX_RETRY_AFTER)
+    })
+}
+
 fn reduce(outcome: TurnOutcome) -> LoopControl {
     match outcome {
         TurnOutcome::Continue(reason) => reduce_continue(reason),
@@ -926,14 +1025,15 @@ fn reduce(outcome: TurnOutcome) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 7 `ContinueReason` variants.
+/// Exhaustive over all 8 `ContinueReason` variants.
 fn reduce_continue(reason: ContinueReason) -> LoopControl {
     match reason {
         ContinueReason::ToolResultsReady
         | ContinueReason::HookContinuation
         | ContinueReason::ReactiveCompactRetry
         | ContinueReason::MicrocompactCompleted
-        | ContinueReason::NoActionRetry => LoopControl::Reloop,
+        | ContinueReason::NoActionRetry
+        | ContinueReason::ConnectorRetry => LoopControl::Reloop,
         // Inert under the unary Phase-C connector (no streaming, no token
         // cursor): a documented no-op re-loop — never
         // `unreachable!`/`panic!` (clippy `panic = warn` under `-D warnings`).
