@@ -1,0 +1,7 @@
+$ cargo clippy --workspace --all-targets -- -D warnings
+   Compiling arcana-agent v0.2.0 (/home/dev/aup/arc2/wt/A2-202-aras/crates/cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.94s
+exit=0
+
+$ cargo fmt --all -- --check
+exit=0

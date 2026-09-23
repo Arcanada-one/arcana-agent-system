@@ -806,7 +806,21 @@ impl<'a> Driver<'a> {
         let mut req = ExecuteRequest::new(self.config.connector_id.clone(), prompt);
         req.model = model;
         req.system_prompt = self.config.system_prompt.clone();
-        req.max_turns = Some(self.config.max_turns);
+        // `self.config.max_turns` is deliberately NOT forwarded as the wire
+        // field `maxTurns`. They are two different quantities: the config value
+        // caps how many connector attempts THIS loop makes, while `maxTurns` is
+        // a per-request passthrough that Model Connector validates as
+        // `z.number().int().min(1).max(100)` and hands to CLI connectors
+        // (`claude-code --max-turns`) for one invocation. Conflating them made
+        // every `arcana run --max-turns 120` die on its first dispatch with an
+        // HTTP 400 before the model was ever reached — a run-level budget
+        // rejected as a per-request one (A2-202).
+        //
+        // Nothing is substituted for it: no run-level number is a correct
+        // per-request cap, the upstream work of one request stays bounded by
+        // `maxBudgetUsd` below, and a caller who genuinely wants to cap an
+        // upstream agentic CLI sets `max_turns` explicitly on its own request
+        // (`arcana_tools::model_call`).
         req.max_budget_usd = self.remaining_cost_budget();
         if first_dispatch {
             req.first_dispatch_measurement = self.config.first_dispatch_measurement.clone();

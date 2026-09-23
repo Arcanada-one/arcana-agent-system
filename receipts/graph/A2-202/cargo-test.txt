@@ -1,0 +1,368 @@
+$ cargo test --workspace
+     Running unittests src/lib.rs (target/debug/deps/arcana_cli-ea9a74d048aeb2fd)
+running 113 tests
+test result: ok. 113 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running unittests src/main.rs (target/debug/deps/arcana-5a691181f593c2ee)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/demo_smoke.rs (target/debug/deps/demo_smoke-0f8816fa88408004)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/first_dispatch_measurement_smoke.rs (target/debug/deps/first_dispatch_measurement_smoke-5a70e006cae0482a)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/kb_read_smoke.rs (target/debug/deps/kb_read_smoke-e0db5281c201e937)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/login_smoke.rs (target/debug/deps/login_smoke-368132112820508c)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+     Running tests/mc_ping_smoke.rs (target/debug/deps/mc_ping_smoke-7fe1ec2367c97f12)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/models_smoke.rs (target/debug/deps/models_smoke-f221ceb8a176456c)
+running 12 tests
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+     Running tests/permission_prompt_smoke.rs (target/debug/deps/permission_prompt_smoke-7d94fbe6a0bfb942)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/repl_smoke.rs (target/debug/deps/repl_smoke-b8a10209f8e2eb9d)
+running 16 tests
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/run_smoke.rs (target/debug/deps/run_smoke-d0b577699848651f)
+running 7 tests
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/run_tool_execution.rs (target/debug/deps/run_tool_execution-dce9083cb428bc65)
+running 13 tests
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/sigint_prompt_smoke.rs (target/debug/deps/sigint_prompt_smoke-9ea08e4527334365)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/sigint_real_signal.rs (target/debug/deps/sigint_real_signal-787b539f0e040d1d)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/usage_smoke.rs (target/debug/deps/usage_smoke-f77fb43fa2adf0fe)
+running 9 tests
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/version.rs (target/debug/deps/version-5841ea00a575f20f)
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/whoami_smoke.rs (target/debug/deps/whoami_smoke-c278f96137cd43a9)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/arcana_connectors-5b631d1adf6c2386)
+running 37 tests
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+     Running tests/auth_arcana_client_credentials.rs (target/debug/deps/auth_arcana_client_credentials-fd4a5171ced9060a)
+running 7 tests
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/coworker_subprocess.rs (target/debug/deps/coworker_subprocess-89c6baba01d68701)
+running 7 tests
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/fetch_contract.rs (target/debug/deps/fetch_contract-f3fe456a2cca99de)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/fetch_parent_range.rs (target/debug/deps/fetch_parent_range-3c67b34fbf89c4d0)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/live_scrutator.rs (target/debug/deps/live_scrutator-bc97c6f270dda9e2)
+running 3 tests
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/model_connector_contract.rs (target/debug/deps/model_connector_contract-e3784b5bfeb8a2b5)
+running 11 tests
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/model_connector_error_body_excerpt.rs (target/debug/deps/model_connector_error_body_excerpt-274e2dd5d5461443)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/model_connector_error_reporting.rs (target/debug/deps/model_connector_error_reporting-f914496ec7ee9893)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/ops_bot_contract.rs (target/debug/deps/ops_bot_contract-32709ba41d691f23)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/scrutator_contract.rs (target/debug/deps/scrutator_contract-7128dd6965611600)
+running 10 tests
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running tests/scrutator_fetchconn.rs (target/debug/deps/scrutator_fetchconn-bc56ff2f9ccbda15)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/skill_store_cutover.rs (target/debug/deps/skill_store_cutover-ef32cfd9cf94c8a6)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/arcana_core-b727c6f0450d145f)
+running 70 tests
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+     Running tests/agent_loop_exhaustive.rs (target/debug/deps/agent_loop_exhaustive-ea81ca4c3461cc01)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/capability_executor_security.rs (target/debug/deps/capability_executor_security-1ad97c0ab19b5994)
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/capstone_vertical_prototype.rs (target/debug/deps/capstone_vertical_prototype-f1b7e451b0e0c569)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/cost_budget.rs (target/debug/deps/cost_budget-7b6ed36a7981f316)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/dispatch_multi_model.rs (target/debug/deps/dispatch_multi_model-548d261377371a53)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/dispatch_policy.rs (target/debug/deps/dispatch_policy-1c3372e7abae36d9)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/dispatch_request_max_turns.rs (target/debug/deps/dispatch_request_max_turns-ab74aaedb0326874)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/dispatch_request_model.rs (target/debug/deps/dispatch_request_model-a4ccdfd59a86ff21)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/driver_audit_inherited.rs (target/debug/deps/driver_audit_inherited-39fd354224c61b87)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/driver_completes_small_task.rs (target/debug/deps/driver_completes_small_task-a819749ab5e5bff0)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/driver_config_validation.rs (target/debug/deps/driver_config_validation-5eb36ba6d03165f0)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/driver_context_window.rs (target/debug/deps/driver_context_window-4705eabc0985a15e)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/driver_cost_accounting.rs (target/debug/deps/driver_cost_accounting-c3ce7413a86be6cb)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/driver_interpret.rs (target/debug/deps/driver_interpret-fd1128ff6eee799a)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/driver_operator_abort.rs (target/debug/deps/driver_operator_abort-1b7fd7f2130ba30c)
+running 7 tests
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/driver_terminal_mapping.rs (target/debug/deps/driver_terminal_mapping-9536c6906923bef1)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/driver_tool_results_feedback.rs (target/debug/deps/driver_tool_results_feedback-c2bc714c32b6490a)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/execution_invariant_replaceinput.rs (target/debug/deps/execution_invariant_replaceinput-d8dc74bc2f1ae3eb)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/execution_invariant_single_audit.rs (target/debug/deps/execution_invariant_single_audit-cf063112a1a38031)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/first_dispatch_measurement.rs (target/debug/deps/first_dispatch_measurement-5b7c1c19697bf6e6)
+running 9 tests
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/hook_bridge_layer.rs (target/debug/deps/hook_bridge_layer-ebf766c011c5d62a)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/hooks_audit.rs (target/debug/deps/hooks_audit-b9f9eb797cb6c087)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/hooks_cancel.rs (target/debug/deps/hooks_cancel-f30d44a8a0f2ea65)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/hooks_chain.rs (target/debug/deps/hooks_chain-78ea9e14b37cd690)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/hooks_cost_budget.rs (target/debug/deps/hooks_cost_budget-6d1cede864d0e689)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/hooks_ops_bot.rs (target/debug/deps/hooks_ops_bot-112fdb743ad55ec0)
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/hooks_trait.rs (target/debug/deps/hooks_trait-e64e87b874c83ac8)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/interactive_layer.rs (target/debug/deps/interactive_layer-00a8c28762b2ff20)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/permission_cascade.rs (target/debug/deps/permission_cascade-fc1d43186e484470)
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/rule_layer.rs (target/debug/deps/rule_layer-ad873b58d4d1ca28)
+running 14 tests
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/schema_layer.rs (target/debug/deps/schema_layer-6bdf9b47f21ac6f8)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs (target/debug/deps/arcana_credential_broker-6e43f55330e180df)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/arcana-credential-broker.rs (target/debug/deps/arcana_credential_broker-ba639671dacfc3bd)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/authorization.rs (target/debug/deps/authorization-6745a5827c570a1a)
+running 24 tests
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/ipc_broker.rs (target/debug/deps/ipc_broker-dc2089faeda9d911)
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/packaging.rs (target/debug/deps/packaging-d6b44a1a69120df1)
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/separation.rs (target/debug/deps/separation-38500950810e5e12)
+running 9 tests
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/arcana_execution_boundary-21c35047d0b8f977)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/clean_env.rs (target/debug/deps/clean_env-fe7a13185a88db4a)
+running 11 tests
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/process_boundary.rs (target/debug/deps/process_boundary-637617054af2875e)
+running 18 tests
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+     Running tests/pty_lifecycle.rs (target/debug/deps/pty_lifecycle-c8fb64c621163200)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/quarantine.rs (target/debug/deps/quarantine-a0991829d3d21f7b)
+running 22 tests
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.68s
+     Running tests/spawn_gate.rs (target/debug/deps/spawn_gate-aaec75c7356a43b8)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+     Running tests/transcript.rs (target/debug/deps/transcript-1c7863eab4a99025)
+running 9 tests
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/arcana_mcp-9e3b5b6087d8d4ad)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/loopback_contract.rs (target/debug/deps/loopback_contract-203de0e2dece7f64)
+running 7 tests
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/no_broker_dep.rs (target/debug/deps/no_broker_dep-a4cdf55a11e042cd)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/arcana_skills-7e94d1272595882f)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/audit.rs (target/debug/deps/audit-3453fa7f3f2367f0)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/builder.rs (target/debug/deps/builder-d1204f689b821258)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/discover.rs (target/debug/deps/discover-f49f17c3ef3c8551)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/interpreter.rs (target/debug/deps/interpreter-b9369ea70639e26a)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/maturity_gate.rs (target/debug/deps/maturity_gate-38d518856dc0b4a9)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/multi_model.rs (target/debug/deps/multi_model-ae5b601b5e1cf458)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/production_artifact.rs (target/debug/deps/production_artifact-204205718212109d)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/reload.rs (target/debug/deps/reload-83d81afec90a0501)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/schema.rs (target/debug/deps/schema-8ee3af85c8950c92)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/smoke.rs (target/debug/deps/smoke-2e88edf64edb25fe)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/source.rs (target/debug/deps/source-f3c6c0e9b1e6748e)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/store.rs (target/debug/deps/store-3716173b1f6327bd)
+running 12 tests
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/arcana_supervisor-56754a19e808249f)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/heartbeat-child.rs (target/debug/deps/heartbeat_child-1b407b41ab5251ec)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/supervisor_budgets.rs (target/debug/deps/supervisor_budgets-0b3544c14f9b89d1)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+     Running tests/supervisor_chaos.rs (target/debug/deps/supervisor_chaos-144ea71e9c356a44)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+     Running tests/supervisor_heartbeat.rs (target/debug/deps/supervisor_heartbeat-787fc4e73624f0a3)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+     Running tests/supervisor_process_group.rs (target/debug/deps/supervisor_process_group-b7d2afa172048fe7)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests/supervisor_restart.rs (target/debug/deps/supervisor_restart-57edf15531ba9adb)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/supervisor_smoke.rs (target/debug/deps/supervisor_smoke-a12b83cc4c5291d6)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/supervisor_terminate.rs (target/debug/deps/supervisor_terminate-5cee567cc7f397eb)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+     Running tests/supervisor_wall_clock.rs (target/debug/deps/supervisor_wall_clock-148ff61ac3b89c53)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+     Running unittests src/lib.rs (target/debug/deps/arcana_tools-3efc20129ab3401f)
+running 19 tests
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/arcana_search_tool.rs (target/debug/deps/arcana_search_tool-82dc11adb4c5d4d8)
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/bash_tool.rs (target/debug/deps/bash_tool-6181f2c47e8e3bd5)
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+     Running tests/edit_tool.rs (target/debug/deps/edit_tool-a91eab9da1cef1fc)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/grep_tool.rs (target/debug/deps/grep_tool-61562d9b3db7471b)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/model_call_capability.rs (target/debug/deps/model_call_capability-0fa26f3ea2edeab8)
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/path_guard.rs (target/debug/deps/path_guard-c5d19c9ab9f0e407)
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/read_tool.rs (target/debug/deps/read_tool-7480ecc6e2431234)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/schema_validation.rs (target/debug/deps/schema_validation-c994b1e60cb1b210)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/webfetch_tool.rs (target/debug/deps/webfetch_tool-974e0d69cbbd3c8e)
+running 10 tests
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.03s
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.05s
+test result: ok. 8 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/write_tool.rs (target/debug/deps/write_tool-d611550b5e9f11f8)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+   Doc-tests arcana_cli
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests arcana_connectors
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests arcana_core
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+   Doc-tests arcana_credential_broker
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests arcana_execution_boundary
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests arcana_mcp
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests arcana_skills
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+   Doc-tests arcana_supervisor
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests arcana_tools
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
