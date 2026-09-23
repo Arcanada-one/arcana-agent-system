@@ -4,6 +4,11 @@
 //! `{name, input}` maps to `AssistantAction::ToolCall`; anything else (no
 //! block, malformed JSON, missing keys) fails closed to
 //! `AssistantAction::Final` — never to an unchecked dispatch.
+//!
+//! A2-208 adds the third answer: a block that opened and never closed is
+//! `AssistantAction::Truncated`, not a final answer. That case used to share
+//! the fail-closed arm with malformed JSON, which made a reply the output
+//! limit cut off indistinguishable from prose.
 
 #![allow(
     clippy::unwrap_used,
@@ -45,16 +50,14 @@ fn driver_interpret() {
             assert_eq!(name, "echo");
             assert_eq!(input["text"], "hi");
         }
-        AssistantAction::Final { text } => {
-            panic!("expected ToolCall, got Final({text})");
-        }
+        other => panic!("expected ToolCall, got {other:?}"),
     }
 
     // 2. A plain response classifies to Final{text} carrying the whole result.
     let final_resp = response_with("The answer is 42.");
     match interpret(&final_resp) {
         AssistantAction::Final { text } => assert_eq!(text, "The answer is 42."),
-        AssistantAction::ToolCall { name, .. } => panic!("expected Final, got ToolCall({name})"),
+        other => panic!("expected Final, got {other:?}"),
     }
 
     // 3. A malformed tool_call block (invalid JSON) fails closed to Final.
@@ -71,7 +74,52 @@ fn driver_interpret() {
         "tool_call block missing name must fail closed to Final"
     );
 
-    // 5. Determinism: repeated calls on the same input yield equal results.
+    // 5. A block that opened and never closed is a cut-off reply, not an
+    // answer — whatever the fragment inside it looks like.
+    let cut_off_mid_json =
+        response_with("Writing it now.\n```tool_call\n{\"name\":\"echo\",\"input\":{\"te");
+    assert!(
+        matches!(
+            interpret(&cut_off_mid_json),
+            AssistantAction::Truncated { .. }
+        ),
+        "an unclosed tool_call fence must not be read as prose"
+    );
+
+    // 6. Even a syntactically complete call is truncated while its fence is
+    // open: the model never said it had finished, so we must not act on it.
+    let cut_off_after_json =
+        response_with("```tool_call\n{\"name\":\"echo\",\"input\":{\"text\":\"hi\"}}\n");
+    match interpret(&cut_off_after_json) {
+        AssistantAction::Truncated { bytes } => assert_eq!(
+            bytes,
+            cut_off_after_json.result.len(),
+            "the fragment's size is reported so the operator can see how much was lost"
+        ),
+        other => panic!("expected Truncated, got {other:?}"),
+    }
+
+    // 7. The closing fence is what distinguishes the two: the same body,
+    // terminated, is an ordinary tool call.
+    assert!(
+        matches!(
+            interpret(&response_with(
+                "```tool_call\n{\"name\":\"echo\",\"input\":{\"text\":\"hi\"}}\n```"
+            )),
+            AssistantAction::ToolCall { .. }
+        ),
+        "a closed block is still a call"
+    );
+
+    // 8. A malformed body inside a CLOSED block keeps failing closed to Final
+    // rather than being reclassified as truncation.
+    assert!(
+        matches!(interpret(&malformed), AssistantAction::Final { .. }),
+        "truncation detection must not swallow the fail-closed arm"
+    );
+
+    // 9. Determinism: repeated calls on the same input yield equal results.
     assert_eq!(interpret(&tool_resp), interpret(&tool_resp));
     assert_eq!(interpret(&final_resp), interpret(&final_resp));
+    assert_eq!(interpret(&cut_off_mid_json), interpret(&cut_off_mid_json));
 }

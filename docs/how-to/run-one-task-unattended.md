@@ -46,7 +46,7 @@ interpret its absence — which looks identical to a crash.
 | Field | Meaning |
 |-------|---------|
 | `completed` | The run did the work. Never `true` with `tool_calls` at `0`. |
-| `reason` | The terminal verdict (`Completed`, `NoAction`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
+| `reason` | The terminal verdict (`Completed`, `NoAction`, `ResponseTruncated`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
 | `turns` | Connector attempts consumed. |
 | `tool_calls` | Tool calls the executor **actually carried out**. Not intent: a call the policy refused, or one the model only described in prose, is not counted. |
 | `cost_usd_micros` | Spend for the run, in micro-USD. |
@@ -54,7 +54,7 @@ interpret its absence — which looks identical to a crash.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | The run completed and executed at least one tool call. `completed` is `true`. |
-| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`. |
+| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction` or `ResponseTruncated`. |
 | `130` | The operator interrupted it. The spend line above the marker is what the interrupted dispatch cost. |
 
 ### A run that claimed to have done the work
@@ -78,6 +78,37 @@ therefore still demonstrate it with a tool call, for example by reading the
 file it is reporting on. That is the intended trade: the command exists to
 change a working directory, and an unattended run that changed nothing and was
 read as success is the failure this whole surface is for.
+
+### A reply that ran out of room
+
+`NoAction` answers "the model would not act". A different failure looks
+identical from the outside and needs the opposite response: the model *was*
+acting and its reply was cut off by its own output limit part-way through the
+`tool_call` block. Measured 2026-09-23 asking DeepSeek for a 3000-word file —
+~9148 output tokens of `tool_call`, no closing fence, no file, $0.040 spent,
+verdict `NoAction`.
+
+The loop now tells them apart. A block that opened and never closed is a
+cut-off reply:
+
+* the half-written call is **never executed**, even when the JSON inside it
+  happens to be complete — the model never said it had finished emitting it;
+* the fragment is discarded rather than fed back into the history as something
+  the model said;
+* the turn is re-dispatched **once**, carrying an instruction to do the work in
+  smaller pieces (write the first part of the file now, append the rest in
+  later turns). That re-dispatch spends a turn from `--max-turns` and is
+  charged against `--max-cost-usd` like any other attempt;
+* if the second reply is cut off too, the run ends on `ResponseTruncated`:
+  `"completed":false`, exit `1`, and a message that names the output limit
+  instead of blaming the model for not acting.
+
+What this does not catch: a reply truncated before it opened a `tool_call`
+fence at all is indistinguishable from a short answer. Model Connector returns
+no finish/stop reason for ARAS to read
+(`src/connectors/interfaces/connector.interface.ts:42`; the DeepSeek adapter
+does not decode `choices[].finish_reason` either), so an open fence is the only
+local evidence there is.
 
 Every tool call, allowed or denied, is appended to the audit log named on the
 second line of stdout (`~/.local/state/arcana/run/audit.log`, mode 0600).

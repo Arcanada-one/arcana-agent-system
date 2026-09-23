@@ -43,7 +43,7 @@ message instead:
 | Code | Condition |
 |------|-----------|
 | `0` | The run reached `Completed` **and** executed at least one tool call. |
-| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
 | `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
 
 The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when

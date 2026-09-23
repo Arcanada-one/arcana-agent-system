@@ -47,6 +47,18 @@ pub const DEFAULT_CONNECTOR_RETRY_LIMIT: u32 = 2;
 /// Pause before re-dispatching when the upstream named no `retryAfter`.
 pub const DEFAULT_CONNECTOR_RETRY_BACKOFF: Duration = Duration::from_secs(2);
 
+/// Consecutive re-dispatches allowed after a reply that the model's output
+/// limit cut off, per run.
+///
+/// One. The re-dispatch carries an instruction to work in smaller pieces, so
+/// it is a genuinely different request rather than the same one sent twice;
+/// but a model that is cut off again immediately after being told why is not
+/// going to split the work on the third ask either, and every attempt costs a
+/// turn and real money. The counter resets on any reply that parses, because a
+/// long run may legitimately hit the limit twice an hour apart — only
+/// back-to-back cut-offs mean the model cannot do what was asked.
+const TRUNCATION_RETRY_LIMIT: u32 = 1;
+
 /// Ceiling on an upstream-named `retryAfter`, so a hostile or mistaken value
 /// cannot park an unattended run for hours.
 ///
@@ -120,7 +132,17 @@ impl std::error::Error for FirstDispatchPromptValidationError {}
 pub enum ContinueReason {
     /// Tool dispatch completed; feed results back to the model.
     ToolResultsReady,
-    /// Response was truncated by `max_output_tokens`; continue from cursor.
+    /// The reply ran out of output tokens part-way through a `tool_call`
+    /// block. Nothing was executed and the fragment was discarded; the turn is
+    /// re-dispatched once with an instruction to do the work in smaller
+    /// pieces, bounded by [`TRUNCATION_RETRY_LIMIT`] and paid for out of the
+    /// same `--max-turns` and cost budget as any other attempt.
+    ///
+    /// The variant predates the behaviour: it was reserved for a streaming
+    /// connector that could resume from a token cursor, and sat inert under
+    /// the unary connector while the case it names — a reply cut off by the
+    /// output limit — was silently classified as an answer. It is the same
+    /// event, so it keeps the name rather than gaining a twin.
     MaxOutputTokensRecovery,
     /// Context overflowed; compaction ran, retry with the compacted history.
     ReactiveCompactRetry,
@@ -230,6 +252,18 @@ pub enum TerminalReason {
     /// for work that no tool ever did. Only [`DriverConfig::require_action`]
     /// runs can end here; an interactive turn is allowed to be a conversation.
     NoAction,
+    /// Two replies in a row were cut off by the model's output limit before
+    /// the `tool_call` block they had opened was complete.
+    ///
+    /// Distinct from [`Self::NoAction`] on purpose, and the reason this
+    /// variant exists. Measured 2026-09-23: asked for a 3000-word file,
+    /// `DeepSeek` emitted ~9148 output tokens of `tool_call` and stopped without
+    /// a closing fence; the loop read the fragment as prose, reported that the
+    /// model had answered without acting, and charged for it. "It would not
+    /// act" and "it was not allowed to finish" call for opposite responses —
+    /// the second is fixed by asking for smaller pieces or a model with a
+    /// larger output limit, never by telling the model to try harder.
+    ResponseTruncated,
 }
 
 impl TerminalReason {
@@ -256,6 +290,11 @@ impl TerminalReason {
             Self::AuditFatal => "the capability audit failed and the executor is latched closed",
             Self::NoAction => {
                 "the model answered without running a single tool, so nothing was done"
+            }
+            Self::ResponseTruncated => {
+                "the model's reply was cut off by its output limit part-way through a tool \
+                 call, twice in a row; nothing was executed — ask for the work in smaller \
+                 steps, or choose a model with a larger output limit"
             }
         }
     }
@@ -322,6 +361,14 @@ pub enum AssistantAction {
     ToolCall { name: String, input: Value },
     /// The model produced a final answer; `text` is the whole response.
     Final { text: String },
+    /// The model opened a `tool_call` block and the reply ended before the
+    /// block closed — the signature of an answer stopped by the output-token
+    /// limit. `bytes` is the length of the fragment that arrived.
+    ///
+    /// Neither an action nor an answer. It is never dispatched, however
+    /// complete the JSON inside it happens to look: a call the model did not
+    /// finish emitting is not a call it asked for.
+    Truncated { bytes: usize },
 }
 
 /// Fence that opens a tool-call block inside a bare text response.
@@ -332,24 +379,72 @@ const CODE_FENCE: &str = "```";
 /// Classify a [`ConnectorResponse`] into an [`AssistantAction`] (D-REQ-06).
 ///
 /// Convention: a single fenced block tagged `tool_call` whose body parses as
-/// `{"name": <string>, "input": <json>}` is an intended tool call. Anything
-/// else — no block, malformed JSON, a missing `name` — **fails closed** to
-/// [`AssistantAction::Final`], never to an unchecked dispatch. The tool call,
-/// when present, is still subjected to the full permission cascade downstream;
-/// this seam only classifies, it never executes.
+/// `{"name": <string>, "input": <json>}` is an intended tool call. A block
+/// that was opened and never closed is [`AssistantAction::Truncated`].
+/// Anything else — no block, malformed JSON, a missing `name` — **fails
+/// closed** to [`AssistantAction::Final`], never to an unchecked dispatch. The
+/// tool call, when present, is still subjected to the full permission cascade
+/// downstream; this seam only classifies, it never executes.
 #[must_use]
 pub fn interpret(resp: &ConnectorResponse) -> AssistantAction {
-    parse_tool_call(&resp.result).unwrap_or_else(|| AssistantAction::Final {
+    let final_answer = || AssistantAction::Final {
         text: resp.result.clone(),
-    })
+    };
+    match scan_tool_call(&resp.result) {
+        // An open fence is the only local evidence of truncation there is.
+        // Model Connector's response carries no finish/stop reason to read
+        // instead: its `ConnectorResponse` has no such field
+        // (`src/connectors/interfaces/connector.interface.ts:42`), and the
+        // DeepSeek adapter does not even decode the provider's
+        // `choices[].finish_reason` — its response interface omits the key and
+        // `parseResponse` returns only the message content
+        // (`src/connectors/deepseek/deepseek.connector.ts:4,82`). Read
+        // 2026-09-23 on model-connector `3911773`. If that contract ever grows
+        // the field, it belongs here as the primary signal and this scan
+        // becomes the fallback.
+        ToolCallBlock::Unterminated => AssistantAction::Truncated {
+            bytes: resp.result.len(),
+        },
+        ToolCallBlock::Closed(body) => parse_tool_call(body).unwrap_or_else(final_answer),
+        ToolCallBlock::Absent => final_answer(),
+    }
 }
 
-/// Attempt to extract a `tool_call` block; `None` on any anomaly (fail-closed).
-fn parse_tool_call(result: &str) -> Option<AssistantAction> {
-    let after_fence = result.find(TOOL_CALL_FENCE)? + TOOL_CALL_FENCE.len();
-    let rest = result.get(after_fence..)?;
-    let close = rest.find(CODE_FENCE)?;
-    let body = rest.get(..close)?.trim();
+/// What a scan of a reply found where a `tool_call` block would be.
+enum ToolCallBlock<'a> {
+    /// No `tool_call` fence in the reply at all.
+    Absent,
+    /// A fence that opened and closed; the payload is its body, trimmed.
+    Closed(&'a str),
+    /// A fence that opened and never closed.
+    Unterminated,
+}
+
+/// Locate the first `tool_call` block and report whether it is complete.
+///
+/// The three outcomes used to be two: a missing closing fence returned `None`
+/// exactly like malformed JSON, so the one anomaly that means "the model was
+/// interrupted" was indistinguishable from the ones that mean "the model wrote
+/// something we cannot use".
+fn scan_tool_call(result: &str) -> ToolCallBlock<'_> {
+    let Some(open) = result.find(TOOL_CALL_FENCE) else {
+        return ToolCallBlock::Absent;
+    };
+    // `find` returns a char boundary and the fence is ASCII, so the slice is
+    // always valid; `get` keeps that an ordinary `Absent` rather than a panic.
+    let Some(rest) = result.get(open + TOOL_CALL_FENCE.len()..) else {
+        return ToolCallBlock::Absent;
+    };
+    match rest.find(CODE_FENCE) {
+        Some(close) => rest.get(..close).map_or(ToolCallBlock::Absent, |body| {
+            ToolCallBlock::Closed(body.trim())
+        }),
+        None => ToolCallBlock::Unterminated,
+    }
+}
+
+/// Parse a complete block body; `None` on any anomaly (fail-closed).
+fn parse_tool_call(body: &str) -> Option<AssistantAction> {
     let value: Value = serde_json::from_str(body).ok()?;
     let name = value.get("name")?.as_str()?.to_owned();
     let input = value.get("input").cloned().unwrap_or(Value::Null);
@@ -626,6 +721,18 @@ Reply now with exactly one fenced `tool_call` block that does the work. If you b
 already satisfied, prove it with a tool call (for example `read` the file you say you wrote) \
 before you answer in prose.";
 
+/// What the loop tells a model whose reply the output limit cut off.
+///
+/// It names the cause, because the model cannot see it: from where the model
+/// sits the turn simply ended. Without that, the obvious next move is to send
+/// the same oversized block again and be cut off at the same token.
+const TRUNCATION_NUDGE: &str =
+    "YOUR LAST REPLY WAS CUT OFF by your own output limit in the middle of a `tool_call` block. \
+Nothing ran, and the half-written call was discarded — do not try to continue it. \
+Do the same work in SMALLER pieces: send one complete `tool_call` block that you are sure fits \
+inside a single reply (for example write the first part of the file now and append the rest in \
+later turns), and keep every later reply small too.";
+
 /// Mutable state threaded through every step of one run.
 ///
 /// It exists so a new per-run fact (the executed-tool-call count, the spent
@@ -646,6 +753,9 @@ struct RunState {
     connector_retries: u32,
     /// Folded-back denials since the last tool call that actually executed.
     consecutive_denials: u32,
+    /// Consecutive replies cut off by the output limit since the last one that
+    /// parsed.
+    truncation_retries: u32,
 }
 
 impl RunState {
@@ -659,7 +769,18 @@ impl RunState {
             nudge_spent: false,
             connector_retries: 0,
             consecutive_denials: 0,
+            truncation_retries: 0,
         }
+    }
+
+    /// Record a reply the loop could read.
+    ///
+    /// It goes into the history verbatim, and it is proof the model can still
+    /// finish a turn — so the truncation budget starts over here rather than
+    /// counting cut-offs across a whole run.
+    fn accept_reply(&mut self, text: &str) {
+        self.truncation_retries = 0;
+        self.history.push(HistoryEntry::Assistant(text.to_owned()));
     }
 }
 
@@ -853,11 +974,16 @@ impl<'a> Driver<'a> {
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
             return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
         }
-        state
-            .history
-            .push(HistoryEntry::Assistant(resp.result.clone()));
         match interpret(&resp) {
+            // Handled before the history is written: the fragment is
+            // deliberately NOT kept. Feeding a half-emitted call back would
+            // put words in the model's mouth that it never finished saying,
+            // and the fragment is large by construction — the live one was
+            // ~9148 output tokens — so carrying it would shrink the window for
+            // the retry that has to succeed.
+            AssistantAction::Truncated { bytes } => Self::recover_from_truncation(state, bytes),
             AssistantAction::Final { text } => {
+                state.accept_reply(&resp.result);
                 // An answer that arrived is DELIVERED even when the operator
                 // interrupted: it is already paid for, and withholding it would
                 // be a second harm. But the verdict still says they stopped the
@@ -893,6 +1019,7 @@ impl<'a> Driver<'a> {
                 // should not then watch a bash command run. The final-text
                 // branch above deliberately does NOT check: that answer is
                 // already paid for, and discarding it would be a second harm.
+                state.accept_reply(&resp.result);
                 if self.cancel.is_cancelled() {
                     return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
                 }
@@ -903,6 +1030,38 @@ impl<'a> Driver<'a> {
                 self.run_tool_turn(state, &name, input).await
             }
         }
+    }
+
+    /// Decide what a reply cut off by the output limit means for the run:
+    /// one more ask for smaller pieces, or a verdict that names the cause.
+    ///
+    /// Not a connector retry — the connector did its job and the answer is
+    /// paid for. What failed is that the model could not say what it wanted to
+    /// say inside one reply, so re-sending the same request unchanged would
+    /// buy the same cut-off at the same token. The re-dispatch is a different
+    /// request: it carries [`TRUNCATION_NUDGE`], and the fragment is dropped
+    /// rather than echoed back.
+    fn recover_from_truncation(state: &mut RunState, bytes: usize) -> StepResult {
+        // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
+        eprintln!(
+            "arcana: the model's reply was cut off after {bytes} bytes with an unclosed \
+             `tool_call` block — nothing was executed"
+        );
+        if state.truncation_retries >= TRUNCATION_RETRY_LIMIT {
+            return StepResult::Terminal(TerminalReason::ResponseTruncated, None);
+        }
+        state.truncation_retries = state.truncation_retries.saturating_add(1);
+        // The discarded fragment is still recorded — as a fact about the turn,
+        // not as something the model said. Without this line the next prompt
+        // would show a task, a nudge, and no trace of the reply between them.
+        state.history.push(HistoryEntry::Injected(format!(
+            "The previous reply was cut off after {bytes} bytes and was discarded; nothing ran."
+        )));
+        state
+            .history
+            .push(HistoryEntry::Injected(TRUNCATION_NUDGE.to_owned()));
+        eprintln!("arcana: asking for the same work in smaller pieces (1 of 1)");
+        StepResult::Continue(ContinueReason::MaxOutputTokensRecovery)
     }
 
     /// Decide what a failed connector attempt means for the run: another
@@ -1147,11 +1306,12 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
         | ContinueReason::MicrocompactCompleted
         | ContinueReason::NoActionRetry
         | ContinueReason::ConnectorRetry
-        | ContinueReason::ToolCallRejected => LoopControl::Reloop,
+        | ContinueReason::ToolCallRejected
+        | ContinueReason::MaxOutputTokensRecovery => LoopControl::Reloop,
         // Inert under the unary Phase-C connector (no streaming, no token
         // cursor): a documented no-op re-loop — never
         // `unreachable!`/`panic!` (clippy `panic = warn` under `-D warnings`).
-        ContinueReason::MaxOutputTokensRecovery | ContinueReason::CollapseDrainRetry => {
+        ContinueReason::CollapseDrainRetry => {
             tracing::debug!(
                 ?reason,
                 "inert streaming Continue variant under unary connector; no-op re-loop"
@@ -1161,7 +1321,7 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 10 `TerminalReason` variants.
+/// Exhaustive over all 11 `TerminalReason` variants.
 fn reduce_terminal(reason: TerminalReason) -> LoopControl {
     match reason {
         TerminalReason::Completed
@@ -1173,7 +1333,8 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::ContextWindowExhausted
         | TerminalReason::ConnectorFatal
         | TerminalReason::AuditFatal
-        | TerminalReason::NoAction => LoopControl::Stop(reason),
+        | TerminalReason::NoAction
+        | TerminalReason::ResponseTruncated => LoopControl::Stop(reason),
     }
 }
 

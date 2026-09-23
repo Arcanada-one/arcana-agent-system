@@ -1,12 +1,12 @@
 //! Agent loop state machine exhaustiveness.
 //!
 //! Contract: `enum TurnOutcome { Continue(ContinueReason), Terminal(TerminalReason) }`
-//! has 9 `ContinueReason` and 10 `TerminalReason` variants. Regression is
+//! has 9 `ContinueReason` and 11 `TerminalReason` variants. Regression is
 //! blocked two independent ways:
 //!   1. Compile-time exhaustive match — adding a variant without updating
 //!      the driver produces a «non-exhaustive patterns» error.
 //!   2. Run-time enumeration — the explicit per-variant list confirms the
-//!      driver still covers the documented 9/10 surface.
+//!      driver still covers the documented 9/11 surface.
 
 #![allow(
     clippy::unwrap_used,
@@ -21,7 +21,7 @@ const CONTINUE_VARIANTS: usize = 9;
 // Was 8 while the enum had 9 variants, and the `all` array below simply left
 // `AuditFatal` out — a test named "exhaustive" that had stopped being so. Both
 // are corrected here rather than only extended for `NoAction`.
-const TERMINAL_VARIANTS: usize = 10;
+const TERMINAL_VARIANTS: usize = 11;
 
 fn classify_continue(reason: ContinueReason) -> &'static str {
     match reason {
@@ -49,6 +49,7 @@ fn classify_terminal(reason: TerminalReason) -> &'static str {
         TerminalReason::ConnectorFatal => "connector_fatal",
         TerminalReason::AuditFatal => "audit_fatal",
         TerminalReason::NoAction => "no_action",
+        TerminalReason::ResponseTruncated => "response_truncated",
     }
 }
 
@@ -93,6 +94,7 @@ fn all_terminal_variants_are_distinct() {
         TerminalReason::ConnectorFatal,
         TerminalReason::AuditFatal,
         TerminalReason::NoAction,
+        TerminalReason::ResponseTruncated,
     ];
     assert_eq!(all.len(), TERMINAL_VARIANTS);
 
