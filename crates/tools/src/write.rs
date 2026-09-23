@@ -5,6 +5,7 @@
 //! filesystem I/O. [`WriteTool::default`] ships a permissive rule set;
 //! production cascade wiring lands in the CLI bootstrap step.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use arcana_core::permission::rule::ToolRuleSet;
@@ -25,12 +26,14 @@ struct WriteInput {
 
 pub struct WriteTool {
     rules: Arc<ToolRuleSet>,
+    root: Option<PathBuf>,
 }
 
 impl Default for WriteTool {
     fn default() -> Self {
         Self {
             rules: Arc::new(ToolRuleSet::default()),
+            root: None,
         }
     }
 }
@@ -38,7 +41,17 @@ impl Default for WriteTool {
 impl WriteTool {
     #[must_use]
     pub fn new(rules: Arc<ToolRuleSet>) -> Self {
-        Self { rules }
+        Self { rules, root: None }
+    }
+
+    /// Resolve relative paths against `root` rather than the ambient process
+    /// working directory. See [`crate::read::ReadTool::with_root`].
+    #[must_use]
+    pub fn with_root(rules: Arc<ToolRuleSet>, root: impl Into<PathBuf>) -> Self {
+        Self {
+            rules,
+            root: Some(root.into()),
+        }
     }
 }
 
@@ -69,8 +82,7 @@ impl Tool for WriteTool {
         let input = invocation.into_input();
         let parsed: WriteInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
-        let cwd = std::env::current_dir()
-            .map_err(|err| ToolError::ExecutionFailed(format!("cwd unavailable: {err}")))?;
+        let cwd = crate::path_guard::working_directory(self.root.as_deref())?;
         let canonical = path_guard::check(&parsed.path, &self.rules, &cwd)?;
 
         let existed = tokio::fs::metadata(&canonical).await.is_ok();

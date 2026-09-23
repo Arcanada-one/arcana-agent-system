@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::io::Read;
+use std::path::PathBuf;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
@@ -112,6 +113,35 @@ enum Cmd {
         #[arg(required = true, num_args = 1..)]
         query: Vec<String>,
     },
+    /// Run ONE task to completion in a working directory, unattended.
+    ///
+    /// The agent really calls its tools (read / write / edit / grep / shell),
+    /// confined to `--cwd` by policy instead of by an interactive prompt.
+    /// Always live: it needs `ARCANA_MC_TOKEN` and it costs money. The last
+    /// line of stdout is always `ARCANA_RUN_DONE <json>`.
+    Run {
+        /// Working directory. Every tool is rooted here and paths outside it
+        /// are refused. Intended for a disposable checkout or git worktree.
+        #[arg(long)]
+        cwd: PathBuf,
+        /// The task, given literally.
+        #[arg(long, conflicts_with = "prompt_stdin")]
+        prompt: Option<String>,
+        /// Read the task from stdin. Preferred for anything with quotes,
+        /// newlines, or shell metacharacters in it.
+        #[arg(long)]
+        prompt_stdin: bool,
+        /// Connector-attempt cap for the run.
+        #[arg(long, default_value_t = 24)]
+        max_turns: u32,
+        /// Spend cap in USD for the run.
+        #[arg(long)]
+        max_cost_usd: Option<f64>,
+        /// Pin a model id instead of using the saved `arcana models use`
+        /// choice.
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
         #[command(subcommand)]
@@ -207,6 +237,23 @@ fn main() {
         Some(Cmd::KbRead { query }) => {
             std::process::exit(arcana_cli::kb_read::run_kb_read(query.join(" ")));
         }
+        Some(Cmd::Run {
+            cwd,
+            prompt,
+            prompt_stdin,
+            max_turns,
+            max_cost_usd,
+            model,
+        }) => {
+            std::process::exit(run_headless(
+                cwd,
+                prompt,
+                prompt_stdin,
+                max_turns,
+                max_cost_usd,
+                model,
+            ));
+        }
         Some(Cmd::Mcp {
             command: McpCmd::Serve { bind },
         }) => {
@@ -216,6 +263,60 @@ fn main() {
             std::process::exit(arcana_cli::repl::run_repl(cli.live));
         }
     }
+}
+
+/// Resolve the task text and hand the run to `arcana_cli::run`.
+fn run_headless(
+    cwd: PathBuf,
+    prompt: Option<String>,
+    prompt_stdin: bool,
+    max_turns: u32,
+    max_cost_usd: Option<f64>,
+    model: Option<String>,
+) -> i32 {
+    let prompt = match (prompt, prompt_stdin) {
+        (Some(prompt), false) => prompt,
+        (None, true) => match read_prompt_stdin() {
+            Ok(prompt) => prompt,
+            Err(err) => {
+                eprintln!("arcana run: could not read the task from stdin: {err}");
+                return 1;
+            }
+        },
+        _ => {
+            eprintln!("arcana run: pass exactly one of --prompt or --prompt-stdin");
+            return 1;
+        }
+    };
+    arcana_cli::run::run(&arcana_cli::run::RunRequest {
+        cwd,
+        prompt,
+        max_turns,
+        max_cost_usd,
+        model,
+    })
+}
+
+/// Read a headless task from stdin.
+///
+/// Capped at the driver's prompt ceiling so a runaway pipe cannot be read
+/// into memory unbounded before the driver rejects it anyway.
+fn read_prompt_stdin() -> Result<String, String> {
+    let limit = arcana_core::agent_loop::MAX_FIRST_DISPATCH_PROMPT_BYTES + 1;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(u64::try_from(limit).map_err(|err| err.to_string())?)
+        .read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
+    if bytes.len() >= limit {
+        return Err(format!("the task exceeds {limit} bytes"));
+    }
+    let prompt = String::from_utf8(bytes).map_err(|_| "the task is not valid UTF-8".to_owned())?;
+    if prompt.trim().is_empty() {
+        return Err("stdin was empty".to_owned());
+    }
+    Ok(prompt)
 }
 
 fn read_first_dispatch_prompt_stdin() -> Result<String, ()> {

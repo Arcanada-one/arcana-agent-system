@@ -16,6 +16,7 @@
 //! needs.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,14 +42,19 @@ struct BashInput {
 #[derive(Default)]
 pub struct BashTool {
     rules: Option<Arc<RuleLayer>>,
+    cwd: Option<PathBuf>,
 }
 
 impl BashTool {
     /// Construct a `BashTool` with no Layer-3 enforcement. Pre-Layer-3
-    /// behaviour: every command reaches `/bin/sh` unchecked.
+    /// behaviour: every command reaches `/bin/sh` unchecked, in the process
+    /// working directory.
     #[must_use]
     pub fn new() -> Self {
-        Self { rules: None }
+        Self {
+            rules: None,
+            cwd: None,
+        }
     }
 
     /// Construct a `BashTool` that consults `rules` before spawning a
@@ -57,7 +63,23 @@ impl BashTool {
     /// invoked.
     #[must_use]
     pub fn with_rules(rules: Arc<RuleLayer>) -> Self {
-        Self { rules: Some(rules) }
+        Self {
+            rules: Some(rules),
+            cwd: None,
+        }
+    }
+
+    /// Spawn the shell in `cwd` instead of the ambient process working
+    /// directory.
+    ///
+    /// The directory a command runs in IS most of its blast radius, and a
+    /// headless run is told which one to use on its command line. Reading it
+    /// from `std::env::current_dir()` makes that radius depend on global
+    /// mutable state shared with every other task in the process.
+    #[must_use]
+    pub fn in_directory(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
     }
 }
 
@@ -104,9 +126,7 @@ impl Tool for BashTool {
         )
         .and_then(|env| env.with_declared_vars(&parsed.env_vars))
         .map_err(|err| ToolError::ExecutionFailed(format!("clean environment: {err}")))?;
-        let cwd = std::env::current_dir().map_err(|err| {
-            ToolError::ExecutionFailed(format!("resolve working directory: {err}"))
-        })?;
+        let cwd = crate::path_guard::working_directory(self.cwd.as_deref())?;
         let output = ProcessSpec::new(std::path::Path::new("/bin/sh"), env)
             .args(["-c", parsed.command.as_str()])
             .cwd(cwd)

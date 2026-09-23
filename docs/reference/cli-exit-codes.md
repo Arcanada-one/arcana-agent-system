@@ -35,6 +35,21 @@ message instead:
 | `201 {"status":"error"}` | `upstream logical error [<kind>]: <message>` |
 | transport failure | `transport error: <detail>` (→ treat as unreachable) |
 
+### `arcana run` exit codes
+
+`run` is the headless task runner (see
+[`../how-to/run-one-task-unattended.md`](../how-to/run-one-task-unattended.md)):
+
+| Code | Condition |
+|------|-----------|
+| `0` | The run reached `Completed`. |
+| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, or any non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
+
+The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when
+the run never started — a runner reads the marker rather than interpreting its
+absence, which is indistinguishable from a crash.
+
 ### `mcp serve` exit codes
 
 `arcana mcp serve` uses the same namespace:
@@ -54,7 +69,7 @@ with a clear message if `--bind` is requested.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `ARCANA_MC_TOKEN` | Bearer token for the Model Connector. Unset/empty → exit path with the `missing API key` message. | *(required)* |
-| `ARCANA_MC_BASE_URL` | Diagnostic override accepted only by hidden `mc-ping`, including a loopback replay fixture (`http://127.0.0.1:PORT`). Production `kb-read` rejects every override except the exact canonical endpoint. | `https://connector.arcanada.ai` |
+| `ARCANA_MC_BASE_URL` | Diagnostic override accepted only by hidden `mc-ping`, including a loopback replay fixture (`http://127.0.0.1:PORT`). Production `kb-read`, `demo --live`, the interactive `--live` session and `run` reject every override except the exact canonical endpoint — and now FAIL on the rejection instead of silently running offline. | `https://connector.arcanada.ai` |
 
 `ARCANA_MC_BASE_URL` lets the smoke gate exercise hidden `mc-ping` against a
 recorded fixture server without a live mesh. It is not an agent-loop replay

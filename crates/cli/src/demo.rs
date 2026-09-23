@@ -388,6 +388,28 @@ impl Session {
         })
     }
 
+    /// Assemble a session from parts the caller composed itself.
+    ///
+    /// `arcana run` needs a different tool set and a different permission
+    /// cascade from `demo`'s, but must NOT get a different agent loop: this
+    /// constructor is what lets it reuse `Session` — one connector, one fused
+    /// executor, one append-only audit log — instead of standing up a second
+    /// composition that would drift from the audited one.
+    #[must_use]
+    pub fn from_parts(
+        connector: Box<dyn ModelConnector>,
+        executor: CapabilityExecutor,
+        cost: Arc<CostTracker>,
+        audit_dir: PathBuf,
+    ) -> Self {
+        Self {
+            connector,
+            executor,
+            cost,
+            audit_dir,
+        }
+    }
+
     /// Drive one task through the shared core.
     ///
     /// A fresh [`Driver`] per task is deliberate: it borrows the connector and
@@ -418,41 +440,67 @@ impl Session {
     }
 }
 
-/// Select the offline demo or real production connector. Measurement mode is
-/// deliberately fail-closed: it never converts a missing live dependency into
-/// a plausible-looking offline receipt.
+/// Select the offline demo or real production connector.
+///
+/// **A requested `--live` that cannot go live is an error, not a fallback.**
+/// It used to print `(live requested but unavailable: ...; using offline
+/// demo)` and carry on: the offline connector replays two canned turns, so
+/// the run completed, exited `0`, and — because `--live` and a token were
+/// both present — printed a dollar figure for a dispatch that never left the
+/// machine. A caller reading the exit code learned that a live run had
+/// succeeded. Every part of that was false, and none of it was visible
+/// without reading the first line of output.
+///
+/// The production base-URL pin inside `try_from_env` is untouched: it is a
+/// deliberate control, and the fix is to report that it refused, not to
+/// loosen it.
 fn select_connector(live: bool, measurement_requested: bool) -> Option<Box<dyn ModelConnector>> {
-    let live_active = live && std::env::var("ARCANA_MC_TOKEN").is_ok();
-    if live_active {
-        return match arcana_connectors::ModelConnectorClient::try_from_env() {
-            Ok(client) => {
-                if !measurement_requested {
-                    println!("(live path: routing through the real Model Connector)");
-                }
-                Some(Box::new(client))
-            }
-            Err(err) if measurement_requested => {
-                eprintln!(
-                    "arcana demo: first-dispatch measurement requires the live Model Connector: {err}"
-                );
-                None
-            }
-            Err(err) => {
-                println!("(live requested but unavailable: {err}; using offline demo)");
-                Some(Box::new(DemoConnector::new()))
-            }
-        };
+    if !live {
+        if measurement_requested {
+            eprintln!(
+                "arcana: first-dispatch measurement requires ARCANA_MC_TOKEN and never falls back offline"
+            );
+            return None;
+        }
+        return Some(Box::new(DemoConnector::new()));
     }
-    if measurement_requested {
-        eprintln!(
-            "arcana demo: first-dispatch measurement requires ARCANA_MC_TOKEN and never falls back offline"
-        );
+    if std::env::var("ARCANA_MC_TOKEN").is_err() {
+        if measurement_requested {
+            // Measurement keeps its own sentence: its readers are looking for
+            // the guarantee by name, not for the generic cause.
+            eprintln!(
+                "arcana: first-dispatch measurement requires ARCANA_MC_TOKEN and never falls back offline"
+            );
+        } else {
+            eprintln!(
+                "arcana: --live was requested but ARCANA_MC_TOKEN is unset, so the run cannot go \
+                 live. Set the key, or re-run without --live for the offline demo."
+            );
+        }
         return None;
     }
-    if live {
-        println!("(live requested but ARCANA_MC_TOKEN unset; using offline demo)");
+    match arcana_connectors::ModelConnectorClient::try_from_env() {
+        Ok(client) => {
+            if !measurement_requested {
+                println!("(live path: routing through the real Model Connector)");
+            }
+            Some(Box::new(client))
+        }
+        Err(err) if measurement_requested => {
+            eprintln!(
+                "arcana: first-dispatch measurement requires the live Model Connector and never \
+                 falls back offline: {err}"
+            );
+            None
+        }
+        Err(err) => {
+            eprintln!(
+                "arcana: --live was requested but the Model Connector is unavailable: {err}. \
+                 Nothing was run and nothing was charged."
+            );
+            None
+        }
     }
-    Some(Box::new(DemoConnector::new()))
 }
 
 const MEASUREMENT_INPUT_KEYS: [&str; 7] = [

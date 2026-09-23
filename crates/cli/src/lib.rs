@@ -14,4 +14,6 @@ pub mod models;
 pub mod out;
 pub mod permission_prompt;
 pub mod repl;
+pub mod run;
 pub mod usage;
+pub mod workspace;

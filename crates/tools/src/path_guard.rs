@@ -25,6 +25,24 @@ use std::sync::Arc;
 use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::tool::ToolError;
 
+/// Resolve the directory a tool resolves relative paths against.
+///
+/// `root` is the explicitly configured workspace root; `None` falls back to
+/// the process working directory, which is what the tools did unconditionally
+/// before a workspace root existed.
+///
+/// # Errors
+///
+/// Returns [`ToolError::ExecutionFailed`] when no root is configured and the
+/// process working directory cannot be read.
+pub fn working_directory(root: Option<&Path>) -> Result<PathBuf, ToolError> {
+    match root {
+        Some(root) => Ok(root.to_path_buf()),
+        None => std::env::current_dir()
+            .map_err(|err| ToolError::ExecutionFailed(format!("cwd unavailable: {err}"))),
+    }
+}
+
 /// Resolve `input` to an absolute, canonical [`PathBuf`].
 ///
 /// When `input` is relative, it is joined onto `cwd` first. The kernel's
@@ -51,9 +69,18 @@ pub fn resolve(input: &str, cwd: &Path) -> Result<PathBuf, ToolError> {
     } else {
         cwd.join(raw)
     };
+    // The kernel resolves symlinks as well as `..`, so it is tried first and
+    // its answer always wins.
     if let Ok(canonical) = std::fs::canonicalize(&absolute) {
         return Ok(canonical);
     }
+    // Nothing on disk to resolve. Collapse `..` and `.` ourselves before
+    // going further: the un-collapsed path used to be returned verbatim, and
+    // every caller that then asks "is this inside my directory?" gets `yes`
+    // for `<root>/missing/../../escaped.txt`, because a prefix test cannot
+    // see through a `..`. With `create_parent_dirs` set, that is a write one
+    // level above the directory the caller thought it had confined.
+    let absolute = lexically_normalize(&absolute);
     let Some(parent) = absolute.parent() else {
         return Ok(absolute);
     };
@@ -67,6 +94,38 @@ pub fn resolve(input: &str, cwd: &Path) -> Result<PathBuf, ToolError> {
         return Ok(canonical_parent.join(file_name));
     }
     Ok(absolute)
+}
+
+/// Collapse `.` and `..` components without touching the filesystem.
+///
+/// Used only for paths the kernel could not resolve, where the alternative is
+/// a path that still contains `..` and therefore cannot be compared against
+/// anything. A `..` at the very root is dropped, matching the kernel (`/..`
+/// is `/`).
+fn lexically_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Only pop a real directory name: popping the root, or a
+                // `..` we could not resolve, would invent a path.
+                if out
+                    .components()
+                    .next_back()
+                    .is_some_and(|last| matches!(last, Component::Normal(_)))
+                {
+                    out.pop();
+                } else if out.components().next_back() != Some(Component::RootDir) {
+                    out.push(Component::ParentDir);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Validate `input` against `rules` and return the canonical [`PathBuf`].
@@ -180,6 +239,34 @@ mod tests {
             "does-not-exist.txt"
         );
         assert!(resolved.is_absolute());
+    }
+
+    #[test]
+    fn resolve_collapses_traversal_through_a_directory_that_does_not_exist() {
+        // The escape the prefix checks downstream depend on: nothing here
+        // exists, so the kernel cannot help, and an un-collapsed result would
+        // still "start with" the temp dir while pointing above it.
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let root = tmpdir.path();
+        let resolved = resolve("missing/../../escaped.txt", root).expect("resolve");
+        assert!(
+            !resolved.starts_with(root),
+            "traversal survived resolution: {}",
+            resolved.display()
+        );
+        assert!(
+            !resolved
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir)),
+            "resolved path retained `..`: {}",
+            resolved.display()
+        );
+    }
+
+    #[test]
+    fn resolve_never_climbs_above_the_filesystem_root() {
+        let resolved = resolve("/../../../escaped", Path::new("/")).expect("resolve");
+        assert_eq!(resolved, PathBuf::from("/escaped"));
     }
 
     #[test]

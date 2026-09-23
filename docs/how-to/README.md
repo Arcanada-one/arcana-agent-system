@@ -6,4 +6,5 @@ Problem-solving recipes. Each page solves one concrete task.
 - [`deployment.md`](deployment.md) — release, cross-compile, GitHub Releases.
 - [`install.md`](install.md) — binary-name collision probe + `cargo install` path.
 - [`configure-permissions.md`](configure-permissions.md) — set up the permission cascade via `permissions.toml`.
+- [`run-one-task-unattended.md`](run-one-task-unattended.md) — drive one task to completion in a working directory with `arcana run`.
 - [`gotchas.md`](gotchas.md) — hard-won lessons.
