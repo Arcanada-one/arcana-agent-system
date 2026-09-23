@@ -310,16 +310,63 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
     }
     let message = match serde_json::from_slice::<NestExceptionEnvelope>(bytes) {
         Ok(envelope) if envelope.status_code == status => envelope.message,
-        _ => format!(
-            "upstream returned a non-contract error body ({} bytes)",
-            bytes.len()
-        ),
+        _ => {
+            let headline = format!(
+                "upstream returned a non-contract error body ({} bytes)",
+                bytes.len()
+            );
+            match error_body_excerpt(bytes) {
+                Some(excerpt) => format!("{headline}: {excerpt}"),
+                None => headline,
+            }
+        }
     };
     Err(ConnectorError::Http {
         status,
         message,
         retry_after: None,
     })
+}
+
+/// Bytes of an untrusted upstream error body shown to the operator.
+const ERROR_BODY_EXCERPT_LIMIT: usize = 200;
+
+/// Render an untrusted error body as a bounded, sanitised excerpt.
+///
+/// The byte count alone was a verdict with no evidence: Model Connector answers
+/// a schema violation with a `ZodValidationPipe` envelope
+/// (`{message, errors[], statusCode}`) that this client cannot parse, so the
+/// one line naming the offending field — `maxTurns: ... <=100` — was replaced
+/// by `(91 bytes)` and cost a bisect to recover (A2-202).
+///
+/// Echoing upstream text is a deliberate, narrowed reversal of the earlier
+/// "never copy a malformed body" rule, recorded here so the change stays
+/// visible: the body may be model output, so it is bounded to
+/// [`ERROR_BODY_EXCERPT_LIMIT`] bytes, truncated on a character boundary, and
+/// stripped of control characters (no forged log lines, no ANSI escapes
+/// repainting the terminal). Only the body is used — never response headers,
+/// never the request, never the API key.
+///
+/// `None` when nothing printable survives, so the caller keeps its bare
+/// headline rather than appending an empty excerpt.
+fn error_body_excerpt(bytes: &[u8]) -> Option<String> {
+    let lossy = String::from_utf8_lossy(bytes);
+    let mut excerpt = String::new();
+    let mut truncated = false;
+    for character in lossy.chars().filter(|c| !c.is_control()) {
+        if excerpt.len() + character.len_utf8() > ERROR_BODY_EXCERPT_LIMIT {
+            truncated = true;
+            break;
+        }
+        excerpt.push(character);
+    }
+    if excerpt.is_empty() {
+        return None;
+    }
+    if truncated {
+        excerpt.push('\u{2026}');
+    }
+    Some(excerpt)
 }
 
 /// Exact `NestJS` `HttpException` body shape `{message, error, statusCode}`.
