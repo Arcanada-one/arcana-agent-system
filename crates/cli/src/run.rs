@@ -508,11 +508,15 @@ fn audit_dir() -> PathBuf {
         .join(RUN_AUDIT_DIR)
 }
 
-/// The system prompt: the wire format, the catalogue, and the boundary.
+/// The system prompt: the wire format, the catalogue, the boundary, and the
+/// destructive-command floor.
 ///
 /// Built from the registered tools rather than hard-coded, so a tool that is
 /// added to or removed from `workspace_tools` cannot drift out of the
-/// description the model is working from.
+/// description the model is working from. The floor section is generated the
+/// same way and for the same reason, from the floor's own constants — see
+/// [`crate::workspace::destructive_floor_disclosure`] for what it costs to
+/// leave a model guessing at it (pilot A2-231: 78 turns lost to one flag).
 #[must_use]
 pub fn system_prompt(tools: &[Arc<dyn Tool>], root: &Path) -> String {
     use std::fmt::Write as _;
@@ -549,9 +553,9 @@ You will receive the tool's output as a `[tool_result]` line and may then call a
 tool or answer.\n\
 \n\
 WORKSPACE BOUNDARY. Every path you touch must be inside `{root}`; prefer relative paths. \
-Shell commands run in `{root}`. Destructive commands (privilege escalation, package or \
-service management, recursive force deletion, history rewriting) are refused by policy and \
-end the run — do not retry one, say what was refused instead.\n\
+Shell commands run in `{root}`.\n\
+\n\
+{floor}\n\
 \n\
 REFUSED CALLS. A call whose arguments do not match the tool's schema, or that names a path \
 outside `{root}`, is refused WITHOUT running and handed back to you as a `[tool_result]` \
@@ -562,6 +566,7 @@ the run.\n\
 When the task is done, reply with a plain-text summary of what you changed and no fenced \
 block.",
         root = root.display(),
+        floor = crate::workspace::destructive_floor_disclosure(),
     )
 }
 

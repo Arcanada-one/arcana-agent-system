@@ -21,8 +21,8 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::connector::{
-    ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, ModelConnector,
-    UnverifiedFirstDispatchObservationV0,
+    ConnectorError, ConnectorResponse, ExecuteRequest, FirstDispatchMeasurementV0, IdempotencyKey,
+    ModelConnector, UnverifiedFirstDispatchObservationV0,
 };
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
@@ -1423,6 +1423,132 @@ later turns), and keep every later reply small too.";
 const TOOL_FORMAT_CORRECTION: &str = "NOTHING WAS EXECUTED. Your last reply asked for a tool in \
 a format this runner cannot execute";
 
+/// The `Idempotency-Key` series one run dispatches under.
+///
+/// ## What the key buys
+///
+/// Model Connector opens a hold, calls the provider and settles the charge in
+/// the same transaction as the request row **before** the response is written
+/// to the socket. A2-230 measured the consequence and said so in the log: a
+/// turn the edge cut may already have been executed and billed, so every
+/// re-dispatch was "a second provider call and a second charge" — and A2-230
+/// had just raised the gateway budget from two re-dispatches to five, which
+/// multiplied the exposure it was describing.
+///
+/// A caller-supplied key closes it. `src/billing/intent.ts`: "An intent key is
+/// supplied by the CALLER and identifies the thing they wanted done, not the
+/// number of times the wire dropped while they asked for it." A repeat of a
+/// key whose first attempt completed replays the stored response — one
+/// provider call and one ledger row, however many times the client re-POSTs.
+///
+/// ## What "the same request" has to mean
+///
+/// The server checks the payload fingerprint BEFORE the intent state, and
+/// answers a key reused for a different payload with `idempotency_key_reused`
+/// rather than replaying the first one. So a key that is stable across an
+/// attempt-series is only correct if the payload is too, and this type does
+/// not assume it: it records [`ExecuteRequest::intent_fingerprint`] alongside
+/// the key and mints a fresh key if the payload ever changes under it.
+///
+/// That check exists because the invariant is not local. The prompt is
+/// recomposed from history on every attempt, the model id comes from a policy
+/// keyed on the turn index, and the remaining cost budget is recomputed — three
+/// values, three different owners, and the key's correctness depends on all
+/// three being unchanged between a failed attempt and its re-dispatch. Today
+/// they are. A fingerprint that disagrees is a defect somewhere upstream of
+/// here, and this turns it into a named warning and one extra charge instead
+/// of a `422` that ends the run.
+/// What [`TurnIntentSeries::stamp`] did with the key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentDecision {
+    /// A new logical turn opened a new series. The ordinary case.
+    New,
+    /// This turn's key was reused, so an attempt that already completed
+    /// upstream is replayed rather than charged again. The point of all this.
+    Reused,
+    /// A series was in force and the payload changed under it, so the key had
+    /// to be replaced. A defect: the re-dispatch is correct and paid for, and
+    /// the attempt it duplicates was paid for too.
+    Replaced,
+}
+
+struct TurnIntentSeries {
+    /// This run's half of the key. A v4 uuid, so the key is unique across
+    /// runs, processes and hosts — two runs that happened to reach turn 7 with
+    /// the same prompt must not replay each other's answers.
+    run: u128,
+    /// Logical turns started so far. Re-dispatches of one turn do not advance
+    /// it; that is the entire point.
+    turn: u64,
+    /// The key in force, with the payload it was minted against.
+    active: Option<(IdempotencyKey, [u8; 32])>,
+}
+
+impl TurnIntentSeries {
+    fn new() -> Self {
+        Self {
+            run: uuid::Uuid::new_v4().as_u128(),
+            turn: 0,
+            active: None,
+        }
+    }
+
+    /// Stamp `req` with the key its attempt-series is dispatched under, and say
+    /// which of the three things happened.
+    ///
+    /// Returned rather than logged in place, because the three cases are not
+    /// equally newsworthy and only the caller can print: [`IntentDecision::New`]
+    /// is every ordinary turn and must be silent, while
+    /// [`IntentDecision::Replaced`] is a defect and must not be. Deciding that
+    /// here with an `eprintln!` made the difference unobservable from a test,
+    /// and a mutant that stopped [`Self::finish_turn`] releasing the key —
+    /// which would put the defect line on every turn of every run — passed the
+    /// whole suite.
+    fn stamp(&mut self, req: &mut ExecuteRequest) -> IntentDecision {
+        let fingerprint = req.intent_fingerprint();
+        let (key, decision) = match self.active.as_ref() {
+            // Same payload as the attempt before it: the same key, and the
+            // server replays rather than charges.
+            Some((key, seen)) if *seen == fingerprint => (key.clone(), IntentDecision::Reused),
+            other => {
+                let decision = if other.is_some() {
+                    IntentDecision::Replaced
+                } else {
+                    IntentDecision::New
+                };
+                self.turn = self.turn.saturating_add(1);
+                let key = IdempotencyKey::for_turn(self.run, self.turn);
+                self.active = Some((key.clone(), fingerprint));
+                (key, decision)
+            }
+        };
+        req.idempotency_key = Some(key);
+        decision
+    }
+
+    /// A reply arrived, so the next dispatch is a new logical turn.
+    ///
+    /// Called on any response of any shape, for the same reason the retry
+    /// budget resets there: the thing the key identifies is the question, and
+    /// an answered question is not asked again. Carrying the key past a reply
+    /// would make the next turn replay the previous turn's answer, and the run
+    /// would sit answering its own opening question until `max_turns`.
+    fn finish_turn(&mut self) {
+        self.active = None;
+    }
+
+    /// Drop the key in force without ending the turn, so the next attempt of
+    /// this same turn mints a fresh one.
+    ///
+    /// The one caller is the `idempotency_key_reused` path: the server has
+    /// told us this key belongs to a different payload, so nothing of ours was
+    /// dispatched or charged under it and reusing it can only be refused
+    /// again.
+    fn abandon_key(&mut self) {
+        self.active = None;
+    }
+}
+
 /// Mutable state threaded through every step of one run.
 ///
 /// It exists so a new per-run fact (the executed-tool-call count, the spent
@@ -1474,6 +1600,8 @@ struct RunState {
     /// Whether a transcript append has already failed and been reported.
     /// One line per run, not one per turn: a full disk is one fact.
     transcript_broken: bool,
+    /// The `Idempotency-Key` series this run dispatches under.
+    intent: TurnIntentSeries,
 }
 
 impl RunState {
@@ -1496,6 +1624,7 @@ impl RunState {
             spilled: 0,
             rejected: 0,
             transcript_broken: false,
+            intent: TurnIntentSeries::new(),
         }
     }
 
@@ -1742,7 +1871,12 @@ impl<'a> Driver<'a> {
             return step;
         }
         let resp = match self
-            .call_connector(prompt, Some(choice.model_id), first_dispatch)
+            .call_connector(
+                &mut state.intent,
+                prompt,
+                Some(choice.model_id),
+                first_dispatch,
+            )
             .await
         {
             Ok(resp) => {
@@ -1754,6 +1888,10 @@ impl<'a> Driver<'a> {
                 state.connector_retries = 0;
                 state.connector_retry_pause_spent = Duration::ZERO;
                 state.connector_failure_since = None;
+                // The question was answered, so the next dispatch is a new
+                // one and gets a new key. A replayed response counts: it is
+                // the answer, arriving late and already paid for.
+                state.intent.finish_turn();
                 resp
             }
             Err(error) => return self.recover_or_stop(state, &error, first_dispatch).await,
@@ -1963,8 +2101,8 @@ No other markup is executed, whatever your training says. \
         if error.is_request_too_large() {
             return StepResult::Terminal(TerminalReason::RequestTooLarge, None);
         }
-        let edge = error.is_edge_gateway_failure();
-        let limit = if edge {
+        let class = RetryClass::of(error);
+        let limit = if class.is_patient() {
             self.config.edge_retry_limit
         } else {
             self.config.connector_retry_limit
@@ -1972,7 +2110,25 @@ No other markup is executed, whatever your training says. \
         // Attempts of THIS turn, the failed first dispatch included — the
         // number an operator counts in the log, not the retry counter.
         let attempts = state.connector_retries.saturating_add(1);
-        if !error.is_transient() {
+        // The key belongs to a DIFFERENT payload, so nothing of ours was
+        // dispatched or charged under it, and sending it again can only be
+        // refused again. Model Connector marks this non-retryable and says in
+        // the same breath what the recovery is — "Use a fresh key for a new
+        // request" — so dropping the key and re-dispatching is the upstream's
+        // own instruction rather than a second-guess of its flag. It should
+        // never fire: `TurnIntentSeries::stamp` compares the payload itself
+        // and mints a new key before the server has to. This is the backstop
+        // for the case that comparison failed to predict, and it says so.
+        let reused_key = error.is_idempotency_key_reused();
+        if reused_key {
+            eprintln!(
+                "arcana: the Idempotency-Key this turn was dispatched under belongs to a \
+                 different request — re-dispatching under a fresh key; this is a defect in \
+                 arcana, not in the connector"
+            );
+            state.intent.abandon_key();
+        }
+        if !reused_key && !error.is_transient() {
             state.terminal_detail = Some(connector_fatal_detail(
                 error,
                 attempts,
@@ -1986,7 +2142,7 @@ No other markup is executed, whatever your training says. \
                 error,
                 attempts,
                 started.elapsed(),
-                FatalCause::RetriesSpent { limit, edge },
+                FatalCause::RetriesSpent { limit, class },
             ));
             return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
         }
@@ -1994,7 +2150,7 @@ No other markup is executed, whatever your training says. \
             error,
             state.connector_retries.saturating_add(1),
             self.config.connector_retry_backoff,
-            edge,
+            class,
         );
         let Some(wait) = plan_retry_pause(
             requested,
@@ -2015,7 +2171,7 @@ No other markup is executed, whatever your training says. \
         state.connector_retry_pause_spent = state.connector_retry_pause_spent.saturating_add(wait);
         eprintln!(
             "{}",
-            retry_line(error, wait, state.connector_retries, limit, edge)
+            retry_line(error, wait, state.connector_retries, limit, class)
         );
         if !wait.is_zero() {
             tokio::time::sleep(wait).await;
@@ -2036,6 +2192,7 @@ No other markup is executed, whatever your training says. \
     /// [`TerminalReason::ConnectorFatal`] needs both facts.
     async fn call_connector(
         &self,
+        intent: &mut TurnIntentSeries,
         prompt: String,
         model: Option<String>,
         first_dispatch: bool,
@@ -2061,6 +2218,16 @@ No other markup is executed, whatever your training says. \
         req.max_budget_usd = self.remaining_cost_budget();
         if first_dispatch {
             req.first_dispatch_measurement = self.config.first_dispatch_measurement.clone();
+        }
+        // Last, so the fingerprint it records covers the finished request.
+        if intent.stamp(&mut req) == IntentDecision::Replaced {
+            // Not a `tracing` call: the CLI installs no subscriber, so this is
+            // the only way the line is ever seen.
+            eprintln!(
+                "arcana: the request changed between attempts of one turn, so this re-dispatch \
+                 cannot be replayed under the turn's Idempotency-Key and may be charged again \
+                 — this is a defect in arcana, not in the connector"
+            );
         }
         match self.connector.execute(req).await {
             Ok(resp) => {
@@ -2364,6 +2531,60 @@ same call again, unchanged, ends the run."
     }
 }
 
+/// Which clock a transient failure heals on, which decides how patiently the
+/// loop waits for it.
+///
+/// Three classes, and the split is about WHO is not answering, not about
+/// severity — see [`ConnectorError::is_edge_gateway_failure`] for the first
+/// half of the argument and [`ConnectorError::is_idempotency_conflict`] for
+/// the second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryClass {
+    /// Model Connector authored the refusal. It has already spent its own
+    /// server-side attempts by the time the client sees one, so a long
+    /// client-side wait on top buys little: two flat re-dispatches.
+    Connector,
+    /// The network edge in front of Model Connector. The request never reached
+    /// a decision, and an edge heals in tens of seconds: five re-dispatches on
+    /// the exponential schedule.
+    EdgeGateway,
+    /// The first attempt of THIS turn is still running upstream, and Model
+    /// Connector is refusing to start a second one under the same key.
+    ///
+    /// The most patient class of the three, and the cheapest: the answer is
+    /// being produced and already paid for, and the alternative to waiting is
+    /// abandoning a turn that was bought. Model Connector's own message is
+    /// explicit that the wrong recovery is a new key — "do not reissue it
+    /// under a new key or it will be dispatched and charged twice."
+    InFlight,
+}
+
+impl RetryClass {
+    fn of(error: &ConnectorError) -> Self {
+        if error.is_idempotency_conflict() {
+            Self::InFlight
+        } else if error.is_edge_gateway_failure() {
+            Self::EdgeGateway
+        } else {
+            Self::Connector
+        }
+    }
+
+    /// Whether this class gets the deeper budget and the exponential schedule.
+    const fn is_patient(self) -> bool {
+        matches!(self, Self::EdgeGateway | Self::InFlight)
+    }
+
+    /// The class as a terminal verdict names it.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Connector => "transient connector failure",
+            Self::EdgeGateway => "transient gateway failure in front of the Model Connector",
+            Self::InFlight => "request still in flight upstream under this turn's Idempotency-Key",
+        }
+    }
+}
+
 /// How long to wait before re-dispatching a transient failure.
 ///
 /// An upstream that named a `retryAfter` knows better than we do — up to
@@ -2375,11 +2596,16 @@ same call again, unchanged, ends the run."
 /// Failing that: a gateway failure gets the exponential schedule, and anything
 /// else keeps the flat `fallback` it has always had. `retry` is 1-based — the
 /// first re-dispatch of the turn is 1.
-fn retry_pause(error: &ConnectorError, retry: u32, fallback: Duration, edge: bool) -> Duration {
+fn retry_pause(
+    error: &ConnectorError,
+    retry: u32,
+    fallback: Duration,
+    class: RetryClass,
+) -> Duration {
     if let Some(secs) = error.retry_after_secs() {
         return Duration::from_secs(secs).min(MAX_RETRY_AFTER);
     }
-    if edge {
+    if class.is_patient() {
         return edge_backoff_pause(retry, fallback, jitter_permille());
     }
     fallback
@@ -2443,7 +2669,7 @@ enum FatalCause {
     /// key, an envelope the upstream marked non-retryable.
     NotRetryable,
     /// Every re-dispatch this class is allowed has been made.
-    RetriesSpent { limit: u32, edge: bool },
+    RetriesSpent { limit: u32, class: RetryClass },
     /// The turn has slept as long as it may.
     PauseBudgetSpent { budget: Duration },
 }
@@ -2467,14 +2693,10 @@ fn connector_fatal_detail(
         FatalCause::NotRetryable => {
             "not retryable — the same request would fail the same way".to_owned()
         }
-        FatalCause::RetriesSpent { limit, edge } => {
-            let class = if edge {
-                "transient gateway failure in front of the Model Connector"
-            } else {
-                "transient connector failure"
-            };
-            format!("the {limit} re-dispatch(es) allowed for a {class} are spent")
-        }
+        FatalCause::RetriesSpent { limit, class } => format!(
+            "the {limit} re-dispatch(es) allowed for a {} are spent",
+            class.label()
+        ),
         FatalCause::PauseBudgetSpent { budget } => format!(
             "the {}s this turn may spend waiting between re-dispatches are spent",
             budget.as_secs()
@@ -2490,36 +2712,43 @@ fn connector_fatal_detail(
 
 /// The line printed before each re-dispatch.
 ///
-/// Pure so its shape can be pinned without capturing stdio. It says one thing
-/// the old line did not: whether this re-dispatch may be paid for twice. See
-/// [`ConnectorError::response_may_have_been_completed_upstream`] — Model
-/// Connector settles the charge before the response reaches the socket, and
-/// `arcana` sends no `Idempotency-Key`, so a request the edge cut may already
-/// have been executed and billed. An operator reconciling a bill needs that in
-/// the log, not in a mandate nobody reads at 3 a.m.
+/// Pure so its shape can be pinned without capturing stdio. It carries the one
+/// fact an operator reconciling a bill at 3 a.m. needs and no layer above will
+/// tell them: what this re-dispatch costs.
+///
+/// A2-230 could only say the bad half of that — Model Connector settles the
+/// charge before the response reaches the socket, `arcana` sent no
+/// `Idempotency-Key`, so a re-dispatch of a cut request "may be a paid
+/// duplicate". Since A2-234 the same key goes out with every attempt of a
+/// turn, so the sentence states the outcome instead of the risk: a request
+/// that was executed and billed comes back as a replay.
 fn retry_line(
     error: &ConnectorError,
     wait: Duration,
     retry: u32,
     limit: u32,
-    edge: bool,
+    class: RetryClass,
 ) -> String {
-    let class = if edge {
-        format!(
+    let headline = match class {
+        RetryClass::Connector => String::new(),
+        RetryClass::EdgeGateway => format!(
             "{} is the gateway in front of the Model Connector, not the Model Connector — ",
             error.status_label()
-        )
-    } else {
-        String::new()
+        ),
+        RetryClass::InFlight => "the first attempt of this turn is still running upstream — \
+waiting for the answer it is already producing rather than dispatching a second paid one, "
+            .to_owned(),
     };
-    let duplicate = if error.response_may_have_been_completed_upstream() {
-        " — the cut request may already have been executed and charged upstream, \
-so this re-dispatch may be a paid duplicate"
-    } else {
-        ""
+    let charge = match class {
+        RetryClass::InFlight => "",
+        _ if error.response_may_have_been_completed_upstream() => {
+            " — the cut request may already have been executed and charged upstream, so the \
+re-dispatch carries the same Idempotency-Key and is replayed rather than charged again"
+        }
+        _ => "",
     };
     format!(
-        "arcana: {class}retrying this turn in {} ({retry} of {limit}){duplicate}",
+        "arcana: {headline}retrying this turn in {} ({retry} of {limit}){charge}",
         format_elapsed(wait)
     )
 }
@@ -2718,14 +2947,17 @@ mod terminal_reason_tests {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod connector_retry_tests {
     use super::{
         connector_fatal_detail, edge_backoff_pause, jitter_permille, plan_retry_pause, retry_line,
-        retry_pause, FatalCause, DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET, DEFAULT_EDGE_RETRY_LIMIT,
-        MAX_EDGE_RETRY_PAUSE, MAX_RETRY_AFTER,
+        retry_pause, FatalCause, IntentDecision, RetryClass, TurnIntentSeries,
+        DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET, DEFAULT_EDGE_RETRY_LIMIT, MAX_EDGE_RETRY_PAUSE,
+        MAX_RETRY_AFTER,
     };
-    use crate::connector::ConnectorError;
+    use crate::connector::{
+        ConnectorError, ExecuteRequest, FirstDispatchMeasurementV0, IdempotencyKey,
+    };
     use std::time::Duration;
 
     const BASE: Duration = Duration::from_secs(2);
@@ -2737,6 +2969,30 @@ mod connector_retry_tests {
                 .into(),
             retry_after: None,
         }
+    }
+
+    /// One of Model Connector's idempotency outcomes, in the envelope shape
+    /// `gateErrorResponse` builds and `parse_error_envelope` parses. The
+    /// `retryable` / `recommendation` pair is the server's, from
+    /// `ERROR_ACTION_MAP` in `src/connectors/interfaces/connector.interface.ts`.
+    fn idempotency_outcome(kind: &str, retryable: bool, recommendation: &str) -> ConnectorError {
+        ConnectorError::Logical {
+            http_status: if kind == "idempotency_key_reused" {
+                422
+            } else {
+                409
+            },
+            kind: kind.into(),
+            message: "…".into(),
+            retryable,
+            recommendation: recommendation.into(),
+            retry_after: None,
+            first_dispatch_observation: None,
+        }
+    }
+
+    fn idempotency_conflict() -> ConnectorError {
+        idempotency_outcome("idempotency_conflict", true, "wait")
     }
 
     /// The schedule, stated: 2, 4, 8, 16, 30 seconds. Written out rather than
@@ -2817,7 +3073,7 @@ mod connector_retry_tests {
             retry_after: Some(7),
         };
         assert_eq!(
-            retry_pause(&named, 1, BASE, true),
+            retry_pause(&named, 1, BASE, RetryClass::EdgeGateway),
             Duration::from_secs(7),
             "the upstream knows its own cooldown"
         );
@@ -2826,7 +3082,10 @@ mod connector_retry_tests {
             message: "upstream returned a non-contract error body (4 bytes): busy".into(),
             retry_after: Some(15_681),
         };
-        assert_eq!(retry_pause(&absurd, 1, BASE, true), MAX_RETRY_AFTER);
+        assert_eq!(
+            retry_pause(&absurd, 1, BASE, RetryClass::EdgeGateway),
+            MAX_RETRY_AFTER
+        );
     }
 
     /// Anything that is not a gateway verdict keeps the flat pause it has
@@ -2843,7 +3102,10 @@ mod connector_retry_tests {
             first_dispatch_observation: None,
         };
         for retry in 1..=4 {
-            assert_eq!(retry_pause(&logical, retry, BASE, false), BASE);
+            assert_eq!(
+                retry_pause(&logical, retry, BASE, RetryClass::Connector),
+                BASE
+            );
         }
     }
 
@@ -2889,24 +3151,37 @@ mod connector_retry_tests {
     }
 
     /// The retry log says the thing an operator reconciling a bill needs.
+    ///
+    /// A2-230 could only warn — "may be a paid duplicate" — because no key was
+    /// sent. A2-234 sends one, so the same line now states the outcome: the
+    /// re-dispatch is replayed. The word "duplicate" is deliberately gone; a
+    /// line that still warned would send an operator hunting a second charge
+    /// that is not there.
     #[test]
-    fn a_gateway_retry_warns_that_the_re_dispatch_may_be_paid_for_twice() {
-        let line = retry_line(&edge_502(), Duration::from_secs(4), 2, 5, true);
+    fn a_gateway_retry_says_the_re_dispatch_is_replayed_not_charged_again() {
+        let line = retry_line(
+            &edge_502(),
+            Duration::from_secs(4),
+            2,
+            5,
+            RetryClass::EdgeGateway,
+        );
         assert!(line.contains("HTTP 502"), "{line}");
         assert!(line.contains("(2 of 5)"), "{line}");
         assert!(line.contains("gateway"), "{line}");
+        assert!(line.contains("Idempotency-Key"), "{line}");
         assert!(
-            line.contains("may be a paid duplicate"),
-            "Model Connector settles the charge before the response reaches the \
-             socket, and we send no Idempotency-Key: {line}"
+            line.contains("replayed rather than charged again"),
+            "{line}"
         );
+        assert!(!line.contains("paid duplicate"), "{line}");
     }
 
     /// An envelope Model Connector authored means the provider call failed and
-    /// the hold was released — nothing was charged, so the line must not cry
-    /// duplicate.
+    /// the hold was released — nothing was charged, so the line says nothing
+    /// about charges at all.
     #[test]
-    fn a_retry_of_a_failure_model_connector_reported_claims_no_duplicate() {
+    fn a_retry_of_a_failure_model_connector_reported_says_nothing_about_charges() {
         let logical = ConnectorError::Logical {
             http_status: 201,
             kind: "network_error".into(),
@@ -2916,18 +3191,174 @@ mod connector_retry_tests {
             retry_after: None,
             first_dispatch_observation: None,
         };
-        let line = retry_line(&logical, Duration::from_secs(2), 1, 2, false);
-        assert!(!line.contains("duplicate"), "{line}");
+        let line = retry_line(
+            &logical,
+            Duration::from_secs(2),
+            1,
+            2,
+            RetryClass::Connector,
+        );
+        assert!(!line.contains("charged"), "{line}");
+        assert!(!line.contains("Idempotency-Key"), "{line}");
         assert!(line.contains("(1 of 2)"), "{line}");
     }
 
     /// A client-side timeout is the other way a completed, billed turn can be
-    /// lost on the wire.
+    /// lost on the wire, and the same key covers it.
     #[test]
-    fn a_client_timeout_also_warns_about_a_duplicate() {
+    fn a_client_timeout_also_says_the_re_dispatch_is_replayed() {
         let timeout = ConnectorError::Timeout("timed out after 290s".into());
-        let line = retry_line(&timeout, Duration::from_secs(2), 1, 2, false);
-        assert!(line.contains("may be a paid duplicate"), "{line}");
+        let line = retry_line(
+            &timeout,
+            Duration::from_secs(2),
+            1,
+            2,
+            RetryClass::Connector,
+        );
+        assert!(
+            line.contains("replayed rather than charged again"),
+            "{line}"
+        );
+    }
+
+    /// A conflict is not a failure of this turn and the line must not read
+    /// like one: the answer is being produced upstream and is already paid
+    /// for. Model Connector's own instruction — do not reissue under a new key
+    /// — is what the wait implements.
+    #[test]
+    fn an_in_flight_conflict_line_says_it_is_waiting_not_re_asking() {
+        let line = retry_line(
+            &idempotency_conflict(),
+            Duration::from_secs(8),
+            3,
+            5,
+            RetryClass::InFlight,
+        );
+        assert!(line.contains("still running upstream"), "{line}");
+        assert!(
+            line.contains("rather than dispatching a second paid one"),
+            "{line}"
+        );
+        assert!(line.contains("(3 of 5)"), "{line}");
+    }
+
+    /// The three idempotency outcomes are three different things, and the
+    /// loop's whole response to each hangs on telling them apart.
+    #[test]
+    fn the_idempotency_outcomes_are_classified_apart() {
+        let conflict = idempotency_conflict();
+        assert!(conflict.is_idempotency_conflict());
+        assert!(!conflict.is_idempotency_key_reused());
+        assert_eq!(RetryClass::of(&conflict), RetryClass::InFlight);
+        // The one idempotency outcome Model Connector marks retryable, and the
+        // patient class: the answer genuinely arrives shortly.
+        assert!(conflict.is_transient());
+        assert!(RetryClass::of(&conflict).is_patient());
+
+        let reused = idempotency_outcome("idempotency_key_reused", false, "abort");
+        assert!(reused.is_idempotency_key_reused());
+        assert!(!reused.is_transient());
+        // Classified as a plain connector failure: the recovery is a fresh
+        // key, not a longer wait.
+        assert_eq!(RetryClass::of(&reused), RetryClass::Connector);
+
+        let unavailable = idempotency_outcome("idempotency_replay_unavailable", false, "abort");
+        assert!(unavailable.is_idempotency_replay_unavailable());
+        assert!(!unavailable.is_transient());
+
+        // And an edge 502 is none of them — the classifier must not reach for
+        // an idempotency verdict on a body Cloudflare wrote.
+        assert_eq!(RetryClass::of(&edge_502()), RetryClass::EdgeGateway);
+        assert!(edge_502().logical_kind().is_none());
+    }
+
+    /// A turn's key is stable across its re-dispatches and fresh on the next
+    /// turn. Both halves matter: the first makes the retry free, the second
+    /// stops turn two replaying turn one's answer for the rest of the run.
+    #[test]
+    fn one_turn_keeps_its_key_and_the_next_turn_gets_a_new_one() {
+        let mut series = TurnIntentSeries::new();
+        let mut first = ExecuteRequest::new("deepseek", "what is the answer");
+        assert_eq!(series.stamp(&mut first), IntentDecision::New);
+        let mut retry = ExecuteRequest::new("deepseek", "what is the answer");
+        assert_eq!(series.stamp(&mut retry), IntentDecision::Reused);
+        assert_eq!(
+            first.idempotency_key, retry.idempotency_key,
+            "a re-dispatch of the same request is the same intent"
+        );
+
+        series.finish_turn();
+        let mut next_turn = ExecuteRequest::new("deepseek", "and the next question");
+        // `New`, not `Replaced`: an ordinary turn boundary is not a defect and
+        // must not be reported as one. A `finish_turn` that failed to release
+        // the key would still mint a fresh key here — the payload differs —
+        // and would put the defect line on every turn of every run, which is
+        // exactly the mutant this assertion exists to kill.
+        assert_eq!(series.stamp(&mut next_turn), IntentDecision::New);
+        assert_ne!(first.idempotency_key, next_turn.idempotency_key);
+    }
+
+    /// The safety net under the stable key: if the payload changes under it —
+    /// which would be a defect elsewhere in the loop — the key changes with
+    /// it, rather than being refused by the server as a reused key. And it is
+    /// reported as the defect it is, not folded in with a turn boundary.
+    #[test]
+    fn a_payload_that_changes_mid_series_gets_a_fresh_key_and_is_named_a_defect() {
+        let mut series = TurnIntentSeries::new();
+        let mut first = ExecuteRequest::new("deepseek", "what is the answer");
+        assert_eq!(series.stamp(&mut first), IntentDecision::New);
+        let mut changed = ExecuteRequest::new("deepseek", "a different question entirely");
+        assert_eq!(series.stamp(&mut changed), IntentDecision::Replaced);
+        assert_ne!(first.idempotency_key, changed.idempotency_key);
+    }
+
+    /// The fingerprint copies the server's two exclusions. The measurement one
+    /// is the load-bearing case: it is present on a run's FIRST attempt and
+    /// absent from its re-dispatch, so counting it would split the very first
+    /// turn's series in two while the server replayed it.
+    #[test]
+    fn the_first_dispatch_measurement_does_not_change_the_intent() {
+        let plain = ExecuteRequest::new("deepseek", "ping");
+        let mut measured = ExecuteRequest::new("deepseek", "ping");
+        measured.first_dispatch_measurement = Some(
+            FirstDispatchMeasurementV0::try_new(
+                "corpus",
+                "case",
+                "role",
+                "task",
+                "command",
+                1,
+                crate::connector::PromptVariantV0::Baseline,
+            )
+            .expect("a well-formed measurement"),
+        );
+        assert_eq!(plain.intent_fingerprint(), measured.intent_fingerprint());
+
+        // And a field that DOES change what the provider is asked to do still
+        // changes it, or the guard above would be inert.
+        let mut other_model = ExecuteRequest::new("deepseek", "ping");
+        other_model.model = Some("grok-3-latest".to_owned());
+        assert_ne!(plain.intent_fingerprint(), other_model.intent_fingerprint());
+    }
+
+    /// Every key the loop can mint is one `normalizeIdempotencyKey` accepts:
+    /// printable ASCII, no spaces, at most 255 characters. A key the server
+    /// rejects is a 400 on every dispatch of the run.
+    #[test]
+    fn a_minted_key_is_one_the_server_accepts() {
+        for (run, turn) in [(0_u128, 0_u64), (u128::MAX, u64::MAX), (1, 7)] {
+            let key = IdempotencyKey::for_turn(run, turn);
+            let raw = key.as_str();
+            assert!(!raw.is_empty());
+            assert!(
+                raw.len() <= crate::connector::MAX_IDEMPOTENCY_KEY_BYTES,
+                "{raw}"
+            );
+            assert!(
+                raw.bytes().all(|byte| (0x21..=0x7e).contains(&byte)),
+                "{raw}"
+            );
+        }
     }
 
     /// The three facts the pilot's `"error": null` did not carry.
@@ -2939,7 +3370,7 @@ mod connector_retry_tests {
             Duration::from_millis(63_400),
             FatalCause::RetriesSpent {
                 limit: 5,
-                edge: true,
+                class: RetryClass::EdgeGateway,
             },
         );
         assert!(detail.contains("HTTP 502"), "{detail}");
@@ -2959,7 +3390,7 @@ mod connector_retry_tests {
             Duration::from_millis(4_100),
             FatalCause::RetriesSpent {
                 limit: 2,
-                edge: false,
+                class: RetryClass::Connector,
             },
         );
         assert!(detail.contains("over 4.1s"), "{detail}");

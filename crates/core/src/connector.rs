@@ -12,6 +12,92 @@ pub const FIRST_DISPATCH_MEASUREMENT_VERSION: &str = "first-dispatch-measurement
 /// The only ARAS call site allowed to label a request as a first dispatch.
 pub const FIRST_DISPATCH_ADAPTER_BOUNDARY: &str = "arcana-agent-system/driver/first-dispatch-v0";
 
+/// The header Model Connector reads a caller-supplied intent key from.
+///
+/// Spelling and semantics are Model Connector's, not ours: `IDEMPOTENCY_HEADER`
+/// in its `src/billing/intent.ts`, lifted onto the request by
+/// `src/connectors/connectors.controller.ts`. It is a HEADER and never a body
+/// field — the body is validated by a Zod schema that does not carry the key,
+/// and the key is deliberately excluded from the payload fingerprint the
+/// server hashes, or a key could never match its own replay.
+pub const IDEMPOTENCY_HEADER: &str = "Idempotency-Key";
+
+/// Longest key Model Connector will store (`MAX_IDEMPOTENCY_KEY_LENGTH`).
+pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
+
+/// The `error.type` Model Connector answers when the first request under this
+/// key is still running. HTTP 409, and the one idempotency outcome it marks
+/// `retryable` — the answer genuinely exists shortly.
+pub const IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
+
+/// The `error.type` Model Connector answers when the key was already claimed
+/// by a DIFFERENT payload. HTTP 422, not retryable, and on our side always a
+/// defect in the caller: a key that is stable per attempt-series must be sent
+/// with a payload that is stable per attempt-series.
+pub const IDEMPOTENCY_KEY_REUSED: &str = "idempotency_key_reused";
+
+/// The `error.type` Model Connector answers when the request completed but its
+/// response was too large to store for replay. HTTP 409, not retryable, and
+/// the one idempotency outcome that states the request WAS charged.
+pub const IDEMPOTENCY_REPLAY_UNAVAILABLE: &str = "idempotency_replay_unavailable";
+
+/// A caller-minted key that identifies one logical request across however many
+/// times the wire drops while asking for it.
+///
+/// A newtype rather than a `String` because the server validates the value and
+/// rejects rather than sanitises (`normalizeIdempotencyKey`): printable ASCII
+/// with no spaces, at most [`MAX_IDEMPOTENCY_KEY_BYTES`]. A value that fails
+/// that test is also not a legal HTTP header value, so an unchecked `String`
+/// has two ways to turn a retry into a hard transport failure. Making the
+/// invalid value unrepresentable removes both, and means the client can send
+/// the header without a fallible path of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IdempotencyKey(String);
+
+/// Longest key [`IdempotencyKey::for_turn`] can produce: the fixed prefix, a
+/// uuid as 32 hex digits, a separator, and `u64::MAX` in decimal.
+const MAX_MINTED_KEY_BYTES: usize = "arcana.".len() + 32 + 1 + 20;
+
+/// A change to the key's shape that outgrew the server's column would be
+/// rejected at run time, one dispatch at a time, as a 400. Caught here instead.
+const _: () = assert!(MAX_MINTED_KEY_BYTES <= MAX_IDEMPOTENCY_KEY_BYTES);
+
+impl IdempotencyKey {
+    /// The key for one logical turn's attempt-series of one run.
+    ///
+    /// `run` is a per-process uuid and `turn` counts logical turns within it,
+    /// so the value is unique across runs, across hosts and across processes,
+    /// while every re-dispatch of one turn reuses it. That is the whole
+    /// contract: the server keys the charge on what the caller wanted done,
+    /// "not the number of times the wire dropped while they asked for it"
+    /// (`src/billing/intent.ts`).
+    ///
+    /// Total by construction. A uuid renders as hex and a turn index as
+    /// decimal digits, so no input can produce a byte outside the printable
+    /// ASCII the server accepts, and [`MAX_MINTED_KEY_BYTES`] is checked
+    /// against the server's ceiling at compile time. There is deliberately no
+    /// fallible constructor beside it: a `Result` here would invite an
+    /// `unwrap_or(None)` at the call site, and a dropped key means believing
+    /// you have an at-most-once guarantee you do not have — which is how the
+    /// caller finds out by being charged twice.
+    #[must_use]
+    pub fn for_turn(run: u128, turn: u64) -> Self {
+        Self(format!("arcana.{run:032x}.{turn}"))
+    }
+
+    /// The key as the header value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for IdempotencyKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 /// Which side of a paired prompt comparison produced the dispatched payload.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -150,6 +236,15 @@ pub struct ExecuteRequest {
         rename = "firstDispatchMeasurement"
     )]
     pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
+    /// The intent this request belongs to, sent as the [`IDEMPOTENCY_HEADER`].
+    ///
+    /// `#[serde(skip)]` is load-bearing twice over: the field travels as a
+    /// header, and the body it would otherwise appear in is validated by a Zod
+    /// schema that does not declare it. It is also why every `PartialEq` on
+    /// this type still compares it — two requests that differ only by key are
+    /// two intents, not one.
+    #[serde(skip)]
+    pub idempotency_key: Option<IdempotencyKey>,
 }
 
 impl std::fmt::Debug for ExecuteRequest {
@@ -170,6 +265,10 @@ impl std::fmt::Debug for ExecuteRequest {
                 "first_dispatch_measurement",
                 &self.first_dispatch_measurement,
             )
+            // Not redacted: the key is a nonce this process minted, carries no
+            // prompt content and no credential, and is the one field an
+            // operator reconciling a double charge needs to see.
+            .field("idempotency_key", &self.idempotency_key)
             .finish()
     }
 }
@@ -187,7 +286,51 @@ impl ExecuteRequest {
             max_budget_usd: None,
             timeout_ms: None,
             first_dispatch_measurement: None,
+            idempotency_key: None,
         }
+    }
+
+    /// What "the same request" means for idempotency purposes, on our side.
+    ///
+    /// Mirrors Model Connector's `ConnectorsService.requestFingerprint`:
+    /// everything that changes what the provider is asked to do, and nothing
+    /// that does not. The two exclusions are the server's and are copied
+    /// deliberately —
+    ///
+    /// * [`Self::idempotency_key`], or a key could never match its own replay;
+    /// * [`Self::first_dispatch_measurement`], which is metadata-only and is
+    ///   set on the FIRST attempt of a run and absent from its re-dispatches.
+    ///   Counting it would make the first turn's retry look like a different
+    ///   request to us while the server replayed it — the one turn where the
+    ///   two views must not disagree.
+    ///
+    /// Hashed field by field rather than through `serde_json`: serialising
+    /// returns a `Result` whose only sane fallback is an empty buffer, and an
+    /// empty buffer hashes every request to the same value — a fingerprint
+    /// that silently stops distinguishing anything. This cannot fail, and the
+    /// field list is visible where the exclusions are argued.
+    #[must_use]
+    pub fn intent_fingerprint(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        let mut field = |bytes: &[u8]| {
+            // Length-prefixed, so ("ab", "c") and ("a", "bc") differ.
+            hasher.update(&(bytes.len() as u64).to_le_bytes());
+            hasher.update(bytes);
+        };
+        field(self.connector.as_bytes());
+        field(self.prompt.as_bytes());
+        field(self.model.as_deref().unwrap_or_default().as_bytes());
+        field(self.system_prompt.as_deref().unwrap_or_default().as_bytes());
+        field(&self.max_turns.unwrap_or_default().to_le_bytes());
+        field(
+            &self
+                .max_budget_usd
+                .unwrap_or_default()
+                .to_bits()
+                .to_le_bytes(),
+        );
+        field(&self.timeout_ms.unwrap_or_default().to_le_bytes());
+        *hasher.finalize().as_bytes()
     }
 }
 
@@ -491,17 +634,68 @@ impl ConnectorError {
     /// is not charged). So:
     ///
     /// * an edge verdict or a client-side timeout cut a response that may
-    ///   already have been produced, billed and lost — a re-dispatch is a
-    ///   second provider call and a second charge, because `arcana` sends no
-    ///   `Idempotency-Key` (Model Connector supports one, and without it
-    ///   `src/billing/intent.ts` says a re-POST "is a second provider call and
-    ///   a second charge");
+    ///   already have been produced, billed and lost;
     /// * an envelope Model Connector authored means the provider call failed
     ///   and the hold was released, so nothing was charged and a retry is
     ///   clean.
+    ///
+    /// Since A2-234 this is a statement about the FIRST attempt only. A
+    /// re-dispatch carries the same [`IDEMPOTENCY_HEADER`], so a request that
+    /// was executed and billed comes back as a stored replay — one provider
+    /// call and one ledger row however many times the client re-POSTs
+    /// (`src/billing/billing.service.ts`, `resolveReplay`). What this now
+    /// decides is which sentence the retry log prints, not whether the money
+    /// is spent twice; see [`crate::agent_loop`]'s `retry_line`.
     #[must_use]
     pub fn response_may_have_been_completed_upstream(&self) -> bool {
         matches!(self, Self::Timeout(_)) || self.is_edge_gateway_failure()
+    }
+
+    /// The `error.type` of an envelope Model Connector authored, if this is
+    /// one. `None` for every transport-, status- or parse-level failure.
+    #[must_use]
+    pub fn logical_kind(&self) -> Option<&str> {
+        match self {
+            Self::Logical { kind, .. } => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// True when Model Connector refused because the FIRST attempt under this
+    /// turn's key is still running.
+    ///
+    /// Not a failure of this turn and not a reason to mint a new key: Model
+    /// Connector's own words are "Retry shortly to receive its result; do not
+    /// reissue it under a new key or it will be dispatched and charged twice."
+    /// The right response is to wait on the answer we have already paid for,
+    /// which is why [`crate::agent_loop`] gives this the patient schedule
+    /// rather than the two flat re-dispatches a connector envelope gets.
+    #[must_use]
+    pub fn is_idempotency_conflict(&self) -> bool {
+        self.logical_kind() == Some(IDEMPOTENCY_CONFLICT)
+    }
+
+    /// True when the key was already claimed by a different payload.
+    ///
+    /// On our side this can only be a defect in this runner — the key is
+    /// stable across an attempt-series precisely because the payload is — so
+    /// it is reported as one rather than retried. Nothing was dispatched and
+    /// nothing was charged under it.
+    #[must_use]
+    pub fn is_idempotency_key_reused(&self) -> bool {
+        self.logical_kind() == Some(IDEMPOTENCY_KEY_REUSED)
+    }
+
+    /// True when the request completed and was charged exactly once, but its
+    /// answer was too large to store for replay.
+    ///
+    /// The one failure class that is terminal AND paid for. Retrying it would
+    /// buy a second execution of work already bought, which is why Model
+    /// Connector marks it non-retryable and why the verdict has to say the
+    /// money is gone rather than implying the turn never ran.
+    #[must_use]
+    pub fn is_idempotency_replay_unavailable(&self) -> bool {
+        self.logical_kind() == Some(IDEMPOTENCY_REPLAY_UNAVAILABLE)
     }
 
     /// The status an operator can act on, whatever shape the failure took.
