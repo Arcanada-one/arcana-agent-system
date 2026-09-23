@@ -1,10 +1,9 @@
 {
  "admission": {
-  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
-  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
-  "verdict": "admitted"
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4) | control (admitting agent): 11 I14 receipt entities exempted with owner, evidence and expiry — 10 historical receipts byte-identical at both revisions, plus this change's own receipt; no failed verdicts, and the 74 entities this change reaches are all verified.",
+  "verdict": "admitted_with_exemptions"
  },
- "captured_at_utc": "2026-09-23T22:46:14Z",
+ "captured_at_utc": "2026-09-23T22:59:45Z",
  "change_set": {
   "base": "c08669fe5087d627acc96ae862ef62bf17a47b96",
   "files": [
@@ -61,29 +60,105 @@
     ],
     "path": "docs/how-to/run-one-task-unattended.md",
     "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-a2-241.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-a2-241.json"
+    ],
+    "path": "receipts/graph/change-admission-a2-241.json",
+    "status": "A"
    }
   ],
-  "head": "be6a59a379a83795432c966f8374f37a40c9ebc5",
+  "head": "3f4cfcb06428fb8f83951d728eae819f0cf41953",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
- "exemptions": [],
+ "exemptions": [
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-003.json == 3f4cfcb:receipts/graph/change-admission-a2-003.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-003b.json == 3f4cfcb:receipts/graph/change-admission-a2-003b.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-203.json == 3f4cfcb:receipts/graph/change-admission-a2-203.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-208.json == 3f4cfcb:receipts/graph/change-admission-a2-208.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-212.json == 3f4cfcb:receipts/graph/change-admission-a2-212.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-216.json == 3f4cfcb:receipts/graph/change-admission-a2-216.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-218.json == 3f4cfcb:receipts/graph/change-admission-a2-218.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-219.json == 3f4cfcb:receipts/graph/change-admission-a2-219.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-230.json == 3f4cfcb:receipts/graph/change-admission-a2-230.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/how-to/run-one-task-unattended.md). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. Program main resolves this class structurally since DEC-AUP-0034 — verify.py at 4e72d6d excludes exactly these entities as owing no verdict and admits the same range outright — but the bundle vendored here is pinned at 542469f, which predates it. Carried to the program repo as a bundle-refresh card; this exemption expires in two weeks so it cannot become the fix. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-234.json == 3f4cfcb:receipts/graph/change-admission-a2-234.json (byte-identical blob at base and head); the only path under receipts/graph/ that this range touches is receipts/graph/change-admission-a2-241.json."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-241.json",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "A2-241 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "This change's OWN receipt: the entity is the file being written, so any verdict on it would be the receipt measuring itself. Same control A2-234 recorded for the superseded version of its receipt. Nothing about this change is left unverified by it — the 74 entities the change actually reaches all carry `verified`. Evidence: git rev-parse c08669f:receipts/graph/change-admission-a2-241.json -> absent, 3f4cfcb:receipts/graph/change-admission-a2-241.json -> 5d7bbff1 (added by this change); it is the ChangeAdmissionReceipt this range is admitted with."
+  }
+ ],
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:e8d3caa992e284a933192ee0db1548ffc0c28c668677db68ca88c7550b499248",
-  "path": "/home/dev/aup/arc2/runs/A2-241/verifywork/verifier-out/graph-c08669fe5087.json",
+  "path": "/home/dev/aup/arc2/runs/A2-241/change-admission-a2-241-bundle.d/graph-c08669fe5087.json",
   "source_commit": "c08669fe5087d627acc96ae862ef62bf17a47b96"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:e2fb0509fea4c61e27e6c28bef8feafb6fa22402ac9a2c3fc7f840a2c9388d50",
-  "path": "/home/dev/aup/arc2/runs/A2-241/verifywork/verifier-out/graph-head-be6a59a379a8.json",
-  "source_commit": "be6a59a379a83795432c966f8374f37a40c9ebc5",
+  "graph_digest": "sha256:551acf36537dc118abec506d2361cce6f7e08614b5959cffd6220e3e6efbe58c",
+  "path": "/home/dev/aup/arc2/runs/A2-241/change-admission-a2-241-bundle.d/graph-head-3f4cfcb06428.json",
+  "source_commit": "3f4cfcb06428fb8f83951d728eae819f0cf41953",
   "staleness": {
-   "checked_at_utc": "2026-09-23T22:46:16Z",
-   "checked_nodes": 310,
+   "checked_at_utc": "2026-09-23T22:59:47Z",
+   "checked_nodes": 311,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -4742,7 +4817,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.0.1"
  },
- "receipt_id": "car-verify-20260923T224614Z-be6a59a3",
+ "receipt_id": "car-verify-20260923T225945Z-3f4cfcb0",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
   "path": "/home/dev/aup/arc2/wt/A2-241-aras"
@@ -4918,132 +4993,21 @@
    "receipt:receipts/graph/change-admission-a2-218.json",
    "receipt:receipts/graph/change-admission-a2-219.json",
    "receipt:receipts/graph/change-admission-a2-230.json",
-   "receipt:receipts/graph/change-admission-a2-234.json"
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-241.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-23T22:46:16Z",
+  "checked_at_utc": "2026-09-23T22:59:47Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [
-  {
-   "content_hash": {
-    "base": "sha256:f08dcf06010c70f9c0195c9b381f69e4ab66ef039312873a1a7aee4cab37ee76",
-    "head": "sha256:f08dcf06010c70f9c0195c9b381f69e4ab66ef039312873a1a7aee4cab37ee76"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-003.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:74418a869a3dc9331e14a49a658fd7193f7d4771a174fb110ca4485986553e7c",
-    "head": "sha256:74418a869a3dc9331e14a49a658fd7193f7d4771a174fb110ca4485986553e7c"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-003b.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:9ba19f464c50b4e06f0fc7d3181c120ed13419a6c3f03871fd29b8b20b5e18b5",
-    "head": "sha256:9ba19f464c50b4e06f0fc7d3181c120ed13419a6c3f03871fd29b8b20b5e18b5"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-203.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-203.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:3fb4f6eea6850f5413b62874eb8007997073000a72bbccbe793836816a1368df",
-    "head": "sha256:3fb4f6eea6850f5413b62874eb8007997073000a72bbccbe793836816a1368df"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-208.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-208.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:e38997f0ebbda7d9c96716c0f3225fca76ab4ea62cb7c69eed62ed6058d497ab",
-    "head": "sha256:e38997f0ebbda7d9c96716c0f3225fca76ab4ea62cb7c69eed62ed6058d497ab"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-212.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-212.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:676c56c4327c93540c2797b2a2a61afa9c3eb2db059d5c2bf7d7a93cdeb3ec2e",
-    "head": "sha256:676c56c4327c93540c2797b2a2a61afa9c3eb2db059d5c2bf7d7a93cdeb3ec2e"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-216.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-216.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:40967d491a639b6df2d684e28c023f622692b191ad7ad6af49c2035217d00de3",
-    "head": "sha256:40967d491a639b6df2d684e28c023f622692b191ad7ad6af49c2035217d00de3"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-218.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-218.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:baada3d7895b9fd26af81ebe9327fd7ab8a355747d36128cee5096caa78cc975",
-    "head": "sha256:baada3d7895b9fd26af81ebe9327fd7ab8a355747d36128cee5096caa78cc975"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-219.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-219.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:6f3c72a7c03f47bd911ede189763e0ec6798791b471abed704b667b1bc0f2dff",
-    "head": "sha256:6f3c72a7c03f47bd911ede189763e0ec6798791b471abed704b667b1bc0f2dff"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-230.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-230.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf",
-    "head": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf"
-   },
-   "entity": "receipt:receipts/graph/change-admission-a2-234.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-a2-234.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "rule": "DEC-AUP-0034"
-  }
- ],
  "tree": {
-  "commit": "be6a59a379a83795432c966f8374f37a40c9ebc5",
+  "commit": "3f4cfcb06428fb8f83951d728eae819f0cf41953",
   "dirty": false
  },
  "verdicts": [
@@ -5638,6 +5602,61 @@
    "verifier_ids": [
     "v-doc-reference"
    ]
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-241.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "verdict": "not_measured"
   }
  ],
  "verifiers": [
@@ -5721,8 +5740,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/arc2/runs/A2-241/verifywork/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-09-23T22:46:18Z",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-241/change-admission-a2-241-bundle.d/v-fitness.json",
+   "started_at_utc": "2026-09-23T22:59:48Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -5735,19 +5754,13 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/arc2/runs/A2-241/verifywork/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-09-23T22:46:18Z",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-241/change-admission-a2-241-bundle.d/v-doc-reference.txt",
+   "started_at_utc": "2026-09-23T22:59:48Z",
    "summary": "2 document(s), 0 failed"
   }
  ],
  "verify": {
-  "events": [
-   {
-    "code": "STRUCTURAL_EXCLUSION",
-    "rule": "DEC-AUP-0034",
-    "text": "10 affected entity(ies) owe no verdict (receipt: 10): unchanged at both revisions and given no verifier by the matrix"
-   }
-  ],
+  "events": [],
   "required_by_entity": {
    "code_unit:crates/cli/src/demo.rs": [
     "fitness_rules"
@@ -5980,11 +5993,12 @@
    "receipt:receipts/graph/change-admission-a2-218.json": [],
    "receipt:receipts/graph/change-admission-a2-219.json": [],
    "receipt:receipts/graph/change-admission-a2-230.json": [],
-   "receipt:receipts/graph/change-admission-a2-234.json": []
+   "receipt:receipts/graph/change-admission-a2-234.json": [],
+   "receipt:receipts/graph/change-admission-a2-241.json": []
   },
   "seconds": {
-   "prepare": 1.12,
-   "total": 3.36,
+   "prepare": 1.1,
+   "total": 3.26,
    "verifiers": 0.01
   }
  },
