@@ -175,6 +175,59 @@ budget. Re-run a narrower version of this call if you need the part that is miss
     }
 }
 
+// ---------------------------------------------------------------------------
+// Compaction band (A2-225)
+// ---------------------------------------------------------------------------
+
+/// Where compaction aims to land a transcript it had to shrink.
+///
+/// Three quarters of the budget, not the budget itself: compacting to exactly
+/// the ceiling means the very next tool result puts the request back over it,
+/// and the run pays for a compaction pass every turn. The gap is headroom for
+/// one more turn, nothing more.
+#[must_use]
+pub const fn compaction_target(budget: usize) -> usize {
+    budget / 4 * 3
+}
+
+/// The smallest transcript a compaction of an over-budget history is expected
+/// to leave behind.
+///
+/// Measured on pilot run A2-204c4 (2026-09-23): the second compaction took a
+/// 179 037-character transcript to **7 098** — 8% of the 90 000-character
+/// budget — by folding 73 entries. Nothing in the guard stated a lower bound,
+/// so "small enough" and "nothing left" were the same verdict, and a run that
+/// had read twenty files answered from a one-line summary of them.
+///
+/// Half the budget. It is a *check on the guard*, not a promise about every
+/// input: a history whose task framing plus its newest turns are themselves
+/// smaller than this lands below it, honestly, because there was nothing more
+/// to keep. [`entry_ceiling`] is what makes the bound hold in the case that
+/// produced the defect — a single entry so large that reaching it meant
+/// folding everything in front of it.
+#[must_use]
+pub const fn compaction_floor(budget: usize) -> usize {
+    budget / 2
+}
+
+/// The most a single history entry may contribute once the guard has run.
+///
+/// A tool result is bounded at ingestion; a **model reply is not**, and on
+/// 2026-09-23 one of them grew the request from 78 234 to 179 037 characters
+/// in a single turn. An entry larger than the whole budget cannot be
+/// compensated for by folding other entries, so the guard has to be able to
+/// shorten the entry itself — otherwise its only move is to delete the rest of
+/// the run and still not fit.
+///
+/// A quarter of the budget, which is also what keeps compaction inside its
+/// band: no single fold or elision can remove more than this, so a pass that
+/// stops at the first moment it is under [`compaction_target`] cannot have
+/// crossed [`compaction_floor`] on the way.
+#[must_use]
+pub const fn entry_ceiling(budget: usize) -> usize {
+    budget / 4
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

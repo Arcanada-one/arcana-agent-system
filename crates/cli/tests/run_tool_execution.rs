@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use arcana_cli::run::{assemble, driver_config, RunRequest};
 use arcana_cli::workspace::WorkspacePolicy;
-use arcana_core::agent_loop::{RunOutput, TerminalReason, MAX_CONSECUTIVE_DENIALS};
+use arcana_core::agent_loop::{RunOutput, TerminalReason};
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, Usage,
 };
@@ -670,9 +670,13 @@ async fn the_rejected_call_is_told_to_the_model_and_names_the_violated_constrain
 }
 
 #[tokio::test]
-async fn three_consecutive_rejections_end_the_run() {
-    // The bound on the fold-back. Without it a model that cannot write a valid
-    // call spends `max_turns` dispatches of the operator's money proving it.
+async fn re_sending_a_refused_call_unchanged_ends_the_run() {
+    // The bound on the fold-back, A2-225 shape. Without one, a model that
+    // cannot write a valid call spends `max_turns` dispatches of the
+    // operator's money proving it; with the old flat cap of three consecutive
+    // refusals, a model making three *different* correctable mistakes lost a
+    // run that was going fine. The repeat is the honest signal: the model was
+    // told what was wrong and sent the same bytes anyway.
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     let bad = schema_violating_bash("echo NOPE > proof.txt");
@@ -686,16 +690,59 @@ async fn three_consecutive_rejections_end_the_run() {
     assert_eq!(out.reason, TerminalReason::PermissionDenied);
     assert_eq!(out.tool_calls, 0, "nothing was ever executed");
     assert_eq!(
-        out.turns, MAX_CONSECUTIVE_DENIALS,
-        "the run must stop at the denial cap, not at max_turns"
+        out.turns, 2,
+        "the second identical call ends it, not the third"
     );
     assert!(!work.path().join("proof.txt").exists());
+    let detail = out
+        .terminal_detail
+        .as_deref()
+        .expect("the run must name what refused it");
+    assert!(detail.contains("schema"), "{detail}");
+    assert!(detail.contains("bash"), "{detail}");
+    assert!(
+        detail.contains("timeout"),
+        "the validation error must be carried, not summarised away: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn three_different_correctable_mistakes_do_not_end_the_run() {
+    // The regression the old cap was: pilot A2-204c4 had done twenty executed
+    // tool calls when three refusals landed in a row and killed it. Three
+    // distinct malformed calls, then the work spelled correctly — the FILE is
+    // the verdict.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let out = drive_out_turns(
+        work.path(),
+        audit.path(),
+        &[
+            &schema_violating_bash("echo one"),
+            &schema_violating_bash("echo two"),
+            &schema_violating_bash("echo three"),
+            &tool_call("bash", serde_json::json!({ "command": "echo OK > ok.txt" })),
+            "done",
+        ],
+        8,
+    )
+    .await;
+
+    assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
+    assert_eq!(out.tool_calls, 1, "the corrected call ran");
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("ok.txt"))
+            .unwrap()
+            .trim(),
+        "OK"
+    );
 }
 
 #[tokio::test]
 async fn a_tool_call_that_runs_clears_the_rejection_streak() {
-    // The counter is CONSECUTIVE. A long, mostly-healthy run that makes three
-    // scattered typos must not die on the third.
+    // The memory of refused calls is CONSECUTIVE. A long, mostly-healthy run
+    // that makes the same typo three times, with real work in between, must
+    // not die on the second occurrence.
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     let bad = schema_violating_bash("echo NOPE > nope.txt");
@@ -703,9 +750,10 @@ async fn a_tool_call_that_runs_clears_the_rejection_streak() {
         "bash",
         serde_json::json!({ "command": "echo OK >> ok.txt" }),
     );
-    // Seven dispatches: three rejections, three executed calls, one answer.
-    // Under a cap of three CONSECUTIVE rejections this must complete; under a
-    // cumulative counter it would die on the third `bad`.
+    // Seven dispatches: three rejections of the SAME call, three executed
+    // calls, one answer. Each executed call clears the memory, so no refusal
+    // is ever a repeat; under a memory that outlived work, the third `bad`
+    // would end the run.
     let out = drive_out_turns(
         work.path(),
         audit.path(),
