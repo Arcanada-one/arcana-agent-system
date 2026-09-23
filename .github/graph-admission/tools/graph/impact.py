@@ -319,19 +319,21 @@ def parse_file_args(specs: list[str]) -> list[dict]:
 
 # ----------------------------------------------------------------------------------------------- staleness
 def check_staleness(idx: GraphIndex, repo: Repo | None, mode: str, base: str | None, tree_commit: str,
-                    tree_dirty: bool, changed_paths: set[str], rules: set[str], reader=None) -> dict:
+                    tree_dirty: bool, changed_paths: set[str], rules: set[str], reader=None, *, head: str | None = None, graph_role: str = "base") -> dict:
     """Returns the staleness block; raises Refusal(STALE_GRAPH). `reader(path) -> bytes|None` overrides the tree
     read (fixtures)."""
     m = idx.manifest
-    ref = base if mode == "diff" else tree_commit
+    if graph_role not in {"base", "head"} or (graph_role == "head" and (mode != "diff" or not head)):
+        raise Refusal("STALE_GRAPH", "invalid graph revision role", {})
+    ref = (head if graph_role == "head" else base) if mode == "diff" else tree_commit
     method = ["manifest.dirty must be false",
-              f"manifest.source_commit == {'change_set.base' if mode == 'diff' else 'HEAD of the tree'}"]
+              f"manifest.source_commit == {('change_set.' + graph_role) if mode == 'diff' else 'HEAD of the tree'}"]
     if mode == "diff":
         method.append("working tree must be clean (a receipt in diff mode describes committed history only)")
     if "staleness" in rules:
         if m.get("source_commit") != ref:
             raise Refusal("STALE_GRAPH", f"graph source_commit {m.get('source_commit', '?')[:12]} ≠ "
-                                         f"{'base' if mode == 'diff' else 'HEAD'} {ref[:12]}; rebuild the graph at that commit",
+                                         f"{graph_role if mode == 'diff' else 'HEAD'} {ref[:12]}; rebuild the graph at that commit",
                           {"graph_source_commit": m.get("source_commit"), "expected": ref})
         if mode == "diff" and tree_dirty:
             raise Refusal("STALE_GRAPH", "working tree is dirty in --diff mode; commit or stash before issuing a receipt",
@@ -340,13 +342,13 @@ def check_staleness(idx: GraphIndex, repo: Repo | None, mode: str, base: str | N
     if "hash_check" in rules and (repo is not None or reader is not None):
         method.append("content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its "
                       "package.json) must equal the sha256 of the file bytes "
-                      + ("at base (git objects)" if mode == "diff" else "in the working tree, changed files excluded")
+                      + (f"at {graph_role} (git objects)" if mode == "diff" else "in the working tree, changed files excluded")
                       + "; contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed")
         def read_one(path: str) -> bytes | None:
             if reader is not None:
                 return reader(path)
             if mode == "diff":
-                return repo.read_at(base, [path]).get(path)
+                return repo.read_at(ref, [path]).get(path)
             return repo.read_worktree(path)
 
         def deployable_manifest(p: str) -> str:
@@ -370,7 +372,7 @@ def check_staleness(idx: GraphIndex, repo: Repo | None, mode: str, base: str | N
         if reader is not None:
             blobs = {p: reader(p) for p in paths}
         elif mode == "diff":
-            blobs = repo.read_at(base, paths)
+            blobs = repo.read_at(ref, paths)
         else:
             blobs = {p: repo.read_worktree(p) for p in paths}
         for p in paths:
@@ -461,7 +463,7 @@ def traverse(idx: GraphIndex, seeds: set[str], max_depth: int | None, edge_types
 # ----------------------------------------------------------------------------------------------- query
 def query(idx: GraphIndex, files: list[dict], *, mode: str, base: str | None = None, head: str | None = None,
           tree_commit: str, tree_dirty: bool, repo: Repo | None = None, reader=None, max_depth: int | None = DEFAULT_MAX_DEPTH,
-          edge_types: set[str] | None = None, rules: set[str] | None = None, graph_path: str | None = None) -> dict:
+          edge_types: set[str] | None = None, rules: set[str] | None = None, graph_path: str | None = None, graph_role: str = "base") -> dict:
     rules = set(RULES) if rules is None else set(rules)
     if "edge_filter" not in rules:
         edge_types = None
@@ -479,7 +481,7 @@ def query(idx: GraphIndex, files: list[dict], *, mode: str, base: str | None = N
     for f in files:
         f["kind"] = classify_file(f["path"], idx)
     changed_paths = {f["path"] for f in files}
-    out["staleness"] = check_staleness(idx, repo, mode, base, tree_commit, tree_dirty, changed_paths, rules, reader)
+    out["staleness"] = check_staleness(idx, repo, mode, base, tree_commit, tree_dirty, changed_paths, rules, reader, head=head, graph_role=graph_role)
     cs = {"mode": mode, "files": []}
     if mode == "diff":
         cs["base"], cs["head"] = base, head
@@ -611,7 +613,7 @@ def receipt_skeleton(q: dict, work_item: str | None = None) -> dict:
         raise Refusal(q["refusal"]["code"], "no receipt can be issued on a refused query: " + q["refusal"]["reason"])
     imp = q["impact_set"]
     entities = [e["entity"] for e in imp["deterministic_core"] + imp["inferred_tail"]]
-    changed = [f["node_id"] for f in q["change_set"]["files"] if f.get("node_id")]
+    changed = [nid for f in q["change_set"]["files"] for nid in (f.get("node_ids") or ([f["node_id"]] if f.get("node_id") else []))]
     seen, verdicts = set(), []
     for ent in entities + changed:
         if ent in seen:
@@ -632,6 +634,9 @@ def receipt_skeleton(q: dict, work_item: str | None = None) -> dict:
                                  "tri-valued verdict; not_measured blocks unqualified admission"}}
     if "empty_impact_explanation" in q:
         rec["empty_impact_explanation"] = q["empty_impact_explanation"]
+    for key in ("head_graph", "revision_selection"):
+        if key in q:
+            rec[key] = q[key]
     if work_item:
         rec["work_item"] = work_item
     return rec
@@ -656,6 +661,14 @@ def run_query(a) -> tuple[dict, int]:
         else:
             files = repo.worktree_files()
         idx = load_graph(a.graph, rules)
+        if mode == "diff":
+            sys.modules.setdefault("impact", sys.modules[__name__])
+            import impact_pair
+            q = impact_pair.query(idx, impact_pair.index_at(repo, head), files, repo=repo, base=base, head=head,
+                                  tree_commit=tree_commit, tree_dirty=tree_dirty, graph_path=str(a.graph),
+                                  max_depth=None if a.max_depth is not None and a.max_depth < 0 else (a.max_depth if a.max_depth is not None else DEFAULT_MAX_DEPTH),
+                                  edge_types=edge_types)
+            return q, (3 if q["events"] else 0)
         q = query(idx, files, mode=mode, base=base, head=head, tree_commit=tree_commit, tree_dirty=tree_dirty, repo=repo,
                   max_depth=None if a.max_depth is not None and a.max_depth < 0 else (a.max_depth if a.max_depth is not None else DEFAULT_MAX_DEPTH),
                   edge_types=edge_types, rules=rules, graph_path=str(a.graph))

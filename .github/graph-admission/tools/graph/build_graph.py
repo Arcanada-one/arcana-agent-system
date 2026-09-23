@@ -59,9 +59,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
+import workflow_config
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
@@ -304,7 +305,7 @@ class Tree:
 
     def under(self, d: str) -> list[str]:
         d = d.rstrip("/")
-        return [p for p in self.paths if d == "" or p.startswith(d + "/")]
+        return [p for p in self.paths if d in ("", ".") or p.startswith(d + "/")]
 
 
 def vendored_bundle_roots(tree: Tree) -> dict[str, dict]:
@@ -545,6 +546,9 @@ class Builder:
     def base(self):
         t = self.tree
         for p in t.paths:
+            if workflow_config.is_workflow(p):
+                self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]),
+                            path=p, kind="workflow_configuration")
             if p.endswith(CODE_EXT) or p.endswith(".prisma") or p.endswith(RUST_EXT) or p.endswith(PY_EXT):
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p)
             if p.endswith(CODE_EXT):
@@ -1284,6 +1288,17 @@ class Builder:
         for p in t.paths:
             if not (p.endswith(".json") and (p.startswith("receipts/") or "/receipts/" in p)):
                 continue
+            # A receipt under receipts/archive/ is SPENT: its change was admitted and the receipt was
+            # moved there by the convention the repositories already follow. It keeps its node — the
+            # history is not erased — but it stops emitting `verifies` edges. Those edges are built from
+            # string literals found in the document, so a spent receipt that happened to name a file 131
+            # times made itself a dependency of every later change touching that file, and each one then
+            # paused as `not_measured` under the matrix's own I14 reason ("asserted, never re-verified").
+            # Measured before the change on muneral@fb390e7e: 2145 verifies edges leave receipts, 1794 of
+            # them leave the archive, and exactly ONE entity is reachable only through an archived
+            # receipt — code_unit:.github/workflows/ci.yml, which carries its own mandatory verifiers.
+            if p.startswith("receipts/archive/") or "/receipts/archive/" in p:
+                continue
             try:
                 doc = json.loads(t.text(p))
             except json.JSONDecodeError:
@@ -1339,6 +1354,8 @@ class Builder:
                     or p.endswith((".prisma", ".md", ".markdown", ".json", ".yaml", ".yml", ".toml"))):
                 uncovered[ext] = uncovered.get(ext, 0) + 1
         limitations = sorted(set(self.limitations))
+        if any(workflow_config.is_workflow(p) for p in self.tree.paths):
+            limitations.append("workflow configurations are opaque hash-bound code units; config_schema checks a bounded YAML shape; no job, expression, shell or hosted execution proof")
         limitations.append("parser: comment/string-aware regex (AST-lite), not the TypeScript compiler; decorators with computed "
                            "arguments, re-exports deeper than 6 hops and dynamic dispatch are not resolved")
         limitations.append("incremental build (manifest.incremental_from) not implemented in builder0; every build is a full rebuild")
@@ -1568,11 +1585,15 @@ def selftest(receipt_out: Path | None, pilot: Path | None, pilot_graph_out: Path
           **_classify(vb, ignore_dirty=True))
     vb_again = dump_graph(build(VENDORED_BUNDLE_FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT))
     check("vendored-bundle-mini: rebuild with the same --built-at is byte-identical", vb_again == dump_graph(vb))
-    check("a repository with NO vendored bundle keeps a byte-identical graph (the manifest key and the stat appear only when a "
-          "bundle is present, so the eight other registered repositories cannot move)",
+    # The pin is over the NODES AND EDGES, not over graph_digest: the digest covers the manifest, and the manifest
+    # carries source_commit, which moves with every commit to this repository. A digest pin therefore fails for a
+    # reason that has nothing to do with the builder — measured the hard way, one commit after it was written.
+    ts_mini_content = sha_bytes(canonical({"nodes": full["nodes"], "edges": full["edges"]}).encode())
+    check("a repository with NO vendored bundle keeps a byte-identical graph — same nodes, same edges, and neither "
+          "the manifest key nor the stat is emitted, so the eight other registered repositories cannot move",
           "vendored_bundles" not in full["manifest"] and "vendored_nodes" not in full["manifest"]["stats"]
-          and full["manifest"]["graph_digest"] == vb_exp["ts_mini_graph_digest_unchanged_by_gate3b"],
-          digest=full["manifest"]["graph_digest"])
+          and ts_mini_content == vb_exp["ts_mini_nodes_edges_sha256_unchanged_by_gate3b"],
+          content_sha=ts_mini_content, pinned=vb_exp["ts_mini_nodes_edges_sha256_unchanged_by_gate3b"])
 
     # negative controls of the selftest itself
     bogus = ("code_unit:apps/api/src/tasks/tasks.service.ts", "imports", "code_unit:does/not/exist.ts", "deterministic")
