@@ -42,7 +42,7 @@ use common::{response, tool_call_result, CountingTool, ScriptedConnector};
 fn cut_off_mid_json() -> String {
     "I will write the file now.\n```tool_call\n{\"name\":\"counting\",\"input\":{\"value\":\
      1"
-        .to_string()
+    .to_string()
 }
 
 /// The crueller shape: the JSON is complete and only the closing fence is
@@ -56,7 +56,11 @@ fn config() -> DriverConfig {
     DriverConfig::new("scripted")
 }
 
-async fn drive(connector: &ScriptedConnector, config: DriverConfig, count: &Arc<AtomicUsize>) -> RunOutput {
+async fn drive(
+    connector: &ScriptedConnector,
+    config: DriverConfig,
+    count: &Arc<AtomicUsize>,
+) -> RunOutput {
     let mut registry = ToolDispatcher::new();
     registry
         .register(Arc::new(CountingTool::new(Arc::clone(count))))
@@ -120,7 +124,11 @@ async fn a_cut_off_tool_call_is_never_executed() {
         "a call the model never finished emitting is not a call we may make"
     );
     assert_eq!(out.tool_calls, 0);
-    assert_eq!(out.reason, TerminalReason::Completed, "the second reply is a real answer");
+    assert_eq!(
+        out.reason,
+        TerminalReason::Completed,
+        "the second reply is a real answer"
+    );
 }
 
 #[tokio::test]
@@ -142,7 +150,7 @@ async fn the_re_dispatch_asks_for_the_work_in_smaller_pieces() {
          unchanged: {second}"
     );
     assert!(
-        second.contains("smaller"),
+        second.contains("SMALLER"),
         "and must ask for the work in smaller pieces: {second}"
     );
     assert!(
@@ -178,7 +186,10 @@ async fn a_second_cut_off_reply_ends_the_run_saying_so() {
         out.reason.explain()
     );
     assert!(!out.reason.is_success());
-    assert_eq!(out.turns, 2, "one attempt, one re-dispatch, then the verdict");
+    assert_eq!(
+        out.turns, 2,
+        "one attempt, one re-dispatch, then the verdict"
+    );
 }
 
 #[tokio::test]

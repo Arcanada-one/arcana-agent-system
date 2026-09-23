@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A reply cut off by the output limit is no longer read as "the model did
+  nothing."** A ```` ```tool_call ```` block whose closing fence never arrived
+  used to fall through `interpret`'s fail-closed arm to `Final`, so the loop
+  concluded the model had answered in prose: measured 2026-09-23, DeepSeek was
+  asked for a 3000-word file, emitted ~9148 output tokens of `tool_call`, was
+  cut off, and the run ended on `NoAction` having written nothing and charged
+  $0.040.
+
+  Truncation is now its own classification (`AssistantAction::Truncated`) and
+  its own outcome. The half-written call is **never executed**, however
+  complete the JSON inside it happens to look — a call the model did not finish
+  emitting is not a call it asked for. The fragment is discarded rather than
+  fed back as something the model said, and the turn is re-dispatched once
+  (`ContinueReason::MaxOutputTokensRecovery`, until now an inert variant
+  reserved for exactly this event) carrying an instruction to do the work in
+  smaller pieces. The re-dispatch is an ordinary attempt: it consumes a turn
+  from `--max-turns` and is charged against `--max-cost-usd`. A second cut-off
+  reply in a row ends the run on the new terminal verdict
+  `ResponseTruncated` — "the model's reply was cut off by its output limit …
+  ask for the work in smaller steps, or choose a model with a larger output
+  limit" — which is the opposite advice to `NoAction`'s and was previously
+  unavailable because the two were the same verdict. The counter resets on any
+  reply that parses, so a long run may legitimately hit the limit more than
+  once.
+
+  Detection is local, and deliberately so: Model Connector's response contract
+  carries no finish/stop reason to read instead
+  (`src/connectors/interfaces/connector.interface.ts:42` on `main` 3911773),
+  and its DeepSeek adapter does not even decode the provider's
+  `choices[].finish_reason` (`src/connectors/deepseek/deepseek.connector.ts:4`,
+  `:82`). An open fence is the only evidence ARAS is given. A reply truncated
+  before it opened a fence at all still looks like an ordinary short answer and
+  is not detected — that limit needs the upstream field.
 - **A slow model turn no longer ends the run.** `arcana run --request-timeout
   <secs>` (or `ARCANA_MC_TIMEOUT_SECS`, default `120`) sets how long one model
   turn may take, and the number is used twice: it travels with the request as
