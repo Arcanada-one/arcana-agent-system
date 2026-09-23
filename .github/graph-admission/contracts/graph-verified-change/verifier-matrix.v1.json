@@ -453,5 +453,13 @@
    "verdict_rule": "verified when the project containing the entity compiles with 0 errors; failed when an error is reported in the entity's file; not_measured when the project fails only in other files (error not attributable) or tsc is unavailable",
    "what": "compilation of the deployable that contains the affected caller / importer / controller / consumer at the head tree"
   }
+ },
+ "node_kinds": {
+  "workflow_configuration": {
+   "mandatory": [
+    "config_schema"
+   ],
+   "note": "Additive obligations for code_unit workflow configuration; bounded YAML shape only, no hosted execution proof."
+  }
  }
 }

@@ -68,6 +68,15 @@ on:
         required: false
         default: ''
         type: string
+      derived_artefact_node_version:
+        description: >-
+          AUP-GRAPH-006:gate5b. Node version installed ONLY when the caller carries
+          .arcana/derived-artefacts.v1.json, so that the gate can run the caller's own declared verifier
+          (B6.4) and re-run it against a corrupted artefact (B6.5). Ignored by every caller that declares
+          nothing.
+        required: false
+        default: '22'
+        type: string
       signing_key_fingerprint:
         description: >-
           AUP-GRAPH-006:gate2b. The `SHA256:…` fingerprint of the Ed25519 key the caller trusts to sign
@@ -109,6 +118,60 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.12'
+
+      # AUP-GRAPH-006:gate5b (B6). A DECLARED DERIVED ARTEFACT is admitted only if the gate can RUN the
+      # caller's own verifier — accept the honest tree, then REFUSE it with one byte corrupted. That needs
+      # the caller's toolchain, which this job otherwise has no reason to install, so these steps are
+      # guarded on the declaration existing: a caller that declares nothing pays nothing, and the gate's
+      # 16 s stays 16 s. NON-COVERAGE, stated in derived-artefacts.v1.md §6: this knows about exactly ONE
+      # ecosystem. A caller in another needs its own toolchain, and the honest remedy is a
+      # declaration-driven toolchain field — named here, not built.
+      - name: Does this repository declare derived artefacts? (B6)
+        id: derived
+        run: |
+          set -euo pipefail
+          if [ -f .arcana/derived-artefacts.v1.json ]; then
+            echo "declared=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "declared=no" >> "$GITHUB_OUTPUT"
+          fi
+          # B6.4 runs the caller's own verifier, and a verifier that records its toolchain compares
+          # what it ran on against what the evidence was built with. The input's default cannot know
+          # that: muneral pins engines.node 24.20.0 and its own test job installs exactly that, so
+          # the gate measured the artefact on the default 22 and reported TOOLCHAIN_MISMATCH —
+          # a red that says nothing about the artefact. The caller cannot fix it in its ci.yml
+          # either: pin_only_edit refuses a bundle refresh whose ci.yml carries any line that is not
+          # the program_ref pin, and rightly so.
+          # So the version is read from where the caller already declares it. An exact pin only
+          # ("24.20.0", not "^24"): a range would install some other patch and reintroduce the same
+          # mismatch under a different number. Nothing declared, or a range, falls back to the input.
+          node_version=""
+          if [ -f package.json ]; then
+            node_version=$(python3 -c "import json;print((json.load(open('package.json')).get('engines') or {}).get('node',''))" 2>/dev/null || true)
+          fi
+          case "$node_version" in
+            [0-9]*.[0-9]*.[0-9]*) : ;;
+            *) node_version="" ;;
+          esac
+          echo "node_version=$node_version" >> "$GITHUB_OUTPUT"
+
+      - name: Node toolchain for the declared verifier (B6)
+        if: steps.derived.outputs.declared == 'yes'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: ${{ steps.derived.outputs.node_version || inputs.derived_artefact_node_version }}
+
+      - name: Corepack for the declared verifier (B6)
+        if: steps.derived.outputs.declared == 'yes'
+        run: |
+          set -euo pipefail
+          # `corepack enable --install-directory` lstat()s the directory and exits 1 if it does not
+          # exist ("Internal Error: ENOENT ... lstat '/home/runner/work/_temp/corepack-bin'").
+          # Measured on the real subject: muneral #73's first run failed here, and the gate failed
+          # CLOSED — it skipped the admission run and reported red rather than passing without B6.
+          mkdir -p "${RUNNER_TEMP}/corepack-bin"
+          corepack enable --install-directory "${RUNNER_TEMP}/corepack-bin"
+          echo "${RUNNER_TEMP}/corepack-bin" >> "$GITHUB_PATH"
 
       - name: Resolve the change range
         id: range

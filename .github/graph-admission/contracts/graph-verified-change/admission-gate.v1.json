@@ -1,7 +1,7 @@
 {
  "schema": "AdmissionGatePolicy/v1",
  "id": "admission-gate.v1",
- "portion_id": "AUP-GRAPH-006:gate2b",
+ "portion_id": "AUP-GRAPH-006:gate4a",
  "epic": "AUP-E29",
  "decision_ref": "DEC-AUP-0008",
  "process_ref": "DEC-AUP-0007",
@@ -100,7 +100,7 @@
    "code": "CHANGE_SET_INCOMPLETE",
    "verdict": "refuse",
    "order": 6,
-   "rule": "Every file changed in the gated range must appear in the union of the change_set of the bound receipts. Uncovered paths are listed in the gate receipt — a receipt that describes a subset of the change is not a receipt for the change."
+   "rule": "Every file changed in the gated range must appear in the union of the change_set of the bound receipts. Uncovered paths are listed in the gate receipt — a receipt that describes a subset of the change is not a receipt for the change. GATEORDER-0 (contracts/graph-verified-change/trailing-record-commits.v1.md): a commit after every bound receipt's head may carry only RECORD paths — (a) a bound receipt file whose bytes at head are the bytes the gate bound, (b) an exact path of .arcana/derived-artefacts.v1.json READ AT BASE whose own verifier accepts it at head and refuses it with one byte corrupted. Such a path, touched by no receipt's own range, is not counted as uncovered; it adds nothing to what any receipt must verify. Any other path changed after the receipt head refuses here, even when the change_set lists it, and a derived verifier that cannot run is not_measured, never a pass."
   },
   {
    "id": "C07",
@@ -164,6 +164,27 @@
    "verdict": "admit",
    "order": 15,
    "rule": "Informational, never raising the verdict — it only names WHY no receipt was authored, so that the refusal the change still gets (C03) is legible. Eligibility fails when: the event payload is absent or is not a pull_request event; the author's login/id/type does not match a registered automated author (a `dependabot/...` BRANCH NAME is never evidence — the head branch name is chosen by whoever opens the pull request); the diff touches a path outside the author's `path_allowlist`; or the author is registered but the repository's required verifier job did not conclude. A pull request refused here is refused by the ordinary rule, with the ordinary code."
+  },
+  {
+   "id": "C16",
+   "code": "STRUCTURAL_EXEMPTION_UNSOUND",
+   "verdict": "refuse",
+   "order": 16,
+   "rule": "A receipt presents an exemption whose code is one of structural_exemptions.codes (NO_IMPACT_BY_CONSTRUCTION, GATE_SELF_UPDATE) and the gate's OWN re-measurement of that exemption's evidence battery does not pass, or the exemption's change_binding.digest is not the digest of the diff the gate is evaluating, or the exemption names an entity other than its own synthesized entity. The receipt is NEVER believed about its own exemption: the gate recomputes A1-A4 / B1-B5 from git and from a graph rebuilt at head, on every evaluation. Refuse, not paused_safe: a structural exemption that does not hold is an assertion that was checked and found false, not a measurement that is missing."
+  },
+  {
+   "id": "C17",
+   "code": "STRUCTURAL_EXEMPTION_COVERAGE_GAP",
+   "verdict": "admit",
+   "order": 17,
+   "rule": "Informational, never raising the verdict. Names the added paths for which the builder yields no node at head (A4), together with manifest.language_coverage, so that «the graph sees nothing here» is stated in the check text and never confused with «there is nothing to see». A change admitted under NO_IMPACT_BY_CONSTRUCTION whose files are all invisible to the builder is admitted on a WEAKER measurement than one whose files the builder covers, and this check is what makes that difference legible."
+  },
+  {
+   "id": "C18",
+   "code": "HEAD_IMPACT_NOT_COVERED",
+   "verdict": "paused_safe",
+   "order": 18,
+   "rule": "Rebuild base/head graphs from actual committed change paths. New head obligations require matching head revision/digest and complete base/head selection and verdict coverage. Deleted base dependents remain required. Unmeasured head code or failed recomputation pauses admission; receipt node_ids and manual exemptions cannot substitute this measurement."
   }
  ],
  "work_item_evidence": {
@@ -419,7 +440,60 @@
    "mechanism": "vendored bundle GraphAdmissionBundle/v1 under the caller's .github/graph-admission/, produced by `tools/graph/ci_gate.py bundle` from one pinned program-repo SHA",
    "why": "the program repository is private: a caller repository's GITHUB_TOKEN cannot check it out, and this portion creates no shared credential. Vendoring keeps the binding promise — the gate runs the code of ONE pinned SHA, never `main` — without inventing a secret.",
    "integrity": "the workflow refuses unless every bundled file's sha256 matches BUNDLE.json and the caller's program_ref input equals the bundle's program_ref; a pull request that touches anything under the bundle directory is refused (BUNDLE_MODIFIED_BY_PR) — a bundle refresh is its own gated pull request.",
-   "known_hole": "a pull request that rewrites BOTH a bundled tool and BUNDLE.json in ONE commit is refused by BUNDLE_MODIFIED_BY_PR, but nothing cryptographically binds the bundle to the program repository — CI is post-hoc (DEC-AUP-0007) and the local gate remains the authority. Closing it needs either a read credential for the private program repository or a signed bundle; recorded as an open hole, not a solved problem."
+   "known_hole": "a pull request that rewrites BOTH a bundled tool and BUNDLE.json in ONE commit is refused by BUNDLE_MODIFIED_BY_PR, but nothing cryptographically binds the bundle to the program repository — CI is post-hoc (DEC-AUP-0007) and the local gate remains the authority. Closing it needs either a read credential for the private program repository or a signed bundle; recorded as an open hole, not a solved problem.",
+   "caller_visibility_rule": {
+    "rule": "WHICH DELIVERY MECHANISM A CALLER MUST USE IS DECIDED BY THE CALLER REPOSITORY'S VISIBILITY, not by the callee's and not by any policy setting. A PRIVATE caller MAY reference the program repository's reusable workflow across repositories (`uses: Arcanada-one/arcanada-universal-program/.github/workflows/graph-admission.yml@<40-hex>`). A PUBLIC caller MUST vendor the digest-pinned, signed GraphAdmissionBundle/v1 and call it locally (`uses: ./.github/workflows/graph-admission.yml`): GitHub does not grant a public repository access to a private repository's actions and reusable workflows, and refuses by failing to RESOLVE the workflow before any job exists — which is why the failure carries no annotation and no job.",
+    "established_by": "AUP-GRAPH-006:gate2c (arms 1 and 2) and AUP-GRAPH-006:gate3c (arm 3 with a contemporaneous public control)",
+    "evidence": [
+     {
+      "arm": "private caller, SAME repository as the callee",
+      "caller": "Arcanada-one/arcanada-universal-program (private)",
+      "portion": "gate2c",
+      "run": "https://github.com/Arcanada-one/arcanada-universal-program/actions/runs/34029824419",
+      "result": "success"
+     },
+     {
+      "arm": "public caller, ACROSS repositories",
+      "caller": "Arcanada-one/muneral (public)",
+      "portion": "gate2c",
+      "run": "https://github.com/Arcanada-one/muneral/actions/runs/34029978727",
+      "result": "failure, ZERO jobs, no annotation"
+     },
+     {
+      "arm": "PRIVATE caller, ACROSS repositories",
+      "caller": "Arcanada-one/auth-arcana (private)",
+      "portion": "gate3c",
+      "run": "https://github.com/Arcanada-one/auth-arcana/actions/runs/34036067025",
+      "result": "SUCCESS — 1 job (`call / echo`), the callee's echo step ran"
+     },
+     {
+      "arm": "public caller, ACROSS repositories — contemporaneous control of the arm above",
+      "caller": "Arcanada-one/scrutator (public)",
+      "portion": "gate3c",
+      "run": "https://github.com/Arcanada-one/scrutator/actions/runs/34036067511",
+      "result": "failure, ZERO jobs; the run's name is the raw file path, so the workflow never resolved"
+     }
+    ],
+    "design": "The gate3c pair holds everything else constant: the SAME echo-only callee at the same 40-hex program SHA (8f4994d320b7), the same caller file, both pushed at 2026-09-06T13:25:43Z, both in the same organisation. The only difference is the caller repository's visibility. Org policy, caller policy, the callee's `access_level: organization` sharing setting and the reference shape were eliminated from the API in gate2c and are unchanged.",
+    "consequence": "Vendoring is not a workaround for a mystery; it is the correct delivery for a private tool consumed by PUBLIC repositories. Six of the seven pilot callers are public, including muneral, the only repository where the check is required, so all of them vendor. The three private repositories (arcanada-universal-program, auth-arcana, prompt-assembly) MAY use the cross-repository reference instead; they currently vendor too, which is a choice about uniformity, no longer a forced move.",
+    "caller_visibility": {
+     "private": [
+      "Arcanada-one/arcanada-universal-program",
+      "Arcanada-one/auth-arcana",
+      "Arcanada-one/prompt-assembly"
+     ],
+     "public": [
+      "Arcanada-one/muneral",
+      "Arcanada-one/model-connector",
+      "Arcanada-one/scrutator",
+      "Arcanada-one/arcana-agent-system",
+      "Arcanada-one/arcanada-publisher",
+      "Arcanada-one/disk-arcana"
+     ],
+     "measured_at_utc": "2026-09-06T13:01Z",
+     "source": "GitHub REST `repos/{owner}/{repo}`.visibility"
+    }
+   }
   },
   "graph_build": {
    "decision": "BUILD in CI, do not commit a graph into the caller repository.",
@@ -494,7 +568,7 @@
    "rotation": "changing the key means re-bundling every caller and updating both the committed public key and every caller's pinned fingerprint. No automation exists for that yet: recorded as a cost, not as a solved problem."
   }
  },
- "updated_at_utc": "2026-09-06T11:02:48Z",
+ "updated_at_utc": "2026-09-06T19:10:00Z",
  "automated_authors": {
   "status": "NORMATIVE_DRAFT — AUP-GRAPH-006:gate2a, 2026-09-06",
   "purpose": "Close the operational hole the required check opened: a repository that auto-merged its dependency updates suddenly needed a human on every one of them, because a dependency bot cannot author a ChangeAdmissionReceipt/v1. The rule is not relaxed — the RECEIPT AUTHOR is typed. The gate itself authors the receipt for a registered automated author, over the identical impact computation, and the receipt is then subject to every check that any other receipt is subject to.",
@@ -570,5 +644,146 @@
    }
   ],
   "residual_risk": "What this does NOT protect against, stated so it is not mistaken for a stronger claim: (1) a malicious upstream release — the gate verifies that the repository's suite is green on the new dependency, not that the dependency is benign; that is the supply-chain problem, out of scope here and unchanged by this rule. (2) An attacker who can make GitHub deliver an event payload with `user.id == 49699333` — i.e. who controls the Actions event stream, which is a full CI compromise. (3) The `path_allowlist` admits `package.json`, whose `scripts` block is executable; dependabot does not edit it, but the gate does not diff the JSON structure, so a hypothetical bot compromise that rewrote a script would be admitted if the repository's suite still passed."
+ },
+ "structural_exemptions": {
+  "status": "NORMATIVE_DRAFT — AUP-GRAPH-006:gate4a, 2026-09-06",
+  "document": "contracts/graph-verified-change/impact-uncomputable.v1.md — the argument, the costs of the shapes not chosen, and the explicit non-coverage of each battery",
+  "purpose": "The gate had no typed verdict for a change whose impact it structurally CANNOT compute: an all-new-files change (the impact set is dependents, seeds excluded, and a file added by the change has no node at base) and the gate's own bundle refresh. Both landed as paused_safe and were being worked around by hand — twice, in muneral, by an admin override of the required check. The tri-valued entity vocabulary is NOT widened: the gate synthesizes one non-code entity naming the missing thing, gives it not_measured, and covers it with a typed exemption bound TO THE DIFF whose evidence the gate re-measures itself.",
+  "issued_by": "tools/graph/admit_change.py exempt — the gate, never the change author by hand. The gate re-measures the battery on every evaluation (C16); a hand-written exemption with one of these codes that does not survive re-measurement is REFUSED.",
+  "never_more_than_one_entity": "Per code, and checked by C16. NO_IMPACT_BY_CONSTRUCTION covers EXACTLY its synthesized entity — by construction the receipt has no other verdict. GATE_SELF_UPDATE covers its synthesized entity PLUS the nodes whose path is bundle-managed at base or head (the vendored foreign code itself, whose verification happened in the program repository — the same principle gate3b landed for vendored config keys, which it covered for config_schema only and not for the vendored .py nodes). An exemption of either code that names anything outside that set is refused: an exemption that grows a list is how a typed exception becomes a bypass.",
+  "change_binding": {
+   "fields": [
+    "base",
+    "head",
+    "digest"
+   ],
+   "digest": "sha256 over the newline-joined, sorted 'status\\tpath\\tblob_sha' triples of base..head, as produced by `git diff --raw`",
+   "rule": "The digest, not the clock, is the expiry. expires_at_utc is still emitted (C10 requires owner + expiry, and removing that requirement would weaken a check) but is a 24 h backstop. Amending a commit, adding a file, or force-pushing a new head voids the exemption; a 30-day calendar exemption (gate2a, AUTOMATED_DEPENDENCY_UPDATE) survives all three.",
+   "contrast_with_gate2a": "gate2a's exemption answers «until when may this excuse be used?» — its TTL is a calendar window. A structural exemption's honest answer is «never again, for any other diff», which only a binding to the diff can express."
+  },
+  "codes": {
+   "NO_IMPACT_BY_CONSTRUCTION": {
+    "entity_template": "impact_computability:<repo>@<head12>",
+    "covers": "the claim that NO EXISTING entity is affected, because at head no pre-existing node references any added path",
+    "does_not_cover": [
+     "the added files' own correctness — the impact set is dependents with seeds excluded, so graph-verified change has never verified the changed entity itself, for ANY change",
+     "runtime discovery no extractor models: reflection, a computed dynamic import, a file read by name at runtime",
+     "any consumer outside this repository"
+    ],
+    "evidence": [
+     {
+      "id": "A1",
+      "code": "ALL_PATHS_ADDED",
+      "rule": "every path in base..head has git status A; any M/D/R/C/T makes the change ordinary. A rename is an edit of the old path. THIS IS THE ABUSE CASE: a real edit smuggled in beside new files."
+     },
+     {
+      "id": "A2",
+      "code": "NO_INBOUND_EDGE_AT_HEAD",
+      "rule": "the graph is rebuilt at HEAD (at base the added files do not exist and the question cannot be asked); every incoming edge of every node of an added path must originate from a node of another added path. A pre-existing node referencing a new file means the file was picked up by convention or glob — a route directory, a migrations folder, a workflow, a plugin directory — and DOES change existing behaviour with no textual edit anywhere. This is the load-bearing measurement."
+     },
+     {
+      "id": "A3",
+      "code": "NO_GLOBAL_FALLBACK",
+      "rule": "no added path classifies into impact.FALLBACK_KINDS (lockfile, root manifest, env schema): such a change makes the whole repository affected (the Bazel/Nx rule of DEC-AUP-0008), never nothing."
+     },
+     {
+      "id": "A4",
+      "code": "BUILDER_COVERAGE_NAMED",
+      "rule": "every added path is recorded as yielding a node or not, with manifest.language_coverage. Never refuses; surfaced as C17 so the coverage boundary is visible."
+     }
+    ]
+   },
+   "GATE_SELF_UPDATE": {
+    "entity_template": "gate_self_update:<repo>@<head12>",
+    "covers": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
+    "does_not_cover": [
+     "a check retained by id but WEAKENED IN BODY, with its mutant weakened alongside it — B4 counts ids and arms, not semantics; this is the largest residual",
+     "key compromise, rotation or revocation: B2 proves the same key as before, never the right key; there is no transparency log (carried hole from gate2b)",
+     "the base of the induction: the first installation of a bundle is BUNDLE_INSTALLED_BY_PR, explicitly not_measured — a tripwire, not a proof",
+     "executing pull-request-controlled code in CI, which the gate job already did",
+     "the structural-exemption battery of the new bundle itself: B3's nested selftest skips it to terminate, so a refresh that breaks ONLY the gate4b arms passes B3 and is caught, if at all, by the program-side receipt (B5)",
+     "a declared derived artefact beyond ONE corrupted byte: B6.5 proves the caller's verifier notices A corruption of each declared file, never EVERY corruption — a verifier that binds only part of a file passes B6.5 and leaves the rest free. Exhaustive coverage is a full mutation census of the caller's artefact (85 sites / ~42 min for muneral) and is refused for cost, stated with the arithmetic, never as a solved problem",
+     "whether the declared verifier job is REQUIRED in branch protection: B6.6 reads the caller's `verifier_job` / `verifier_conclusion` workflow inputs (gate2a's, unchanged) and proves the named job succeeded on this head — not that GitHub would block a merge without it",
+     "a declared path the graph builder does not model: it has no dependents and satisfies B6.3's impact bound VACUOUSLY. That is A4's coverage gap inherited by the declaration, reported through C17 as not_measured, never as a pass"
+    ],
+    "evidence": [
+     {
+      "id": "B1",
+      "code": "SELF_UPDATE_SHAPE",
+      "rule": "the changed set is a subset of the bundle-managed paths (the manifest's file list under the bundle directory, BUNDLE.json, BUNDLE.json.sig, SIGNING-KEY.pub, and the vendored workflow) PLUS, and only plus, caller workflow files whose ONLY textual change is a `program_ref:` pin line whose new value EQUALS the head bundle's own program_ref. MEASURED on the real subject (muneral, .github/workflows/ci.yml): a caller pins the program SHA in its own workflow, outside the bundle, precisely so the bundle cannot vouch for its own pin — so a refresh must move a file the shape rule would otherwise call foreign, and the rule as first written could never admit the very change it exists for. The allowance is the narrowest one that is still checkable, and it is strictly STRONGER than silence: nothing compared the caller's pin to the manifest before the run until now. Everything read from git, never from the bundle. A pull request that also edits src/**, or whose workflow edit carries anything besides the pin, or that pins a SHA the bundle does not carry, is an ordinary change; one that touches some OTHER file under the bundle directory is not a self-update and BUNDLE_MODIFIED_BY_PR stands."
+     },
+     {
+      "id": "B2",
+      "code": "SELF_UPDATE_KEY_CONTINUITY",
+      "rule": "THE ANCHOR, and the only non-circular one: the head bundle's BUNDLE.json must verify using the sshsig.py OF THE BASE TREE against the SIGNING-KEY.pub OF THE BASE TREE. Both the verifier and the trusted key come from the commit the repository had already accepted and which this pull request did not write. A self-update is judged by the gate it replaces, never by itself. A base bundle with no sshsig.py (a pin older than gate2b, e.g. 0caeec0) makes B2 not_measured, and not_measured is not a pass: no exemption, the change pauses."
+     },
+     {
+      "id": "B3",
+      "code": "SELF_UPDATE_SELFTEST",
+      "rule": "the head bundle's ci_gate.py --selftest exits 0, arm count recorded. MEASURED non-coverage: admit_change.py --selftest is NOT runnable from a vendored bundle (its fixture set is not bundled — it reports `fixture-drift`), so B3 is stated on ci_gate alone. FURTHER measured non-coverage: this battery is itself part of ci_gate --selftest, so the nested invocation is marked (AUP_GATE4B_NESTED) and skips the structural-exemption battery — otherwise B3 would recurse without bound. A self-update's B3 therefore exercises three batteries of the new bundle, not four, and base and head are both counted the same way so B4's comparison stays like-for-like. Self-consistency in any case, made meaningful only by B2: without B2 this is a tool grading itself, and a malicious refresh ships a selftest that prints a pass."
+     },
+     {
+      "id": "B4",
+      "code": "SELF_UPDATE_MONOTONIC",
+      "rule": "the base bundle's admission-gate.v1.json check ids are a subset of the head bundle's, and the head selftest arm count is >= the base bundle's. A proxy for «the update does not weaken the gate», which is the exact shape of «the rule holds for every change except changes to the rule»."
+     },
+     {
+      "id": "B5",
+      "code": "SELF_UPDATE_PROVENANCE",
+      "rule": "the head bundle's program_ref is recorded with the program-side commit and the digest of the program-side ChangeAdmissionReceipt the exemption names. Recorded, not enforced: a caller's CI cannot read the private program repository. It is the pointer an auditor follows."
+     },
+     {
+      "id": "B6",
+      "code": "SELF_UPDATE_DERIVED_ARTEFACT",
+      "rule": "AUP-GRAPH-006:gate5a. B1's model — «a bundle refresh changes nothing but the bundle» — is false in any caller whose own evidence is bound to its tree, and this is the SECOND instance of that error (the first was the program_ref pin, patched in gate4b). MEASURED on the real subject: muneral's apps/api/test/mutation-evidence.spec.ts pins `trackedTreeWithoutEvidence`, a hash of the whole tracked tree, so EVERY change must rewrite apps/api/test/assembly/mutation-results.json in the same commit — which B1 then refuses, making `graph-admission` and `lint-and-test` green only in mutually exclusive states. A path outside the bundle that is not a program_ref pin is tolerated ONLY as a DECLARED DERIVED ARTEFACT, and only when all six arms below hold. A caller-declared allowlist is a caller-controlled hole unless the gate re-measures every clause of it, so the gate measures all six itself (C16 re-measures them on every evaluation, exactly as for A1-A4 and B1-B5). Any arm that cannot be measured is not_measured, and not_measured is not a pass: no exemption, the change pauses. B6 is reachable ONLY after B1 has passed and ONLY on the self-update path — where the toolchain, the lockfile, the declaration and the verifier's own implementation are all base's, byte-for-byte, in a tree the pull request did not write. That is B2's anchor extended by one step: a declared artefact is judged by the verifier the caller already had. The argument, the rejected remedy and the residuals: contracts/graph-verified-change/derived-artefacts.v1.md.",
+      "arms": {
+       "B6.1 DECLARED": "every changed path outside the bundle that is not a program_ref pin appears in .github/graph-admission/derived-artefacts.v1.json READ AT BASE, and that declaration file is itself absent from the diff. The licence in force is the one already merged; a refresh can never widen its own. Widening it is an ordinary change, under the ordinary rule, visible in history. THE ONE EXCEPTION — the BOOTSTRAP, measured and bounded, not a convenience: the declaration file may be ADDED by the change that uses it IFF the case is gate_self_update. Without it no declaration can ever land, because a repository whose ruleset requires its own suite has that suite red until the artefact is rewritten while the gate refuses the rewrite until a declaration exists (measured on muneral, ruleset 20039696 — read /rules/branches/<branch>, not /branches/<branch>/protection). It is admissible only there because B1 has already proved every other changed path is bundle-managed or the pin: such a change may introduce the caller's DECLARATION but never its VERIFIER. On the ordinary path A1 permits arbitrary added files, so a change could ship its own verifier, and the clause does not reach it.",
+       "B6.2 REFRESHED": "every declared path exists at base and its git status is M. A derived artefact is refreshed; a new file is a new fact. Added, deleted and renamed paths are refused whatever the declaration says — A1's rule applied one level in, and what kills «declare a glob, then add a backdoor file under it».",
+       "B6.3 BOUNDED": "no declared path is a FALLBACK_KIND (a lockfile or global config: its blast radius is the whole repository — A3's rule), and the impact set of the declared paths, computed on a graph rebuilt AT HEAD, is empty — or else every dependent already carries `verified` in the receipt. This is the lock that refuses a declaration covering src/**: source has dependents and a self-update receipt carries no verdicts for them.",
+       "B6.4 VERIFIER_ACCEPTS": "the declaration's verify.argv (after its optional setup.argv) runs in a scratch checkout of head and exits 0. A stale artefact, or one hand-edited to a value the verifier does not recompute, exits non-zero here.",
+       "B6.5 VERIFIER_BINDS": "THE ARM THAT MAKES THE ALLOWLIST NON-SELF-SERVING. For EACH declared artefact the gate corrupts one byte of it in the scratch checkout and re-runs verify.argv: it MUST exit non-zero. A declaration is a claim that job J verifies file P; this is a mutation test of that claim, run by the gate, at admission time, on this change. `[\"true\"]` survives no arm of it, and neither does a declaration bolted onto an unrelated green job.",
+       "B6.6 REQUIRED_AND_UPSTREAM": "the caller's workflow input verifier_job equals the declaration's verified_by_job and verifier_conclusion is `success`. gate2a already built and shipped both inputs, so this costs nothing and adds no API call, token or wait; and because B1's pin allowance lets ONLY a program_ref line change in that workflow file, the needs: edge and the verifier_job value are provably not written by the pull request under review."
+      },
+      "provenance_of_the_false_framing": "«regenerated rather than hand-edited» is not the property to prove: for an artefact whose verifier RECOMPUTES it from the rest of the tree, a hand edit that produces the correct value IS the regeneration, and one that does not is refused by the verifier. Measured: a tampered trackedTreeWithoutEvidence exits 1 under muneral's own --verify-structure. The property proved is that the artefact's bytes carry NO FREE INFORMATION, and only running the verifier can prove it."
+     }
+    ]
+   }
+  },
+  "no_override_artefact": "Deliberately NOT introduced. If a battery does not pass the change stays paused_safe and the remedy is to make it pass or to split the pull request. An --admin merge past the required check remains what receipts/graph/self-update-bypass-audit0-20260906T151740Z.json called it: a finding, not a procedure.",
+  "reverse_if": "A self-update passes this battery while shipping a bundle that removes or weakens a check the base bundle enforced (B4 insufficient), or a change admitted under A1-A4 is shown to have changed the behaviour of a pre-existing entity (A2 insufficient). Either voids the corresponding code, which returns to paused_safe, and the finding is recorded as a receipt.",
+  "declared_derived_artefacts": {
+   "status": "NORMATIVE_DRAFT — AUP-GRAPH-006:gate5a, 2026-09-06",
+   "document": "contracts/graph-verified-change/derived-artefacts.v1.md",
+   "declaration_path": ".github/graph-admission/derived-artefacts.v1.json",
+   "read_from": "base — never head. The declaration file appearing in the diff refuses the exemption outright.",
+   "schema": {
+    "schema": "GraphAdmissionDerivedArtefacts/v1",
+    "artefacts": "a list. Each entry: `path` (an exact repository-relative path — NOT a glob; a glob is refused, so that the declaration names what it licenses), `verified_by_job` (the caller job whose conclusion the workflow passes in), `verify` ({argv, cwd}) and optional `setup` ({argv, cwd}), and `why` (free prose, recorded, never parsed).",
+    "why_no_globs": "a glob is a licence whose extent is decided later, by whatever files happen to match. An exact path list is a licence whose extent is decided when it is merged, by a human-readable line in a diff."
+   },
+   "rejected_remedy": {
+    "what": "change muneral's mutation evidence so a whole-tree hash is not a precondition of every unrelated change",
+    "why_rejected": "the mutation outcome (KILLED_BY_TEST / KILLED_BY_TYPECHECK) is a function of the WHOLE tracked tree — any test file, tsconfig or transitively imported source can change either answer — so trackedTreeWithoutEvidence is exactly as broad as the claim it guards, and narrowing it would make the evidence assert more than it measured. It is also a foreign repository's discipline: the mirror image of gate3b's «vendored code is foreign and belongs to its vendor». And decisively, the audit that opened this thread measured that the ONLY pull requests merged past the required check with an admin override were the gate's own updates; changing the thing that says no is that same move in a different costume.",
+    "what_it_is_right_about": "muneral's only regeneration route today is a full 85-mutant census. That is a defect in the ROUTE, not in the ASSERTION; fixing it is additive and is muneral's to make. Nothing here requires it."
+   },
+   "cost_of_the_chosen_remedy": [
+    "six new measured arms inside the most load-bearing check — complexity in a gate is itself a hole, and this is the largest cost",
+    "the gate must execute caller-declared commands; sound only on the self-update path, for the three reasons in B6's rule",
+    "muneral still needs a change: the declaration file, landed by an ORDINARY pull request under the ordinary rule. Additive, weakening nothing. Remedy (1) is not «no change in muneral», it is «no WEAKENING in muneral»"
+   ],
+   "measured_cost_on_the_real_subject": "verify.argv = 0.787 s (muneral, `--verify-structure`, 85 records, rc 0); setup.argv = one `pnpm install --frozen-lockfile`, the step lint-and-test already pays on the same runner pool",
+   "bootstrap": {
+    "rule": "the declaration may be ADDED by the change that uses it iff the case is gate_self_update",
+    "why": "otherwise the first declaration can never land: lint-and-test is red until the artefact is rewritten and the gate refuses the rewrite until a declaration exists at base. Measured on muneral #71 and #72.",
+    "bound_by": "B1 — on a bundle refresh every other changed path is bundle-managed or the program_ref pin, so the change may introduce the DECLARATION but never the VERIFIER",
+    "mutants": [
+     "control-3: a refresh that ADDS the declaration is admitted",
+     "14: an ORDINARY change that adds the declaration and uses it is refused",
+     "5: a refresh that adds the declaration AND carries an undeclared path is refused — the clause widens B1 by the declaration file and the declared artefacts, and by nothing else"
+    ],
+    "retired_arm": "mutant (5) previously asserted «a declaration that exists only at HEAD licenses nothing, full stop». The claim is SPLIT, not dropped, and the rewrite is recorded in derived-artefacts.v1.md §5b — it is exactly the «check retained by id but weakened in body» residual B4 cannot see.",
+    "residual": "a refresh may name a dependent-less file that some existing base command binds; B6.6 checks the verifier job's name and conclusion, never that the job runs the declared command"
+   }
+  }
  }
 }

@@ -32,7 +32,9 @@
    "host",
    "work_item",
    "notes",
-   "canaries"
+   "canaries",
+   "head_graph",
+   "revision_selection"
   ],
   "producer": {
    "required": [
@@ -238,6 +240,23 @@
     "paused_safe"
    ],
    "rule": "admitted requires every verdict = verified; admitted_with_exemptions requires every non-verified entity to have an unexpired exemption; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe or refused"
+  },
+  "head_graph": {
+   "required": [
+    "source_commit",
+    "graph_digest",
+    "staleness"
+   ],
+   "rule": "If paired evidence is present: source_commit equals change_set.head, sha256 digest is exact rebuilt head graph, staleness.verdict is fresh."
+  },
+  "revision_selection": {
+   "schema": "RevisionImpactSelection/v1",
+   "required": [
+    "base",
+    "head",
+    "unmeasured_head_files"
+   ],
+   "rule": "Entity arrays come from separate revision traversals. Every base/head entity requires a verdict; native required_by_entity must cover them. Unmeasured head code prohibits admission. Gate independently recomputes from Git."
   }
  },
  "rules": {
@@ -264,7 +283,9 @@
   "EXEMPTION_WITHOUT_EXPIRY": "exemption lacks expires_at_utc or it is not ISO-8601 UTC",
   "EXEMPTION_EXPIRED": "exemption.expires_at_utc ≤ captured_at_utc",
   "ADMISSION_CONTRADICTS_VERDICTS": "admission.verdict admitted with a failed/not_measured verdict; admitted_with_exemptions with a non-verified entity lacking a valid exemption; admitted while global_fallback triggered without every entity verified",
-  "ADMISSION_VERDICT_INVALID": "admission.verdict outside verdict_values"
+  "ADMISSION_VERDICT_INVALID": "admission.verdict outside verdict_values",
+  "HEAD_GRAPH_BINDING_INVALID": "Paired receipt has missing/invalid head revision, digest or freshness.",
+  "REVISION_SELECTION_INCOMPLETE": "Paired selection malformed or selected entities omitted from verdict/required mapping, or unmeasured head code admitted."
  },
  "verdicts": {
   "conformant": "0 violations",
