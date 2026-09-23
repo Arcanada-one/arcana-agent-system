@@ -468,6 +468,21 @@ fn describe_reqwest(err: &reqwest::Error, connect: Duration, request: Duration) 
 
 #[async_trait]
 impl ModelConnector for ModelConnectorClient {
+    /// The agent loop's bound on waiting for an answer already paid for
+    /// (A2-241), and the same number this client will itself wait for one
+    /// dispatch: [`http_wait`] — the per-attempt `timeout` we send, times the
+    /// server's own attempts, plus its queue slack and backoff.
+    ///
+    /// Not `request_timeout` alone. That is one attempt, and Model Connector
+    /// makes two of them before it answers (`CONNECTOR_MAX_RETRIES`, default
+    /// 1 — `src/config/env.schema.ts:39`), with a queue in front
+    /// (`CONNECTOR_QUEUE_TIMEOUT_MS`, default 60 s). A bound of one attempt
+    /// would abandon a turn upstream is legitimately on its second — the same
+    /// defect A2-240 hit, one layer down.
+    fn upstream_dispatch_budget(&self) -> Option<Duration> {
+        Some(self.http_wait)
+    }
+
     async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
         let url = self.execute_url()?;
         let mut req = req;
