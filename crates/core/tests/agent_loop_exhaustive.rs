@@ -52,6 +52,7 @@ fn classify_terminal(reason: TerminalReason) -> &'static str {
         TerminalReason::NoAction => "no_action",
         TerminalReason::ResponseTruncated => "response_truncated",
         TerminalReason::UnsupportedToolCallFormat => "unsupported_tool_call_format",
+        TerminalReason::RequestTooLarge => "request_too_large",
     }
 }
 

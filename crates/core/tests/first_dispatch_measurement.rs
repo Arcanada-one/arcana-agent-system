@@ -265,6 +265,9 @@ async fn driver_rejects_prompt_without_measurement_before_connector_io() {
 
 #[tokio::test]
 async fn driver_rejects_first_dispatch_prompt_over_context_budget_before_io() {
+    // The budget is in UTF-16 code units. `"🧪".repeat(13)` is 13 scalar
+    // values, 26 units and 52 bytes — the three numbers a guard could be
+    // counting, and only the middle one is what Model Connector enforces.
     let connector = ScriptedConnector::new(vec![response("must not run", 0.0)]);
     let (executor, _audit_dir) = common::test_executor(
         ToolDispatcher::new(),
@@ -272,7 +275,7 @@ async fn driver_rejects_first_dispatch_prompt_over_context_budget_before_io() {
         HookChain::new(),
     );
     let mut config = DriverConfig::new("scripted");
-    config.context_budget_chars = 50;
+    config.context_budget_units = 20;
     config.first_dispatch_measurement = Some(measurement());
     config.first_dispatch_prompt =
         Some(FirstDispatchPromptV0::try_new("🧪".repeat(13)).expect("valid bounded prompt"));
@@ -285,9 +288,42 @@ async fn driver_rejects_first_dispatch_prompt_over_context_budget_before_io() {
     );
 
     let output = driver.run("task").await;
-    assert_eq!(output.reason, TerminalReason::ContextWindowExhausted);
+    assert_eq!(output.reason, TerminalReason::RequestTooLarge);
     assert_eq!(output.turns, 0);
     assert!(connector.requests().is_empty());
+}
+
+/// The negative control for the unit above: the SAME prompt, under a budget
+/// that its 26 UTF-16 units fit and its 52 bytes do not, is sent. A guard that
+/// had gone on counting `String::len` would refuse it here.
+#[tokio::test]
+async fn a_first_dispatch_prompt_is_measured_in_utf16_units_not_bytes() {
+    let connector = ScriptedConnector::new(vec![response("sent", 0.0)]);
+    let (executor, _audit_dir) = common::test_executor(
+        ToolDispatcher::new(),
+        common::allow_cascade(),
+        HookChain::new(),
+    );
+    let mut config = DriverConfig::new("scripted");
+    config.context_budget_units = 30;
+    config.first_dispatch_measurement = Some(measurement());
+    config.first_dispatch_prompt =
+        Some(FirstDispatchPromptV0::try_new("🧪".repeat(13)).expect("valid bounded prompt"));
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        Arc::new(CostTracker::new()),
+        CancellationToken::new(),
+        config,
+    );
+
+    let output = driver.run("task").await;
+    assert_eq!(
+        connector.requests().len(),
+        1,
+        "26 units under a 30-unit budget must be sent, whatever its 52 bytes say"
+    );
+    assert_eq!(output.turns, 1);
 }
 
 #[tokio::test]

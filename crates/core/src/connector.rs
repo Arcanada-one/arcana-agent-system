@@ -431,6 +431,45 @@ impl ConnectorError {
         }
     }
 
+    /// True when the upstream refused the request for its size rather than
+    /// for anything about its content.
+    ///
+    /// Two shapes, both measured against production Model Connector on
+    /// 2026-09-23 (A2-205, and the pilot run this exists for):
+    ///
+    /// * a field over its Zod ceiling —
+    ///   `HTTP 400 {"message":"Validation failed","errors":["prompt: Too big:
+    ///   expected string to have <=100000 characters"]}`. Fastify's own
+    ///   `NestJS` envelope is not used for it, so the text arrives inside the
+    ///   "non-contract error body" excerpt rather than as `message`, and the
+    ///   match has to look at the whole rendered string.
+    /// * the whole body over the server's limit — `HTTP 413
+    ///   {"statusCode":413,"message":"Request body is too large"}`.
+    ///
+    /// Matching on text is a last line of defence, not the mechanism: the
+    /// loop's own budget is what keeps requests inside the contract. This
+    /// exists so that if the ceiling ever moves down under us, the run says so
+    /// instead of blaming the connector — and so it is deliberately narrow,
+    /// requiring a size word and not merely a 400.
+    #[must_use]
+    pub fn is_request_too_large(&self) -> bool {
+        match self {
+            Self::Http {
+                status, message, ..
+            } => {
+                if *status == 413 {
+                    return true;
+                }
+                if *status != 400 {
+                    return false;
+                }
+                let text = message.to_ascii_lowercase();
+                text.contains("too big") || text.contains("too large")
+            }
+            _ => false,
+        }
+    }
+
     /// How long the upstream asked the caller to wait before trying again.
     #[must_use]
     pub const fn retry_after_secs(&self) -> Option<u64> {

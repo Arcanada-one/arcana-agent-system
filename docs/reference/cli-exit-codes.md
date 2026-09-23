@@ -43,12 +43,27 @@ message instead:
 | Code | Condition |
 |------|-----------|
 | `0` | The run reached `Completed` **and** executed at least one tool call. |
-| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), `UnsupportedToolCallFormat` (the model asked for a tool in an encoding this runner cannot execute, and repeated it after being told the one it reads), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), `UnsupportedToolCallFormat` (the model asked for a tool in an encoding this runner cannot execute, and repeated it after being told the one it reads), `RequestTooLarge` (the transcript could not be compacted into the connector's 100 000-character per-field request limit), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
 | `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
 
 The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when
 the run never started — a runner reads the marker rather than interpreting its
-absence, which is indistinguishable from a crash.
+absence, which is indistinguishable from a crash. Its `compactions` field
+counts the turns on which the transcript had to be shortened to stay inside the
+request contract; non-zero means the model answered from a summary of part of
+its own history, which is worth knowing before comparing two runs of the same
+card.
+
+`RequestTooLarge` is separate from `ContextWindowExhausted`, and the difference
+is which side refused. `ContextWindowExhausted` is about the **model** — its
+context window — and is answered by choosing a model with a larger one.
+`RequestTooLarge` is about the **wire**: Model Connector's `/execute` caps
+`prompt` and `systemPrompt` at 100 000 UTF-16 code units *each*
+(`src/connectors/dto/execute.dto.ts:53,55`) and rejects an over-long field with
+an HTTP 400 before any model is reached, so a larger model would not help and
+the refusal costs nothing. Measured 2026-09-23: a run that had executed five
+tool calls and cloned a repository died at turn 10 on that 400, reported as
+`ConnectorFatal` — which names the connector for a limit the caller overran.
 
 `UnsupportedToolCallFormat` is separate from `NoAction` for the same reason
 `NoAction` is separate from `Completed`: the two look identical in a marker
@@ -87,6 +102,8 @@ with a clear message if `--bind` is requested.
 |----------|---------|---------|
 | `ARCANA_MC_TOKEN` | Bearer token for the Model Connector. Unset/empty → exit path with the `missing API key` message. | *(required)* |
 | `ARCANA_MC_BASE_URL` | Diagnostic override accepted only by hidden `mc-ping`, including a loopback replay fixture (`http://127.0.0.1:PORT`). Production `kb-read`, `demo --live`, the interactive `--live` session and `run` reject every override except the exact canonical endpoint — and now FAIL on the rejection instead of silently running offline. | `https://connector.arcanada.ai` |
+| `ARCANA_MC_TIMEOUT_SECS` | Per-attempt model budget, `5`..`600` whole seconds; the same number `--request-timeout` sets. A value that is not a whole number of seconds is refused, not silently replaced. | `120` |
+| `ARCANA_MC_CONNECT_TIMEOUT_SECS` | How long to wait for TCP+TLS before any byte of the request is sent, `1`..`60` whole seconds. Separate from the model budget on purpose: they bound different failures. Measured from a fleet host on 2026-09-23, `connector.arcanada.ai` connects in ~11 ms of TCP and ~33 ms through TLS, so the default is ~300× the healthy case and exists to bound a black hole. Raise it only where the path itself is slow — a relay, a satellite link; raising it does not help a healthy edge, it only lengthens the pause before the retry. A connect timeout is transient and the turn is re-dispatched. | `10` |
 
 `ARCANA_MC_BASE_URL` lets the smoke gate exercise hidden `mc-ping` against a
 recorded fixture server without a live mesh. It is not an agent-loop replay

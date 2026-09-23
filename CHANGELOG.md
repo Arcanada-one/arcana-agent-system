@@ -8,6 +8,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A long run no longer dies when its transcript outgrows the request
+  contract.** Model Connector's `/execute` caps `prompt` and `systemPrompt` at
+  100 000 UTF-16 code units *each*
+  (`model-connector src/connectors/dto/execute.dto.ts:53,55`); the agent loop
+  had a context guard whose default ceiling was 1 000 000 and whose measure was
+  `String::len` — ten times the wall, counted in the wrong unit. Measured
+  2026-09-23: a run that had executed five tool calls and cloned a repository
+  died at turn 10 on `HTTP 400 {"message":"Validation failed","errors":
+  ["prompt: Too big: expected string to have <=100000 characters"]}`, reported
+  as `ConnectorFatal`.
+
+  Requests now fit by construction. The new `arcana_core::prompt_budget` writes
+  the contract down once, in UTF-16 code units, with the live probes that
+  established it (a byte count is wrong by a factor of three on Russian or
+  Chinese text, a `char` count by a factor of two on emoji — both in the
+  direction that sends an over-limit request). Each tool result is bounded as
+  it enters the transcript, head and tail, with a marker stating how many
+  characters were removed; the complete output is written to
+  `.arcana/tool-output/` inside the working directory and the marker names the
+  file, so the model re-reads the part it needs instead of re-running the
+  command. When the transcript still overflows, the oldest entries — never the
+  task framing, never the turn being answered — are folded into one
+  `[compacted]` line that states how many entries, how many model replies and
+  which tool calls it replaced. The run prints what it did (`arcana:
+  transcript compacted …`) and the done-marker carries a new `compactions`
+  count: a model answering from a summary of its own history is not something a
+  log should hide.
+
+  A request that still cannot be made to fit is the new terminal verdict
+  `RequestTooLarge`, which names the limit, and an upstream size refusal
+  (`400 … Too big`, `413 Request body is too large`) maps to it as well rather
+  than being retried with the same oversized body or reported as a failure of
+  a connector that kept its contract. `RequestTooLarge` is deliberately
+  distinct from `ContextWindowExhausted`: that one is about the model's window
+  and is answered by a bigger model, this one is about the wire and would not
+  be.
+
+- **The TCP+TLS connect budget is separately configurable**
+  (`ARCANA_MC_CONNECT_TIMEOUT_SECS`, `1`..`60` s, default `10`), and `arcana
+  run` now prints it beside the model budget. The default is measured, not
+  assumed: five probes of `connector.arcanada.ai` from a fleet host on
+  2026-09-23 connected in 10.3–11.4 ms of TCP and 31.8–33.5 ms through TLS, so
+  ten seconds is ~300× the healthy case and raising it would only lengthen the
+  pause before the retry that actually fixes the failure. A connect timeout was
+  already transient and re-dispatched — the live run of 2026-09-23 lost its
+  first dispatch that way and its second succeeded — and a regression test now
+  pins that classification, with a refused connection as its negative control.
+
 - **A reply cut off by the output limit is no longer read as "the model did
   nothing."** A ```` ```tool_call ```` block whose closing fence never arrived
   used to fall through `interpret`'s fail-closed arm to `Final`, so the loop

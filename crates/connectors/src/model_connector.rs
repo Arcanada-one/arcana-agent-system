@@ -15,7 +15,31 @@ const ENV_API_KEY: &str = "ARCANA_MC_TOKEN";
 const ENV_BASE_URL: &str = "ARCANA_MC_BASE_URL";
 /// Optional per-attempt model budget override, in whole seconds.
 const ENV_REQUEST_TIMEOUT: &str = "ARCANA_MC_TIMEOUT_SECS";
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Optional override for the TCP+TLS connect budget, in whole seconds.
+const ENV_CONNECT_TIMEOUT: &str = "ARCANA_MC_CONNECT_TIMEOUT_SECS";
+/// Longest this client waits to establish the TCP+TLS connection, before any
+/// byte of the request is sent.
+///
+/// Ten seconds, and measured rather than assumed: five probes of
+/// `https://connector.arcanada.ai/health` from a fleet host on 2026-09-23
+/// connected in 10.3–11.4 ms of TCP and 31.8–33.5 ms through TLS. The budget
+/// is therefore ~300× the healthy case — it exists to bound a black hole, not
+/// to accommodate a slow edge, and raising it only lengthens the pause before
+/// the retry that is going to fix it. A connect timeout is transient
+/// ([`ConnectorError::Timeout`]) and is re-dispatched; the live pilot run of
+/// 2026-09-23 lost its first dispatch this way and the second one succeeded.
+///
+/// Configurable through [`ENV_CONNECT_TIMEOUT`] for deployments reached over a
+/// path this number does not describe — a satellite link, a mesh that dials
+/// through a relay — because the right value there is a property of the
+/// network, not of this crate.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bounds on the configured connect budget. Below a second no real TLS
+/// handshake completes over a WAN; above a minute the caller has stopped
+/// bounding anything.
+const MIN_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Per-attempt budget this client asks Model Connector to spend on the model,
 /// sent as `ExecuteRequest.timeout` (ms) and used to size the HTTP wait.
@@ -98,6 +122,8 @@ pub struct ModelConnectorClient {
     request_timeout: Duration,
     /// How long this client waits for the response.
     http_wait: Duration,
+    /// How long it waits to establish the connection in the first place.
+    connect_timeout: Duration,
 }
 
 impl ModelConnectorClient {
@@ -226,23 +252,29 @@ impl ModelConnectorClient {
                 MAX_REQUEST_TIMEOUT.as_secs(),
             )));
         }
+        let connect = connect_timeout_from_env()?;
         let http = reqwest::Client::builder()
             .https_only(base_url.scheme() == "https")
             .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
+            .connect_timeout(connect)
             .timeout(wait)
             .user_agent(concat!("arcana/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|err| {
-                ConnectorError::Transport(describe_reqwest(&err, CONNECT_TIMEOUT, wait))
-            })?;
+            .map_err(|err| ConnectorError::Transport(describe_reqwest(&err, connect, wait)))?;
         Ok(Self {
             http,
             base_url,
             api_key,
             request_timeout,
             http_wait: wait,
+            connect_timeout: connect,
         })
+    }
+
+    /// The connect budget this client was built with.
+    #[must_use]
+    pub const fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
     }
 
     /// The per-attempt model budget this client sends upstream.
@@ -278,6 +310,38 @@ fn http_wait(request_timeout: Duration) -> Duration {
     UPSTREAM_QUEUE_SLACK
         .saturating_add(request_timeout.saturating_mul(UPSTREAM_ATTEMPTS))
         .saturating_add(UPSTREAM_BACKOFF)
+}
+
+/// Read the optional connect budget from [`ENV_CONNECT_TIMEOUT`].
+///
+/// # Errors
+/// [`ConnectorError::Transport`] when the value is not a whole number of
+/// seconds, or is outside [`MIN_CONNECT_TIMEOUT`]..=[`MAX_CONNECT_TIMEOUT`].
+fn connect_timeout_from_env() -> Result<Duration, ConnectorError> {
+    let Some(raw) = std::env::var(ENV_CONNECT_TIMEOUT)
+        .ok()
+        .filter(|raw| !raw.trim().is_empty())
+    else {
+        return Ok(DEFAULT_CONNECT_TIMEOUT);
+    };
+    let parsed = raw
+        .trim()
+        .parse::<u64>()
+        .map(Duration::from_secs)
+        .map_err(|_| {
+            ConnectorError::Transport(format!(
+                "{ENV_CONNECT_TIMEOUT} must be a whole number of seconds"
+            ))
+        })?;
+    if parsed < MIN_CONNECT_TIMEOUT || parsed > MAX_CONNECT_TIMEOUT {
+        return Err(ConnectorError::Transport(format!(
+            "{ENV_CONNECT_TIMEOUT} {}s is outside the {}s..{}s this client accepts",
+            parsed.as_secs(),
+            MIN_CONNECT_TIMEOUT.as_secs(),
+            MAX_CONNECT_TIMEOUT.as_secs(),
+        )));
+    }
+    Ok(parsed)
 }
 
 /// Read the optional per-attempt budget from [`ENV_REQUEST_TIMEOUT`].
@@ -419,7 +483,7 @@ impl ModelConnector for ModelConnectorClient {
             .json(&req)
             .send()
             .await
-            .map_err(|err| classify_reqwest(&err, CONNECT_TIMEOUT, wait))?;
+            .map_err(|err| classify_reqwest(&err, self.connect_timeout, wait))?;
 
         let status = resp.status().as_u16();
         let content_type = resp
@@ -430,7 +494,7 @@ impl ModelConnector for ModelConnectorClient {
         let bytes = resp
             .bytes()
             .await
-            .map_err(|err| classify_reqwest(&err, CONNECT_TIMEOUT, wait))?;
+            .map_err(|err| classify_reqwest(&err, self.connect_timeout, wait))?;
 
         match status {
             201 => parse_success_envelope(&bytes, content_type),
@@ -587,6 +651,48 @@ mod tests {
         assert_eq!(key.secret(), "mc-supersecret-value");
     }
 
+    // --- connect budget (A2-216) ------------------------------------------
+
+    #[test]
+    fn the_connect_budget_defaults_to_the_measured_ten_seconds() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var(ENV_CONNECT_TIMEOUT);
+        assert_eq!(connect_timeout_from_env().unwrap(), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn the_connect_budget_is_separately_configurable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_CONNECT_TIMEOUT, "25");
+        let read = connect_timeout_from_env();
+        std::env::remove_var(ENV_CONNECT_TIMEOUT);
+        assert_eq!(read.unwrap(), Duration::from_secs(25));
+    }
+
+    #[test]
+    fn a_connect_budget_outside_the_accepted_range_is_refused_by_name() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_CONNECT_TIMEOUT, "600");
+        let read = connect_timeout_from_env();
+        std::env::remove_var(ENV_CONNECT_TIMEOUT);
+        match read {
+            Err(ConnectorError::Transport(message)) => {
+                assert!(message.contains(ENV_CONNECT_TIMEOUT), "{message}");
+                assert!(message.contains("60s"), "{message}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_mistyped_connect_budget_is_not_silently_replaced_by_the_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(ENV_CONNECT_TIMEOUT, "ten");
+        let read = connect_timeout_from_env();
+        std::env::remove_var(ENV_CONNECT_TIMEOUT);
+        assert!(read.is_err());
+    }
+
     // --- credential validation (issue #107) --------------------------------
 
     #[test]
@@ -697,6 +803,66 @@ mod tests {
         assert!(
             rendered.starts_with("timed out after 120s"),
             "expected the request budget in the headline, got: {rendered}"
+        );
+    }
+
+    /// A timeout — of either budget — is a statement about this attempt, not
+    /// about the request, so it must come back transient and be re-dispatched.
+    ///
+    /// The stalled listener produces the request-budget timeout because it is
+    /// the one a test can create deterministically; `reqwest` reports both
+    /// through the same `is_timeout()` predicate and `classify_reqwest` reads
+    /// only that. The connect half was measured live instead: the pilot run of
+    /// 2026-09-23 lost its first dispatch to
+    /// `timed out after 10s: ... client error (Connect): operation timed out`
+    /// and the log's next line is `retrying this turn in 2s (1 of 2)`.
+    #[tokio::test]
+    async fn a_timeout_is_classified_transient_so_the_turn_is_re_dispatched() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+            }
+        });
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let err = client
+            .get(format!("http://{addr}/execute"))
+            .send()
+            .await
+            .expect_err("a stalled server must time out");
+        assert!(err.is_timeout(), "the fixture must produce a timeout");
+
+        let classified = classify_reqwest(&err, Duration::from_secs(10), Duration::from_secs(120));
+        assert!(
+            matches!(classified, ConnectorError::Timeout(_)),
+            "a timeout must not be folded into Transport: {classified:?}"
+        );
+        assert!(classified.is_transient(), "and it must be re-dispatched");
+    }
+
+    /// The negative control for the line above: a refused connection is NOT a
+    /// timeout, stays `Transport`, and is fatal — retrying a closed port three
+    /// times only delays the message the operator needs.
+    #[tokio::test]
+    async fn a_refused_connection_is_not_transient() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let client = reqwest::Client::builder().build().unwrap();
+        let err = client
+            .get(format!("http://{addr}/execute"))
+            .send()
+            .await
+            .expect_err("a closed port must refuse");
+        let classified = classify_reqwest(&err, Duration::from_secs(10), Duration::from_secs(120));
+        assert!(
+            !classified.is_transient(),
+            "a refusal is a configuration fact: {classified:?}"
         );
     }
 

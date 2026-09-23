@@ -10,6 +10,7 @@ pub mod execution;
 pub mod hooks;
 pub mod kb;
 pub mod permission;
+pub mod prompt_budget;
 pub mod tool;
 pub mod tool_dialect;
 

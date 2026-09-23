@@ -82,6 +82,22 @@ fn retryable_upstream_timeout() -> ConnectorError {
     }
 }
 
+/// Model Connector's refusal of an over-long field, as it actually arrives.
+///
+/// Measured 2026-09-23: the body is Fastify's Zod report, not the `NestJS`
+/// exception envelope the client parses, so the text reaches the error inside
+/// the "non-contract error body" excerpt rather than as `message`.
+fn field_over_the_size_limit() -> ConnectorError {
+    ConnectorError::Http {
+        status: 400,
+        message: "upstream returned a non-contract error body (105 bytes): \
+                  {\"message\":\"Validation failed\",\"errors\":[\"prompt: Too big: expected \
+                  string to have <=100000 characters\"]}"
+            .into(),
+        retry_after: None,
+    }
+}
+
 /// A connector id that does not exist fails the same way forever.
 fn fatal_not_found() -> ConnectorError {
     ConnectorError::Http {
@@ -180,4 +196,38 @@ async fn an_error_that_will_never_succeed_is_not_retried() {
          delays the message the operator needs"
     );
     assert_eq!(out.turns, 1);
+}
+
+/// A size refusal is the caller's fault and its own terminal reason.
+///
+/// It must not be retried — the second attempt sends the same oversized body —
+/// and it must not be reported as `ConnectorFatal`, which names the connector
+/// for a contract the connector kept. This is the failure that ended a pilot
+/// run at turn 10 with five tool calls of real work already done.
+#[tokio::test]
+async fn an_over_size_refusal_is_terminal_and_names_the_limit() {
+    let connector = FlakyConnector::new(usize::MAX, field_over_the_size_limit);
+    let out = drive(&connector, config()).await;
+
+    assert_eq!(out.reason, TerminalReason::RequestTooLarge);
+    assert_eq!(connector.calls(), 1, "an oversized body is not sent twice");
+    assert!(
+        out.reason.explain().contains("100 000"),
+        "the operator is told which limit: {}",
+        out.reason.explain()
+    );
+}
+
+/// A 413 — the whole body past the server's limit — is the same class.
+#[tokio::test]
+async fn a_body_too_large_refusal_is_terminal_too() {
+    let connector = FlakyConnector::new(usize::MAX, || ConnectorError::Http {
+        status: 413,
+        message: "Request body is too large".into(),
+        retry_after: None,
+    });
+    let out = drive(&connector, config()).await;
+
+    assert_eq!(out.reason, TerminalReason::RequestTooLarge);
+    assert_eq!(connector.calls(), 1);
 }

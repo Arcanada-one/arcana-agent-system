@@ -76,6 +76,11 @@ const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
 /// prefix followed by one JSON object, and it is always the last line.
 pub const DONE_MARKER: &str = "ARCANA_RUN_DONE";
 
+/// Where a tool result too large to carry in the transcript is kept in full,
+/// relative to the workspace root. A runner artefact, not the task's output:
+/// it is untracked, so `git diff` and a patch built from it are unaffected.
+pub const TOOL_OUTPUT_DIR: &str = ".arcana/tool-output";
+
 /// Everything a headless run needs.
 #[derive(Debug, Clone)]
 pub struct RunRequest {
@@ -152,9 +157,11 @@ async fn run_async(request: &RunRequest) -> i32 {
         ) {
             Ok(client) => {
                 println!(
-                    "model budget: {}s per attempt, waiting up to {}s for a reply",
+                    "model budget: {}s per attempt, waiting up to {}s for a reply, \
+{}s to connect",
                     client.request_timeout().as_secs(),
-                    client.http_wait().as_secs()
+                    client.http_wait().as_secs(),
+                    client.connect_timeout().as_secs(),
                 );
                 Box::new(client)
             }
@@ -196,6 +203,11 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
         config.model = Some(model);
     }
     config.system_prompt = Some(system_prompt(tools, root));
+    // Where a tool result too large to carry is kept in full. Inside the
+    // workspace on purpose: the workspace boundary is what decides which paths
+    // the model may read, and a spill file it is not allowed to open would be
+    // a marker that promises something it cannot deliver.
+    config.tool_output_spill_dir = Some(root.join(TOOL_OUTPUT_DIR));
     // Nobody reads the prose of a headless run, so prose alone cannot end it.
     config.require_action = true;
     config
@@ -424,15 +436,16 @@ fn report(out: &RunOutput, root: &Path) -> i32 {
     }
     println!(
         "{DONE_MARKER} {}",
-        done_marker_body(
+        done_marker_body(&DoneMarker {
             completed,
-            &reason,
-            out.turns,
-            out.tool_calls,
-            out.cost.total_cost_usd_micros,
+            reason: &reason,
+            turns: out.turns,
+            tool_calls: out.tool_calls,
+            cost_usd_micros: out.cost.total_cost_usd_micros,
+            compactions: out.compactions,
             root,
-            None,
-        )
+            error: None,
+        })
     );
     let code = crate::interrupt::exit_code(out.reason);
     // `exit_code` maps the driver's reason; a marker that says the run did not
@@ -452,27 +465,53 @@ fn exit_failed(error: &str, root: &Path) -> i32 {
     eprintln!("arcana run: {error}");
     println!(
         "{DONE_MARKER} {}",
-        done_marker_body(false, "NotStarted", 0, 0, 0, root, Some(error))
+        done_marker_body(&DoneMarker {
+            completed: false,
+            reason: "NotStarted",
+            turns: 0,
+            tool_calls: 0,
+            cost_usd_micros: 0,
+            compactions: 0,
+            root,
+            error: Some(error),
+        })
     );
     1
 }
 
 /// The JSON body of the done-marker line.
-fn done_marker_body(
+struct DoneMarker<'a> {
     completed: bool,
-    reason: &str,
+    reason: &'a str,
     turns: u32,
     tool_calls: u32,
     cost_usd_micros: u64,
-    root: &Path,
-    error: Option<&str>,
-) -> String {
+    compactions: u32,
+    root: &'a Path,
+    error: Option<&'a str>,
+}
+
+fn done_marker_body(marker: &DoneMarker<'_>) -> String {
+    let DoneMarker {
+        completed,
+        reason,
+        turns,
+        tool_calls,
+        cost_usd_micros,
+        compactions,
+        root,
+        error,
+    } = *marker;
     let body = serde_json::json!({
         "completed": completed,
         "reason": reason,
         "turns": turns,
         "tool_calls": tool_calls,
         "cost_usd_micros": cost_usd_micros,
+        // Non-zero means the model answered from a summary of part of its own
+        // history. A reader comparing two runs of the same card needs that
+        // fact; it is not visible anywhere else after the process exits.
+        "compactions": compactions,
         "workspace": root.display().to_string(),
         "error": error,
     });
@@ -499,26 +538,37 @@ mod tests {
 
     #[test]
     fn the_done_marker_is_one_json_object_after_a_fixed_prefix() {
-        let body = done_marker_body(true, "Completed", 2, 1, 59, Path::new("/tmp"), None);
+        let body = done_marker_body(&DoneMarker {
+            completed: true,
+            reason: "Completed",
+            turns: 2,
+            tool_calls: 1,
+            cost_usd_micros: 59,
+            compactions: 3,
+            root: Path::new("/tmp"),
+            error: None,
+        });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], true);
         assert_eq!(parsed["reason"], "Completed");
         assert_eq!(parsed["turns"], 2);
         assert_eq!(parsed["tool_calls"], 1);
         assert_eq!(parsed["cost_usd_micros"], 59);
+        assert_eq!(parsed["compactions"], 3);
     }
 
     #[test]
     fn a_run_that_never_started_is_not_reported_as_completed() {
-        let body = done_marker_body(
-            false,
-            "NotStarted",
-            0,
-            0,
-            0,
-            Path::new("/tmp"),
-            Some("boom"),
-        );
+        let body = done_marker_body(&DoneMarker {
+            completed: false,
+            reason: "NotStarted",
+            turns: 0,
+            tool_calls: 0,
+            cost_usd_micros: 0,
+            compactions: 0,
+            root: Path::new("/tmp"),
+            error: Some("boom"),
+        });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], false);
         assert_eq!(parsed["error"], "boom");
@@ -534,6 +584,7 @@ mod tests {
             cost: arcana_core::cost::CostTracker::new().snapshot(),
             selected_models: Vec::new(),
             first_dispatch_observation: None,
+            compactions: 0,
         }
     }
 

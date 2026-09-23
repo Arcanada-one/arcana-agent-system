@@ -87,7 +87,7 @@ async fn driver_rejects_negative_cost_cap_before_call() {
 #[tokio::test]
 async fn driver_rejects_zero_context_budget_before_call() {
     let mut config = DriverConfig::new("scripted");
-    config.context_budget_chars = 0;
+    config.context_budget_units = 0;
 
     let (out, calls) = run_with(config).await;
 
