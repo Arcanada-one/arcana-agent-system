@@ -544,16 +544,19 @@ async fn a_refused_tool_call_does_not_count_as_an_executed_one() {
 // `args` — a common convention, and not ours — has them silently dropped,
 // dispatches `bash` with `null`, and fails `"type": "object"`.
 //
-// That silent default is a second defect and is deliberately NOT fixed here
-// (it belongs to the tool-call convention, not to the permission cascade).
-// What this card changes is that the model is now TOLD, and can correct
-// itself — which is exactly what the live run below did.
+// That silent default was a second defect, deliberately left to the tool-call
+// convention rather than fixed in the permission cascade. A2-212 fixed it
+// there: `arguments`, `parameters` and `args` are now read as the arguments
+// they are, so this block no longer becomes a `null` dispatch at all. The
+// recovery A2-204 built is still what catches a call the schema really does
+// refuse — `schema_violating_bash` below is such a call, and the tests either
+// side of this comment are its coverage.
 
 /// The failure verbatim: a tool-call block naming `bash` whose arguments are
-/// under a key the driver does not read, so `input` defaults to `null`.
+/// under `arguments` rather than `input`.
 ///
-/// This is the exact shape behind audit hash `03f88b99c3d8073b`, not an
-/// analogue of it.
+/// This is the exact shape behind audit hash `03f88b99c3d8073b` — the hash of
+/// the `null` the driver used to dispatch instead — not an analogue of it.
 fn tool_call_with_arguments_key(name: &str, input: serde_json::Value) -> String {
     format!(
         "```tool_call\n{}\n```",
@@ -894,11 +897,15 @@ async fn a_rejected_call_is_still_recorded_as_denied_in_the_audit_log() {
 
 #[tokio::test]
 async fn the_exact_live_failure_is_reproduced_and_the_run_survives_it() {
-    // Audit hash `03f88b99c3d8073b` is `blake3("null")`, so the denied input
-    // was JSON `null` — a tool-call block whose arguments the driver never
-    // read. Before this card that one block ended the run with `tool_calls: 0`
-    // and `rc 1`; here the same block is followed by the same work in the
-    // encoding the driver does read, and the file appears.
+    // Audit hash `03f88b99c3d8073b` is `blake3("null")`: the input the driver
+    // dispatched for a block whose arguments it never read. A2-204 made that
+    // denial survivable — the model was told, and could correct itself on the
+    // next turn. A2-212 removes the denial: `arguments` IS the arguments, so
+    // the first block does the work and there is nothing to recover from.
+    //
+    // The test keeps its name and its single scripted block on purpose. It is
+    // the live failure, and the assertion that used to say "the run recovered"
+    // now says "the run never had to".
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     let out = drive_out(
@@ -906,10 +913,6 @@ async fn the_exact_live_failure_is_reproduced_and_the_run_survives_it() {
         audit.path(),
         &[
             &tool_call_with_arguments_key(
-                "bash",
-                serde_json::json!({ "command": "echo LIVE > proof.txt" }),
-            ),
-            &tool_call(
                 "bash",
                 serde_json::json!({ "command": "echo LIVE > proof.txt" }),
             ),
@@ -925,14 +928,21 @@ async fn the_exact_live_failure_is_reproduced_and_the_run_survives_it() {
         "LIVE"
     );
     assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
-    assert_eq!(out.tool_calls, 1);
+    assert_eq!(
+        out.tool_calls, 1,
+        "the arguments the model sent must reach the tool on the FIRST turn: {:?}",
+        out.reason
+    );
 
-    // The denial that is being recovered from is the one from the field: the
-    // `schema` layer, on `bash`, over exactly the input the live run hashed.
+    // The `null` dispatch is gone, not merely recovered from: the hash that
+    // identified the live failure never appears, and nothing was denied.
     let log = std::fs::read_to_string(audit.path().join("audit.log")).unwrap();
     assert!(
-        log.contains(r#""input_hash":"03f88b99c3d8073b""#),
-        "not the input the live failure denied: {log}"
+        !log.contains(r#""input_hash":"03f88b99c3d8073b""#),
+        "`arguments` was still dropped and `null` dispatched: {log}"
     );
-    assert!(log.contains(r#""layer":"schema""#), "audit log: {log}");
+    assert!(
+        !log.contains(r#""decision":"Denied""#),
+        "a call carrying its arguments must not be denied: {log}"
+    );
 }

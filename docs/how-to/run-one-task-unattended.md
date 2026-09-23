@@ -46,7 +46,7 @@ interpret its absence — which looks identical to a crash.
 | Field | Meaning |
 |-------|---------|
 | `completed` | The run did the work. Never `true` with `tool_calls` at `0`. |
-| `reason` | The terminal verdict (`Completed`, `NoAction`, `ResponseTruncated`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
+| `reason` | The terminal verdict (`Completed`, `NoAction`, `ResponseTruncated`, `UnsupportedToolCallFormat`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
 | `turns` | Connector attempts consumed. |
 | `tool_calls` | Tool calls the executor **actually carried out**. Not intent: a call the policy refused, or one the model only described in prose, is not counted. |
 | `cost_usd_micros` | Spend for the run, in micro-USD. |
@@ -54,7 +54,7 @@ interpret its absence — which looks identical to a crash.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | The run completed and executed at least one tool call. `completed` is `true`. |
-| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction` or `ResponseTruncated`. |
+| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
 | `130` | The operator interrupted it. The spend line above the marker is what the interrupted dispatch cost. |
 
 ### A run that claimed to have done the work
@@ -156,17 +156,55 @@ worktree, on a host whose integrity does not depend on this check.
 
 ## Why a task can silently do nothing (and no longer does)
 
-The driver recognises exactly one tool-call encoding — a fenced
-```` ```tool_call ```` block whose body is `{"name": ..., "input": ...}` — and
-fails closed to "this was the final answer" on anything else. A model that has
-not been told so answers a request to run a command with a ```` ```bash ````
-block, which reads exactly like an action and is only text.
+The driver executes exactly one tool-call encoding — a fenced
+```` ```tool_call ```` block whose body is `{"name": ..., "input": ...}`. `run`
+states that format and the tool catalogue in its system prompt, built from the
+tools that are actually registered, so the description cannot drift from the
+dispatcher. If you are adding a surface that drives the agent loop, do the
+same, and test it by the file on disk rather than by what the model said it
+did.
 
-`run` states the wire format and the tool catalogue in its system prompt,
-built from the tools that are actually registered, so the description cannot
-drift from the dispatcher. If you are adding a surface that drives the agent
-loop, do the same, and test it by the file on disk rather than by what the
-model said it did.
+What changed is what happens to a reply that is *not* in that encoding. It used
+to fail closed to "this was the final answer" — including when the reply was
+plainly a request to run a command. Measured 2026-09-23 on `deepseek-v4-flash`,
+turn one of a real task arrived as DeepSeek's own markup:
+
+```text
+<｜｜DSML｜｜ invoke name="bash">
+<｜｜DSML｜｜ parameter name="command" string="true">ls -la</｜｜DSML｜｜ parameter>
+</｜｜DSML｜｜ invoke>
+```
+
+The loop read it as prose and ended the run `"completed":true`,
+`"reason":"Completed"` with nothing done. The model had asked for a shell
+command in the only dialect it knew; the runner answered by calling the job
+finished.
+
+A reply that asks for a tool is no longer an answer, whatever it is written in:
+
+* **`invoke` markup** — DeepSeek's `DSML` form and the sentinel-less
+  `<invoke name="…"><parameter name="…">…</parameter></invoke>` form — is
+  translated into a real call and executed. Those tags exist for nothing else,
+  so a closed one is not a guess about intent. The translated call goes through
+  the whole permission cascade exactly like a canonical one.
+* **Anything else recognisable** — a `tool_call` block whose body is not usable
+  JSON, a bare OpenAI-shaped `{"name": …, "arguments": …}` object — is **not**
+  executed. The model is told once, in full, what encoding this runner reads,
+  and the run ends on `UnsupportedToolCallFormat` (`"completed":false`, exit
+  `1`) if the next reply is in an unreadable format too. A JSON object shaped
+  like a tool call can appear inside an explanation of tool calling, so it is
+  corrected rather than run.
+* **Arguments under any spelling** — `input`, `arguments`, `parameters`, `args`,
+  including OpenAI's JSON-encoded-string form — reach the tool. They used to be
+  read only under `input`, so a call spelt any other way was dispatched with no
+  arguments at all and refused for a mistake the model had not made. A block
+  that names a tool and carries no arguments under *any* spelling is corrected
+  rather than dispatched as JSON `null`, which could only ever be a schema
+  denial.
+
+A ```` ```bash ```` block, a shell transcript, or a description of what you
+would run is still only text: it names no tool, so there is nothing to
+translate and nothing to correct.
 
 ## Slow turns
 

@@ -1,12 +1,12 @@
 //! Agent loop state machine exhaustiveness.
 //!
 //! Contract: `enum TurnOutcome { Continue(ContinueReason), Terminal(TerminalReason) }`
-//! has 9 `ContinueReason` and 11 `TerminalReason` variants. Regression is
+//! has 10 `ContinueReason` and 12 `TerminalReason` variants. Regression is
 //! blocked two independent ways:
 //!   1. Compile-time exhaustive match — adding a variant without updating
 //!      the driver produces a «non-exhaustive patterns» error.
 //!   2. Run-time enumeration — the explicit per-variant list confirms the
-//!      driver still covers the documented 9/11 surface.
+//!      driver still covers the documented 10/12 surface.
 
 #![allow(
     clippy::unwrap_used,
@@ -17,11 +17,11 @@
 
 use arcana_core::agent_loop::{ContinueReason, TerminalReason, TurnOutcome};
 
-const CONTINUE_VARIANTS: usize = 9;
+const CONTINUE_VARIANTS: usize = 10;
 // Was 8 while the enum had 9 variants, and the `all` array below simply left
 // `AuditFatal` out — a test named "exhaustive" that had stopped being so. Both
 // are corrected here rather than only extended for `NoAction`.
-const TERMINAL_VARIANTS: usize = 11;
+const TERMINAL_VARIANTS: usize = 12;
 
 fn classify_continue(reason: ContinueReason) -> &'static str {
     match reason {
@@ -34,6 +34,7 @@ fn classify_continue(reason: ContinueReason) -> &'static str {
         ContinueReason::NoActionRetry => "no_action_retry",
         ContinueReason::ConnectorRetry => "connector_retry",
         ContinueReason::ToolCallRejected => "tool_call_rejected",
+        ContinueReason::ToolCallFormatRejected => "tool_call_format_rejected",
     }
 }
 
@@ -50,6 +51,7 @@ fn classify_terminal(reason: TerminalReason) -> &'static str {
         TerminalReason::AuditFatal => "audit_fatal",
         TerminalReason::NoAction => "no_action",
         TerminalReason::ResponseTruncated => "response_truncated",
+        TerminalReason::UnsupportedToolCallFormat => "unsupported_tool_call_format",
     }
 }
 
@@ -72,6 +74,7 @@ fn all_continue_variants_are_distinct() {
         ContinueReason::NoActionRetry,
         ContinueReason::ConnectorRetry,
         ContinueReason::ToolCallRejected,
+        ContinueReason::ToolCallFormatRejected,
     ];
     assert_eq!(all.len(), CONTINUE_VARIANTS);
 
@@ -95,6 +98,7 @@ fn all_terminal_variants_are_distinct() {
         TerminalReason::AuditFatal,
         TerminalReason::NoAction,
         TerminalReason::ResponseTruncated,
+        TerminalReason::UnsupportedToolCallFormat,
     ];
     assert_eq!(all.len(), TERMINAL_VARIANTS);
 

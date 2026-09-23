@@ -43,12 +43,22 @@ message instead:
 | Code | Condition |
 |------|-----------|
 | `0` | The run reached `Completed` **and** executed at least one tool call. |
-| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), `UnsupportedToolCallFormat` (the model asked for a tool in an encoding this runner cannot execute, and repeated it after being told the one it reads), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
 | `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
 
 The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when
 the run never started — a runner reads the marker rather than interpreting its
 absence, which is indistinguishable from a crash.
+
+`UnsupportedToolCallFormat` is separate from `NoAction` for the same reason
+`NoAction` is separate from `Completed`: the two look identical in a marker
+line and call for opposite fixes. "The model would not act" is answered by a
+better prompt or a better model; "the model acted in a dialect this runner
+threw away" is answered in the runner. Measured 2026-09-23 on
+`deepseek-v4-flash`, the second was being reported as the first — and before
+that, as success. Native `invoke` markup is now translated and executed rather
+than counted here; this verdict is what remains when the attempt is one we will
+not run unseen.
 
 `NoAction` is its own verdict because the failure it names is invisible
 otherwise. Asked in plain language to create a file, a model answered `The file

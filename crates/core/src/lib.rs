@@ -11,6 +11,7 @@ pub mod hooks;
 pub mod kb;
 pub mod permission;
 pub mod tool;
+pub mod tool_dialect;
 
 #[must_use]
 pub fn skeleton_marker() -> &'static str {
