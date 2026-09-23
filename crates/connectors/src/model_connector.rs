@@ -4,7 +4,9 @@
 
 use std::time::Duration;
 
-use arcana_core::connector::{ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector};
+use arcana_core::connector::{
+    ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, NON_CONTRACT_BODY_HEADLINE,
+};
 use async_trait::async_trait;
 use url::Url;
 
@@ -565,10 +567,11 @@ fn parse_error_envelope(status: u16, bytes: &[u8]) -> Result<ConnectorResponse, 
     let message = match serde_json::from_slice::<NestExceptionEnvelope>(bytes) {
         Ok(envelope) if envelope.status_code == status => envelope.message,
         _ => {
-            let headline = format!(
-                "upstream returned a non-contract error body ({} bytes)",
-                bytes.len()
-            );
+            // The words are `arcana-core`'s, not this module's: the agent
+            // loop matches on them to tell a Cloudflare verdict apart from a
+            // refusal Model Connector authored, and a retry budget now depends
+            // on that.
+            let headline = format!("{NON_CONTRACT_BODY_HEADLINE} ({} bytes)", bytes.len());
             match error_body_excerpt(bytes) {
                 Some(excerpt) => format!("{headline}: {excerpt}"),
                 None => headline,

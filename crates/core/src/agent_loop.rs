@@ -53,8 +53,48 @@ pub const MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS: usize = MC_FIELD_MAX_UTF16
 /// and a budget on an upstream that is simply down.
 pub const DEFAULT_CONNECTOR_RETRY_LIMIT: u32 = 2;
 
-/// Pause before re-dispatching when the upstream named no `retryAfter`.
+/// Pause before re-dispatching when the upstream named no `retryAfter`, and
+/// the first step of the gateway schedule below.
 pub const DEFAULT_CONNECTOR_RETRY_BACKOFF: Duration = Duration::from_secs(2);
+
+/// Re-dispatches allowed after a transient GATEWAY failure, per turn.
+///
+/// Five, against two for the failures Model Connector itself reports, because
+/// the two classes fail for different reasons and heal on different clocks —
+/// see [`ConnectorError::is_edge_gateway_failure`]. Measured on pilot A2-204c5
+/// (2026-09-23): a 94-turn run with the work already done — the test written,
+/// four mutants run — died on **three** consecutive `HTTP 502 … error code:
+/// 502` from `connector.arcanada.ai`, 16 bytes of Cloudflare, spread over
+/// about four seconds because the policy was two retries two seconds apart.
+/// Four seconds is not a serious attempt to outlast an edge.
+///
+/// The schedule below is what makes five affordable: the run now spends about
+/// a minute finding out, instead of four seconds.
+pub const DEFAULT_EDGE_RETRY_LIMIT: u32 = 5;
+
+/// Ceiling on one pause of the gateway backoff schedule.
+///
+/// The schedule doubles, so without a ceiling the fifth pause would be 32 s
+/// and a sixth — if the limit is ever raised — 64 s, which is longer than most
+/// edges take to heal and longer than an operator expects one turn to stall.
+const MAX_EDGE_RETRY_PAUSE: Duration = Duration::from_secs(30);
+
+/// Total time one turn may spend ASLEEP between re-dispatches, across every
+/// retry class.
+///
+/// A per-pause cap bounds one wait; this bounds the sum, which is the number
+/// an unattended run's operator actually cares about. It binds hardest on the
+/// path the per-pause cap cannot reach: an upstream-named `retryAfter` is
+/// honoured up to [`MAX_RETRY_AFTER`] (60 s) each, so five of them would park
+/// a turn for five minutes. Two are as long as this budget allows.
+///
+/// The default gateway schedule does NOT reach it: 2 + 4 + 8 + 16 + 30 = 60 s
+/// nominal, and jitter only ever shortens a pause (see
+/// [`edge_backoff_pause`]), so the worst case added wall time for five
+/// gateway re-dispatches is 60 s of sleep on top of the five dispatches
+/// themselves. The budget is the backstop for the schedules this file does
+/// not control.
+pub const DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET: Duration = Duration::from_secs(120);
 
 /// Consecutive re-dispatches allowed after a reply that the model's output
 /// limit cut off, per run.
@@ -234,6 +274,15 @@ const RECOVERABLE_DENIAL_LAYERS: [&str; 3] = ["schema", "registry", "workspace_b
 /// not symmetric: any reply resets the retry budget, including a reply the
 /// cascade then refused, because a refused call is still proof the upstream is
 /// up. Pinned by `crates/core/tests/driver_retry_denial_independence.rs`.
+///
+/// Until A2-230 this constant was documentation and nothing else: the rule was
+/// carried by a `HashSet::insert` in `fold_denial`, which can only ever mean
+/// "one", so editing the number here changed no behaviour and broke no test —
+/// the worst kind of comment, one that reads like a knob. `RunState` now
+/// counts refusals per distinct call and this is the bound it is checked
+/// against, which is what makes
+/// `re_sending_an_already_refused_call_ends_the_run_and_says_why` go red if
+/// the number moves.
 pub const MAX_DENIALS_PER_DISTINCT_CALL: u32 = 1;
 
 /// Replies in an unexecutable tool-call format a run tolerates before it ends
@@ -1207,8 +1256,17 @@ pub struct DriverConfig {
     /// consumes a turn and is checked against the cost cap like any other
     /// attempt, so neither budget can be exceeded by retrying.
     pub connector_retry_limit: u32,
-    /// Pause before a re-dispatch when the upstream named no `retryAfter`.
+    /// Consecutive transient GATEWAY failures the loop will re-dispatch before
+    /// it gives up. Separate from `connector_retry_limit` because an edge
+    /// verdict and a refusal Model Connector authored are different facts.
+    pub edge_retry_limit: u32,
+    /// Pause before a re-dispatch when the upstream named no `retryAfter`, and
+    /// the first step of the gateway backoff schedule.
     pub connector_retry_backoff: Duration,
+    /// Total time one turn may spend asleep between re-dispatches. Reached, the
+    /// run ends [`TerminalReason::ConnectorFatal`] saying so rather than
+    /// sleeping on.
+    pub connector_retry_pause_budget: Duration,
 }
 
 impl DriverConfig {
@@ -1234,7 +1292,9 @@ impl DriverConfig {
             policy: ModelPolicy::new(),
             require_action: false,
             connector_retry_limit: DEFAULT_CONNECTOR_RETRY_LIMIT,
+            edge_retry_limit: DEFAULT_EDGE_RETRY_LIMIT,
             connector_retry_backoff: DEFAULT_CONNECTOR_RETRY_BACKOFF,
+            connector_retry_pause_budget: DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
         }
     }
 
@@ -1381,11 +1441,20 @@ struct RunState {
     nudge_spent: bool,
     /// Consecutive transient connector failures since the last response.
     connector_retries: u32,
-    /// Folded-back denials since the last tool call that actually executed.
-    consecutive_denials: u32,
-    /// Calls already refused at a correctable layer since the last tool call
-    /// that actually executed. Re-sending one ends the run.
-    refused_calls: std::collections::HashSet<String>,
+    /// Time already slept between re-dispatches of the current turn.
+    connector_retry_pause_spent: Duration,
+    /// When the current streak of connector failures began. `None` while the
+    /// upstream is answering; the terminal verdict reports its elapsed time.
+    connector_failure_since: Option<std::time::Instant>,
+    /// How often each call refused at a correctable layer has been sent since
+    /// the last tool call that actually executed. A call whose count passes
+    /// [`MAX_DENIALS_PER_DISTINCT_CALL`] ends the run.
+    ///
+    /// A map rather than a set because the bound is a NUMBER of refusals per
+    /// distinct call, and a set can only ever express "one". The constant used
+    /// to be documented as the rule while the code was a `HashSet::insert`, so
+    /// editing it changed nothing and no test noticed (A2-230).
+    refused_calls: std::collections::HashMap<String, u32>,
     /// What refused the run, carried out of the step that decided to stop.
     terminal_detail: Option<String>,
     /// Consecutive replies cut off by the output limit since the last one that
@@ -1417,8 +1486,9 @@ impl RunState {
             tool_calls: 0,
             nudge_spent: false,
             connector_retries: 0,
-            consecutive_denials: 0,
-            refused_calls: std::collections::HashSet::new(),
+            connector_retry_pause_spent: Duration::ZERO,
+            connector_failure_since: None,
+            refused_calls: std::collections::HashMap::new(),
             truncation_retries: 0,
             malformed_calls: 0,
             compactions: 0,
@@ -1682,6 +1752,8 @@ impl<'a> Driver<'a> {
                 // hour end it as if the connector had failed three times in a
                 // row.
                 state.connector_retries = 0;
+                state.connector_retry_pause_spent = Duration::ZERO;
+                state.connector_failure_since = None;
                 resp
             }
             Err(error) => return self.recover_or_stop(state, &error, first_dispatch).await,
@@ -1877,6 +1949,13 @@ No other markup is executed, whatever your training says. \
         // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
         // a log line here is discarded.
         eprintln!("arcana: connector dispatch failed: {error}");
+        // The clock the terminal verdict reports. Started at the first failure
+        // of the streak, not at the start of the run: "94 turns" and "three
+        // 502s over four seconds" are different facts and the second one is
+        // what says whether the retry policy was a serious attempt.
+        let started = *state
+            .connector_failure_since
+            .get_or_insert_with(std::time::Instant::now);
         // A size refusal is not a connector failure: the request was ours and
         // it was too big. Retrying sends the same oversized body again, and
         // reporting `ConnectorFatal` points the operator at a service that did
@@ -1884,16 +1963,59 @@ No other markup is executed, whatever your training says. \
         if error.is_request_too_large() {
             return StepResult::Terminal(TerminalReason::RequestTooLarge, None);
         }
-        if !error.is_transient() || state.connector_retries >= self.config.connector_retry_limit {
+        let edge = error.is_edge_gateway_failure();
+        let limit = if edge {
+            self.config.edge_retry_limit
+        } else {
+            self.config.connector_retry_limit
+        };
+        // Attempts of THIS turn, the failed first dispatch included — the
+        // number an operator counts in the log, not the retry counter.
+        let attempts = state.connector_retries.saturating_add(1);
+        if !error.is_transient() {
+            state.terminal_detail = Some(connector_fatal_detail(
+                error,
+                attempts,
+                started.elapsed(),
+                FatalCause::NotRetryable,
+            ));
             return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
         }
+        if state.connector_retries >= limit {
+            state.terminal_detail = Some(connector_fatal_detail(
+                error,
+                attempts,
+                started.elapsed(),
+                FatalCause::RetriesSpent { limit, edge },
+            ));
+            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+        }
+        let requested = retry_pause(
+            error,
+            state.connector_retries.saturating_add(1),
+            self.config.connector_retry_backoff,
+            edge,
+        );
+        let Some(wait) = plan_retry_pause(
+            requested,
+            state.connector_retry_pause_spent,
+            self.config.connector_retry_pause_budget,
+        ) else {
+            state.terminal_detail = Some(connector_fatal_detail(
+                error,
+                attempts,
+                started.elapsed(),
+                FatalCause::PauseBudgetSpent {
+                    budget: self.config.connector_retry_pause_budget,
+                },
+            ));
+            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+        };
         state.connector_retries = state.connector_retries.saturating_add(1);
-        let wait = retry_pause(error, self.config.connector_retry_backoff);
+        state.connector_retry_pause_spent = state.connector_retry_pause_spent.saturating_add(wait);
         eprintln!(
-            "arcana: retrying this turn in {}s ({} of {})",
-            wait.as_secs(),
-            state.connector_retries,
-            self.config.connector_retry_limit
+            "{}",
+            retry_line(error, wait, state.connector_retries, limit, edge)
         );
         if !wait.is_zero() {
             tokio::time::sleep(wait).await;
@@ -2010,10 +2132,15 @@ No other markup is executed, whatever your training says. \
         // arguments can produce the same validation sentence, and that is a
         // model still trying rather than a model stuck.
         let fingerprint = format!("{layer}\u{1f}{name}\u{1f}{input}");
-        state.consecutive_denials = state.consecutive_denials.saturating_add(1);
-        if !state.refused_calls.insert(fingerprint) {
+        let refusals = state
+            .refused_calls
+            .entry(fingerprint)
+            .and_modify(|n| *n = n.saturating_add(1))
+            .or_insert(1);
+        if *refusals > MAX_DENIALS_PER_DISTINCT_CALL {
             state.terminal_detail = Some(format!(
-                "{detail} — and this is the same call again, unchanged, after being told that"
+                "{detail} — and this is the same call again, unchanged, for the \
+{refusals}(th) time, after being told that"
             ));
             return StepResult::Terminal(TerminalReason::PermissionDenied, None);
         }
@@ -2216,7 +2343,6 @@ same call again, unchanged, ends the run."
         // Otherwise a long, mostly-healthy run that made the same slip twice an
         // hour apart would die on the second — and the bound is meant for a
         // model stuck in one place, not for a run with a long memory.
-        state.consecutive_denials = 0;
         state.refused_calls.clear();
         // Same argument for the format streak: a call that executed is proof
         // the model can write one this runner reads.
@@ -2242,11 +2368,173 @@ same call again, unchanged, ends the run."
 ///
 /// An upstream that named a `retryAfter` knows better than we do — up to
 /// [`MAX_RETRY_AFTER`], past which an unattended run would be parked for
-/// longer than any operator expects a single turn to take.
-fn retry_pause(error: &ConnectorError, fallback: Duration) -> Duration {
-    error.retry_after_secs().map_or(fallback, |secs| {
-        Duration::from_secs(secs).min(MAX_RETRY_AFTER)
-    })
+/// longer than any operator expects a single turn to take. It wins over both
+/// schedules below, because it is the only one of the three that is a
+/// statement about this particular upstream at this particular moment.
+///
+/// Failing that: a gateway failure gets the exponential schedule, and anything
+/// else keeps the flat `fallback` it has always had. `retry` is 1-based — the
+/// first re-dispatch of the turn is 1.
+fn retry_pause(error: &ConnectorError, retry: u32, fallback: Duration, edge: bool) -> Duration {
+    if let Some(secs) = error.retry_after_secs() {
+        return Duration::from_secs(secs).min(MAX_RETRY_AFTER);
+    }
+    if edge {
+        return edge_backoff_pause(retry, fallback, jitter_permille());
+    }
+    fallback
+}
+
+/// One pause of the bounded exponential gateway schedule, with jitter.
+///
+/// Nominal is `base * 2^(retry - 1)`, capped at [`MAX_EDGE_RETRY_PAUSE`]: with
+/// the shipped 2 s base that is **2 s, 4 s, 8 s, 16 s, 30 s** — 60 s of sleep
+/// across the five re-dispatches [`DEFAULT_EDGE_RETRY_LIMIT`] allows, which is
+/// the worst-case wall time this schedule adds to a turn.
+///
+/// Jitter only ever SHORTENS a pause (the factor is `0.5 ..= 1.0` of nominal),
+/// so the worst case above is a real ceiling rather than an average. Jitter is
+/// not decoration: an edge that drops a burst of requests hands every client
+/// the same failure at the same instant, and a fleet of runs that all wake at
+/// exactly 2 s re-creates the burst that took the edge down. `permille` is the
+/// randomness, passed in so the schedule is a pure function and can be pinned.
+fn edge_backoff_pause(retry: u32, base: Duration, permille: u32) -> Duration {
+    let steps = retry.saturating_sub(1).min(16);
+    let nominal = base
+        .saturating_mul(1_u32 << steps)
+        .min(MAX_EDGE_RETRY_PAUSE);
+    // 500..=1000 permille of nominal. Integer arithmetic on nanos: the pauses
+    // are seconds-scale, so u128 cannot overflow and no float rounding can
+    // push a pause above nominal.
+    let factor = 500 + u128::from(permille.min(1000)) / 2;
+    let nanos = nominal.as_nanos() * factor / 1000;
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+}
+
+/// Jitter source: the sub-second part of the wall clock.
+///
+/// Deliberately not a `rand` dependency. The property needed here is that two
+/// runners failing on the same edge burst do not wake together, and the
+/// nanosecond the process reaches this line is already uncorrelated between
+/// them. A clock that refuses to answer yields the full pause, which is the
+/// conservative direction.
+fn jitter_permille() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1000, |since| since.subsec_nanos() % 1001)
+}
+
+/// Clamp a requested pause to what is left of the turn's sleep budget.
+///
+/// `None` means the budget is spent and the run must stop instead of sleeping
+/// again — a bound on the sum of pauses, which no per-pause cap can express.
+fn plan_retry_pause(requested: Duration, spent: Duration, budget: Duration) -> Option<Duration> {
+    let remaining = budget.checked_sub(spent).unwrap_or(Duration::ZERO);
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(requested.min(remaining))
+}
+
+/// Why the loop stopped re-dispatching.
+#[derive(Debug, Clone, Copy)]
+enum FatalCause {
+    /// The same request would fail the same way — a 404 connector id, a bad
+    /// key, an envelope the upstream marked non-retryable.
+    NotRetryable,
+    /// Every re-dispatch this class is allowed has been made.
+    RetriesSpent { limit: u32, edge: bool },
+    /// The turn has slept as long as it may.
+    PauseBudgetSpent { budget: Duration },
+}
+
+/// The line a run that died on the connector leaves behind, in the marker's
+/// `error` field and on stderr.
+///
+/// Pilot A2-204c5 ended `ConnectorFatal` with `"error": null` and the single
+/// stderr line `the Model Connector could not complete the request` — which
+/// named neither the status, nor how many times it had been tried, nor over
+/// how long. Three 502s in four seconds and an upstream down for an hour read
+/// identically, and only one of them is a retry policy that was too short.
+/// A2-225 gave denials this treatment; this is the connector's half.
+fn connector_fatal_detail(
+    error: &ConnectorError,
+    attempts: u32,
+    elapsed: Duration,
+    cause: FatalCause,
+) -> String {
+    let why = match cause {
+        FatalCause::NotRetryable => {
+            "not retryable — the same request would fail the same way".to_owned()
+        }
+        FatalCause::RetriesSpent { limit, edge } => {
+            let class = if edge {
+                "transient gateway failure in front of the Model Connector"
+            } else {
+                "transient connector failure"
+            };
+            format!("the {limit} re-dispatch(es) allowed for a {class} are spent")
+        }
+        FatalCause::PauseBudgetSpent { budget } => format!(
+            "the {}s this turn may spend waiting between re-dispatches are spent",
+            budget.as_secs()
+        ),
+    };
+    format!(
+        "{} after {attempts} attempt(s) over {} — {why}: {}",
+        error.status_label(),
+        format_elapsed(elapsed),
+        error.detail_text()
+    )
+}
+
+/// The line printed before each re-dispatch.
+///
+/// Pure so its shape can be pinned without capturing stdio. It says one thing
+/// the old line did not: whether this re-dispatch may be paid for twice. See
+/// [`ConnectorError::response_may_have_been_completed_upstream`] — Model
+/// Connector settles the charge before the response reaches the socket, and
+/// `arcana` sends no `Idempotency-Key`, so a request the edge cut may already
+/// have been executed and billed. An operator reconciling a bill needs that in
+/// the log, not in a mandate nobody reads at 3 a.m.
+fn retry_line(
+    error: &ConnectorError,
+    wait: Duration,
+    retry: u32,
+    limit: u32,
+    edge: bool,
+) -> String {
+    let class = if edge {
+        format!(
+            "{} is the gateway in front of the Model Connector, not the Model Connector — ",
+            error.status_label()
+        )
+    } else {
+        String::new()
+    };
+    let duplicate = if error.response_may_have_been_completed_upstream() {
+        " — the cut request may already have been executed and charged upstream, \
+so this re-dispatch may be a paid duplicate"
+    } else {
+        ""
+    };
+    format!(
+        "arcana: {class}retrying this turn in {} ({retry} of {limit}){duplicate}",
+        format_elapsed(wait)
+    )
+}
+
+/// A duration as an operator reads it: whole seconds past ten, one decimal
+/// below, so `0.3s` and `63s` both say something.
+fn format_elapsed(d: Duration) -> String {
+    if d.as_secs() >= 10 {
+        // Rounded through the integer parts rather than through `f64`: this
+        // string ends up in a done-marker a script may parse.
+        let rounded = d.as_secs() + u64::from(d.subsec_millis() >= 500);
+        format!("{rounded}s")
+    } else {
+        format!("{:.1}s", d.as_secs_f64())
+    }
 }
 
 /// Exhaustive reduction of a [`TurnOutcome`] to a loop directive.
@@ -2426,6 +2714,255 @@ mod terminal_reason_tests {
         let explained = TerminalReason::ContextWindowExhausted.explain();
         assert!(explained.contains("context window"), "{explained}");
         assert!(explained.contains("shorten"), "{explained}");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod connector_retry_tests {
+    use super::{
+        connector_fatal_detail, edge_backoff_pause, jitter_permille, plan_retry_pause, retry_line,
+        retry_pause, FatalCause, DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET, DEFAULT_EDGE_RETRY_LIMIT,
+        MAX_EDGE_RETRY_PAUSE, MAX_RETRY_AFTER,
+    };
+    use crate::connector::ConnectorError;
+    use std::time::Duration;
+
+    const BASE: Duration = Duration::from_secs(2);
+
+    fn edge_502() -> ConnectorError {
+        ConnectorError::Http {
+            status: 502,
+            message: "upstream returned a non-contract error body (16 bytes): error code: 502"
+                .into(),
+            retry_after: None,
+        }
+    }
+
+    /// The schedule, stated: 2, 4, 8, 16, 30 seconds. Written out rather than
+    /// computed, so a change to the arithmetic has to change the number an
+    /// operator was promised.
+    #[test]
+    fn the_gateway_schedule_is_two_four_eight_sixteen_thirty() {
+        let nominal: Vec<u64> = (1..=DEFAULT_EDGE_RETRY_LIMIT)
+            .map(|retry| edge_backoff_pause(retry, BASE, 1000).as_secs())
+            .collect();
+        assert_eq!(nominal, vec![2, 4, 8, 16, 30]);
+    }
+
+    /// The number the card asks for: worst-case wall time this schedule adds.
+    #[test]
+    fn the_worst_case_added_wall_time_is_sixty_seconds_of_sleep() {
+        let worst: u64 = (1..=DEFAULT_EDGE_RETRY_LIMIT)
+            .map(|retry| edge_backoff_pause(retry, BASE, 1000).as_secs())
+            .sum();
+        assert_eq!(worst, 60, "five gateway re-dispatches sleep at most 60s");
+        assert!(
+            Duration::from_secs(worst) <= DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
+            "the shipped schedule must fit inside the total budget without ever \
+             reaching it, or the budget would silently truncate it"
+        );
+    }
+
+    /// Jitter shortens, never lengthens — which is what makes the 60 s above a
+    /// ceiling rather than an average.
+    #[test]
+    fn jitter_only_ever_shortens_a_pause() {
+        for retry in 1..=DEFAULT_EDGE_RETRY_LIMIT {
+            let nominal = edge_backoff_pause(retry, BASE, 1000);
+            for permille in [0_u32, 1, 250, 499, 500, 750, 999, 1000, 9999] {
+                let pause = edge_backoff_pause(retry, BASE, permille);
+                assert!(pause <= nominal, "retry {retry}, permille {permille}");
+                assert!(
+                    pause * 2 >= nominal,
+                    "a pause below half of nominal is not jitter, it is a \
+                     different schedule: retry {retry}, permille {permille}"
+                );
+            }
+        }
+    }
+
+    /// The doubling is capped, so raising the limit cannot produce a pause
+    /// nobody chose.
+    #[test]
+    fn no_single_pause_exceeds_the_cap_however_far_the_schedule_runs() {
+        for retry in 1..=64 {
+            assert!(edge_backoff_pause(retry, BASE, 1000) <= MAX_EDGE_RETRY_PAUSE);
+        }
+    }
+
+    /// A zero base flattens the schedule — the property the integration tests
+    /// rely on to run without sleeping.
+    #[test]
+    fn a_zero_base_yields_no_pause_at_all() {
+        for retry in 1..=DEFAULT_EDGE_RETRY_LIMIT {
+            assert!(edge_backoff_pause(retry, Duration::ZERO, 1000).is_zero());
+        }
+    }
+
+    #[test]
+    fn the_clock_jitter_source_stays_inside_its_range() {
+        for _ in 0..1000 {
+            assert!(jitter_permille() <= 1000);
+        }
+    }
+
+    /// An upstream that named a `retryAfter` wins over both schedules, still
+    /// capped.
+    #[test]
+    fn a_named_retry_after_overrides_the_schedule() {
+        let named = ConnectorError::Http {
+            status: 503,
+            message: "upstream returned a non-contract error body (4 bytes): busy".into(),
+            retry_after: Some(7),
+        };
+        assert_eq!(
+            retry_pause(&named, 1, BASE, true),
+            Duration::from_secs(7),
+            "the upstream knows its own cooldown"
+        );
+        let absurd = ConnectorError::Http {
+            status: 503,
+            message: "upstream returned a non-contract error body (4 bytes): busy".into(),
+            retry_after: Some(15_681),
+        };
+        assert_eq!(retry_pause(&absurd, 1, BASE, true), MAX_RETRY_AFTER);
+    }
+
+    /// Anything that is not a gateway verdict keeps the flat pause it has
+    /// always had.
+    #[test]
+    fn a_non_gateway_failure_keeps_the_flat_backoff() {
+        let logical = ConnectorError::Logical {
+            http_status: 201,
+            kind: "network_error".into(),
+            message: "The operation was aborted due to timeout".into(),
+            retryable: true,
+            recommendation: "retry".into(),
+            retry_after: None,
+            first_dispatch_observation: None,
+        };
+        for retry in 1..=4 {
+            assert_eq!(retry_pause(&logical, retry, BASE, false), BASE);
+        }
+    }
+
+    /// The sum of the pauses is bounded, and the bound is reported rather than
+    /// silently turning a wait into no wait.
+    #[test]
+    fn the_pause_budget_clamps_then_refuses() {
+        let budget = Duration::from_secs(120);
+        assert_eq!(
+            plan_retry_pause(Duration::from_secs(60), Duration::ZERO, budget),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            plan_retry_pause(Duration::from_secs(60), Duration::from_secs(90), budget),
+            Some(Duration::from_secs(30)),
+            "the last pause is shortened to what is left, not granted in full"
+        );
+        assert_eq!(
+            plan_retry_pause(Duration::from_secs(60), Duration::from_secs(120), budget),
+            None
+        );
+        assert_eq!(
+            plan_retry_pause(Duration::from_secs(1), Duration::ZERO, Duration::ZERO),
+            None,
+            "a zero budget buys no re-dispatch at all"
+        );
+    }
+
+    /// Two 60 s `retryAfter` values are all the budget allows — the case the
+    /// per-pause cap cannot express.
+    #[test]
+    fn a_hostile_retry_after_cannot_park_a_turn_past_the_budget() {
+        let mut spent = Duration::ZERO;
+        let mut granted = 0;
+        while let Some(pause) =
+            plan_retry_pause(MAX_RETRY_AFTER, spent, DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET)
+        {
+            spent += pause;
+            granted += 1;
+        }
+        assert_eq!(granted, 2);
+        assert_eq!(spent, DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET);
+    }
+
+    /// The retry log says the thing an operator reconciling a bill needs.
+    #[test]
+    fn a_gateway_retry_warns_that_the_re_dispatch_may_be_paid_for_twice() {
+        let line = retry_line(&edge_502(), Duration::from_secs(4), 2, 5, true);
+        assert!(line.contains("HTTP 502"), "{line}");
+        assert!(line.contains("(2 of 5)"), "{line}");
+        assert!(line.contains("gateway"), "{line}");
+        assert!(
+            line.contains("may be a paid duplicate"),
+            "Model Connector settles the charge before the response reaches the \
+             socket, and we send no Idempotency-Key: {line}"
+        );
+    }
+
+    /// An envelope Model Connector authored means the provider call failed and
+    /// the hold was released — nothing was charged, so the line must not cry
+    /// duplicate.
+    #[test]
+    fn a_retry_of_a_failure_model_connector_reported_claims_no_duplicate() {
+        let logical = ConnectorError::Logical {
+            http_status: 201,
+            kind: "network_error".into(),
+            message: "The operation was aborted due to timeout".into(),
+            retryable: true,
+            recommendation: "retry".into(),
+            retry_after: None,
+            first_dispatch_observation: None,
+        };
+        let line = retry_line(&logical, Duration::from_secs(2), 1, 2, false);
+        assert!(!line.contains("duplicate"), "{line}");
+        assert!(line.contains("(1 of 2)"), "{line}");
+    }
+
+    /// A client-side timeout is the other way a completed, billed turn can be
+    /// lost on the wire.
+    #[test]
+    fn a_client_timeout_also_warns_about_a_duplicate() {
+        let timeout = ConnectorError::Timeout("timed out after 290s".into());
+        let line = retry_line(&timeout, Duration::from_secs(2), 1, 2, false);
+        assert!(line.contains("may be a paid duplicate"), "{line}");
+    }
+
+    /// The three facts the pilot's `"error": null` did not carry.
+    #[test]
+    fn the_fatal_detail_carries_status_attempts_and_elapsed() {
+        let detail = connector_fatal_detail(
+            &edge_502(),
+            6,
+            Duration::from_millis(63_400),
+            FatalCause::RetriesSpent {
+                limit: 5,
+                edge: true,
+            },
+        );
+        assert!(detail.contains("HTTP 502"), "{detail}");
+        assert!(detail.contains("6 attempt(s)"), "{detail}");
+        assert!(detail.contains("over 63s"), "{detail}");
+        assert!(detail.contains("5 re-dispatch(es)"), "{detail}");
+        assert!(detail.contains("error code: 502"), "{detail}");
+    }
+
+    /// Sub-ten-second elapsed times keep a decimal, because "three 502s over
+    /// 4.1s" is the whole diagnosis and "over 4s" loses half of it.
+    #[test]
+    fn a_short_streak_is_reported_with_a_decimal() {
+        let detail = connector_fatal_detail(
+            &edge_502(),
+            3,
+            Duration::from_millis(4_100),
+            FatalCause::RetriesSpent {
+                limit: 2,
+                edge: false,
+            },
+        );
+        assert!(detail.contains("over 4.1s"), "{detail}");
     }
 }
 
