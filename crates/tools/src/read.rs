@@ -28,21 +28,39 @@ struct ReadInput {
 
 pub struct ReadTool {
     rules: Arc<ToolRuleSet>,
+    root: Option<PathBuf>,
 }
 
 impl Default for ReadTool {
     fn default() -> Self {
         Self {
             rules: Arc::new(ToolRuleSet::default()),
+            root: None,
         }
     }
 }
 
 impl ReadTool {
-    /// Construct a tool with an explicit rule set.
+    /// Construct a tool with an explicit rule set. Relative paths resolve
+    /// against the process working directory.
     #[must_use]
     pub fn new(rules: Arc<ToolRuleSet>) -> Self {
-        Self { rules }
+        Self { rules, root: None }
+    }
+
+    /// Construct a tool that resolves relative paths against `root` instead of
+    /// the ambient process working directory.
+    ///
+    /// A headless run is given one working directory on the command line and
+    /// may share a process with other work; resolving against `std::env::
+    /// current_dir()` makes the tool's reach depend on global mutable state
+    /// nobody in the call chain can see.
+    #[must_use]
+    pub fn with_root(rules: Arc<ToolRuleSet>, root: impl Into<PathBuf>) -> Self {
+        Self {
+            rules,
+            root: Some(root.into()),
+        }
     }
 }
 
@@ -72,8 +90,7 @@ impl Tool for ReadTool {
         let input = invocation.into_input();
         let parsed: ReadInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
-        let cwd = std::env::current_dir()
-            .map_err(|err| ToolError::ExecutionFailed(format!("cwd unavailable: {err}")))?;
+        let cwd = crate::path_guard::working_directory(self.root.as_deref())?;
         let canonical: PathBuf = path_guard::check(&parsed.path, &self.rules, &cwd)?;
         let cap = parsed.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
         let metadata = tokio::fs::metadata(&canonical).await.map_err(|err| {

@@ -95,9 +95,16 @@ fn an_offline_demo_states_that_nothing_was_charged() {
         .stdout(predicate::str::contains("$").not());
 }
 
+/// `--live` that cannot go live must FAIL, not quietly go offline.
+///
+/// It used to print `(live requested but ARCANA_MC_TOKEN unset; using offline
+/// demo)`, replay the canned offline script, and exit `0`. The first line said
+/// so and every later line — including the terminal verdict and the exit code
+/// a wrapper reads — described a live run that never happened. This test was
+/// the one asserting that behaviour; it now asserts the opposite, which is the
+/// only honest reading of an unmet requirement.
 #[test]
-fn live_requested_without_a_token_falls_back_and_still_claims_no_charge() {
-    // The fallback path is the one a first run actually hits.
+fn live_requested_without_a_token_fails_instead_of_falling_back() {
     let state = tempfile::TempDir::new().unwrap();
     Command::cargo_bin("arcana")
         .unwrap()
@@ -105,6 +112,28 @@ fn live_requested_without_a_token_falls_back_and_still_claims_no_charge() {
         .env("XDG_STATE_HOME", state.path())
         .args(["demo", "--live"])
         .assert()
-        .stdout(predicate::str::contains("nothing was charged"))
+        .failure()
+        .stderr(predicate::str::contains("ARCANA_MC_TOKEN"))
+        // Nothing ran, so nothing may be reported about a run.
+        .stdout(predicate::str::contains("ATTEMPT").not());
+}
+
+/// The same lie in its costlier costume: with a key present but the Model
+/// Connector origin refused by the production pin, the offline replay also
+/// produced a `$0.002000 this turn` billing line for a dispatch that never
+/// left the machine.
+#[test]
+fn live_requested_against_an_unapproved_origin_fails_and_invents_no_charge() {
+    let state = tempfile::TempDir::new().unwrap();
+    Command::cargo_bin("arcana")
+        .unwrap()
+        // Not a credential: only long enough to reach the base-URL check.
+        .env("ARCANA_MC_TOKEN", "not-a-real-key")
+        .env("ARCANA_MC_BASE_URL", "http://127.0.0.1:9")
+        .env("XDG_STATE_HOME", state.path())
+        .args(["demo", "--live"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not approved"))
         .stdout(predicate::str::contains("$").not());
 }

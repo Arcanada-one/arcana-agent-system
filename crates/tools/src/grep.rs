@@ -28,12 +28,23 @@ fn default_recursive() -> bool {
 }
 
 #[derive(Default)]
-pub struct GrepTool;
+pub struct GrepTool {
+    root: Option<PathBuf>,
+}
 
 impl GrepTool {
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self { root: None }
+    }
+
+    /// Resolve a relative `path` (including the default `.`) against `root`
+    /// rather than the ambient process working directory.
+    #[must_use]
+    pub fn with_root(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: Some(root.into()),
+        }
     }
 }
 
@@ -98,8 +109,11 @@ impl Tool for GrepTool {
             .build()
             .map_err(|err| ToolError::InvalidInput(format!("invalid regex: {err}")))?;
 
+        let base = crate::path_guard::working_directory(self.root.as_deref())?;
+        let target = base.join(&parsed.path);
+
         let mut files = Vec::new();
-        collect_files(Path::new(&parsed.path), parsed.recursive, &mut files)
+        collect_files(&target, parsed.recursive, &mut files)
             .await
             .map_err(|err| ToolError::ExecutionFailed(format!("walk {}: {err}", parsed.path)))?;
 

@@ -8,6 +8,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`arcana run` — one task, unattended, with real tools.** `arcana run --cwd
+  DIR --prompt-stdin` drives a single task to completion in a working
+  directory: the built-in `read`, `write`, `edit`, `grep` and `bash` tools are
+  registered and rooted at that directory, and a workspace policy replaces the
+  interactive prompt — auto-allow inside the directory, refuse paths outside
+  it (compared after canonicalization, so symlinks and `..` are covered),
+  refuse a closed list of destructive commands. The last line of stdout is
+  always `ARCANA_RUN_DONE <json>`, printed even when the run never started, so
+  a caller never has to interpret a missing marker. Exit `0` on completion,
+  `130` on interrupt, `1` otherwise. Always live: there is no offline mode,
+  because replaying the canned offline turns against a real working directory
+  would produce a receipt for work that never happened.
+
+  The command also carries the reason a task could previously print a shell
+  command and change nothing: the driver recognises exactly one tool-call
+  encoding, and no surface had ever told a model so. `run` states the wire
+  format and the tool catalogue in its system prompt, built from the tools
+  that are actually registered.
+
+  The marker carries `tool_calls` — the number of tool calls the executor
+  actually carried out — and a run that executed none of them is `NoAction`:
+  `"completed":false`, exit `1`. Told in plain language to create a file, a
+  model answered `The file has been created successfully.` in a single turn,
+  called nothing, created nothing, and the run reported `"completed":true` and
+  exited `0`. Judging a run by its own sentence was the last way this command
+  could still hand a runner a receipt for work nobody did.
+- **The loop asks once for an action.** When a run that requires an action gets
+  a first answer with no tool call, the driver tells the model that nothing was
+  executed and asks it to act, buying exactly one more dispatch
+  (`ContinueReason::NoActionRetry`). Off by default — an interactive turn may
+  legitimately be a question answered in prose — and switched on by
+  `DriverConfig::require_action`, which `arcana run` sets.
+
+  Measured, 10 live runs per arm, same prompt and same model
+  (`deepseek-v4-flash`), judged by the file on disk: **without** the nudge 4/10
+  runs produced the file, and all 6 that did not reported `"completed":false`
+  with `"tool_calls":0` and exit `1` — honest, but a 40% success rate.
+  **With** it, 10/10 produced the file; the nudge fired in 5 of those 10 and
+  the model acted every time. The verdict alone stops the lie; the nudge is
+  what makes the command usable.
+- **Explicit workspace roots for the built-in tools.** `ReadTool`,
+  `WriteTool` and `EditTool` gain `with_root`, `GrepTool` gains `with_root`
+  and `BashTool` gains `in_directory`. Each still defaults to the process
+  working directory, so existing behaviour is unchanged; what is new is that
+  a caller can say where a tool's reach ends instead of depending on global
+  mutable state shared with every other task in the process.
 - **`arcana demo --first-dispatch-prompt-stdin`.** The exact prompt for a
   measured live first dispatch can now be handed to the demo on stdin instead
   of argv, so a baseline or compiled corpus prompt never appears in a process
@@ -20,6 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Connector's own 100,000 UTF-16-code-unit limit.
 
 ### Changed
+- **A `--live` that cannot go live now fails instead of going offline.**
+  `demo --live` and the interactive `--live` session used to print `(live
+  requested but unavailable: ...; using offline demo)`, replay the canned
+  offline script, and exit `0` — and, with a key present, print a dollar
+  figure for a dispatch that never left the machine. A caller reading the exit
+  code learned that a live run had succeeded; every part of that was false.
+  Both now exit non-zero with the cause on stderr, having run and charged
+  nothing. The production base-URL pin that refuses an unapproved Model
+  Connector origin is unchanged: it is a deliberate control, and the fix was
+  to report that it refused.
 - **sha2 0.11.** Upgraded from 0.10.9. `Sha256::digest` now returns
   `digest::Array`, which no longer implements `LowerHex`; hex-formatting
   call sites format the digest bytes manually instead of via `{:x}`.
@@ -35,6 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of `CallToolResult` directly. Converted at the trait boundary via
   the provided `From<CallToolResult>` impl; internal helpers still return
   `CallToolResult` unchanged.
+
+### Fixed
+- **Path-traversal gap in the filesystem tools' path guard.** When neither a
+  path nor its parent existed, `path_guard::resolve` returned the path with
+  its `..` components intact, so any downstream "is this inside my directory?"
+  test answered yes for `<root>/missing/../../escaped.txt`. With
+  `create_parent_dirs` set, that is a write one level above the directory the
+  caller believed it had confined. Unresolvable paths are now normalized
+  lexically before they are returned.
 
 ## [0.2.0] - unreleased
 

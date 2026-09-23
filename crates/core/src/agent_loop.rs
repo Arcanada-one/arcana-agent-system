@@ -106,6 +106,10 @@ pub enum ContinueReason {
     HookContinuation,
     /// A microcompact pass completed inline; proceed with the trimmed window.
     MicrocompactCompleted,
+    /// The model answered without calling a tool while the run requires an
+    /// action. It has been told once that nothing was executed and asked to
+    /// act; this buys it exactly one more dispatch.
+    NoActionRetry,
 }
 
 /// Reasons a turn terminates the run.
@@ -129,6 +133,14 @@ pub enum TerminalReason {
     ConnectorFatal,
     /// Mandatory capability audit failed; executor is latched closed.
     AuditFatal,
+    /// The run required an action and the model never executed a tool call.
+    ///
+    /// Distinct from [`Self::Completed`] on purpose. A model asked to create a
+    /// file answered `The file has been created successfully.` in one turn,
+    /// called nothing, and the run reported success and exited `0` — a receipt
+    /// for work that no tool ever did. Only [`DriverConfig::require_action`]
+    /// runs can end here; an interactive turn is allowed to be a conversation.
+    NoAction,
 }
 
 impl TerminalReason {
@@ -153,6 +165,9 @@ impl TerminalReason {
             }
             Self::ConnectorFatal => "the Model Connector could not complete the request",
             Self::AuditFatal => "the capability audit failed and the executor is latched closed",
+            Self::NoAction => {
+                "the model answered without running a single tool, so nothing was done"
+            }
         }
     }
 
@@ -398,6 +413,13 @@ pub struct DriverConfig {
     /// to the model id written onto `ExecuteRequest.model`. The former static
     /// `model` above seeds this policy's `Default` fallback in [`Driver::new`].
     pub policy: ModelPolicy,
+    /// Require at least one executed tool call before the run may be called
+    /// completed.
+    ///
+    /// Off by default: an interactive turn may legitimately be a question
+    /// answered in prose. Headless runs set it, because there nobody reads the
+    /// prose and the only thing downstream sees is the exit code.
+    pub require_action: bool,
 }
 
 impl DriverConfig {
@@ -416,6 +438,7 @@ impl DriverConfig {
             first_dispatch_measurement: None,
             first_dispatch_prompt: None,
             policy: ModelPolicy::new(),
+            require_action: false,
         }
     }
 
@@ -450,6 +473,12 @@ pub struct RunOutput {
     pub final_text: Option<String>,
     /// Number of connector attempts consumed.
     pub turns: u32,
+    /// Tool calls the executor actually carried out in this run.
+    ///
+    /// Evidence, not intent: a call the permission cascade refused, or one the
+    /// model only described in prose, is not counted. Zero here means the run
+    /// changed nothing through a tool, whatever its final text claims.
+    pub tool_calls: u32,
     /// Cost accounting snapshot at termination.
     pub cost: CostSnapshot,
     /// The ordered sequence of model ids selected, one per connector call
@@ -479,6 +508,51 @@ pub struct Driver<'a> {
 enum StepResult {
     Continue(ContinueReason),
     Terminal(TerminalReason, Option<String>),
+}
+
+/// What the loop tells a model that answered without acting.
+///
+/// Phrased as a fact about the machine, not as encouragement: the model is
+/// told what did NOT happen and what encoding would make it happen. An earlier
+/// live transcript had the model insisting the file existed; asking it to
+/// verify with a tool call gives it a way to be right that still produces
+/// evidence.
+const NO_ACTION_NUDGE: &str =
+    "NOTHING WAS EXECUTED. Your last reply contained no tool call, so no \
+command ran, no file was written, and the task is NOT done — printing a sentence is not an action. \
+Reply now with exactly one fenced `tool_call` block that does the work. If you believe the task is \
+already satisfied, prove it with a tool call (for example `read` the file you say you wrote) \
+before you answer in prose.";
+
+/// Mutable state threaded through every step of one run.
+///
+/// It exists so a new per-run fact (the executed-tool-call count, the spent
+/// nudge) is added in one place rather than as another `&mut` parameter on a
+/// signature that already had four.
+struct RunState {
+    history: Vec<HistoryEntry>,
+    /// Connector attempts consumed; enforces `max_turns`.
+    attempts: u32,
+    /// Ordered per-step model ids.
+    selected: Vec<String>,
+    first_dispatch_observation: Option<UnverifiedFirstDispatchObservationV0>,
+    /// Tool calls the executor actually carried out.
+    tool_calls: u32,
+    /// Whether the one no-action nudge has been used.
+    nudge_spent: bool,
+}
+
+impl RunState {
+    fn new(task: &str) -> Self {
+        Self {
+            history: vec![HistoryEntry::Task(task.to_owned())],
+            attempts: 0,
+            selected: Vec::new(),
+            first_dispatch_observation: None,
+            tool_calls: 0,
+            nudge_spent: false,
+        }
+    }
 }
 
 /// What the exhaustive `reduce` tells the run loop to do.
@@ -514,29 +588,20 @@ impl<'a> Driver<'a> {
 
     /// Drive `task` to a terminal outcome — the single public entrypoint.
     pub async fn run(&self, task: &str) -> RunOutput {
-        let mut first_dispatch_observation = None;
         if let Some(reason) = self.config.invalid_reason() {
             return RunOutput {
                 reason,
                 final_text: None,
                 turns: 0,
+                tool_calls: 0,
                 cost: self.cost.snapshot(),
                 selected_models: Vec::new(),
-                first_dispatch_observation,
+                first_dispatch_observation: None,
             };
         }
-        let mut history = vec![HistoryEntry::Task(task.to_owned())];
-        let mut attempts: u32 = 0;
-        let mut selected: Vec<String> = Vec::new();
+        let mut state = RunState::new(task);
         loop {
-            let step = self
-                .step(
-                    &mut history,
-                    &mut attempts,
-                    &mut selected,
-                    &mut first_dispatch_observation,
-                )
-                .await;
+            let step = self.step(&mut state).await;
             let outcome = match &step {
                 StepResult::Continue(reason) => TurnOutcome::Continue(*reason),
                 StepResult::Terminal(reason, _) => TurnOutcome::Terminal(*reason),
@@ -550,17 +615,18 @@ impl<'a> Driver<'a> {
                     };
                     let cost = self.cost.snapshot();
                     let reason = if reason == TerminalReason::AbortedByOperator {
-                        self.record_abort(attempts, &selected, &cost)
+                        self.record_abort(state.attempts, &state.selected, &cost)
                     } else {
                         reason
                     };
                     return RunOutput {
                         reason,
                         final_text,
-                        turns: attempts,
+                        turns: state.attempts,
+                        tool_calls: state.tool_calls,
                         cost,
-                        selected_models: selected,
-                        first_dispatch_observation,
+                        selected_models: state.selected,
+                        first_dispatch_observation: state.first_dispatch_observation,
                     };
                 }
             }
@@ -608,13 +674,9 @@ impl<'a> Driver<'a> {
     /// turn | final). `attempts` is the shared connector-attempt counter that
     /// enforces `max_turns`; `selected` accumulates the ordered per-step model
     /// ids.
-    async fn step(
-        &self,
-        history: &mut Vec<HistoryEntry>,
-        attempts: &mut u32,
-        selected: &mut Vec<String>,
-        first_dispatch_observation: &mut Option<UnverifiedFirstDispatchObservationV0>,
-    ) -> StepResult {
+    async fn step(&self, state: &mut RunState) -> StepResult {
+        let history = &mut state.history;
+        let attempts = &mut state.attempts;
         if self.cancel.is_cancelled() {
             return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
         }
@@ -658,7 +720,7 @@ impl<'a> Driver<'a> {
             turn: *attempts,
         };
         let choice = self.config.policy.select(classify(&ctx));
-        selected.push(choice.model_id.clone());
+        state.selected.push(choice.model_id.clone());
         *attempts = attempts.saturating_add(1);
         let resp = match self
             .call_connector(prompt, Some(choice.model_id), first_dispatch)
@@ -667,18 +729,22 @@ impl<'a> Driver<'a> {
             Ok(resp) => resp,
             Err((reason, observation)) => {
                 if first_dispatch {
-                    *first_dispatch_observation = observation;
+                    state.first_dispatch_observation = observation;
                 }
                 return StepResult::Terminal(reason, None);
             }
         };
         if first_dispatch {
-            first_dispatch_observation.clone_from(&resp.first_dispatch_observation);
+            state
+                .first_dispatch_observation
+                .clone_from(&resp.first_dispatch_observation);
         }
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
             return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
         }
-        history.push(HistoryEntry::Assistant(resp.result.clone()));
+        state
+            .history
+            .push(HistoryEntry::Assistant(resp.result.clone()));
         match interpret(&resp) {
             AssistantAction::Final { text } => {
                 // An answer that arrived is DELIVERED even when the operator
@@ -689,12 +755,24 @@ impl<'a> Driver<'a> {
                 // inert on the commonest shape there is, a task answered in one
                 // dispatch, and tells a wrapper script the run was never
                 // interrupted at all.
-                let reason = if self.cancel.is_cancelled() {
-                    TerminalReason::AbortedByOperator
-                } else {
-                    TerminalReason::Completed
-                };
-                StepResult::Terminal(reason, Some(text))
+                if self.cancel.is_cancelled() {
+                    return StepResult::Terminal(TerminalReason::AbortedByOperator, Some(text));
+                }
+                // A run that required an action and executed nothing did not
+                // complete, whatever its prose says. Tell the model once that
+                // nothing ran — measured live, most models then act — and end
+                // on `NoAction` if the second answer is empty too.
+                if self.config.require_action && state.tool_calls == 0 {
+                    if state.nudge_spent {
+                        return StepResult::Terminal(TerminalReason::NoAction, Some(text));
+                    }
+                    state.nudge_spent = true;
+                    state
+                        .history
+                        .push(HistoryEntry::Injected(NO_ACTION_NUDGE.to_owned()));
+                    return StepResult::Continue(ContinueReason::NoActionRetry);
+                }
+                StepResult::Terminal(TerminalReason::Completed, Some(text))
             }
             AssistantAction::ToolCall { name, input } => {
                 // Re-check between the answer and the side effect. The
@@ -707,11 +785,11 @@ impl<'a> Driver<'a> {
                 if self.cancel.is_cancelled() {
                     return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
                 }
-                history.push(HistoryEntry::ToolCall {
+                state.history.push(HistoryEntry::ToolCall {
                     name: name.clone(),
                     input: input.to_string(),
                 });
-                self.run_tool_turn(history, &name, input).await
+                self.run_tool_turn(state, &name, input).await
             }
         }
     }
@@ -773,12 +851,8 @@ impl<'a> Driver<'a> {
     /// Reuse-only tool turn: cascade → `pre_tool` → dispatch → `post_tool`, folding
     /// results into `history`. A dispatch error folds back as a tool-result
     /// string (recoverable, bounded by `max_turns`) rather than terminating.
-    async fn run_tool_turn(
-        &self,
-        history: &mut Vec<HistoryEntry>,
-        name: &str,
-        input: Value,
-    ) -> StepResult {
+    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
+        let history = &mut state.history;
         let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
         let capability = match self.executor.execute(&ctx, name, input).await {
             Ok(capability) => capability,
@@ -805,13 +879,18 @@ impl<'a> Driver<'a> {
                 return StepResult::Continue(ContinueReason::ToolResultsReady);
             }
         };
-        history.push(HistoryEntry::ToolResult {
+        // Counted here and nowhere else: the executor returned, so the tool
+        // ran. A denied or hook-aborted call left through an arm above, and a
+        // dispatch error folds back as a tool result without reaching this
+        // line, because a tool that failed to dispatch did no work either.
+        state.tool_calls = state.tool_calls.saturating_add(1);
+        state.history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
             content: capability.output.content,
         });
         let injected_context = !capability.injected.is_empty();
         for line in capability.injected {
-            history.push(HistoryEntry::Injected(line));
+            state.history.push(HistoryEntry::Injected(line));
         }
         if injected_context {
             StepResult::Continue(ContinueReason::HookContinuation)
@@ -833,13 +912,14 @@ fn reduce(outcome: TurnOutcome) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 6 `ContinueReason` variants.
+/// Exhaustive over all 7 `ContinueReason` variants.
 fn reduce_continue(reason: ContinueReason) -> LoopControl {
     match reason {
         ContinueReason::ToolResultsReady
         | ContinueReason::HookContinuation
         | ContinueReason::ReactiveCompactRetry
-        | ContinueReason::MicrocompactCompleted => LoopControl::Reloop,
+        | ContinueReason::MicrocompactCompleted
+        | ContinueReason::NoActionRetry => LoopControl::Reloop,
         // Inert under the unary Phase-C connector (no streaming, no token
         // cursor): a documented no-op re-loop — never
         // `unreachable!`/`panic!` (clippy `panic = warn` under `-D warnings`).
@@ -853,7 +933,7 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 8 `TerminalReason` variants.
+/// Exhaustive over all 10 `TerminalReason` variants.
 fn reduce_terminal(reason: TerminalReason) -> LoopControl {
     match reason {
         TerminalReason::Completed
@@ -864,7 +944,8 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::PermissionDenied
         | TerminalReason::ContextWindowExhausted
         | TerminalReason::ConnectorFatal
-        | TerminalReason::AuditFatal => LoopControl::Stop(reason),
+        | TerminalReason::AuditFatal
+        | TerminalReason::NoAction => LoopControl::Stop(reason),
     }
 }
 
@@ -875,7 +956,7 @@ mod terminal_reason_tests {
 
     /// Every variant, so a new one cannot be added without deciding what the
     /// operator is told when it fires.
-    const ALL: [TerminalReason; 9] = [
+    const ALL: [TerminalReason; 10] = [
         TerminalReason::Completed,
         TerminalReason::MaxTurns,
         TerminalReason::MaxCostUsd,
@@ -885,6 +966,7 @@ mod terminal_reason_tests {
         TerminalReason::ContextWindowExhausted,
         TerminalReason::ConnectorFatal,
         TerminalReason::AuditFatal,
+        TerminalReason::NoAction,
     ];
 
     #[test]
