@@ -854,8 +854,10 @@ mod tests {
         // The KB loop registers exactly one tool, so `bash` is refused at the
         // `registry` layer. Since A2-204 that refusal is handed back to the
         // model instead of ending the run on the spot, so a model that insists
-        // is stopped by the consecutive-denial cap rather than by the first
-        // refusal. The safety property is unchanged and is what the last two
+        // is stopped by `MAX_DENIALS_PER_DISTINCT_CALL` — the bound on how
+        // often ONE distinct call may be refused — rather than by the first
+        // refusal. (It was a flat consecutive-denial cap until A2-225, and
+        // that cap was documentation rather than code until A2-230.) The safety property is unchanged and is what the last two
         // assertions pin: nothing but `arcana_search` can ever execute, and no
         // request reached the backend.
         let server = MockServer::start().await;
