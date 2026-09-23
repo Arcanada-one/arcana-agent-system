@@ -5,7 +5,8 @@
 use std::time::Duration;
 
 use arcana_core::connector::{
-    ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, NON_CONTRACT_BODY_HEADLINE,
+    ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, IDEMPOTENCY_HEADER,
+    NON_CONTRACT_BODY_HEADLINE,
 };
 use async_trait::async_trait;
 use url::Url;
@@ -477,11 +478,22 @@ impl ModelConnector for ModelConnectorClient {
             req.timeout_ms = u64::try_from(self.request_timeout.as_millis()).ok();
         }
         let wait = self.http_wait;
-        let resp = self
+        let mut pending = self
             .http
             .post(url)
             .bearer_auth(self.api_key.secret())
-            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::ACCEPT, "application/json");
+        // The intent key is a HEADER, never a body field: Model Connector reads
+        // it with `@Headers(IDEMPOTENCY_HEADER)` and validates the body against
+        // a Zod schema that does not carry the key. `IdempotencyKey` is
+        // printable ASCII by construction, so this cannot produce an invalid
+        // header value — which matters, because a header builder error would
+        // surface as a transport failure and kill the very retry the key
+        // exists to make free.
+        if let Some(key) = req.idempotency_key.as_ref() {
+            pending = pending.header(IDEMPOTENCY_HEADER, key.as_str());
+        }
+        let resp = pending
             .json(&req)
             .send()
             .await

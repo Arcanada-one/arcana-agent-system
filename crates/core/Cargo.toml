@@ -27,6 +27,9 @@ tokio-util = { version = "0.7", default-features = false }
 toml = "1.1"
 tracing = "0.1"
 tracing-appender = "0.2"
+# One v4 uuid per run, as the stable half of the `Idempotency-Key` a turn's
+# re-dispatches share (A2-234). Already in the workspace lock via `arcana-mcp`.
+uuid = { version = "1", features = ["v4"] }
 xdg = "3.0"
 
 [dev-dependencies]

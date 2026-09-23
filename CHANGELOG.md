@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A re-dispatched turn is no longer paid for twice.** A2-230 gave a turn cut
+  off by the network edge up to five re-dispatches and, in the same breath,
+  measured what each of them cost: Model Connector settles the charge in the
+  same transaction as the request row *before* the response reaches the socket,
+  so a request the edge cut may already have been executed and billed — and
+  `arcana` sent no `Idempotency-Key`, so every re-dispatch was a second provider
+  call and a second charge. Raising the budget from two to five raised the worst
+  case with it.
+
+  Every dispatch now carries `Idempotency-Key: arcana.<run-uuid>.<turn>` —
+  stable across all re-dispatches of one turn, fresh on the next turn. A request
+  that was executed and billed comes back as a stored replay: one provider call
+  and one ledger row however many times the client re-POSTs. Measured against a
+  stub implementing Model Connector's own intent-store contract
+  (`crates/connectors/tests/idempotent_turn_retry.rs`): an edge-cut turn that
+  cost two provider calls before costs one now.
+
+  The key is bound to the payload, not assumed stable with it: the request's
+  fingerprint is recorded when the key is minted, and a payload that changes
+  under a key gets a fresh one rather than the server's `idempotency_key_reused`
+  refusal. Model Connector's other two answers are handled by name —
+  `idempotency_conflict` (the first attempt is still running upstream) is waited
+  out on the patient schedule under the *same* key, never a new one, because a
+  new key is what would dispatch and charge a second time;
+  `idempotency_replay_unavailable` ends the run and says the turn was charged
+  exactly once rather than implying it never ran. The retry line states the
+  outcome instead of the risk: a cut re-dispatch "is replayed rather than
+  charged again".
+- **The model is told which commands the destructive floor refuses.** Pilot
+  A2-231 (2026-09-23) ran 78 turns, 62 tool calls and $0.27, then asked for
+  `rm -rf` on its own scratch directory; the floor refused, correctly, and the
+  run ended there. The model was not evading the floor — `rm -r` without `-f` is
+  permitted and would have done exactly what it wanted — it had never been told.
+  The system prompt's only word on the subject named no command and offered no
+  alternative.
+
+  The prompt now carries the floor's closed lists in full, generated from the
+  same constants the floor evaluates, plus the permitted alternatives and the
+  fact that a floor refusal ends the run with no second attempt. A command added
+  to the floor therefore cannot start refusing runs silently, and
+  `crates/cli/tests/run_destructive_floor_prompt.rs` asserts that what the
+  prompt *states* about a command equals what the floor *does* to it.
 - **Three 502s from the edge no longer throw away a finished run.** Measured on
   pilot A2-204c5 (2026-09-23, `arcana` c24cd49): 94 turns, 61 tool calls, the
   test written and four mutants run — ended `ConnectorFatal` at $0.34 when three

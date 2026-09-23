@@ -146,6 +146,22 @@ The policy that replaces the interactive prompt:
 
 A refused call ends the run with `PermissionDenied` rather than looping.
 
+**The model is told this list, in full, in its system prompt.** It is generated
+from the same constants the policy evaluates, so a command added to the floor
+appears in the next run's prompt without anybody editing prose, and it names
+the permitted alternatives — `rm -r <dir>` without `-f` deletes a tree and is
+allowed; `mkdir` a fresh sub-directory rather than reaching for `git clean`.
+
+That disclosure is deliberate and it is not a downgrade. A floor refusal is
+still never handed *back* to the model as a correction — answering a model that
+has just probed for an effect invites a hunt for a synonym the list does not
+carry. Telling it the rule before it acts is a different act, and the cost of
+not doing it was measured: pilot A2-231 (2026-09-23) ran 78 turns, 62 tool
+calls and $0.27, then asked for `rm -rf` on its own scratch directory and lost
+all of it to a flag. The floor was right; the model had never been told, and
+`rm -r` would have done what it wanted. This is also not a security boundary in
+the first place — see *What this is not* below.
+
 ### What this is not
 
 The path checks are exact. **The shell check is a heuristic over the command
@@ -344,21 +360,49 @@ finished died on **three** `HTTP 502 … error code: 502` — 16 bytes of
 Cloudflare — inside about four seconds, which is not a serious attempt to
 outlast an edge.
 
-> **A gateway retry may be paid for twice.** Model Connector settles the charge
+> **A gateway retry is not paid for twice.** Model Connector settles the charge
 > in the same transaction as the request row *before* the response is written
-> to the socket, and `arcana` sends no `Idempotency-Key`. A request the edge cut
-> may therefore already have been executed and billed, and the re-dispatch is a
-> second provider call and a second charge. The retry line says so:
+> to the socket, so a request the edge cut may already have been executed and
+> billed. Every dispatch therefore carries an `Idempotency-Key` —
+> `arcana.<run-uuid>.<turn>`, the same value on every re-dispatch of one turn
+> and a fresh one on the next — and a request that was executed under it comes
+> back as a stored replay rather than a second provider call. The retry line
+> says so:
 >
 > ```
 > arcana: HTTP 502 is the gateway in front of the Model Connector, not the Model
 > Connector — retrying this turn in 4.0s (2 of 5) — the cut request may already
-> have been executed and charged upstream, so this re-dispatch may be a paid
-> duplicate
+> have been executed and charged upstream, so the re-dispatch carries the same
+> Idempotency-Key and is replayed rather than charged again
 > ```
 >
-> A failure Model Connector itself reported carries no such warning: there the
+> A failure Model Connector itself reported carries no such clause: there the
 > provider call failed, the hold was released and nothing was charged.
+>
+> Before A2-234 no key was sent, and the same line could only warn that the
+> re-dispatch "may be a paid duplicate" — which, with five gateway
+> re-dispatches allowed, was up to five charges for one turn.
+
+A third class joins the two in the table above. When the first attempt of a
+turn is **still running upstream**, Model Connector refuses the re-dispatch
+with `idempotency_conflict` rather than starting a second paid request. The
+loop waits it out on the same key and the patient schedule, because the answer
+is being produced and is already paid for — and because reissuing under a new
+key is precisely what would be dispatched and charged twice:
+
+```
+arcana: the first attempt of this turn is still running upstream — waiting for
+the answer it is already producing rather than dispatching a second paid one,
+retrying this turn in 8.0s (3 of 5)
+```
+
+Two other answers are terminal. `idempotency_replay_unavailable` means the
+request completed and was charged exactly once but its answer was too large to
+store — the run stops and the verdict says the turn was paid for, rather than
+implying it never ran. `idempotency_key_reused` means the key belonged to a
+different request; nothing of ours was dispatched or charged under it, so the
+turn is re-dispatched under a fresh key, and the line that reports it says
+outright that it is a defect in `arcana` rather than in the connector.
 
 When the re-dispatches are spent, the run ends `ConnectorFatal` — and the
 verdict names the status, the attempts and how long they took, in the marker's

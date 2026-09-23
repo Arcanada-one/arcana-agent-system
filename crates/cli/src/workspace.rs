@@ -425,6 +425,92 @@ fn contains_phrase(segment: &[String], phrase: &[&str]) -> bool {
         .any(|window| window.iter().zip(phrase).all(|(word, want)| word == want))
 }
 
+/// The floor's refused-command list, rendered for the model's system prompt.
+///
+/// ## Why the list is disclosed at all
+///
+/// The module's own rule is that a floor refusal is NOT handed back to the
+/// model (`arcana_core::agent_loop::RECOVERABLE_DENIAL_LAYERS`), because
+/// naming the refused word to a model that has just asked for the effect
+/// invites a hunt for a synonym the list does not carry. That rule is about
+/// what happens AFTER a probe, and it stands.
+///
+/// Telling the model the rule BEFORE it acts is a different act, and the
+/// measured cost of not doing it is the argument for it: pilot A2-231
+/// (`/home/dev/aup/arc2/runs/A2-231/log`, 2026-09-23) ran 78 turns and 62
+/// tool calls, then asked for `rm -rf` on its own scratch directory, and the
+/// floor correctly refused and ended the run — 0.27 USD and every turn of
+/// work thrown away over a flag. The model was not evading the floor; it did
+/// not know the floor existed, and the prompt's one vague clause ("recursive
+/// force deletion … refused by policy") gave it no way to be right. `rm -r`
+/// without `-f`, which is permitted, would have done exactly what it wanted.
+///
+/// This disclosure is also not a security downgrade, because the floor is not
+/// a security boundary: the module header says outright that the `bash` check
+/// is a string heuristic with no namespace, seccomp or chroot under it, and
+/// that a caller must therefore run in a disposable worktree. What the floor
+/// protects against is an unwitting command, and an unwitting model that is
+/// never told the rule cannot follow it.
+///
+/// ## Why it is generated rather than written
+///
+/// Every word comes from the same constants the floor evaluates, so a command
+/// added to [`REFUSED_COMMANDS`] or [`REFUSED_PHRASES`] cannot be refused
+/// silently: it appears in the next prompt without anybody remembering to
+/// edit prose. `crates/cli/tests/run_destructive_floor_prompt.rs` pins both
+/// halves — that the prompt names every entry, and that what it STATES about
+/// a command equals what [`WorkspacePolicy::assess`] actually does to it.
+#[must_use]
+pub fn destructive_floor_disclosure() -> String {
+    let mut names: Vec<&str> = REFUSED_COMMANDS.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    let phrases = REFUSED_PHRASES
+        .iter()
+        .map(|(phrase, _)| format!("`{}`", phrase.join(" ")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "DESTRUCTIVE COMMANDS. The `bash` commands below are refused BEFORE they run, and a \
+refusal here ENDS THE RUN immediately: it is not handed back to you as a correction, so there is \
+no second attempt and everything done so far is lost. Check each command against this list \
+before you send it.\n\
+\n\
+Refused by name, as the command word of any pipeline stage or `;`/`&&` list element: {names}.\n\
+\n\
+Refused as a phrase: {phrases}.\n\
+\n\
+Refused by shape: `rm` carrying a recursive flag (`-r`, `-R`, `--recursive`) AND a force flag \
+(`-f`, `--force`) at the same time — `rm -rf`, `rm -fr`, `rm -Rf` and `rm -r --force` are all \
+refused; a fork bomb; any command longer than {max_bytes} bytes.\n\
+\n\
+Use these instead. `rm -r <dir>` removes a directory and everything in it and is PERMITTED — \
+recursion alone is fine, it is only the combination with a force flag that is refused. `rm \
+<file>` and `rm -f <file>` are permitted. For a clean working area, `mkdir` a fresh \
+sub-directory and work in that. Ordinary tools — `mkdir`, `mv`, `cp`, `touch`, `find`, `sed`, \
+`cargo`, `python3`, `git add`, `git commit`, `git push` — are not on any list above and run \
+normally.",
+        names = names.join(", "),
+        phrases = phrases,
+        max_bytes = MAX_COMMAND_BYTES,
+    )
+}
+
+/// The refused command words, for a test that asserts the prompt names them
+/// all. Exposed rather than duplicated: a copy in the test would drift.
+#[must_use]
+pub fn refused_command_words() -> Vec<&'static str> {
+    REFUSED_COMMANDS.iter().map(|(name, _)| *name).collect()
+}
+
+/// The refused phrases, joined as they are written on a command line.
+#[must_use]
+pub fn refused_command_phrases() -> Vec<String> {
+    REFUSED_PHRASES
+        .iter()
+        .map(|(phrase, _)| phrase.join(" "))
+        .collect()
+}
+
 /// Deny-only floor for the closed destructive-command list, placed BEFORE
 /// [`WorkspaceBoundary`] and before the operator's rule layer.
 ///
