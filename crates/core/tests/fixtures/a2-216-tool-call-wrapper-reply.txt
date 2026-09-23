@@ -1,0 +1,4 @@
+<tool_call>
+{"name":"bash","input":{"command":"cd aras && cat rust-toolchain.toml; echo '== workflows =='; ls .github/workflows 2>&1; echo '== layer names in repo =='; grep -rn '\"destructive_command_floor\"\\|\"hook_bridge\"\\|\"workspace_auto_allow\"\\|\"interactive_auto\"\\|\"cascade\"\\|\"rule\"' --include=*.rs crates | head -60","timeout_seconds":120}}
+</tool_call>
+</tool_call>

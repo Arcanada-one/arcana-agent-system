@@ -153,6 +153,16 @@ enum Cmd {
         /// only help against a deployment reached without it.
         #[arg(long, value_name = "SECONDS")]
         request_timeout: Option<u64>,
+        /// Transcript ceiling in UTF-16 code units (1..=100000).
+        ///
+        /// When the serialized history passes it, the loop elides tool
+        /// results and folds older turns into a summary, and says so.
+        /// Default 90000 — ten percent under the 100000-unit limit Model
+        /// Connector enforces on the request field. Lower it for a model
+        /// whose own context window is smaller than that, or to exercise
+        /// compaction deliberately.
+        #[arg(long, value_name = "UNITS")]
+        context_budget: Option<usize>,
     },
     /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
@@ -257,6 +267,7 @@ fn main() {
             max_cost_usd,
             model,
             request_timeout,
+            context_budget,
         }) => {
             std::process::exit(run_headless(
                 cwd,
@@ -266,6 +277,7 @@ fn main() {
                 max_cost_usd,
                 model,
                 request_timeout,
+                context_budget,
             ));
         }
         Some(Cmd::Mcp {
@@ -289,6 +301,7 @@ fn run_headless(
     max_cost_usd: Option<f64>,
     model: Option<String>,
     request_timeout: Option<u64>,
+    context_budget: Option<usize>,
 ) -> i32 {
     let prompt = match (prompt, prompt_stdin) {
         (Some(prompt), false) => prompt,
@@ -311,6 +324,7 @@ fn run_headless(
         max_cost_usd,
         model,
         request_timeout: request_timeout.map(std::time::Duration::from_secs),
+        context_budget,
     })
 }
 

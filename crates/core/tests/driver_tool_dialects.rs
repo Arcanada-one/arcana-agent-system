@@ -190,3 +190,122 @@ async fn a_misspelt_canonical_block_is_corrected_not_delivered_as_the_answer() {
         "the correction must say what was wrong: {second}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A2-218 — the `<tool_call>` XML wrapper
+// ---------------------------------------------------------------------------
+
+/// The reply that ended the A2-216 live run, byte for byte.
+///
+/// `runs/A2-216/live.log:9-12` on ARAS `92a4a7a`, model `deepseek-flash`
+/// through Model Connector. It is a complete, valid call — tool `bash`, an
+/// `input` object with the command — wrapped in the `<tool_call>` XML tags
+/// Qwen/Hermes-style templates train a model to emit. `interpret` did not know
+/// the wrapper, read the whole thing as prose, and the run printed
+/// `ARCANA_RUN_DONE {"completed":true,"reason":"Completed"}` with that text as
+/// the operator's answer.
+const LIVE_WRAPPER_REPLY: &str = include_str!("fixtures/a2-216-tool-call-wrapper-reply.txt");
+
+#[tokio::test]
+async fn the_live_a2_216_wrapper_reply_is_a_call_not_a_final_answer() {
+    let action = arcana_core::agent_loop::interpret(&response(LIVE_WRAPPER_REPLY, 0.0));
+
+    let arcana_core::agent_loop::AssistantAction::ToolCall { name, input } = action else {
+        panic!("the live reply is a complete tool call, not an answer: {action:?}");
+    };
+    assert_eq!(name, "bash");
+    assert!(
+        input["command"]
+            .as_str()
+            .is_some_and(|cmd| cmd.starts_with("cd aras && cat rust-toolchain.toml")),
+        "the command the model asked for must survive the unwrap: {input}"
+    );
+    // The model sent this key alongside `command`; dropping it would silently
+    // change the call it asked for.
+    assert_eq!(input["timeout_seconds"], 120);
+}
+
+#[tokio::test]
+async fn a_tool_call_wrapper_executes_the_tool_it_names() {
+    let wrapped =
+        "<tool_call>\n{\"name\": \"echo\", \"arguments\": {\"text\": \"hello\"}}\n</tool_call>";
+    let (out, _) = run_script(
+        vec![response(wrapped, 0.0), response("done", 0.0)],
+        allow_cascade(),
+    )
+    .await;
+
+    assert_eq!(
+        out.tool_calls, 1,
+        "the tool the model asked for must actually run: {out:?}"
+    );
+    assert_eq!(out.reason, TerminalReason::Completed);
+}
+
+#[tokio::test]
+async fn an_unclosed_wrapper_is_corrected_never_delivered_as_the_answer() {
+    // The output limit cut the reply mid-wrapper. Complete-looking JSON inside
+    // an unclosed wrapper is not a call the model finished asking for.
+    let cut = "<tool_call>\n{\"name\": \"echo\", \"input\": {\"text\": \"hello\"}}";
+    let (out, prompts) = run_script(
+        vec![response(cut, 0.0), response(cut, 0.0)],
+        allow_cascade(),
+    )
+    .await;
+
+    assert_eq!(
+        out.reason,
+        TerminalReason::UnsupportedToolCallFormat,
+        "{out:?}"
+    );
+    assert_eq!(out.tool_calls, 0, "nothing ran");
+    assert!(
+        out.final_text.is_none(),
+        "an unfinished call is not an answer to deliver: {out:?}"
+    );
+    let second = prompts.get(1).expect("a second dispatch was made");
+    assert!(
+        second.contains("</tool_call>"),
+        "the correction must say what was missing: {second}"
+    );
+}
+
+#[tokio::test]
+async fn a_wrapper_around_something_that_is_not_a_call_is_corrected() {
+    let junk = "<tool_call>\nsorry, I cannot do that\n</tool_call>";
+    let (out, prompts) = run_script(
+        vec![response(junk, 0.0), response(junk, 0.0)],
+        allow_cascade(),
+    )
+    .await;
+
+    assert_eq!(
+        out.reason,
+        TerminalReason::UnsupportedToolCallFormat,
+        "{out:?}"
+    );
+    assert_eq!(out.tool_calls, 0);
+    let second = prompts.get(1).expect("a second dispatch was made");
+    assert!(
+        second.contains("```tool_call"),
+        "the correction must restate the encoding that works: {second}"
+    );
+}
+
+#[tokio::test]
+async fn prose_that_merely_names_the_wrapper_in_backticks_stays_prose() {
+    // The negative control. A model explaining the format it was told about is
+    // answering, not calling — and an answer must not cost a correction turn.
+    let prose = "Some templates want `<tool_call>` tags around the JSON, but this \
+                 runner wants a fenced block. I checked and nothing else uses \
+                 `</tool_call>` here.";
+    let action = arcana_core::agent_loop::interpret(&response(prose, 0.0));
+
+    assert!(
+        matches!(
+            action,
+            arcana_core::agent_loop::AssistantAction::Final { .. }
+        ),
+        "prose about the wrapper is prose: {action:?}"
+    );
+}

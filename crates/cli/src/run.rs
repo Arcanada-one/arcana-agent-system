@@ -46,6 +46,7 @@ use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::permission::{
     AutoFromEnv, InteractiveDirective, PermissionCascade, PermissionLayer, RuleLayer, SchemaLayer,
 };
+use arcana_core::prompt_budget::MC_FIELD_MAX_UTF16_UNITS;
 use arcana_core::tool::{Tool, ToolDispatcher};
 use arcana_tools::{
     bash::BashTool, edit::EditTool, grep::GrepTool, read::ReadTool, write::WriteTool,
@@ -97,6 +98,43 @@ pub struct RunRequest {
     /// Per-attempt model budget. `None` leaves the client on its own default
     /// (or on `ARCANA_MC_TIMEOUT_SECS`, when that is set).
     pub request_timeout: Option<Duration>,
+    /// Serialized-transcript ceiling in UTF-16 code units. `None` keeps
+    /// [`arcana_core::prompt_budget::DEFAULT_CONTEXT_BUDGET_UTF16_UNITS`].
+    ///
+    /// Two reasons it is reachable from the command line at all. A model whose
+    /// context window is smaller than Model Connector's field limit needs the
+    /// lower number, and until this flag existed there was no way to give it
+    /// one. And the compaction path could not be exercised live: nothing a
+    /// task does makes a transcript cross 90 000 units cheaply, so the only
+    /// evidence that folding works in a real run was an offline test
+    /// (A2-216 report, § "what is NOT measured").
+    pub context_budget: Option<usize>,
+}
+
+/// Reject a `--context-budget` that cannot be honoured, before anything is
+/// spent.
+///
+/// Above [`MC_FIELD_MAX_UTF16_UNITS`] the number is a promise the server will
+/// not keep: the transcript would be compacted to a ceiling that still fails
+/// validation, so the run would die on an `HTTP 400` having paid for every
+/// turn up to it. Zero is refused here rather than left to the driver so the
+/// operator reads a sentence instead of a terminal reason.
+///
+/// # Errors
+/// The message to print, when the value cannot be used.
+pub fn check_context_budget(units: Option<usize>) -> Result<(), String> {
+    let Some(units) = units else { return Ok(()) };
+    if units == 0 {
+        return Err("--context-budget must be at least 1".to_owned());
+    }
+    if units > MC_FIELD_MAX_UTF16_UNITS {
+        return Err(format!(
+            "--context-budget {units} is above the {MC_FIELD_MAX_UTF16_UNITS}-unit limit Model \
+             Connector enforces on the request; a transcript compacted to it would still be \
+             refused"
+        ));
+    }
+    Ok(())
 }
 
 /// Entry point for `arcana run`. Returns a process exit code.
@@ -142,6 +180,9 @@ async fn run_async(request: &RunRequest) -> i32 {
     if request.prompt.trim().is_empty() {
         return exit_failed("the task is empty", &root);
     }
+    if let Err(err) = check_context_budget(request.context_budget) {
+        return exit_failed(&err, &root);
+    }
 
     let policy = match WorkspacePolicy::new(&root) {
         Ok(policy) => Arc::new(policy),
@@ -178,15 +219,23 @@ async fn run_async(request: &RunRequest) -> i32 {
     println!("arcana run: workspace {}", root.display());
     println!("audit log: {}", session.audit_log_path().display());
 
+    let config = driver_config(request, &tools, &root);
+    // Stated, not assumed: the number the transcript is held under decides
+    // when the run starts folding its own history, and a live run that
+    // compacts should not leave the reader guessing which ceiling it hit.
+    println!(
+        "context budget: {} characters (UTF-16 units){}",
+        config.context_budget_units,
+        if request.context_budget.is_some() {
+            ""
+        } else {
+            " (default)"
+        }
+    );
+
     let interrupt = crate::interrupt::Interrupt::install();
     let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
-    let out = session
-        .run_task(
-            &request.prompt,
-            driver_config(request, &tools, &root),
-            cancel,
-        )
-        .await;
+    let out = session.run_task(&request.prompt, config, cancel).await;
     drop(turn_guard);
 
     report(&out, &root)
@@ -203,6 +252,9 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
         config.model = Some(model);
     }
     config.system_prompt = Some(system_prompt(tools, root));
+    if let Some(units) = request.context_budget {
+        config.context_budget_units = units;
+    }
     // Where a tool result too large to carry is kept in full. Inside the
     // workspace on purpose: the workspace boundary is what decides which paths
     // the model may read, and a spill file it is not allowed to open would be

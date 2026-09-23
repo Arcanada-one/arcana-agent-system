@@ -24,6 +24,7 @@ TASK
 | `--max-cost-usd <n>` | Spend cap for the run. |
 | `--model <id>` | Pin a model instead of the saved `arcana models use` choice. |
 | `--request-timeout <secs>` | How long one model turn may take upstream, `5`..`600` (default `120`). `ARCANA_MC_TIMEOUT_SECS` sets the same number. The separate TCP+TLS connect budget is `ARCANA_MC_CONNECT_TIMEOUT_SECS` (`1`..`60`, default `10`). |
+| `--context-budget <units>` | Ceiling the serialized transcript is held under, in UTF-16 code units, `1`..`100000` (default `90000`). Lower it for a model whose own context window is below the connector's field limit, or to exercise compaction deliberately. A value above `100000` is refused before the run starts. The run prints the number it is working to. |
 
 Exactly one of `--prompt` and `--prompt-stdin` is required.
 
@@ -187,6 +188,16 @@ A reply that asks for a tool is no longer an answer, whatever it is written in:
   translated into a real call and executed. Those tags exist for nothing else,
   so a closed one is not a guess about intent. The translated call goes through
   the whole permission cascade exactly like a canonical one.
+* **The `<tool_call>` XML wrapper** — `<tool_call>{"name": …, "arguments": …}
+  </tool_call>`, what the Hermes/Qwen function-calling chat template instructs
+  a model to emit — is translated and executed on the same terms. It cost a run
+  the same way the `invoke` markup did: measured 2026-09-23, the last reply of
+  a long task was a complete, correct `bash` call in the wrapper, and the run
+  ended `Completed` with that text handed back as the answer. The bar is a
+  *closed* wrapper whose body is a JSON object naming a tool; an unclosed one,
+  or one wrapped around an apology, is corrected instead. A `` `<tool_call>` ``
+  written inside backticks stays prose — a model explaining the format has
+  answered, and an answer must not cost a turn.
 * **Anything else recognisable** — a `tool_call` block whose body is not usable
   JSON, a bare OpenAI-shaped `{"name": …, "arguments": …}` object — is **not**
   executed. The model is told once, in full, what encoding this runner reads,
@@ -232,6 +243,14 @@ Three things keep a request inside that contract, by construction:
   The run says so on stderr (`arcana: transcript compacted …`) and counts it in
   the done-marker's `compactions` field, because a model answering from a
   summary of its own history is a fact the reader of a log deserves.
+
+The ceiling is `--context-budget`, default 90 000 — ten percent under the wall,
+so a dispatch that touches 100 000 is a defect in the guard rather than a
+budget set slightly too high. Lowering it is how the folding is exercised on
+purpose: a six-file task run at `--context-budget 12000` on `deepseek-flash`
+compacted five times, folded nine entries into one summary at the first
+overflow (29 064 → 1 217 characters), and still finished with the right file on
+disk (`"compactions":5,"completed":true,"tool_calls":20`, $0.015).
 
 A request that still cannot be made to fit ends the run on `RequestTooLarge`,
 naming the limit — never on `ConnectorFatal`, which would blame the connector
