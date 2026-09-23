@@ -159,9 +159,9 @@ async fn driver_terminal_mapping() {
     );
     assert_eq!(out.turns, 1, "the tool response consumed one attempt");
 
-    // 7. ContextWindowExhausted — an irreducible budget stops before any call.
+    // 7. RequestTooLarge — an irreducible budget stops before any call.
     let mut cfg = DriverConfig::new("scripted");
-    cfg.context_budget_chars = 4; // smaller than the task framing itself
+    cfg.context_budget_units = 4; // smaller than the task framing itself
     let out = run_scenario(
         ScriptedConnector::new(vec![response("final", 0.0)]),
         ToolDispatcher::new(),
@@ -173,8 +173,8 @@ async fn driver_terminal_mapping() {
     .await;
     assert_eq!(
         out.reason,
-        TerminalReason::ContextWindowExhausted,
-        "irreducible budget → ContextWindowExhausted"
+        TerminalReason::RequestTooLarge,
+        "irreducible budget → RequestTooLarge, the limit that actually refused it"
     );
     assert_eq!(out.turns, 0, "pre-call context rejection consumes no turn");
 

@@ -23,7 +23,7 @@ TASK
 | `--max-turns <n>` | Connector-attempt cap (default `24`). |
 | `--max-cost-usd <n>` | Spend cap for the run. |
 | `--model <id>` | Pin a model instead of the saved `arcana models use` choice. |
-| `--request-timeout <secs>` | How long one model turn may take upstream, `5`..`600` (default `120`). `ARCANA_MC_TIMEOUT_SECS` sets the same number. |
+| `--request-timeout <secs>` | How long one model turn may take upstream, `5`..`600` (default `120`). `ARCANA_MC_TIMEOUT_SECS` sets the same number. The separate TCP+TLS connect budget is `ARCANA_MC_CONNECT_TIMEOUT_SECS` (`1`..`60`, default `10`). |
 
 Exactly one of `--prompt` and `--prompt-stdin` is required.
 
@@ -205,6 +205,39 @@ A reply that asks for a tool is no longer an answer, whatever it is written in:
 A ```` ```bash ```` block, a shell transcript, or a description of what you
 would run is still only text: it names no tool, so there is nothing to
 translate and nothing to correct.
+
+## Long runs: the transcript and the request contract
+
+Every turn sends the whole conversation so far. Model Connector's `/execute`
+caps `prompt` and `systemPrompt` at **100 000 UTF-16 code units each**
+(`src/connectors/dto/execute.dto.ts:53,55`) and refuses an over-long field with
+an HTTP 400 before the model is reached — so a long run used to end, mid-work,
+on a validation error it could have avoided. Measured 2026-09-23: a run that
+had executed five tool calls and cloned a repository died at turn 10.
+
+Three things keep a request inside that contract, by construction:
+
+* **The instructions travel separately.** The tool catalogue, the wire format
+  and the workspace boundary go in `systemPrompt`, which has its own 100 000
+  and does not compete with the transcript for room.
+* **Every tool result is bounded when it enters the transcript** — head and
+  tail, with a marker stating how many characters were removed. Nothing is
+  lost: the complete output is written to `.arcana/tool-output/` inside the
+  working directory and the marker names the file, so the model reads the part
+  it needs with one more tool call instead of re-running the command. Those
+  files are runner artefacts and are untracked; a `git diff` or a patch built
+  from one is unaffected.
+* **Older turns are folded into a summary** when the transcript still does not
+  fit — oldest first, never the task framing and never the turn being answered.
+  The run says so on stderr (`arcana: transcript compacted …`) and counts it in
+  the done-marker's `compactions` field, because a model answering from a
+  summary of its own history is a fact the reader of a log deserves.
+
+A request that still cannot be made to fit ends the run on `RequestTooLarge`,
+naming the limit — never on `ConnectorFatal`, which would blame the connector
+for keeping its contract. The counting is in UTF-16 code units, the unit the
+server counts in: on Russian or Chinese text a byte count is wrong by a factor
+of three, in the direction that sends an over-limit request.
 
 ## Slow turns
 

@@ -28,12 +28,20 @@ use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
 use crate::hooks::HookContext;
+use crate::prompt_budget::{
+    self, DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
+    MC_FIELD_MAX_UTF16_UNITS,
+};
 use crate::tool_dialect::{self, DialectMatch};
 
 /// Maximum exact first-dispatch prompt size accepted by the driver.
 pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
 /// Upstream Model Connector prompt limit, measured as JavaScript UTF-16 code units.
-pub const MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS: usize = 100_000;
+///
+/// The same wall every dispatch of this loop is held to; it lives in
+/// [`crate::prompt_budget`] with the live probes that established it, and is
+/// re-exported here under the name the first-dispatch path already used.
+pub const MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS: usize = MC_FIELD_MAX_UTF16_UNITS;
 
 /// Re-dispatches allowed after a transient connector failure, per turn.
 ///
@@ -298,6 +306,22 @@ pub enum TerminalReason {
     /// own `invoke` markup, was read as prose, and the run reported
     /// `{"completed":true,"reason":"Completed"}` with nothing done.
     UnsupportedToolCallFormat,
+    /// The request could not be made to fit the connector's request contract.
+    ///
+    /// Distinct from [`Self::ContextWindowExhausted`] on purpose. That one is
+    /// about the MODEL — its context window — and is answered by choosing a
+    /// model with a bigger one. This one is about the WIRE: Model Connector's
+    /// `/execute` caps `prompt` and `systemPrompt` at
+    /// [`crate::prompt_budget::MC_FIELD_MAX_UTF16_UNITS`] UTF-16 units each and
+    /// rejects an over-long field with an HTTP 400 before any model is
+    /// reached, so a larger model would not help and the run is charged
+    /// nothing for the refusal.
+    ///
+    /// Measured 2026-09-23: a pilot run that had executed five tool calls and
+    /// cloned a repository died at turn 10 on exactly that 400, reported as
+    /// `ConnectorFatal` — a verdict that names the connector for a limit the
+    /// caller had overrun and could have honoured.
+    RequestTooLarge,
 }
 
 impl TerminalReason {
@@ -321,6 +345,11 @@ impl TerminalReason {
                  or choose a model with a larger window"
             }
             Self::ConnectorFatal => "the Model Connector could not complete the request",
+            Self::RequestTooLarge => {
+                "the transcript no longer fits the Model Connector's 100 000-character \
+                 per-field request limit even after compaction; run the task in smaller \
+                 pieces, or with tools that return less output"
+            }
             Self::AuditFatal => "the capability audit failed and the executor is latched closed",
             Self::NoAction => {
                 "the model answered without running a single tool, so nothing was done"
@@ -569,11 +598,86 @@ fn parse_tool_call(body: &str) -> AssistantAction {
 // Conversation history (D-REQ-03)
 // ---------------------------------------------------------------------------
 
+/// A run of older history entries replaced by one line that says what they
+/// were.
+///
+/// Compaction used to be deletion: the oldest tool result was `Vec::remove`d
+/// and nothing anywhere recorded that it had existed. A model whose earlier
+/// work silently stops being in the transcript re-does it — and an operator
+/// reading the log cannot tell a run that never called a tool from one whose
+/// call was quietly dropped. The span therefore keeps the *shape* of what it
+/// swallowed: how many entries, how many were the model's own turns, which
+/// tools ran and how often, and how much text went away.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompactedSpan {
+    /// History entries folded into this span.
+    pub entries: usize,
+    /// How many of them were the model's own replies.
+    pub assistant_turns: usize,
+    /// Tool call counts by tool name, in name order.
+    pub tool_calls: std::collections::BTreeMap<String, usize>,
+    /// UTF-16 units of transcript this span replaced.
+    pub units: usize,
+}
+
+impl CompactedSpan {
+    /// Fold one entry into the span, keeping what a later turn may need.
+    fn absorb(&mut self, entry: &HistoryEntry) {
+        self.entries = self.entries.saturating_add(1);
+        self.units = self
+            .units
+            .saturating_add(prompt_budget::utf16_units(&serialize_entry(entry)));
+        match entry {
+            HistoryEntry::Assistant(_) => {
+                self.assistant_turns = self.assistant_turns.saturating_add(1);
+            }
+            HistoryEntry::ToolCall { name, .. } => {
+                *self.tool_calls.entry(name.clone()).or_insert(0) += 1;
+            }
+            HistoryEntry::Compacted(other) => {
+                // Folding into an existing span must not lose its tally.
+                self.entries = self.entries.saturating_add(other.entries - 1);
+                self.assistant_turns = self.assistant_turns.saturating_add(other.assistant_turns);
+                self.units = self.units.saturating_add(other.units);
+                for (name, count) in &other.tool_calls {
+                    *self.tool_calls.entry(name.clone()).or_insert(0) += count;
+                }
+            }
+            HistoryEntry::Task(_) | HistoryEntry::ToolResult { .. } | HistoryEntry::Injected(_) => {
+            }
+        }
+    }
+
+    /// The one line the model reads in place of the folded entries.
+    fn render(&self) -> String {
+        let mut calls: Vec<String> = self
+            .tool_calls
+            .iter()
+            .map(|(name, count)| format!("{name}×{count}"))
+            .collect();
+        if calls.is_empty() {
+            calls.push("none".to_owned());
+        }
+        format!(
+            "EARLIER TRANSCRIPT COMPACTED by the runner to fit the request budget: \
+{entries} entries ({units} characters) were replaced by this line — {turns} of your own \
+replies and these executed tool calls: {calls}. Their output is NOT in this request any \
+more. Nothing was undone: the work those calls did is still on disk. If you need a fact \
+from them, get it again with a tool call rather than assuming it.",
+            entries = self.entries,
+            units = self.units,
+            turns = self.assistant_turns,
+            calls = calls.join(", "),
+        )
+    }
+}
+
 /// One entry in the ordered conversation log that composes each next request.
 ///
 /// [`HistoryEntry::Task`] carries the initial task framing and is **never**
-/// trimmed by the context guard; [`HistoryEntry::ToolResult`] payloads are the
-/// only compaction target.
+/// trimmed by the context guard; [`HistoryEntry::ToolResult`] payloads are
+/// elided first, and whole older entries are folded into a
+/// [`HistoryEntry::Compacted`] span only when eliding is not enough.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryEntry {
     /// The initial task / system framing (never trimmed).
@@ -582,46 +686,68 @@ pub enum HistoryEntry {
     Assistant(String),
     /// An intended tool call; `input` is compact JSON.
     ToolCall { name: String, input: String },
-    /// A tool's output — the trimmable compaction target.
+    /// A tool's output — elided first when the transcript overflows.
     ToolResult { name: String, content: String },
     /// A post-tool hook `InjectContext` line folded into the next turn.
     Injected(String),
+    /// Older entries the guard replaced with a statement of what they were.
+    Compacted(CompactedSpan),
+}
+
+/// Render one entry exactly as [`serialize_history`] renders it, trailing
+/// newline included, so a size taken per entry sums to the size of the whole.
+fn serialize_entry(entry: &HistoryEntry) -> String {
+    let mut out = String::new();
+    match entry {
+        HistoryEntry::Task(text) => {
+            out.push_str("[task] ");
+            out.push_str(text);
+        }
+        HistoryEntry::Assistant(text) => {
+            out.push_str("[assistant] ");
+            out.push_str(text);
+        }
+        HistoryEntry::ToolCall { name, input } => {
+            out.push_str("[tool_call] ");
+            out.push_str(name);
+            out.push(' ');
+            out.push_str(input);
+        }
+        HistoryEntry::ToolResult { name, content } => {
+            out.push_str("[tool_result] ");
+            out.push_str(name);
+            out.push(' ');
+            out.push_str(content);
+        }
+        HistoryEntry::Injected(text) => {
+            out.push_str("[injected] ");
+            out.push_str(text);
+        }
+        HistoryEntry::Compacted(span) => {
+            out.push_str("[compacted] ");
+            out.push_str(&span.render());
+        }
+    }
+    out.push('\n');
+    out
 }
 
 /// Serialize the history into the connector prompt string (also the size
-/// measure used by the context guard, so guard and prompt agree byte-for-byte).
+/// measure used by the context guard, so guard and prompt agree exactly).
 fn serialize_history(history: &[HistoryEntry]) -> String {
     let mut out = String::new();
     for entry in history {
-        match entry {
-            HistoryEntry::Task(text) => {
-                out.push_str("[task] ");
-                out.push_str(text);
-            }
-            HistoryEntry::Assistant(text) => {
-                out.push_str("[assistant] ");
-                out.push_str(text);
-            }
-            HistoryEntry::ToolCall { name, input } => {
-                out.push_str("[tool_call] ");
-                out.push_str(name);
-                out.push(' ');
-                out.push_str(input);
-            }
-            HistoryEntry::ToolResult { name, content } => {
-                out.push_str("[tool_result] ");
-                out.push_str(name);
-                out.push(' ');
-                out.push_str(content);
-            }
-            HistoryEntry::Injected(text) => {
-                out.push_str("[injected] ");
-                out.push_str(text);
-            }
-        }
-        out.push('\n');
+        out.push_str(&serialize_entry(entry));
     }
     out
+}
+
+/// Size of the serialized history in the unit the connector counts in.
+fn history_units(history: &[HistoryEntry]) -> usize {
+    history
+        .iter()
+        .map(|entry| prompt_budget::utf16_units(&serialize_entry(entry)))
+        .sum()
 }
 
 // ---------------------------------------------------------------------------
@@ -634,40 +760,145 @@ fn serialize_history(history: &[HistoryEntry]) -> String {
 pub enum ContextVerdict {
     /// History is within budget; no compaction needed.
     Ok,
-    /// A single oldest tool-result was trimmed and history now fits.
+    /// One compaction action was enough.
     Microcompacted,
-    /// More than one tool-result was trimmed to fit.
+    /// More than one compaction action was needed to fit.
     ReactiveCompacted,
-    /// History still overflows with no tool-result left to trim.
+    /// History still overflows with nothing left to compact.
     Irreducible,
 }
 
-/// Trim oldest [`HistoryEntry::ToolResult`] payloads until `history` serializes
-/// within `budget` chars, and report the classification (D-REQ-04). The
-/// [`HistoryEntry::Task`] framing is never removed.
-#[must_use]
-pub fn guard_context(history: &mut Vec<HistoryEntry>, budget: usize) -> ContextVerdict {
-    if serialize_history(history).len() <= budget {
-        return ContextVerdict::Ok;
+/// What the guard did, so the run can state it rather than change the request
+/// behind the model's back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionReport {
+    /// The classification the driver maps to a `Continue` reason.
+    pub verdict: ContextVerdict,
+    /// Tool results shortened in place.
+    pub elided_results: usize,
+    /// Entries folded into a [`HistoryEntry::Compacted`] span.
+    pub folded_entries: usize,
+    /// Serialized size before the guard ran, in UTF-16 units.
+    pub units_before: usize,
+    /// Serialized size after it ran.
+    pub units_after: usize,
+    /// The ceiling it was working to.
+    pub budget: usize,
+}
+
+impl CompactionReport {
+    /// The sentence the run prints when it changed the transcript.
+    ///
+    /// Only when it changed something: a guard that narrates every no-op turn
+    /// teaches the operator to skip its lines, including the one that matters.
+    #[must_use]
+    pub fn stated(&self) -> Option<String> {
+        if self.verdict == ContextVerdict::Ok {
+            return None;
+        }
+        Some(format!(
+            "arcana: transcript compacted to fit the {budget}-character request budget — \
+{elided} tool result(s) shortened, {folded} earlier entr(ies) folded into a summary \
+({before} → {after} characters)",
+            budget = self.budget,
+            elided = self.elided_results,
+            folded = self.folded_entries,
+            before = self.units_before,
+            after = self.units_after,
+        ))
     }
-    let mut trimmed: usize = 0;
-    while serialize_history(history).len() > budget {
-        match history
-            .iter()
-            .position(|entry| matches!(entry, HistoryEntry::ToolResult { .. }))
-        {
-            Some(index) => {
-                history.remove(index);
-                trimmed = trimmed.saturating_add(1);
+}
+
+/// Bring `history` within `budget` UTF-16 units, degrading in authority order,
+/// and report what that cost (D-REQ-04).
+///
+/// The order is not arbitrary. A tool result is the cheapest thing to lose
+/// part of — its full text is on disk and the model is told where — so results
+/// are elided first, oldest first, keeping head and tail. Only when that is
+/// not enough are whole older entries folded into a
+/// [`HistoryEntry::Compacted`] span, again oldest first, because the newest
+/// turns are the ones the next reply answers. The [`HistoryEntry::Task`]
+/// framing is never touched at all: a run that forgets its own task is worse
+/// than a run that stops.
+#[must_use]
+pub fn guard_context(history: &mut Vec<HistoryEntry>, budget: usize) -> CompactionReport {
+    let units_before = history_units(history);
+    let mut report = CompactionReport {
+        verdict: ContextVerdict::Ok,
+        elided_results: 0,
+        folded_entries: 0,
+        units_before,
+        units_after: units_before,
+        budget,
+    };
+    if units_before <= budget {
+        return report;
+    }
+
+    // Stage 1 — shorten tool results, oldest first. Two floors rather than a
+    // search: the first leaves a result usable, the second is what is left
+    // when the transcript has to survive at all. Each result is counted once
+    // however many times it is shortened.
+    let mut elided: Vec<usize> = Vec::new();
+    for floor in [budget / 8, budget / 64] {
+        for (index, entry) in history.iter_mut().enumerate() {
+            if let HistoryEntry::ToolResult { content, .. } = entry {
+                if !prompt_budget::fits(content, floor) {
+                    *content = prompt_budget::elide_middle(content, floor, None);
+                    if !elided.contains(&index) {
+                        elided.push(index);
+                    }
+                }
             }
-            None => return ContextVerdict::Irreducible,
+        }
+        report.units_after = history_units(history);
+        if report.units_after <= budget {
+            break;
         }
     }
-    match trimmed {
+    report.elided_results = elided.len();
+
+    // Stage 2 — fold the oldest entries after the task framing into ONE span.
+    //
+    // One, not one per entry: the summary line costs a few hundred characters
+    // of its own, so a row of them would grow the request it is supposed to
+    // shrink. Each iteration removes exactly one entry, so this terminates,
+    // and it stops before the newest entry — a model handed a summary of the
+    // question it is answering has nothing left to answer.
+    let Some(start) = history
+        .iter()
+        .position(|entry| !matches!(entry, HistoryEntry::Task(_)))
+    else {
+        report.verdict = ContextVerdict::Irreducible;
+        return report;
+    };
+    if report.units_after > budget && start + 1 < history.len() {
+        let mut span = CompactedSpan::default();
+        span.absorb(&history[start]);
+        history[start] = HistoryEntry::Compacted(span);
+        report.folded_entries = 1;
+        report.units_after = history_units(history);
+        while report.units_after > budget && history.len() > start + 2 {
+            let entry = history.remove(start + 1);
+            if let HistoryEntry::Compacted(span) = &mut history[start] {
+                span.absorb(&entry);
+            }
+            report.folded_entries = report.folded_entries.saturating_add(1);
+            report.units_after = history_units(history);
+        }
+    }
+    if report.units_after > budget {
+        report.verdict = ContextVerdict::Irreducible;
+        return report;
+    }
+
+    let actions = report.elided_results + report.folded_entries;
+    report.verdict = match actions {
         0 => ContextVerdict::Ok,
         1 => ContextVerdict::Microcompacted,
         _ => ContextVerdict::ReactiveCompacted,
-    }
+    };
+    report
 }
 
 /// Map a compaction verdict to the `Continue` reason the driver emits for it.
@@ -698,8 +929,26 @@ pub struct DriverConfig {
     pub max_turns: u32,
     /// Optional cost cap (USD) → [`TerminalReason::MaxCostUsd`].
     pub max_cost_usd: Option<f64>,
-    /// Serialized-history ceiling (chars) → compaction / `ContextWindowExhausted`.
-    pub context_budget_chars: usize,
+    /// Serialized-history ceiling, in UTF-16 code units → compaction, then
+    /// [`TerminalReason::RequestTooLarge`].
+    ///
+    /// Units, not bytes: `String::len` is what this used to be measured in,
+    /// and it is the wrong number by a factor of three on Russian or Chinese
+    /// text and by a factor of two on emoji — in the direction that sends an
+    /// over-limit request. See [`crate::prompt_budget`].
+    pub context_budget_units: usize,
+    /// Ceiling on one tool result carried into the transcript, in UTF-16 code
+    /// units. Output past it is elided head-and-tail with a marker that says
+    /// how much went and where the whole of it still is.
+    pub tool_result_budget_units: usize,
+    /// Where a tool result too large to carry is kept in full.
+    ///
+    /// `None` — the default, and what every test gets — means nothing is
+    /// written to disk and the elision marker tells the model to narrow its
+    /// call instead. A headless run sets it to a directory inside the
+    /// workspace, so the path in the marker is one the model is allowed to
+    /// read.
+    pub tool_output_spill_dir: Option<std::path::PathBuf>,
     /// Opt-in paired-corpus metadata. The driver attaches it only to the first
     /// connector attempt; later tool-loop turns never inherit it.
     pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
@@ -733,7 +982,8 @@ pub struct DriverConfig {
 
 impl DriverConfig {
     /// Config for `connector_id` with defensive defaults (8 connector
-    /// attempts, no cost cap, a generous context budget). Callers tune
+    /// attempts, no cost cap, and a context budget derived from the
+    /// connector's own request contract rather than guessed). Callers tune
     /// individual fields.
     #[must_use]
     pub fn new(connector_id: impl Into<String>) -> Self {
@@ -743,7 +993,9 @@ impl DriverConfig {
             system_prompt: None,
             max_turns: 8,
             max_cost_usd: None,
-            context_budget_chars: 1_000_000,
+            context_budget_units: DEFAULT_CONTEXT_BUDGET_UTF16_UNITS,
+            tool_result_budget_units: DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
+            tool_output_spill_dir: None,
             first_dispatch_measurement: None,
             first_dispatch_prompt: None,
             policy: ModelPolicy::new(),
@@ -765,8 +1017,17 @@ impl DriverConfig {
         {
             return Some(TerminalReason::MaxCostUsd);
         }
-        if self.context_budget_chars == 0 {
+        if self.context_budget_units == 0 {
             return Some(TerminalReason::ContextWindowExhausted);
+        }
+        // A system prompt over the wall fails every dispatch of the run
+        // identically, and it is known before the first one is sent.
+        if self
+            .system_prompt
+            .as_deref()
+            .is_some_and(|text| !prompt_budget::fits(text, MC_FIELD_MAX_UTF16_UNITS))
+        {
+            return Some(TerminalReason::RequestTooLarge);
         }
         if self.first_dispatch_prompt.is_some() && self.first_dispatch_measurement.is_none() {
             return Some(TerminalReason::ConnectorFatal);
@@ -799,6 +1060,10 @@ pub struct RunOutput {
     /// Opaque, explicitly unverified receipt returned for the first dispatch.
     /// `PostgreSQL` remains authoritative; this value is correlation-only.
     pub first_dispatch_observation: Option<UnverifiedFirstDispatchObservationV0>,
+    /// Turns on which the transcript had to be compacted to stay inside the
+    /// connector's request contract. Non-zero means the model answered from a
+    /// summary of part of its own history.
+    pub compactions: u32,
 }
 
 /// The agent-loop driver. Borrows its collaborators; owns only run config and
@@ -881,6 +1146,12 @@ struct RunState {
     truncation_retries: u32,
     /// Unexecutable tool-call formats since the last call that executed.
     malformed_calls: u32,
+    /// Turns on which the guard changed the transcript to fit the request
+    /// contract. Reported, because a compacted run answers from less than it
+    /// was given and a reader of the marker line deserves to know.
+    compactions: u32,
+    /// Tool results spilled to disk so far; also the spill file's number.
+    spilled: u32,
 }
 
 impl RunState {
@@ -896,6 +1167,8 @@ impl RunState {
             consecutive_denials: 0,
             truncation_retries: 0,
             malformed_calls: 0,
+            compactions: 0,
+            spilled: 0,
         }
     }
 
@@ -952,6 +1225,7 @@ impl<'a> Driver<'a> {
                 cost: self.cost.snapshot(),
                 selected_models: Vec::new(),
                 first_dispatch_observation: None,
+                compactions: 0,
             };
         }
         let mut state = RunState::new(task);
@@ -982,6 +1256,7 @@ impl<'a> Driver<'a> {
                         cost,
                         selected_models: state.selected,
                         first_dispatch_observation: state.first_dispatch_observation,
+                        compactions: state.compactions,
                     };
                 }
             }
@@ -1025,33 +1300,52 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Bring the transcript inside this run's budget, and say so when that
+    /// changed the request.
+    ///
+    /// Returns `Some` when the step is over: a compaction that re-loops
+    /// without spending a turn, or a transcript that cannot be made to fit.
+    fn fit_request(&self, state: &mut RunState) -> Option<StepResult> {
+        let report = guard_context(&mut state.history, self.config.context_budget_units);
+        // The run says what it did. A model whose earlier turns were
+        // summarised behind its back, and an operator reading only the log,
+        // otherwise have no way to know the request changed shape — and a
+        // shorter answer from a compacted transcript would look like a worse
+        // model rather than a smaller question.
+        if let Some(line) = report.stated() {
+            eprintln!("{line}");
+        }
+        state.compactions = state
+            .compactions
+            .saturating_add(u32::from(report.verdict != ContextVerdict::Ok));
+        match report.verdict {
+            ContextVerdict::Ok => None,
+            ContextVerdict::Irreducible => {
+                Some(StepResult::Terminal(TerminalReason::RequestTooLarge, None))
+            }
+            verdict => compaction_continue(verdict).map(StepResult::Continue),
+        }
+    }
+
     /// One step: guards → select model → connector attempt → interpret → (tool
     /// turn | final). `attempts` is the shared connector-attempt counter that
     /// enforces `max_turns`; `selected` accumulates the ordered per-step model
     /// ids.
     async fn step(&self, state: &mut RunState) -> StepResult {
-        let history = &mut state.history;
-        let attempts = &mut state.attempts;
         if self.cancel.is_cancelled() {
             return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
         }
-        if *attempts >= self.config.max_turns {
+        if state.attempts >= self.config.max_turns {
             return StepResult::Terminal(TerminalReason::MaxTurns, None);
         }
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
             return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
         }
-        match guard_context(history, self.config.context_budget_chars) {
-            ContextVerdict::Ok => {}
-            ContextVerdict::Irreducible => {
-                return StepResult::Terminal(TerminalReason::ContextWindowExhausted, None);
-            }
-            verdict => {
-                if let Some(reason) = compaction_continue(verdict) {
-                    return StepResult::Continue(reason);
-                }
-            }
+        if let Some(step) = self.fit_request(state) {
+            return step;
         }
+        let history = &mut state.history;
+        let attempts = &mut state.attempts;
         let first_dispatch = *attempts == 0;
         let prompt = if first_dispatch {
             self.config.first_dispatch_prompt.clone().map_or_else(
@@ -1061,8 +1355,24 @@ impl<'a> Driver<'a> {
         } else {
             serialize_history(history)
         };
-        if prompt.len() > self.config.context_budget_chars {
-            return StepResult::Terminal(TerminalReason::ContextWindowExhausted, None);
+        // The wall, not the budget. The guard above already compacted to
+        // `context_budget_units`; this is the contract Model Connector will
+        // enforce with an HTTP 400, and the only request that can reach it is
+        // one the guard could not shrink or an exact first-dispatch prompt the
+        // caller supplied. Refusing here costs nothing and names the limit;
+        // sending it spends a roundtrip to be told the same thing by a
+        // validator that calls it `ConnectorFatal`.
+        let ceiling = self
+            .config
+            .context_budget_units
+            .min(MC_FIELD_MAX_UTF16_UNITS);
+        if !prompt_budget::fits(&prompt, ceiling) {
+            eprintln!(
+                "arcana: the request is {} characters, over the {ceiling}-character ceiling \
+                 for this run — not sent",
+                prompt_budget::utf16_units(&prompt),
+            );
+            return StepResult::Terminal(TerminalReason::RequestTooLarge, None);
         }
         // Per-step multi-model dispatch (D-REQ-01/03/05): classify the step
         // context, select the model, record it, and route it through the
@@ -1263,6 +1573,13 @@ No other markup is executed, whatever your training says. \
         // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
         // a log line here is discarded.
         eprintln!("arcana: connector dispatch failed: {error}");
+        // A size refusal is not a connector failure: the request was ours and
+        // it was too big. Retrying sends the same oversized body again, and
+        // reporting `ConnectorFatal` points the operator at a service that did
+        // exactly what its contract says.
+        if error.is_request_too_large() {
+            return StepResult::Terminal(TerminalReason::RequestTooLarge, None);
+        }
         if !error.is_transient() || state.connector_retries >= self.config.connector_retry_limit {
             return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
         }
@@ -1390,6 +1707,50 @@ No other markup is executed, whatever your training says. \
         StepResult::Continue(ContinueReason::ToolCallRejected)
     }
 
+    /// Bound one tool result before it enters the transcript, keeping the
+    /// whole of it where the model can still get at it.
+    ///
+    /// A single command decides whether the rest of the run happens: `git
+    /// clone`, `cargo test` and `find` all return more text than an entire
+    /// request may contain, and the old loop carried every character of it
+    /// into every later turn until the connector refused the request. Bounding
+    /// at ingestion — rather than trimming later, when the transcript is
+    /// already too big — is what makes the request fit *by construction*.
+    ///
+    /// Nothing is destroyed. With a spill directory configured the untouched
+    /// output is written to a file inside the workspace and the elision marker
+    /// names it, so "read the last 200 lines of that output" is one tool call
+    /// away. A failed write is not fatal: the result is still carried, elided,
+    /// with a marker that does not promise a file that is not there.
+    fn carry_tool_result(&self, state: &mut RunState, name: &str, content: String) -> String {
+        let budget = self.config.tool_result_budget_units;
+        if prompt_budget::fits(&content, budget) {
+            return content;
+        }
+        let spilled = self.spill_tool_result(state, name, &content);
+        prompt_budget::elide_middle(&content, budget, spilled.as_deref())
+    }
+
+    /// Write the full output to the spill directory; return the path to name
+    /// in the marker, relative to the spill root's parent when it is inside
+    /// the workspace the model works in.
+    fn spill_tool_result(&self, state: &mut RunState, name: &str, content: &str) -> Option<String> {
+        let dir = self.config.tool_output_spill_dir.as_ref()?;
+        state.spilled = state.spilled.saturating_add(1);
+        // The tool name reaches this through the model; a call named
+        // `../../etc/cron.d/x` must not choose the path. Only the characters a
+        // tool name may legally contain survive.
+        let safe: String = name
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+            .take(32)
+            .collect();
+        let file = dir.join(format!("{:04}-{}.txt", state.spilled, safe));
+        std::fs::create_dir_all(dir).ok()?;
+        std::fs::write(&file, content).ok()?;
+        Some(file.display().to_string())
+    }
+
     /// Reuse-only tool turn: cascade → `pre_tool` → dispatch → `post_tool`, folding
     /// results into `history`. A dispatch error folds back as a tool-result
     /// string (recoverable, bounded by `max_turns`) rather than terminating,
@@ -1433,9 +1794,10 @@ No other markup is executed, whatever your training says. \
         // Same argument for the format streak: a call that executed is proof
         // the model can write one this runner reads.
         state.malformed_calls = 0;
+        let content = self.carry_tool_result(state, name, capability.output.content);
         state.history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
-            content: capability.output.content,
+            content,
         });
         let injected_context = !capability.injected.is_empty();
         for line in capability.injected {
@@ -1497,7 +1859,7 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 12 `TerminalReason` variants.
+/// Exhaustive over every `TerminalReason` variant.
 fn reduce_terminal(reason: TerminalReason) -> LoopControl {
     match reason {
         TerminalReason::Completed
@@ -1511,7 +1873,8 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::AuditFatal
         | TerminalReason::NoAction
         | TerminalReason::ResponseTruncated
-        | TerminalReason::UnsupportedToolCallFormat => LoopControl::Stop(reason),
+        | TerminalReason::UnsupportedToolCallFormat
+        | TerminalReason::RequestTooLarge => LoopControl::Stop(reason),
     }
 }
 
@@ -1522,7 +1885,14 @@ mod terminal_reason_tests {
 
     /// Every variant, so a new one cannot be added without deciding what the
     /// operator is told when it fires.
-    const ALL: [TerminalReason; 10] = [
+    /// The list said "every variant" and held ten of them while the enum had
+    /// twelve: `ResponseTruncated` and `UnsupportedToolCallFormat` were added
+    /// with their explanations and never checked here, because a `const` array
+    /// with an explicit length is not an exhaustive match and the compiler has
+    /// nothing to say about it. Kept as an array rather than a match on a
+    /// sample value so the length is visible; the test below asserts it
+    /// against the enum's own count.
+    const ALL: [TerminalReason; 13] = [
         TerminalReason::Completed,
         TerminalReason::MaxTurns,
         TerminalReason::MaxCostUsd,
@@ -1533,7 +1903,43 @@ mod terminal_reason_tests {
         TerminalReason::ConnectorFatal,
         TerminalReason::AuditFatal,
         TerminalReason::NoAction,
+        TerminalReason::ResponseTruncated,
+        TerminalReason::UnsupportedToolCallFormat,
+        TerminalReason::RequestTooLarge,
     ];
+
+    /// A variant added to the enum without being added to [`ALL`] is a
+    /// compile error here, not a silently unchecked variant.
+    #[test]
+    fn the_list_holds_every_variant() {
+        fn count(reason: TerminalReason) -> usize {
+            // Exhaustive by construction: adding a variant fails to compile
+            // until it is given an index, and the indices must cover 0..N.
+            match reason {
+                TerminalReason::Completed => 0,
+                TerminalReason::MaxTurns => 1,
+                TerminalReason::MaxCostUsd => 2,
+                TerminalReason::AbortedByOperator => 3,
+                TerminalReason::AbortedByHook => 4,
+                TerminalReason::PermissionDenied => 5,
+                TerminalReason::ContextWindowExhausted => 6,
+                TerminalReason::ConnectorFatal => 7,
+                TerminalReason::AuditFatal => 8,
+                TerminalReason::NoAction => 9,
+                TerminalReason::ResponseTruncated => 10,
+                TerminalReason::UnsupportedToolCallFormat => 11,
+                TerminalReason::RequestTooLarge => 12,
+            }
+        }
+        let mut seen = [false; ALL.len()];
+        for reason in ALL {
+            seen[count(reason)] = true;
+        }
+        assert!(
+            seen.iter().all(|hit| *hit),
+            "ALL does not cover every TerminalReason variant"
+        );
+    }
 
     #[test]
     fn every_variant_explains_itself_in_prose() {
