@@ -4,7 +4,8 @@
 //! Both bounds landed in the same week and both live on `RunState`: A2-203
 //! re-dispatches a transient connector failure up to
 //! `DriverConfig::connector_retry_limit` times, A2-204 hands a correctable
-//! cascade denial back to the model up to `MAX_CONSECUTIVE_DENIALS` times.
+//! cascade denial back to the model until the model re-sends one unchanged
+//! (`MAX_DENIALS_PER_DISTINCT_CALL`).
 //! They protect against opposite things — an upstream that is down, and a model
 //! that cannot write a valid call — and a run that hits both must still stop.
 //!
@@ -26,9 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use arcana_core::agent_loop::{
-    Driver, DriverConfig, RunOutput, TerminalReason, MAX_CONSECUTIVE_DENIALS,
-};
+use arcana_core::agent_loop::{Driver, DriverConfig, RunOutput, TerminalReason};
 use arcana_core::connector::{ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector};
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
@@ -91,11 +90,12 @@ impl ModelConnector for ScriptedFlaky {
 /// integer. This is the production denial path of the live A2-201 failure —
 /// `CapabilityExecutor::prepare` validates the input and denies at the
 /// `schema` layer, one of the three layers that fold back.
-fn schema_violating_call() -> Step {
-    Step::Reply(tool_call_result(
-        "counting",
-        json!({ "value": "not-an-integer" }),
-    ))
+/// A malformed `counting` call. The `nonce` is what makes one refusal
+/// different from another: A2-225 bounds the fold-back on the *repeat* of a
+/// call already refused, so a test about streaks has to say whether the model
+/// is making a new mistake or the same one again.
+fn schema_violating_call(nonce: &str) -> Step {
+    Step::Reply(tool_call_result("counting", json!({ "value": nonce })))
 }
 
 /// A `counting` call that executes.
@@ -127,19 +127,19 @@ async fn drive(connector: &ScriptedFlaky, executions: &Arc<AtomicUsize>) -> RunO
 
 #[tokio::test]
 async fn a_connector_retry_does_not_clear_the_rejection_streak() {
-    // Rejection, a re-dispatched transient failure, then two more rejections.
-    // The third rejection must end the run — the re-dispatch in the middle is
-    // a fact about the network, not evidence that the model has improved.
+    // Rejection, a re-dispatched transient failure, then the SAME rejected
+    // call again. The repeat must end the run — the re-dispatch in the middle
+    // is a fact about the network, not evidence that the model has improved,
+    // and it must not have wiped the memory of what was already refused.
     //
-    // The fifth step is a call that WOULD execute, and exists so this check can
-    // go red: an implementation that reset the streak on a retry would reach it,
-    // report `tool_calls: 1` and complete.
+    // The fourth step is a call that WOULD execute, and exists so this check
+    // can go red: an implementation that cleared the memory on a retry would
+    // reach it, report `tool_calls: 1` and complete.
     let executions = Arc::new(AtomicUsize::new(0));
     let connector = ScriptedFlaky::new(vec![
-        schema_violating_call(),
+        schema_violating_call("same"),
         Step::Transient,
-        schema_violating_call(),
-        schema_violating_call(),
+        schema_violating_call("same"),
         valid_call(),
     ]);
     let out = drive(&connector, &executions).await;
@@ -147,17 +147,24 @@ async fn a_connector_retry_does_not_clear_the_rejection_streak() {
     assert_eq!(
         out.reason,
         TerminalReason::PermissionDenied,
-        "the rejection cap must still stop the run: {:?}",
+        "the repeated call must still stop the run: {:?}",
         out.reason
     );
     assert_eq!(out.tool_calls, 0, "nothing was ever executed");
     assert_eq!(executions.load(Ordering::SeqCst), 0, "the tool never ran");
     assert_eq!(
         connector.calls(),
-        usize::try_from(MAX_CONSECUTIVE_DENIALS).unwrap() + 1,
-        "three rejections plus the one re-dispatched failure, and no attempt more"
+        3,
+        "two rejections plus the one re-dispatched failure, and no attempt more"
     );
-    assert_eq!(out.turns, 4, "every attempt is a turn, the re-dispatch too");
+    assert_eq!(out.turns, 3, "every attempt is a turn, the re-dispatch too");
+    assert!(
+        out.terminal_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("schema") && detail.contains("counting")),
+        "the stop must name what refused it: {:?}",
+        out.terminal_detail
+    );
 }
 
 #[tokio::test]
@@ -171,7 +178,7 @@ async fn a_rejection_does_not_spend_the_connector_retry_budget() {
     let connector = ScriptedFlaky::new(vec![
         Step::Transient,
         Step::Transient,
-        schema_violating_call(),
+        schema_violating_call("one"),
         Step::Transient,
         Step::Transient,
         valid_call(),
@@ -192,17 +199,19 @@ async fn a_rejection_does_not_spend_the_connector_retry_budget() {
 
 #[tokio::test]
 async fn an_executed_call_after_a_retry_still_clears_the_rejection_streak() {
-    // The streak is cleared by work, not by time or by luck. Two rejections, a
-    // transient failure, a call that runs, then two more rejections: the run
-    // must survive, because the executed call reset the streak to zero.
+    // The memory is cleared by work, not by time or by luck. Two rejections, a
+    // transient failure, a call that runs, then the SAME two rejected calls
+    // again: the run must survive, because the executed call in the middle
+    // made them new again. Without the clear, the fifth step is a repeat and
+    // the run dies there — which is what makes this check able to go red.
     let executions = Arc::new(AtomicUsize::new(0));
     let connector = ScriptedFlaky::new(vec![
-        schema_violating_call(),
-        schema_violating_call(),
+        schema_violating_call("one"),
+        schema_violating_call("two"),
         Step::Transient,
         valid_call(),
-        schema_violating_call(),
-        schema_violating_call(),
+        schema_violating_call("one"),
+        schema_violating_call("two"),
         Step::Reply("counted".to_owned()),
     ]);
     let out = drive(&connector, &executions).await;
@@ -210,7 +219,7 @@ async fn an_executed_call_after_a_retry_still_clears_the_rejection_streak() {
     assert_eq!(
         out.reason,
         TerminalReason::Completed,
-        "five rejections in a run, never three in a row: {:?}",
+        "four rejections in a run, no call refused twice since work was done: {:?}",
         out.reason
     );
     assert_eq!(out.tool_calls, 1);

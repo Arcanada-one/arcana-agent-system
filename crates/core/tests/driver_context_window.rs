@@ -22,11 +22,11 @@ use std::sync::Arc;
 
 use arcana_core::agent_loop::{
     compaction_continue, guard_context, ContextVerdict, ContinueReason, Driver, DriverConfig,
-    HistoryEntry, TerminalReason,
+    HistoryEntry, TerminalReason, KEEP_RECENT_ENTRIES,
 };
 use arcana_core::cost::CostTracker;
 use arcana_core::hooks::HookChain;
-use arcana_core::prompt_budget::{utf16_units, MC_FIELD_MAX_UTF16_UNITS};
+use arcana_core::prompt_budget::{compaction_floor, utf16_units, MC_FIELD_MAX_UTF16_UNITS};
 use arcana_core::tool::ToolDispatcher;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -345,4 +345,115 @@ async fn an_oversized_tool_result_is_bounded_and_spilled_to_disk() {
         requests[1].prompt.contains(&path.display().to_string()),
         "the marker names the file the model may read"
     );
+}
+
+/// A2-225: the pilot's shape — one unbounded model reply, at the newest end of
+/// a long transcript, is what made compaction collapse the run.
+///
+/// Measured on run A2-204c4 (audit `~/.local/state/arcana/run/audit.log`,
+/// dispatches turn 29 → turn 30): the request went 78 234 → 179 037 characters
+/// in a single turn, which only one entry can explain — a model reply of some
+/// 100 000 characters, a kind of entry nothing bounded. The guard then folded
+/// **73** earlier entries and handed the model a 7 098-character request: 8% of
+/// its budget, with every fact the run had gathered gone. Folding is strictly
+/// oldest-first, so reaching the one oversized entry meant destroying
+/// everything in front of it, and the loop's only other stop was "two entries
+/// left".
+///
+/// The contract this pins: an over-budget transcript lands inside a stated band
+/// — at or under the budget, at or above [`compaction_floor`] — and still
+/// carries its task statement verbatim.
+#[test]
+fn one_oversized_recent_entry_does_not_collapse_the_whole_transcript() {
+    const BUDGET: usize = 90_000;
+    const TASK: &str = "A2-225: find why compaction folds a long run to nothing";
+
+    let mut history = vec![HistoryEntry::Task(TASK.to_string())];
+    // 24 ordinary turns: a reply, a call, a result already bounded at
+    // ingestion the way `carry_tool_result` bounds it.
+    for turn in 0..24 {
+        history.push(HistoryEntry::Assistant(format!(
+            "turn {turn}: {}",
+            "looking at the file ".repeat(60)
+        )));
+        history.push(HistoryEntry::ToolCall {
+            name: "bash".to_string(),
+            input: json!({ "command": format!("rg -n pattern{turn} crates/") }).to_string(),
+        });
+        history.push(tool_result(1_800));
+    }
+    // The newest reply: the one entry nothing bounds.
+    history.push(HistoryEntry::Assistant(format!(
+        "FINAL PLAN {}",
+        "z".repeat(100_000)
+    )));
+
+    let before = rendered_units(&history);
+    assert!(before > BUDGET, "the fixture must overflow: {before}");
+
+    let report = guard_context(&mut history, BUDGET);
+
+    assert_ne!(report.verdict, ContextVerdict::Irreducible, "{report:?}");
+    assert!(
+        report.units_after <= BUDGET,
+        "over the budget it was working to: {report:?}"
+    );
+    assert!(
+        report.units_after >= compaction_floor(BUDGET),
+        "compaction landed near zero instead of near its target: {report:?}"
+    );
+    // The task statement, verbatim, is what a run needs to still be the same
+    // run after compaction.
+    assert!(
+        history
+            .iter()
+            .any(|entry| matches!(entry, HistoryEntry::Task(text) if text == TASK)),
+        "the task statement did not survive compaction verbatim"
+    );
+    assert!(
+        matches!(history[0], HistoryEntry::Task(_)),
+        "the Task entry is never folded"
+    );
+    // The most recent turns are what the next reply answers; they stay as
+    // entries of their own rather than being swallowed by the summary.
+    let recent = history.len()
+        - history
+            .iter()
+            .position(|entry| matches!(entry, HistoryEntry::Compacted(_)))
+            .map_or(0, |index| index + 1);
+    assert!(
+        recent >= KEEP_RECENT_ENTRIES,
+        "only {recent} entries survived the fold, expected at least {KEEP_RECENT_ENTRIES}"
+    );
+}
+
+/// The band, stated as a property over many shapes rather than one fixture.
+#[test]
+fn compaction_lands_in_the_stated_band_whatever_overflowed() {
+    const BUDGET: usize = 40_000;
+    for (label, giant_at) in [("oldest", 1usize), ("middle", 20), ("newest", 39)] {
+        let mut history = vec![HistoryEntry::Task("the task".to_string())];
+        for turn in 0..40 {
+            history.push(HistoryEntry::Assistant(format!(
+                "turn {turn} {}",
+                "a".repeat(900)
+            )));
+        }
+        let HistoryEntry::Assistant(text) = &mut history[giant_at] else {
+            panic!("fixture");
+        };
+        *text = "G".repeat(120_000);
+
+        let report = guard_context(&mut history, BUDGET);
+        assert_ne!(
+            report.verdict,
+            ContextVerdict::Irreducible,
+            "{label}: {report:?}"
+        );
+        assert!(report.units_after <= BUDGET, "{label}: {report:?}");
+        assert!(
+            report.units_after >= compaction_floor(BUDGET),
+            "{label}: collapsed below the floor: {report:?}"
+        );
+    }
 }

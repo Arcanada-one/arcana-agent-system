@@ -549,10 +549,15 @@ You will receive the tool's output as a `[tool_result]` line and may then call a
 tool or answer.\n\
 \n\
 WORKSPACE BOUNDARY. Every path you touch must be inside `{root}`; prefer relative paths. \
-Shell commands run in `{root}`. Calls naming a path outside it, and destructive commands \
-(privilege escalation, package or service management, recursive force deletion, history \
-rewriting), are refused by policy and end the run — do not retry a refused call, say what \
-was refused instead.\n\
+Shell commands run in `{root}`. Destructive commands (privilege escalation, package or \
+service management, recursive force deletion, history rewriting) are refused by policy and \
+end the run — do not retry one, say what was refused instead.\n\
+\n\
+REFUSED CALLS. A call whose arguments do not match the tool's schema, or that names a path \
+outside `{root}`, is refused WITHOUT running and handed back to you as a `[tool_result]` \
+line that names the field and what was expected. That is a correction, not a verdict: fix \
+the call and send it again. Sending the SAME refused call a second time, unchanged, ends \
+the run.\n\
 \n\
 When the task is done, reply with a plain-text summary of what you changed and no fenced \
 block.",
@@ -587,8 +592,15 @@ fn report(out: &RunOutput, root: &Path) -> i32 {
         crate::usage::turn_line(&spend, out.cost.total_cost_usd_micros)
     );
     let (completed, reason) = verdict(out);
+    // Whatever the driver could say about the cause, said here and carried in
+    // the marker. Pilot A2-204c4 ended `PermissionDenied` with `"error": null`
+    // and the single stderr line `the permission cascade refused the tool
+    // call`, which named neither the layer, nor the tool, nor the validation
+    // error — three schema refusals of one `read` call were indistinguishable
+    // from a policy refusal in every artefact the run left behind.
+    let detail = out.terminal_detail.as_deref();
     if !completed {
-        eprintln!("arcana run: {} ({reason})", out.reason);
+        eprintln!("{}", outcome_line(out.reason, &reason, detail));
     }
     println!(
         "{DONE_MARKER} {}",
@@ -600,7 +612,7 @@ fn report(out: &RunOutput, root: &Path) -> i32 {
             cost_usd_micros: out.cost.total_cost_usd_micros,
             compactions: out.compactions,
             root,
-            error: None,
+            error: detail,
         })
     );
     let code = crate::interrupt::exit_code(out.reason);
@@ -633,6 +645,20 @@ fn exit_failed(error: &str, root: &Path) -> i32 {
         })
     );
     1
+}
+
+/// The one stderr line a run that did not complete leaves behind.
+///
+/// Pure so the shape can be pinned without capturing stdio. Pilot A2-204c4
+/// printed `arcana run: the permission cascade refused the tool call
+/// (PermissionDenied)` — true, and useless: the same sentence covers a
+/// misspelt argument and an operator-written policy rule, and the run's
+/// done-marker said `"error": null` beside it.
+fn outcome_line(reason: TerminalReason, verdict: &str, detail: Option<&str>) -> String {
+    match detail {
+        Some(detail) => format!("arcana run: {reason} ({verdict}): {detail}"),
+        None => format!("arcana run: {reason} ({verdict})"),
+    }
 }
 
 /// The JSON body of the done-marker line.
@@ -693,6 +719,38 @@ mod tests {
     }
 
     #[test]
+    fn a_run_that_was_refused_says_what_refused_it_in_both_places() {
+        // A2-225. The detail travels to the two artefacts anything downstream
+        // reads: the stderr line an operator sees, and the `error` field a
+        // wrapper script parses. The pilot had neither.
+        let detail = "schema layer refused `read`: at `/path`: \"\" is shorter than 1 character";
+        let line = outcome_line(
+            TerminalReason::PermissionDenied,
+            "PermissionDenied",
+            Some(detail),
+        );
+        assert!(line.contains("schema layer refused `read`"), "{line}");
+        assert!(line.contains("/path"), "{line}");
+
+        let body = done_marker_body(&DoneMarker {
+            completed: false,
+            reason: "PermissionDenied",
+            turns: 31,
+            tool_calls: 20,
+            cost_usd_micros: 73_150,
+            compactions: 2,
+            root: Path::new("/tmp"),
+            error: Some(detail),
+        });
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["error"], detail, "the marker must not report null");
+
+        // And a run that ended without a detail still prints one clean line.
+        let bare = outcome_line(TerminalReason::MaxTurns, "MaxTurns", None);
+        assert!(!bare.ends_with(": "), "{bare}");
+    }
+
+    #[test]
     fn the_done_marker_is_one_json_object_after_a_fixed_prefix() {
         let body = done_marker_body(&DoneMarker {
             completed: true,
@@ -741,6 +799,7 @@ mod tests {
             selected_models: Vec::new(),
             first_dispatch_observation: None,
             compactions: 0,
+            terminal_detail: None,
         }
     }
 

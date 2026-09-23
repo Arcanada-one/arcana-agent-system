@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A long run no longer loses its history to compaction.** Measured on pilot
+  run A2-204c4 (2026-09-23, audit `~/.local/state/arcana/run/audit.log`): the
+  request grew from 78 234 to 179 037 characters in one turn, and the guard
+  answered by folding **73** earlier entries into a summary and handing the
+  model a 7 098-character request — 8% of its 90 000-character budget, with
+  every fact twenty tool calls had gathered gone.
+
+  Two causes, both fixed. A tool result is bounded when it enters the
+  transcript; a **model reply is not**, and one of ~100 000 characters is what
+  overflowed the budget in a single turn. Folding is strictly oldest-first, so
+  reaching that one entry meant destroying everything in front of it, and the
+  only other stop was "two entries left". The guard now shortens an entry that
+  is itself more than a quarter of the budget (head and tail kept, the gap
+  stated), every stage cuts only what the arithmetic asks for and stops at a
+  stated target of three quarters of the budget, and the newest six entries are
+  kept out of the summary unless the transcript does not otherwise fit at all.
+  `CompactionReport` carries the target and a separate count of oversized
+  entries, and the operator's line states both. On the pilot's shape:
+  174 395 → 66 199 characters against a target of 67 500, 24 entries folded
+  instead of 73.
+- **A schema refusal no longer ends a run, and whatever does ends it says so.**
+  The same pilot spent its last three turns on one `read` call the schema layer
+  refused (`input_hash fe133faf0121151c`), then ended `PermissionDenied`,
+  `completed: false`, `"error": null`. Two reasons it could not recover: the
+  validation error it was handed was the message alone — `"one" is not of type
+  "integer"` — with the offending field on a separate `jsonschema` field nobody
+  read, and a flat cap of three *consecutive* refusals killed the run whether or
+  not the refusals were related.
+
+  Validation errors now name the instance path (`at \`/value\`: …`), which
+  discloses nothing the model's own tool list does not already carry. The cap is
+  replaced by the repeat: a call refused at a correctable layer and sent again
+  **unchanged** ends the run; distinct correctable mistakes keep being answered,
+  bounded by `--max-turns` and the cost cap like everything else a run spends.
+  Policy layers (destructive-command floor, operator rules, hooks) stay terminal
+  on the first refusal, as before. `RunOutput::terminal_detail` carries which
+  layer refused, which tool and the error, and it is printed on the run's last
+  stderr line and in the done-marker's `error` field.
+
 ### Added
 - **A reply the runner refuses to act on is kept, verbatim.** Measured
   2026-09-23 (`runs/A2-204c3/log`, ARAS `92a4a7a`): a live run reached turn 34

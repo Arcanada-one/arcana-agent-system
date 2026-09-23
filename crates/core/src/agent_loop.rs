@@ -210,30 +210,37 @@ pub enum ContinueReason {
 /// than becoming recoverable by omission.
 const RECOVERABLE_DENIAL_LAYERS: [&str; 3] = ["schema", "registry", "workspace_boundary"];
 
-/// Consecutive folded-back denials a run may accumulate before it ends on
-/// [`TerminalReason::PermissionDenied`].
+/// Times one distinct tool call may be refused at a correctable layer before
+/// the run ends on [`TerminalReason::PermissionDenied`].
 ///
-/// The counter resets on any tool call that actually executes, so this bounds
-/// a model hammering one wall, not a long run that makes occasional mistakes.
-/// Without it, "fold the denial back" would be an unbounded retry against a
-/// refusal that never changes, paid for one dispatch at a time up to
-/// `max_turns`.
+/// One. A refusal at a correctable layer is a fact the model did not have when
+/// it wrote the call, and it is told exactly what the fact is; sending the same
+/// call again is the one thing that proves the fold-back is not working.
 ///
-/// It is executed work that clears the streak, and nothing else — in particular
-/// **not** a [`ContinueReason::ConnectorRetry`] in the middle of it. The two
+/// This replaced a flat cap of three *consecutive* refusals of any kind
+/// (A2-225). The cap was the wrong shape twice over. It ended runs over
+/// correctable mistakes — pilot A2-204c4 died on its 31st turn having done
+/// twenty tool calls of real work, because three refusals happened to land in
+/// a row — while a model alternating between two different bad calls was never
+/// caught by it at all. Distinct mistakes are now bounded by `max_turns` and
+/// the cost cap, like every other way a run can spend money; a repeat is
+/// terminal immediately, and says so.
+///
+/// The memory is cleared by executed work and nothing else — in particular
+/// **not** by a [`ContinueReason::ConnectorRetry`] in the middle of it. The two
 /// budgets are independent: `RunState::connector_retries` asks "is the upstream
 /// answering", this asks "is the model writing callable calls", and a run that
 /// is failing at both must still stop. The reverse direction is deliberately
 /// not symmetric: any reply resets the retry budget, including a reply the
 /// cascade then refused, because a refused call is still proof the upstream is
 /// up. Pinned by `crates/core/tests/driver_retry_denial_independence.rs`.
-pub const MAX_CONSECUTIVE_DENIALS: u32 = 3;
+pub const MAX_DENIALS_PER_DISTINCT_CALL: u32 = 1;
 
 /// Replies in an unexecutable tool-call format a run tolerates before it ends
 /// on [`TerminalReason::UnsupportedToolCallFormat`].
 ///
 /// Two, so the model gets exactly one correction — one fewer than
-/// [`MAX_CONSECUTIVE_DENIALS`], and on purpose. A schema denial tells the model
+/// a schema refusal's allowance, and on purpose. A schema denial tells the model
 /// something it could not have known before it called; the wire format is
 /// already stated verbatim in the system prompt, and the correction states it
 /// again with the offending reply in view. A model that ignores it twice is
@@ -243,6 +250,23 @@ pub const MAX_CONSECUTIVE_DENIALS: u32 = 3;
 /// actually executes clears it, so a long run is not killed by two unrelated
 /// format slips an hour apart.
 pub const MAX_DIALECT_CORRECTIONS: u32 = 2;
+
+/// History entries at the newest end of the transcript that compaction folds
+/// only as a last resort.
+///
+/// The newest turns are the ones the next reply answers. Folding them into a
+/// summary hands the model a description of the question instead of the
+/// question — which is what the second compaction of pilot run A2-204c4 did on
+/// 2026-09-23 when it folded 73 of 74 foldable entries and left a
+/// 7 098-character request.
+///
+/// Six: a reply, a call and its result, twice over. Enough to see what was
+/// just tried and what it returned. The guard will still fold into this tail
+/// if the transcript does not otherwise fit the hard budget at all — a run
+/// that stops is worse than a run that forgets — but only then, and
+/// [`CompactionReport::verdict`] says so by landing below
+/// [`crate::prompt_budget::compaction_floor`].
+pub const KEEP_RECENT_ENTRIES: usize = 6;
 
 /// Whether a cascade denial at `layer` is handed back to the model.
 ///
@@ -817,6 +841,15 @@ pub struct CompactionReport {
     pub verdict: ContextVerdict,
     /// Tool results shortened in place.
     pub elided_results: usize,
+    /// Entries that are not tool results — model replies, tool-call arguments,
+    /// injected context — shortened in place because one of them alone was a
+    /// large share of the budget.
+    ///
+    /// Non-zero means the transcript overflowed partly because the *model*
+    /// wrote too much in one turn, which no ingestion bound covers. It is a
+    /// different fact from `elided_results` and a reader should not have to
+    /// guess which one happened.
+    pub bounded_entries: usize,
     /// Entries folded into a [`HistoryEntry::Compacted`] span.
     pub folded_entries: usize,
     /// Serialized size before the guard ran, in UTF-16 units.
@@ -825,6 +858,10 @@ pub struct CompactionReport {
     pub units_after: usize,
     /// The ceiling it was working to.
     pub budget: usize,
+    /// The size it was aiming for — [`crate::prompt_budget::compaction_target`]
+    /// of `budget`. Stated so "how much did it cut" has an answer that is not
+    /// just "enough".
+    pub target: usize,
 }
 
 impl CompactionReport {
@@ -838,16 +875,48 @@ impl CompactionReport {
             return None;
         }
         Some(format!(
-            "arcana: transcript compacted to fit the {budget}-character request budget — \
-{elided} tool result(s) shortened, {folded} earlier entr(ies) folded into a summary \
-({before} → {after} characters)",
+            "arcana: transcript compacted to fit the {budget}-character request budget \
+(target {target}) — {elided} tool result(s) shortened, {bounded} oversized entr(ies) \
+shortened, {folded} earlier entr(ies) folded into a summary ({before} → {after} characters)",
             budget = self.budget,
+            target = self.target,
             elided = self.elided_results,
+            bounded = self.bounded_entries,
             folded = self.folded_entries,
             before = self.units_before,
             after = self.units_after,
         ))
     }
+}
+
+/// The text of one entry, when the guard is allowed to shorten it.
+///
+/// [`HistoryEntry::Task`] is excluded because the task statement is the one
+/// thing a run cannot afford to lose — a run that forgets what it was asked is
+/// worse than a run that stops — and [`HistoryEntry::Compacted`] because a
+/// summary of folded entries is already the short form of something.
+fn shrinkable_text(entry: &mut HistoryEntry) -> Option<(&mut String, bool)> {
+    match entry {
+        HistoryEntry::Task(_) | HistoryEntry::Compacted(_) => None,
+        HistoryEntry::ToolResult { content, .. } => Some((content, true)),
+        HistoryEntry::Assistant(text) | HistoryEntry::Injected(text) => Some((text, false)),
+        HistoryEntry::ToolCall { input, .. } => Some((input, false)),
+    }
+}
+
+/// How short one entry has to become for the transcript to reach its target,
+/// never shorter than `hard_floor` and never shorter than a usable elision.
+///
+/// This is the whole anti-overshoot rule, in one line: cut what the transcript
+/// is over by, not everything the entry has. The guard that produced the
+/// 7 098-character request cut to a fixed floor whether or not the floor was
+/// needed, so each step removed far more than the step's own arithmetic asked
+/// for.
+fn shrink_to(entry_units: usize, excess: usize, hard_floor: usize) -> usize {
+    entry_units
+        .saturating_sub(excess)
+        .max(hard_floor)
+        .max(prompt_budget::MIN_ELISION_BUDGET)
 }
 
 /// Bring `history` within `budget` UTF-16 units, degrading in authority order,
@@ -861,65 +930,172 @@ impl CompactionReport {
 /// turns are the ones the next reply answers. The [`HistoryEntry::Task`]
 /// framing is never touched at all: a run that forgets its own task is worse
 /// than a run that stops.
+///
+/// # The band (A2-225)
+///
+/// Every stage aims at [`crate::prompt_budget::compaction_target`] and stops
+/// at the first moment it is reached, and no single stage may remove more than
+/// [`crate::prompt_budget::entry_ceiling`] at once. Together those two say the
+/// pass lands at or above [`crate::prompt_budget::compaction_floor`] whenever
+/// there was that much material to keep — which the old guard did not, and on
+/// 2026-09-23 it took a 179 037-character transcript to 7 098 by folding 73
+/// entries to reach one oversized entry at the newest end.
+///
+/// That oversized entry is the reason for stage 0. A tool result is bounded at
+/// ingestion; a model reply is not, and an entry larger than the whole budget
+/// cannot be compensated for by folding anything else. The guard now shortens
+/// it — keeping head and tail, saying how much went — instead of deleting the
+/// rest of the run and still not fitting.
 #[must_use]
 pub fn guard_context(history: &mut Vec<HistoryEntry>, budget: usize) -> CompactionReport {
     let units_before = history_units(history);
     let mut report = CompactionReport {
         verdict: ContextVerdict::Ok,
         elided_results: 0,
+        bounded_entries: 0,
         folded_entries: 0,
         units_before,
         units_after: units_before,
         budget,
+        target: prompt_budget::compaction_target(budget),
     };
     if units_before <= budget {
         return report;
     }
-
-    // Stage 1 — shorten tool results, oldest first. Two floors rather than a
-    // search: the first leaves a result usable, the second is what is left
-    // when the transcript has to survive at all. Each result is counted once
-    // however many times it is shortened.
+    // One index set across both eliding stages: an entry shortened by stage 0
+    // for being oversized and again by stage 1 for still not fitting is ONE
+    // tool result that lost text, and the line the operator reads says so.
     let mut elided: Vec<usize> = Vec::new();
-    for floor in [budget / 8, budget / 64] {
-        for (index, entry) in history.iter_mut().enumerate() {
-            if let HistoryEntry::ToolResult { content, .. } = entry {
-                if !prompt_budget::fits(content, floor) {
-                    *content = prompt_budget::elide_middle(content, floor, None);
-                    if !elided.contains(&index) {
-                        elided.push(index);
-                    }
-                }
-            }
+    bound_oversized_entries(history, &mut report, &mut elided);
+    elide_tool_results(history, &mut report, &mut elided);
+    report.elided_results = elided.len();
+    fold_oldest_entries(history, &mut report);
+    if report.units_after > budget {
+        report.verdict = ContextVerdict::Irreducible;
+        return report;
+    }
+    let actions = report.elided_results + report.bounded_entries + report.folded_entries;
+    report.verdict = match actions {
+        0 => ContextVerdict::Ok,
+        1 => ContextVerdict::Microcompacted,
+        _ => ContextVerdict::ReactiveCompacted,
+    };
+    report
+}
+
+/// Stage 0 — no single entry may be a large share of the budget.
+///
+/// Whole-history stages cannot fix an entry that is itself bigger than the
+/// budget, and trying is what destroys the transcript: folding is oldest-first,
+/// so reaching one oversized entry at the newest end costs every entry in front
+/// of it. Order here is oldest-first only for determinism; an entry is touched
+/// because of its own size, wherever it sits.
+///
+/// A tool result shortened here is reported as an elided result, not a bounded
+/// entry: it is the same act stage 1 performs, and a reader counting "how many
+/// tool results lost text" should get one number. `bounded_entries` is
+/// therefore exactly the count of *model-written* entries that were too big,
+/// which is the fact nothing else in the report carries.
+fn bound_oversized_entries(
+    history: &mut [HistoryEntry],
+    report: &mut CompactionReport,
+    elided: &mut Vec<usize>,
+) {
+    let ceiling = prompt_budget::entry_ceiling(report.budget);
+    for index in 0..history.len() {
+        if report.units_after <= report.target {
+            return;
+        }
+        let excess = report.units_after - report.target;
+        let Some((text, is_result)) = shrinkable_text(&mut history[index]) else {
+            continue;
+        };
+        let text_units = prompt_budget::utf16_units(text);
+        if text_units <= ceiling {
+            continue;
+        }
+        let keep = shrink_to(text_units, excess, ceiling);
+        if keep >= text_units {
+            continue;
+        }
+        *text = prompt_budget::elide_middle(text, keep, None);
+        if is_result {
+            elided.push(index);
+        } else {
+            report.bounded_entries = report.bounded_entries.saturating_add(1);
         }
         report.units_after = history_units(history);
-        if report.units_after <= budget {
-            break;
-        }
     }
-    report.elided_results = elided.len();
+}
 
-    // Stage 2 — fold the oldest entries after the task framing into ONE span.
-    //
-    // One, not one per entry: the summary line costs a few hundred characters
-    // of its own, so a row of them would grow the request it is supposed to
-    // shrink. Each iteration removes exactly one entry, so this terminates,
-    // and it stops before the newest entry — a model handed a summary of the
-    // question it is answering has nothing left to answer.
+/// Stage 1 — shorten tool results, oldest first, and only as far as the
+/// arithmetic asks.
+///
+/// A tool result is the cheapest thing to lose part of: its full text is on
+/// disk and the elision marker names the file. The floor is what is left when
+/// the transcript has to survive at all; reaching it is not the goal, fitting
+/// is. The guard this replaced cut every result to a fixed floor whether or not
+/// the floor was needed.
+fn elide_tool_results(
+    history: &mut [HistoryEntry],
+    report: &mut CompactionReport,
+    elided: &mut Vec<usize>,
+) {
+    let floor = report.budget / 64;
+    for index in 0..history.len() {
+        if report.units_after <= report.target {
+            return;
+        }
+        let excess = report.units_after - report.target;
+        let HistoryEntry::ToolResult { content, .. } = &mut history[index] else {
+            continue;
+        };
+        let content_units = prompt_budget::utf16_units(content);
+        let keep = shrink_to(content_units, excess, floor);
+        if keep >= content_units {
+            continue;
+        }
+        *content = prompt_budget::elide_middle(content, keep, None);
+        if !elided.contains(&index) {
+            elided.push(index);
+        }
+        report.units_after = history_units(history);
+    }
+}
+
+/// Stage 2 — fold the oldest entries after the task framing into ONE span.
+///
+/// One, not one per entry: the summary line costs a few hundred characters of
+/// its own, so a row of them would grow the request it is supposed to shrink.
+/// Each iteration removes exactly one entry, so this terminates.
+///
+/// Two passes, with different stopping rules. The first keeps the newest
+/// [`KEEP_RECENT_ENTRIES`] entries out of the summary and stops at the target:
+/// a model handed a summary of the turn it is answering has nothing left to
+/// answer. The second runs only if the transcript still does not fit the hard
+/// budget, and then the tail is fair game too — a run that stops is worse than
+/// a run that forgets, and a `units_after` below
+/// [`crate::prompt_budget::compaction_floor`] is how the operator sees it came
+/// to that.
+fn fold_oldest_entries(history: &mut Vec<HistoryEntry>, report: &mut CompactionReport) {
     let Some(start) = history
         .iter()
         .position(|entry| !matches!(entry, HistoryEntry::Task(_)))
     else {
-        report.verdict = ContextVerdict::Irreducible;
-        return report;
+        return;
     };
-    if report.units_after > budget && start + 1 < history.len() {
-        let mut span = CompactedSpan::default();
-        span.absorb(&history[start]);
-        history[start] = HistoryEntry::Compacted(span);
-        report.folded_entries = 1;
-        report.units_after = history_units(history);
-        while report.units_after > budget && history.len() > start + 2 {
+    for (limit, keep_recent) in [(report.target, KEEP_RECENT_ENTRIES), (report.budget, 1)] {
+        if report.units_after <= limit || history.len() <= start + keep_recent {
+            continue;
+        }
+        if report.folded_entries == 0 {
+            let mut span = CompactedSpan::default();
+            span.absorb(&history[start]);
+            history[start] = HistoryEntry::Compacted(span);
+            report.folded_entries = 1;
+            report.units_after = history_units(history);
+        }
+        while report.units_after > limit && history.len() > start + 1 + keep_recent {
             let entry = history.remove(start + 1);
             if let HistoryEntry::Compacted(span) = &mut history[start] {
                 span.absorb(&entry);
@@ -928,18 +1104,6 @@ pub fn guard_context(history: &mut Vec<HistoryEntry>, budget: usize) -> Compacti
             report.units_after = history_units(history);
         }
     }
-    if report.units_after > budget {
-        report.verdict = ContextVerdict::Irreducible;
-        return report;
-    }
-
-    let actions = report.elided_results + report.folded_entries;
-    report.verdict = match actions {
-        0 => ContextVerdict::Ok,
-        1 => ContextVerdict::Microcompacted,
-        _ => ContextVerdict::ReactiveCompacted,
-    };
-    report
 }
 
 /// Map a compaction verdict to the `Continue` reason the driver emits for it.
@@ -1133,6 +1297,15 @@ pub struct RunOutput {
     /// connector's request contract. Non-zero means the model answered from a
     /// summary of part of its own history.
     pub compactions: u32,
+    /// What ended the run, in the words of whatever refused it.
+    ///
+    /// [`TerminalReason`] is a closed set of causes; this is the one detail
+    /// that cause carried — which cascade layer refused, which tool, and the
+    /// validation error itself. Pilot run A2-204c4 ended `PermissionDenied`
+    /// with `error: null` in its done-marker and `the permission cascade
+    /// refused the tool call` on stderr, and an operator reading that could not
+    /// tell a policy refusal from a misspelt argument.
+    pub terminal_detail: Option<String>,
 }
 
 /// The agent-loop driver. Borrows its collaborators; owns only run config and
@@ -1210,6 +1383,11 @@ struct RunState {
     connector_retries: u32,
     /// Folded-back denials since the last tool call that actually executed.
     consecutive_denials: u32,
+    /// Calls already refused at a correctable layer since the last tool call
+    /// that actually executed. Re-sending one ends the run.
+    refused_calls: std::collections::HashSet<String>,
+    /// What refused the run, carried out of the step that decided to stop.
+    terminal_detail: Option<String>,
     /// Consecutive replies cut off by the output limit since the last one that
     /// parsed.
     truncation_retries: u32,
@@ -1240,9 +1418,11 @@ impl RunState {
             nudge_spent: false,
             connector_retries: 0,
             consecutive_denials: 0,
+            refused_calls: std::collections::HashSet::new(),
             truncation_retries: 0,
             malformed_calls: 0,
             compactions: 0,
+            terminal_detail: None,
             spilled: 0,
             rejected: 0,
             transcript_broken: false,
@@ -1303,6 +1483,7 @@ impl<'a> Driver<'a> {
                 selected_models: Vec::new(),
                 first_dispatch_observation: None,
                 compactions: 0,
+                terminal_detail: None,
             };
         }
         let mut state = RunState::new(task);
@@ -1334,6 +1515,7 @@ impl<'a> Driver<'a> {
                         selected_models: state.selected,
                         first_dispatch_observation: state.first_dispatch_observation,
                         compactions: state.compactions,
+                        terminal_detail: state.terminal_detail.take(),
                     };
                 }
             }
@@ -1794,9 +1976,17 @@ No other markup is executed, whatever your training says. \
     /// back as a recoverable tool result; a malformed call is the same kind of
     /// mistake and now follows the same rule.
     ///
-    /// Two bounds keep that from becoming an unbounded retry against a wall:
-    /// only [`RECOVERABLE_DENIAL_LAYERS`] fold back at all, and a run may
-    /// accumulate at most [`MAX_CONSECUTIVE_DENIALS`] of them in a row.
+    /// A2-225 changed what bounds the fold-back. It used to be a count —
+    /// three consecutive refusals of any kind and the run was over — and pilot
+    /// A2-204c4 died on it after twenty executed tool calls, because three
+    /// refusals happened to land in a row at the end. The bound is now the
+    /// **repeat**: a call already refused at this layer, sent again
+    /// unchanged, ends the run, because the fold-back has demonstrably not
+    /// worked. Genuinely new mistakes keep getting answered, bounded by
+    /// `max_turns` and the cost cap like everything else a run spends.
+    ///
+    /// Only [`RECOVERABLE_DENIAL_LAYERS`] fold back at all; a policy layer is
+    /// terminal on its first refusal, as before.
     ///
     /// Nothing executed either way: `tool_calls` is not incremented here, so a
     /// run whose every call was refused still reports zero work done.
@@ -1805,25 +1995,38 @@ No other markup is executed, whatever your training says. \
         name: &str,
         layer: &'static str,
         reason: &str,
+        input: &Value,
     ) -> StepResult {
+        // Whatever ends the run says which layer refused, which tool, and what
+        // the error was. `PermissionDenied` alone made a misspelt argument and
+        // an operator-written policy rule read identically in the done-marker,
+        // where the pilot reported `"error": null`.
+        let detail = format!("{layer} layer refused `{name}`: {reason}");
         if !denial_is_recoverable(layer) {
+            state.terminal_detail = Some(detail);
             return StepResult::Terminal(TerminalReason::PermissionDenied, None);
         }
+        // The fingerprint is the call, not the message: two different bad
+        // arguments can produce the same validation sentence, and that is a
+        // model still trying rather than a model stuck.
+        let fingerprint = format!("{layer}\u{1f}{name}\u{1f}{input}");
         state.consecutive_denials = state.consecutive_denials.saturating_add(1);
-        if state.consecutive_denials >= MAX_CONSECUTIVE_DENIALS {
+        if !state.refused_calls.insert(fingerprint) {
+            state.terminal_detail = Some(format!(
+                "{detail} — and this is the same call again, unchanged, after being told that"
+            ));
             return StepResult::Terminal(TerminalReason::PermissionDenied, None);
         }
-        let remaining = MAX_CONSECUTIVE_DENIALS - state.consecutive_denials;
         // Phrased as a fact about the machine, like `NO_ACTION_NUDGE`: what did
-        // not happen, why, and how many attempts are left. The budget is stated
-        // because a model that does not know it is on a counter cannot choose
-        // to spend its last attempt on a different approach.
+        // not happen, why, and what the model has to change. The one rule it is
+        // on is stated, because a model that does not know re-sending is fatal
+        // cannot choose to try something else instead.
         state.history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
             content: format!(
                 "REJECTED at the {layer} layer — the call was NOT executed and nothing happened: \
-{reason}. Fix the call itself and send exactly one corrected `tool_call` block. \
-{remaining} rejected call(s) remain before this run is stopped."
+{reason}. Fix the call itself and send exactly one corrected `tool_call` block. Sending this \
+same call again, unchanged, ends the run."
             ),
         });
         StepResult::Continue(ContinueReason::ToolCallRejected)
@@ -1975,10 +2178,14 @@ No other markup is executed, whatever your training says. \
     /// and so does a denial at one of the [`RECOVERABLE_DENIAL_LAYERS`].
     async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
         let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
+        // The call as the model wrote it, kept for the refusal fingerprint.
+        // The executor consumes the value, and a denial has to be able to say
+        // whether this is the same call the model already sent.
+        let attempted = input.clone();
         let capability = match self.executor.execute(&ctx, name, input).await {
             Ok(capability) => capability,
             Err(CapabilityError::Denied { layer, reason }) => {
-                return Self::fold_denial(state, name, layer, &reason);
+                return Self::fold_denial(state, name, layer, &reason, &attempted);
             }
             Err(CapabilityError::HookAborted) => {
                 return StepResult::Terminal(TerminalReason::AbortedByHook, None);
@@ -2005,10 +2212,12 @@ No other markup is executed, whatever your training says. \
         // dispatch error folds back as a tool result without reaching this
         // line, because a tool that failed to dispatch did no work either.
         state.tool_calls = state.tool_calls.saturating_add(1);
-        // The streak counts consecutive refusals, so a call that ran clears it.
-        // Otherwise a long, mostly-healthy run would accumulate three scattered
-        // typos over twenty turns and die on the third.
+        // The refusal memory is consecutive, so a call that ran clears it.
+        // Otherwise a long, mostly-healthy run that made the same slip twice an
+        // hour apart would die on the second — and the bound is meant for a
+        // model stuck in one place, not for a run with a long memory.
         state.consecutive_denials = 0;
+        state.refused_calls.clear();
         // Same argument for the format streak: a call that executed is proof
         // the model can write one this runner reads.
         state.malformed_calls = 0;

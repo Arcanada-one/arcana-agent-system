@@ -48,6 +48,14 @@ pub trait Tool: Send + Sync {
     /// rejects mismatched payloads as [`ToolError::InvalidInput`]. Concrete
     /// tools rarely override this — they only need a precise `input_schema`.
     ///
+    /// Each error names **where** it is as well as what it is. `jsonschema`'s
+    /// `Display` is the message alone — `"one" is not of type "integer"` —
+    /// and the instance path lives on a separate field. A model reading only
+    /// the message has to guess which of its arguments the validator disliked,
+    /// and on 2026-09-23 one guessed wrong three times in a row and ended the
+    /// run (pilot A2-204c4, `input_hash fe133faf0121151c`). The path is not a
+    /// disclosure: the schema it refers to is already in the model's tool list.
+    ///
     /// # Errors
     ///
     /// Returns [`ToolError::ExecutionFailed`] when the schema itself fails
@@ -62,7 +70,16 @@ pub trait Tool: Send + Sync {
         }
         let detail = validator
             .iter_errors(input)
-            .map(|err| err.to_string())
+            .map(|err| {
+                let path = err.instance_path().to_string();
+                // The root instance has an empty path; `at ` before nothing
+                // reads as a truncated sentence, so say which object it is.
+                if path.is_empty() {
+                    format!("at the top level of `input`: {err}")
+                } else {
+                    format!("at `{path}`: {err}")
+                }
+            })
             .collect::<Vec<_>>()
             .join("; ");
         Err(ToolError::InvalidInput(detail))
