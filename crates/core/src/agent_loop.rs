@@ -181,6 +181,15 @@ const RECOVERABLE_DENIAL_LAYERS: [&str; 3] = ["schema", "registry", "workspace_b
 /// Without it, "fold the denial back" would be an unbounded retry against a
 /// refusal that never changes, paid for one dispatch at a time up to
 /// `max_turns`.
+///
+/// It is executed work that clears the streak, and nothing else — in particular
+/// **not** a [`ContinueReason::ConnectorRetry`] in the middle of it. The two
+/// budgets are independent: `RunState::connector_retries` asks "is the upstream
+/// answering", this asks "is the model writing callable calls", and a run that
+/// is failing at both must still stop. The reverse direction is deliberately
+/// not symmetric: any reply resets the retry budget, including a reply the
+/// cascade then refused, because a refused call is still proof the upstream is
+/// up. Pinned by `crates/core/tests/driver_retry_denial_independence.rs`.
 pub const MAX_CONSECUTIVE_DENIALS: u32 = 3;
 
 /// Whether a cascade denial at `layer` is handed back to the model.
@@ -1106,11 +1115,6 @@ impl<'a> Driver<'a> {
     }
 }
 
-/// Exhaustive reduction of a [`TurnOutcome`] to a loop directive.
-///
-/// Delegates to per-branch matchers so that adding a `ContinueReason` or a
-/// `TerminalReason` variant is a compile error the driver must resolve
-/// (D-REQ-02).
 /// How long to wait before re-dispatching a transient failure.
 ///
 /// An upstream that named a `retryAfter` knows better than we do — up to
@@ -1122,6 +1126,11 @@ fn retry_pause(error: &ConnectorError, fallback: Duration) -> Duration {
     })
 }
 
+/// Exhaustive reduction of a [`TurnOutcome`] to a loop directive.
+///
+/// Delegates to per-branch matchers so that adding a `ContinueReason` or a
+/// `TerminalReason` variant is a compile error the driver must resolve
+/// (D-REQ-02).
 fn reduce(outcome: TurnOutcome) -> LoopControl {
     match outcome {
         TurnOutcome::Continue(reason) => reduce_continue(reason),

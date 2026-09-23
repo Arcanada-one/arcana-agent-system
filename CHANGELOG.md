@@ -144,7 +144,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Bounded by `MAX_CONSECUTIVE_DENIALS = 3` in a row, reset by any tool call
   that actually executes — so it stops a model hammering one wall without
-  punishing a long run for occasional typos.
+  punishing a long run for occasional typos. Only executed work clears that
+  streak: a connector re-dispatch in the middle of it (the `ConnectorRetry`
+  above) does not, or a model that cannot write a valid call could keep a run
+  alive indefinitely by being unlucky with the network in between. The reverse
+  is deliberately not symmetric — any reply resets the retry budget, including
+  one the cascade then refused, because a refused call is still proof the
+  upstream is answering. The two counters are independent, and each direction
+  is pinned by a test that was watched to fail against the opposite behaviour.
 
   The workspace policy's deny-only half is now two layers,
   `DestructiveCommandFloor` ahead of `WorkspaceBoundary`, so the loop can tell
