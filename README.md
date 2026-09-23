@@ -179,3 +179,5 @@ Dual-licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option (`MIT OR Apache-2.0`).
+
+<!-- A2-238 negative control (throwaway): neither side carries the trigger fix -->
