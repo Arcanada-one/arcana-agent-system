@@ -18448,26 +18448,6 @@
   "verdict": "admitted_with_exemptions",
   "rule": "the graph selects verification, it never replaces it; every affected entity carries a tri-valued verdict; not_measured blocks unqualified admission"
  },
- "head_graph": {
-  "builder_version": "1.0.1",
-  "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:e11dde4253fcc52c2df60b251bfc1479141e9d7533f2ef6552448d2495fec41f",
-  "path": "/home/dev/aup/arc2/runs/A2-106/receipt-draft.d/graph-head-5cee1c2d2925.json",
-  "source_commit": "5cee1c2d292554881c4ba6b796c9de0fa99b0662",
-  "staleness": {
-   "checked_at_utc": "2026-09-23T11:11:49Z",
-   "checked_nodes": 266,
-   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
-   "mismatched_nodes": [],
-   "verdict": "fresh"
-  }
- },
- "revision_selection": {
-  "base": [],
-  "head": [],
-  "schema": "RevisionImpactSelection/v1",
-  "unmeasured_head_files": []
- },
  "notes": [
   "This repo (Rust/Cargo workspace) is outside R00 graph-builder language coverage (TypeScript/NestJS/Prisma/Zod); per the mandate's rollout note the receipt's verifiers/verdicts/exemptions/admission were authored manually by the admitting agent (A2-106) on top of the auto-built RelationshipGraph/v1 and its ChangeAdmissionReceipt/v1 DRAFT (`tools/graph/verify.py`), which supplied graph/staleness/change_set/impact_set as-is.",
   "code_unit and deployable_unit entities (222 + 9 = 231, plus the changed node code_unit:Cargo.lock) are verified by cargo audit (security posture of the whole resolved dependency graph) and cargo test --workspace (compiles + runs every crate). document and config_key entities (35 + 19 = 54) reached only via the Cargo.lock global-fallback edge, with no content change and no applicable verifier for this stack, are not_measured with an owned, dated exemption."
