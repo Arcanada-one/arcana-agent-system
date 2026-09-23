@@ -240,11 +240,25 @@ def strip_comments_rust(src: str) -> str:
     return "".join(out)
 
 
-def strip_comments_python(src: str) -> str:
-    """Comment/string-aware pass for Python: triple-quoted strings (docstrings) are blanked line-preserving,
+def scan_python(src: str) -> tuple[str, list[tuple[int, int]]]:
+    """One walk, two answers: the comment-blanked text (offsets preserved) and the spans of every
+    string-literal BODY.
+
+    Comment/string-aware pass for Python: triple-quoted strings (docstrings) are blanked line-preserving,
     `'`/`"` strings are quote-walked, `#` starts a line comment. f-string/byte-string prefixes are not special-cased
-    (the quote walk still finds the right closing quote for them)."""
+    (the quote walk still finds the right closing quote for them).
+
+    The spans are what keeps TEST DATA from becoming the topology of the repository. A decorator, an
+    import or an `os.environ` read whose match STARTS inside a literal body is a quoted example, not
+    source: `tools/graph/test_cli_entry_points.py` carries a FastAPI fixture in a single-quoted string,
+    and the builder minted `route:GET /health` and `route:GET /version` for THIS repository out of it
+    — and a `provides_route` edge makes `canary` a mandatory verifier, so a test file that merely
+    mentions a decorator pauses its own repository forever (found by A2-229, measured in AUP #111).
+    A span covers the body only, never the quotes, so the path argument of a REAL decorator — which
+    starts after the `@`, outside every span — is untouched. One walk rather than two: a second
+    tokenisation of the same language is how the two answers come to disagree."""
     out: list[str] = []
+    spans: list[tuple[int, int]] = []
     i, n = 0, len(src)
     while i < n:
         if src[i:i + 3] in ('"""', "'''"):
@@ -254,6 +268,7 @@ def strip_comments_python(src: str) -> str:
             j = src.find(q, i)
             end = n if j < 0 else j
             out.append(re.sub(r"[^\n]", " ", src[i:end]))
+            spans.append((i, end))
             i = end
             if j >= 0:
                 out.append(q)
@@ -264,6 +279,7 @@ def strip_comments_python(src: str) -> str:
             q = c
             out.append(c)
             i += 1
+            body = i
             while i < n and src[i] != q:
                 if src[i] == "\\" and i + 1 < n:
                     out.append(src[i:i + 2])
@@ -273,6 +289,7 @@ def strip_comments_python(src: str) -> str:
                     break
                 out.append(src[i])
                 i += 1
+            spans.append((body, i))
             if i < n:
                 out.append(src[i])
                 i += 1
@@ -284,7 +301,23 @@ def strip_comments_python(src: str) -> str:
             continue
         out.append(c)
         i += 1
-    return "".join(out)
+    return "".join(out), spans
+
+
+def strip_comments_python(src: str) -> str:
+    return scan_python(src)[0]
+
+
+def inside_literal(spans: list[tuple[int, int]], pos: int) -> bool:
+    """Is `pos` inside a string-literal body? `spans` is sorted and non-overlapping by construction."""
+    lo, hi = 0, len(spans)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if spans[mid][1] <= pos:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo < len(spans) and spans[lo][0] <= pos < spans[lo][1]
 
 
 # ----------------------------------------------------------------------------------------------- source tree
@@ -1045,9 +1078,15 @@ class Builder:
         is_test = lambda p: bool(re.search(r"(^|/)(test_\w+|\w+_test)\.py$", p) or "/tests/" in p or p.startswith("tests/"))  # noqa: E731
         resolved_of: dict[str, list[str]] = {}
         for p in py_files:
-            code = strip_comments_python(t.text(p))
+            code, literals = scan_python(t.text(p))
+            # A construct QUOTED inside a string is an example, not a declaration. The guard is on the
+            # match start, so the decorator's own path argument and the key of an `os.environ[...]`
+            # read — both of which are literals themselves — stay readable. See scan_python.
+            source = lambda m: not inside_literal(literals, m.start())  # noqa: E731
             targets: list[str] = []
             for m in PY_FROM_RE.finditer(code):
+                if not source(m):
+                    continue
                 dots, module = m.group(1), m.group(2)
                 r = resolve_relative(p, len(dots), module) if dots else (resolve_absolute(module) if module else None)
                 if r and r != p and f"code_unit:{r}" in self.g.nodes:
@@ -1055,16 +1094,22 @@ class Builder:
                                 via="python-relative-import" if dots else "python-absolute-import")
                     targets.append(r)
             for m in PY_IMPORT_RE.finditer(code):
+                if not source(m):
+                    continue
                 r = resolve_absolute(m.group(1))
                 if r and r != p and f"code_unit:{r}" in self.g.nodes:
                     self.g.edge(f"code_unit:{p}", "imports", f"code_unit:{r}", "deterministic", via="python-import")
                     targets.append(r)
             resolved_of[p] = targets
             for m in PY_ENV_RE.finditer(code):
+                if not source(m):
+                    continue
                 key = next(g for g in m.groups() if g)
                 self.g.node(f"config_key:{key}", "config_key", sha_text(key), symbol=key)
                 self.g.edge(f"code_unit:{p}", "reads_config", f"config_key:{key}", "deterministic", via="os-environ")
             for m in PY_ROUTE_RE.finditer(code):
+                if not source(m):
+                    continue
                 rid = f"route:{m.group(1).upper()} {m.group(2)}"
                 self.g.node(rid, "route", sha_bytes(t.files[p]), path=p, kind="fastapi")
                 self.g.edge(f"code_unit:{p}", "provides_route", rid, "deterministic", via="fastapi-decorator")

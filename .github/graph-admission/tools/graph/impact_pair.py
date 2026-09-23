@@ -6,7 +6,9 @@ verification obligations; it does not manufacture verification results.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import build_graph
@@ -162,7 +164,9 @@ A paired receipt must match both graph digests and the complete dual selection.
                 problems.append("revision impact paths differ from independent traversal: " + section)
     expected = set(selection["base"]) | set(selection["head"])
     verdicts = {v.get("entity") for v in doc.get("verdicts", [])}
-    missing = sorted(expected - verdicts)
+    excluded, exclusion_problems = structural_exclusions_rederived(repo, doc, base, head, before, after)
+    problems.extend(exclusion_problems)
+    missing = sorted(expected - verdicts - excluded)
     if missing:
         problems.append("missing selected entity verdicts: " + ", ".join(missing[:12]))
     admitted = (doc.get("admission") or {}).get("verdict") in {"admitted", "admitted_with_exemptions"}
@@ -195,6 +199,120 @@ A paired receipt must match both graph digests and the complete dual selection.
     if selection["unmeasured_head_files"]:
         problems.append("head code extraction not measured: " + ", ".join(selection["unmeasured_head_files"]))
     return problems
+
+
+def structural_exclusions_rederived(repo: impact.Repo, doc: dict, base: str, head: str,
+                                    before: impact.GraphIndex, after: impact.GraphIndex) -> tuple[set[str], list[str]]:
+    """Which of the receipt's claimed exclusions survive an independent re-derivation (DEC-AUP-0034).
+
+    The receipt does not get to assert its own coverage. Every condition is checked here from the
+    matrix and from Git — the node type carries neither a mandatory nor a selectable verifier, the
+    change set does not contain the path, and `git cat-file` at both revisions yields the same bytes
+    AND the same digests the receipt printed. A claim that fails any of them buys nothing: the entity
+    goes back to owing a verdict, and the discrepancy is named so a reader sees a forged exclusion
+    rather than a quietly smaller impact set."""
+    claims = doc.get("structural_exclusions")
+    if not claims:
+        return set(), ([] if claims in (None, []) else ["structural_exclusions is not a list"])
+    if not isinstance(claims, list):
+        return set(), ["structural_exclusions is not a list"]
+    matrix = json.loads((Path(__file__).resolve().parents[2] / "contracts/graph-verified-change/verifier-matrix.v1.json").read_text())
+    changed = {f.get("path") for f in (doc.get("change_set") or {}).get("files", [])}
+    accepted, problems = set(), []
+    for claim in claims:
+        if not isinstance(claim, dict) or not isinstance(claim.get("entity"), str):
+            problems.append("malformed structural exclusion entry")
+            continue
+        eid = claim["entity"]
+        node = after.nodes.get(eid) or before.nodes.get(eid) or {}
+        ntype = node.get("type") or eid.split(":", 1)[0]
+        spec = matrix["node_types"].get(ntype)
+        path = node.get("path") or claim.get("path")
+        if not isinstance(spec, dict) or (spec.get("mandatory") or []) or (spec.get("selectable") or []):
+            problems.append(f"structural exclusion claims a node type the matrix does verify: {eid}")
+            continue
+        if claim.get("rule") == "DEC-AUP-0035":
+            ok, why = _superseded_self_rederived(repo, doc, claim, path, base, head)
+            if ok:
+                accepted.add(eid)
+            else:
+                problems.append(f"structural exclusion claims supersession it does not have: {eid} ({why})")
+            continue
+        if path in changed:
+            problems.append(f"structural exclusion claims an entity the change set contains: {eid}")
+            continue
+        digests = claim.get("content_hash") if isinstance(claim.get("content_hash"), dict) else {}
+        blobs = {}
+        for rev in (base, head):
+            r = subprocess.run(["git", "-C", str(repo.top), "cat-file", "blob", f"{rev}:{path}"],
+                               capture_output=True)
+            if r.returncode != 0:
+                break
+            blobs[rev] = r.stdout
+        if len(blobs) != 2:
+            problems.append(f"structural exclusion names a path unreadable at base or head: {eid}")
+            continue
+        seen = {"base": _sha_bytes(blobs[base]), "head": _sha_bytes(blobs[head])}
+        if blobs[base] != blobs[head]:
+            problems.append(f"structural exclusion claims byte-identity for a file that changed: {eid}")
+            continue
+        if {k: digests.get(k) for k in ("base", "head")} != seen:
+            problems.append(f"structural exclusion carries a content hash the tree does not confirm: {eid}")
+            continue
+        accepted.add(eid)
+    return accepted, problems
+
+
+def _superseded_self_rederived(repo: impact.Repo, doc: dict, claim: dict, path, base: str,
+                               head: str) -> tuple[bool, str]:
+    """DEC-AUP-0035, re-derived from Git rather than believed (the R4 discipline of DEC-AUP-0034).
+
+    The claim is narrow on purpose: THIS receipt, at the path THIS receipt was written to, replacing
+    a document that carries THIS receipt's work item. Every one of those three is checked against
+    the blobs, so the only thing a claim can ever buy is the `not_measured` that the previous draft
+    of the same record would have carried — which is the verdict the matrix gives that node type
+    whatever anyone claims."""
+    own = doc.get("receipt_path")
+    if not isinstance(path, str) or not path:
+        return False, "no path"
+    if path != own:
+        return False, f"path {path!r} is not the receipt's own output path {own!r}"
+    wi = doc.get("work_item")
+    wi = wi if isinstance(wi, str) else (wi or {}).get("task_id") if isinstance(wi, dict) else None
+    if not wi:
+        return False, "the receipt declares no work item"
+    sup = claim.get("superseded") if isinstance(claim.get("superseded"), dict) else {}
+    if sup.get("work_item") != wi or sup.get("receipt_path") != path:
+        return False, "the claim's superseded block disagrees with the receipt"
+    digests = claim.get("content_hash") if isinstance(claim.get("content_hash"), dict) else {}
+    seen_any = False
+    for rev, role in ((base, "base"), (head, "head")):
+        r = subprocess.run(["git", "-C", str(repo.top), "cat-file", "blob", f"{rev}:{path}"],
+                           capture_output=True)
+        if r.returncode != 0:
+            if digests.get(role) is not None:
+                return False, f"a content hash is claimed at {role} where the path does not exist"
+            continue
+        seen_any = True
+        if digests.get(role) != _sha_bytes(r.stdout):
+            return False, f"the content hash at {role} is not the one the tree carries"
+        try:
+            was = json.loads(r.stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False, f"the document at {role} is not readable JSON, so it supersedes nothing"
+        if not (isinstance(was, dict) and str(was.get("schema", "")).endswith("Receipt/v1")):
+            return False, f"the document at {role} is not a receipt"
+        prev = was.get("work_item")
+        prev = prev if isinstance(prev, str) else (prev or {}).get("task_id") if isinstance(prev, dict) else None
+        if prev != wi:
+            return False, f"the receipt at {role} carries work item {prev!r}, not {wi!r}"
+    if not seen_any:
+        return False, "the path exists at neither revision"
+    return True, ""
+
+
+def _sha_bytes(b: bytes) -> str:
+    return "sha256:" + hashlib.sha256(b).hexdigest()
 
 
 def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: dict) -> dict[str, list[str]]:
