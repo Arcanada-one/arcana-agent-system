@@ -66,3 +66,5 @@ fn main() {
     }
     println!("cargo:rerun-if-env-changed=ARCANA_GIT_SHA");
 }
+
+// A2-107 probe: a trivial code change used to reproduce the tree-wide receipt scan.
