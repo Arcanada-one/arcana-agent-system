@@ -28,6 +28,7 @@ use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
 use crate::hooks::HookContext;
+use crate::tool_dialect::{self, DialectMatch};
 
 /// Maximum exact first-dispatch prompt size accepted by the driver.
 pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
@@ -167,6 +168,12 @@ pub enum ContinueReason {
     /// tool name, a path outside the workspace). The reason was handed back as
     /// a tool result so the model can correct it; nothing was executed.
     ToolCallRejected,
+    /// The reply carried a recognisable tool-call attempt this runner cannot
+    /// execute as written — a native markup, a bare JSON object, a canonical
+    /// block whose body is not a usable call. The expected format was named
+    /// back to the model, bounded by [`MAX_DIALECT_CORRECTIONS`]; nothing was
+    /// executed, and the attempt is explicitly NOT a final answer.
+    ToolCallFormatRejected,
 }
 
 /// Cascade layers whose refusal is a defect in the model's own tool call, and
@@ -213,6 +220,21 @@ const RECOVERABLE_DENIAL_LAYERS: [&str; 3] = ["schema", "registry", "workspace_b
 /// cascade then refused, because a refused call is still proof the upstream is
 /// up. Pinned by `crates/core/tests/driver_retry_denial_independence.rs`.
 pub const MAX_CONSECUTIVE_DENIALS: u32 = 3;
+
+/// Replies in an unexecutable tool-call format a run tolerates before it ends
+/// on [`TerminalReason::UnsupportedToolCallFormat`].
+///
+/// Two, so the model gets exactly one correction — one fewer than
+/// [`MAX_CONSECUTIVE_DENIALS`], and on purpose. A schema denial tells the model
+/// something it could not have known before it called; the wire format is
+/// already stated verbatim in the system prompt, and the correction states it
+/// again with the offending reply in view. A model that ignores it twice is
+/// not going to read it the third time, and each attempt is a paid dispatch.
+///
+/// Like the denial streak, the counter is consecutive: any tool call that
+/// actually executes clears it, so a long run is not killed by two unrelated
+/// format slips an hour apart.
+pub const MAX_DIALECT_CORRECTIONS: u32 = 2;
 
 /// Whether a cascade denial at `layer` is handed back to the model.
 ///
@@ -264,6 +286,18 @@ pub enum TerminalReason {
     /// the second is fixed by asking for smaller pieces or a model with a
     /// larger output limit, never by telling the model to try harder.
     ResponseTruncated,
+    /// The model kept asking for a tool in a format this runner cannot
+    /// execute, after being told the one it reads.
+    ///
+    /// Distinct from [`Self::NoAction`] on purpose, and the reason this
+    /// variant exists. "The model would not act" and "the model acted in a
+    /// dialect we threw away" look identical in a marker line and call for
+    /// opposite fixes — the second is fixed in the runner or the prompt, never
+    /// by telling the model to try harder. Measured 2026-09-23 on
+    /// `deepseek-v4-flash`: the first turn of a real task arrived as `DeepSeek`'s
+    /// own `invoke` markup, was read as prose, and the run reported
+    /// `{"completed":true,"reason":"Completed"}` with nothing done.
+    UnsupportedToolCallFormat,
 }
 
 impl TerminalReason {
@@ -295,6 +329,10 @@ impl TerminalReason {
                 "the model's reply was cut off by its output limit part-way through a tool \
                  call, twice in a row; nothing was executed — ask for the work in smaller \
                  steps, or choose a model with a larger output limit"
+            }
+            Self::UnsupportedToolCallFormat => {
+                "the model asked for a tool in a format this runner cannot execute, and \
+                 repeated it after being told the expected one; nothing was executed"
             }
         }
     }
@@ -369,6 +407,22 @@ pub enum AssistantAction {
     /// complete the JSON inside it happens to look: a call the model did not
     /// finish emitting is not a call it asked for.
     Truncated { bytes: usize },
+    /// The reply is a recognisable attempt to call a tool that this runner
+    /// will not dispatch as written.
+    ///
+    /// Neither an action nor an answer, and it is the third outcome because
+    /// two were not enough: a model that asks for a shell command in its own
+    /// native markup has not answered the question, and calling that a final
+    /// answer is how a run ends `Completed` with nothing done. `dialect` names
+    /// what was recognised and `detail` says what made it uncallable; the
+    /// driver folds both back so the model can send the call again in the
+    /// format that works.
+    MalformedToolCall {
+        /// Human-readable name of the dialect that was recognised.
+        dialect: &'static str,
+        /// What specifically made the attempt uncallable.
+        detail: String,
+    },
 }
 
 /// Fence that opens a tool-call block inside a bare text response.
@@ -376,20 +430,29 @@ const TOOL_CALL_FENCE: &str = "```tool_call";
 /// Generic Markdown code fence — closes the tool-call block.
 const CODE_FENCE: &str = "```";
 
+/// Label for this runner's own encoding, used in corrections and log lines.
+const CANONICAL_DIALECT: &str = "a fenced `tool_call` block";
+
 /// Classify a [`ConnectorResponse`] into an [`AssistantAction`] (D-REQ-06).
 ///
 /// Convention: a single fenced block tagged `tool_call` whose body parses as
 /// `{"name": <string>, "input": <json>}` is an intended tool call. A block
 /// that was opened and never closed is [`AssistantAction::Truncated`].
-/// Anything else — no block, malformed JSON, a missing `name` — **fails
-/// closed** to [`AssistantAction::Final`], never to an unchecked dispatch. The
-/// tool call, when present, is still subjected to the full permission cascade
-/// downstream; this seam only classifies, it never executes.
+///
+/// Four outcomes, not two. A reply that names a tool in a way we recognise —
+/// this runner's fence with an unusable body, `DeepSeek`'s native `invoke`
+/// markup, a bare `OpenAI`-shaped JSON object — is an
+/// [`AssistantAction::MalformedToolCall`], never an answer. Reading such a
+/// reply as prose is what let a run end `Completed` having done nothing
+/// (`crate::tool_dialect`). Only a reply with no tool-call attempt in it at
+/// all is [`AssistantAction::Final`].
+///
+/// Fail-closed still holds where it matters: the fallback is never an
+/// unchecked dispatch. A [`AssistantAction::MalformedToolCall`] executes
+/// nothing, and a translated call is subjected to the full permission cascade
+/// downstream exactly like a canonical one — this seam only classifies.
 #[must_use]
 pub fn interpret(resp: &ConnectorResponse) -> AssistantAction {
-    let final_answer = || AssistantAction::Final {
-        text: resp.result.clone(),
-    };
     match scan_tool_call(&resp.result) {
         // An open fence is the only local evidence of truncation there is.
         // Model Connector's response carries no finish/stop reason to read
@@ -405,8 +468,22 @@ pub fn interpret(resp: &ConnectorResponse) -> AssistantAction {
         ToolCallBlock::Unterminated => AssistantAction::Truncated {
             bytes: resp.result.len(),
         },
-        ToolCallBlock::Closed(body) => parse_tool_call(body).unwrap_or_else(final_answer),
-        ToolCallBlock::Absent => final_answer(),
+        ToolCallBlock::Closed(body) => parse_tool_call(body),
+        // No canonical block at all: the reply may still be a tool call
+        // written in a dialect the model was trained on rather than the one it
+        // was told. Only here — a canonical block, however broken, is judged
+        // as a canonical block.
+        ToolCallBlock::Absent => match tool_dialect::recognise(&resp.result) {
+            Some(DialectMatch::Call { name, input, .. }) => {
+                AssistantAction::ToolCall { name, input }
+            }
+            Some(DialectMatch::Attempt { dialect, detail }) => {
+                AssistantAction::MalformedToolCall { dialect, detail }
+            }
+            None => AssistantAction::Final {
+                text: resp.result.clone(),
+            },
+        },
     }
 }
 
@@ -443,12 +520,49 @@ fn scan_tool_call(result: &str) -> ToolCallBlock<'_> {
     }
 }
 
-/// Parse a complete block body; `None` on any anomaly (fail-closed).
-fn parse_tool_call(body: &str) -> Option<AssistantAction> {
-    let value: Value = serde_json::from_str(body).ok()?;
-    let name = value.get("name")?.as_str()?.to_owned();
-    let input = value.get("input").cloned().unwrap_or(Value::Null);
-    Some(AssistantAction::ToolCall { name, input })
+/// Judge a complete block body.
+///
+/// Always a verdict, never a fall-through: either the call, or a
+/// [`AssistantAction::MalformedToolCall`] that says what was wrong. It used to
+/// return `None` for a body that was not valid JSON or had no `name`, and the
+/// caller turned that `None` into [`AssistantAction::Final`] — the runner's
+/// own format, misspelt, delivered as an answer to the operator's question.
+fn parse_tool_call(body: &str) -> AssistantAction {
+    let malformed = |detail: String| AssistantAction::MalformedToolCall {
+        dialect: CANONICAL_DIALECT,
+        detail,
+    };
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return malformed("the body of your `tool_call` block is not valid JSON".to_owned());
+    };
+    let Some(name) = value.get("name").and_then(Value::as_str) else {
+        return malformed(
+            "the body of your `tool_call` block has no `name` string, so no tool was named"
+                .to_owned(),
+        );
+    };
+    // `arguments` / `parameters` / `args` are accepted as `input`. The reader
+    // here was `value.get("input").cloned().unwrap_or(Value::Null)`, so a
+    // model that used any other spelling had its arguments silently discarded
+    // and its call dispatched empty — a `bash` with no command, refused for a
+    // reason that was never the model's mistake.
+    //
+    // No spelling at all is the same defect with nothing to recover: a `null`
+    // dispatched into a tool that wants an object is a schema denial we can
+    // see coming, and the model is better served by being told its call has no
+    // arguments than by being told `null` is not an object. Measured live on
+    // 2026-09-23 — audit `input_hash 03f88b99c3d8073b`, `blake3("null")` — this
+    // is the one remaining way that hash could still be written.
+    let Some(input) = tool_dialect::arguments_of(&value) else {
+        return malformed(format!(
+            "your `tool_call` block named `{name}` but carried no arguments; put them in an \
+             `input` object (send `\"input\": {{}}` if the tool genuinely takes none)"
+        ));
+    };
+    AssistantAction::ToolCall {
+        name: name.to_owned(),
+        input,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +846,15 @@ Nothing ran, and the half-written call was discarded — do not try to continue 
 Do the same work in SMALLER pieces: send one complete `tool_call` block that you are sure fits \
 inside a single reply (for example write the first part of the file now and append the rest in \
 later turns), and keep every later reply small too.";
+/// What the loop tells a model whose tool call it could not execute.
+///
+/// Phrased as a fact about the machine, like [`NO_ACTION_NUDGE`]: what was
+/// recognised, what did not happen, and the one encoding that does happen. The
+/// format is restated in full rather than referred back to, because the reply
+/// that triggered this is proof the model is not working from the copy in the
+/// system prompt.
+const TOOL_FORMAT_CORRECTION: &str = "NOTHING WAS EXECUTED. Your last reply asked for a tool in \
+a format this runner cannot execute";
 
 /// Mutable state threaded through every step of one run.
 ///
@@ -756,6 +879,8 @@ struct RunState {
     /// Consecutive replies cut off by the output limit since the last one that
     /// parsed.
     truncation_retries: u32,
+    /// Unexecutable tool-call formats since the last call that executed.
+    malformed_calls: u32,
 }
 
 impl RunState {
@@ -770,6 +895,7 @@ impl RunState {
             connector_retries: 0,
             consecutive_denials: 0,
             truncation_retries: 0,
+            malformed_calls: 0,
         }
     }
 
@@ -1029,6 +1155,14 @@ impl<'a> Driver<'a> {
                 });
                 self.run_tool_turn(state, &name, input).await
             }
+            // Recognised, not executed, and NOT the end of the run.
+            AssistantAction::MalformedToolCall { dialect, detail } => {
+                // The reply is kept, unlike a truncated fragment: the model
+                // finished saying it, and hiding it would make the correction
+                // that follows read as an answer to nothing.
+                state.accept_reply(&resp.result);
+                Self::correct_tool_format(state, dialect, &detail)
+            }
         }
     }
 
@@ -1062,6 +1196,44 @@ impl<'a> Driver<'a> {
             .push(HistoryEntry::Injected(TRUNCATION_NUDGE.to_owned()));
         eprintln!("arcana: asking for the same work in smaller pieces (1 of 1)");
         StepResult::Continue(ContinueReason::MaxOutputTokensRecovery)
+    }
+
+    /// Decide what an unexecutable tool-call format does to the run: one
+    /// correction naming the encoding that works, or a verdict that says the
+    /// model asked for a tool in a dialect this runner threw away.
+    ///
+    /// Not a `NoAction` nudge, though it lands near one. [`NO_ACTION_NUDGE`]
+    /// answers a model that produced no call at all; this answers a model that
+    /// produced one we could not read, and the difference is the whole point —
+    /// told "nothing was executed, so call a tool", a model that has just
+    /// called a tool has no way to work out what to change.
+    ///
+    /// Nothing executed: `tool_calls` is not incremented here, so a run whose
+    /// every reply was in the wrong dialect still reports zero work done.
+    fn correct_tool_format(state: &mut RunState, dialect: &str, detail: &str) -> StepResult {
+        // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
+        // The operator needs this line — it is the difference between "the
+        // model refused to work" and "this runner cannot read what the model
+        // sent", and only one of those is the model's fault.
+        eprintln!(
+            "arcana: the model asked for a tool as {dialect} — {detail}; nothing was executed"
+        );
+        state.malformed_calls = state.malformed_calls.saturating_add(1);
+        if state.malformed_calls >= MAX_DIALECT_CORRECTIONS {
+            return StepResult::Terminal(TerminalReason::UnsupportedToolCallFormat, None);
+        }
+        let remaining = MAX_DIALECT_CORRECTIONS - state.malformed_calls;
+        state.history.push(HistoryEntry::Injected(format!(
+            "{TOOL_FORMAT_CORRECTION} — {detail}. No command ran and no file was written. \
+Send the SAME call again as exactly one fenced block tagged `tool_call`, whose body is one \
+JSON object with the keys `name` and `input`:\n\
+```tool_call\n\
+{{\"name\": \"<tool name>\", \"input\": {{ ... }}}}\n\
+```\n\
+No other markup is executed, whatever your training says. \
+{remaining} more reply(ies) in a format this runner cannot execute will stop this run."
+        )));
+        StepResult::Continue(ContinueReason::ToolCallFormatRejected)
     }
 
     /// Decide what a failed connector attempt means for the run: another
@@ -1258,6 +1430,9 @@ impl<'a> Driver<'a> {
         // Otherwise a long, mostly-healthy run would accumulate three scattered
         // typos over twenty turns and die on the third.
         state.consecutive_denials = 0;
+        // Same argument for the format streak: a call that executed is proof
+        // the model can write one this runner reads.
+        state.malformed_calls = 0;
         state.history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
             content: capability.output.content,
@@ -1297,7 +1472,7 @@ fn reduce(outcome: TurnOutcome) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 9 `ContinueReason` variants.
+/// Exhaustive over all 10 `ContinueReason` variants.
 fn reduce_continue(reason: ContinueReason) -> LoopControl {
     match reason {
         ContinueReason::ToolResultsReady
@@ -1307,7 +1482,8 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
         | ContinueReason::NoActionRetry
         | ContinueReason::ConnectorRetry
         | ContinueReason::ToolCallRejected
-        | ContinueReason::MaxOutputTokensRecovery => LoopControl::Reloop,
+        | ContinueReason::MaxOutputTokensRecovery
+        | ContinueReason::ToolCallFormatRejected => LoopControl::Reloop,
         // Inert under the unary Phase-C connector (no streaming, no token
         // cursor): a documented no-op re-loop — never
         // `unreachable!`/`panic!` (clippy `panic = warn` under `-D warnings`).
@@ -1321,7 +1497,7 @@ fn reduce_continue(reason: ContinueReason) -> LoopControl {
     }
 }
 
-/// Exhaustive over all 11 `TerminalReason` variants.
+/// Exhaustive over all 12 `TerminalReason` variants.
 fn reduce_terminal(reason: TerminalReason) -> LoopControl {
     match reason {
         TerminalReason::Completed
@@ -1334,7 +1510,8 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::ConnectorFatal
         | TerminalReason::AuditFatal
         | TerminalReason::NoAction
-        | TerminalReason::ResponseTruncated => LoopControl::Stop(reason),
+        | TerminalReason::ResponseTruncated
+        | TerminalReason::UnsupportedToolCallFormat => LoopControl::Stop(reason),
     }
 }
 

@@ -41,6 +41,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `:82`). An open fence is the only evidence ARAS is given. A reply truncated
   before it opened a fence at all still looks like an ordinary short answer and
   is not detected — that limit needs the upstream field.
+- **A model that asks for a tool in its own markup is no longer told the job is
+  done.** The driver executes one encoding — a fenced ```` ```tool_call ````
+  block — and used to fail closed to "this was the final answer" on everything
+  else, including on replies that were plainly a request to run a command.
+  Measured 2026-09-23 on `deepseek-v4-flash`, turn one of a real task arrived as
+  DeepSeek's native markup (`<｜｜DSML｜｜ invoke name="bash">…`), was read as
+  prose, and the run printed `{"completed":true,"reason":"Completed"}` having
+  executed nothing.
+
+  `invoke` markup — DeepSeek's `DSML` form and the sentinel-less
+  `<invoke>`/`<parameter>` form — is now translated into a real call and
+  executed, through the full permission cascade like any other. A recognisable
+  attempt we will *not* run unseen — a `tool_call` block whose body is not
+  usable JSON, a bare OpenAI-shaped `{"name": …, "arguments": …}` object — costs
+  the model exactly one correction restating the encoding that works, and then
+  ends the run on the new `TerminalReason::UnsupportedToolCallFormat`
+  (`"completed":false`, exit `1`). Nothing on this path is ever dispatched
+  unchecked, and a call that executes clears the streak.
+
+  Arguments now reach the tool under any of `input`, `arguments`, `parameters`
+  or `args`, including OpenAI's JSON-encoded-string form. The reader was
+  `value.get("input").cloned().unwrap_or(Value::Null)`, so a call spelt any
+  other way was dispatched with **no arguments at all** — a `bash` with no
+  command — and refused for a mistake the model had not made. That is the
+  `blake3("null")` input hash behind the A2-204 live denial; it cannot recur.
 - **A slow model turn no longer ends the run.** `arcana run --request-timeout
   <secs>` (or `ARCANA_MC_TIMEOUT_SECS`, default `120`) sets how long one model
   turn may take, and the number is used twice: it travels with the request as
