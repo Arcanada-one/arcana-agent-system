@@ -120,6 +120,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CallToolResult` unchanged.
 
 ### Fixed
+- **One malformed tool call no longer ends the whole `arcana run`.** A denial
+  from the permission cascade was terminal at every layer, including `schema`
+  — which means only that the arguments did not match the tool's published
+  JSON schema. Measured with `deepseek-flash`: turn 1 called `bash`, the
+  arguments failed the schema, and the run ended `PermissionDenied` with
+  `tool_calls: 0` and exit `1`. The model was never told what was wrong, so it
+  could not correct itself, and one typo cost the whole task.
+
+  A denial at `schema`, `registry` or `workspace_boundary` is now handed back
+  to the model as a tool result naming the violated constraint, so it can send
+  a corrected call — the same rule the loop already applied to dispatch
+  errors. Nothing executed: `tool_calls` is not incremented and the `Denied`
+  audit record is written exactly as before.
+
+  Refusals that are policy rather than a typo stay terminal: the destructive
+  command floor, operator hooks, the operator's `permissions.toml`, the
+  `ARCANA_PERMISSION_AUTO` directive and the fail-closed cascade tail. Layers
+  not on the recoverable list are terminal by default, so a layer added later
+  cannot become recoverable by omission. Telling a model which word is on the
+  refusal list invites a hunt for one that is not; telling it a path is
+  outside its own working directory does not.
+
+  Bounded by `MAX_CONSECUTIVE_DENIALS = 3` in a row, reset by any tool call
+  that actually executes — so it stops a model hammering one wall without
+  punishing a long run for occasional typos.
+
+  The workspace policy's deny-only half is now two layers,
+  `DestructiveCommandFloor` ahead of `WorkspaceBoundary`, so the loop can tell
+  the two refusals apart. Both are deny-or-defer over the same assessment, so
+  the gate-set is unchanged.
 - **`arcana run --max-turns N` above 100 died on its first dispatch.** The
   run-level connector-attempt cap was forwarded as the per-request Model
   Connector field `maxTurns`, which that service validates as

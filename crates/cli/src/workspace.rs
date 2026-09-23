@@ -10,13 +10,16 @@
 //!
 //! ## Gate-set in force
 //!
-//! The policy ships as TWO layers so a rule file cannot widen it:
+//! The policy ships as THREE layers so a rule file cannot widen it:
 //!
-//! 1. [`WorkspaceBoundary`] — evaluated BEFORE [`RuleLayer`], answers `Deny`
-//!    or `Defer` only. A boundary refusal cannot be overridden downstream,
-//!    because the cascade short-circuits on the first concrete answer.
-//! 2. [`RuleLayer`] — the operator's own `permissions.toml`, unchanged.
-//! 3. [`WorkspaceAutoAllow`] — evaluated AFTER the rules, answers `Allow` or
+//! 1. [`DestructiveCommandFloor`] — evaluated FIRST, answers `Deny` or
+//!    `Defer` only, and owns the closed refused-command list.
+//! 2. [`WorkspaceBoundary`] — evaluated BEFORE [`RuleLayer`], answers `Deny`
+//!    or `Defer` only, and owns workspace confinement. A boundary refusal
+//!    cannot be overridden downstream, because the cascade short-circuits on
+//!    the first concrete answer.
+//! 3. [`RuleLayer`] — the operator's own `permissions.toml`, unchanged.
+//! 4. [`WorkspaceAutoAllow`] — evaluated AFTER the rules, answers `Allow` or
 //!    `Defer`. A tool this policy does not recognise defers to the cascade
 //!    tail, which is fail-closed.
 //!
@@ -24,6 +27,13 @@
 //! can answer `Allow` (an `allow_commands` entry), and the cascade stops at
 //! the first concrete answer, so a permissive rule file placed before a
 //! combined layer would silently buy passage out of the workspace.
+//!
+//! Splitting the deny-only half in two is not a second policy: both halves
+//! read the same [`WorkspacePolicy::assess`], and a call refused by either is
+//! refused. They are separate layers because the agent loop decides whether
+//! to hand a refusal back to the model by the layer's NAME, and these two
+//! refusals must be answered differently — see
+//! `arcana_core::agent_loop::RECOVERABLE_DENIAL_LAYERS`.
 //!
 //! ## What this is NOT
 //!
@@ -131,15 +141,45 @@ const REFUSED_PHRASES: [(&[&str], &str); 8] = [
 const MAX_COMMAND_BYTES: usize = 16 * 1024;
 
 /// What the policy concluded about one tool call.
+///
+/// The two refusal variants exist because the agent loop treats them
+/// differently, and the difference is not severity but **what the reason
+/// discloses**. `OutsideWorkspace` names a directory the model was already
+/// given as its cwd, and the recovery — work inside it — is the behaviour we
+/// want, so that reason is handed back to the model. `Destructive` names a
+/// word on a closed refusal list, and handing that back to a model that wants
+/// the effect invites a hunt for a synonym the list does not carry. See
+/// `arcana_core::agent_loop::RECOVERABLE_DENIAL_LAYERS`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Assessment {
     /// Every effect this call can have lands inside the workspace.
     InsideWorkspace,
-    /// Refused, with an operator-facing reason.
-    Refused(String),
+    /// Refused because an effect lands outside the workspace, with an
+    /// operator-facing reason naming the path and the root.
+    OutsideWorkspace(String),
+    /// Refused by the closed destructive-command floor, with an
+    /// operator-facing reason naming the refused command and why.
+    Destructive(String),
     /// A tool this policy makes no statement about. The cascade tail decides,
     /// and the tail is fail-closed.
     Unrecognised,
+}
+
+impl Assessment {
+    /// The operator-facing reason, for either refusal kind.
+    #[must_use]
+    pub fn refusal_reason(&self) -> Option<&str> {
+        match self {
+            Self::OutsideWorkspace(reason) | Self::Destructive(reason) => Some(reason),
+            Self::InsideWorkspace | Self::Unrecognised => None,
+        }
+    }
+
+    /// True for either refusal kind.
+    #[must_use]
+    pub const fn is_refused(&self) -> bool {
+        matches!(self, Self::OutsideWorkspace(_) | Self::Destructive(_))
+    }
 }
 
 /// Workspace confinement policy, rooted at one canonical directory.
@@ -198,16 +238,18 @@ impl WorkspacePolicy {
     fn assess_path(&self, tool: &str, path: &str) -> Assessment {
         match path_guard::resolve(path, &self.root) {
             Ok(resolved) if resolved.starts_with(&self.root) => Assessment::InsideWorkspace,
-            Ok(resolved) => Assessment::Refused(format!(
+            Ok(resolved) => Assessment::OutsideWorkspace(format!(
                 "`{tool}` path `{}` resolves to `{}`, outside the workspace `{}`",
                 path,
                 resolved.display(),
                 self.root.display()
             )),
             Err(ToolError::PermissionDenied(reason)) => {
-                Assessment::Refused(format!("`{tool}` path `{path}` refused: {reason}"))
+                Assessment::OutsideWorkspace(format!("`{tool}` path `{path}` refused: {reason}"))
             }
-            Err(err) => Assessment::Refused(format!("`{tool}` path `{path}` refused: {err}")),
+            Err(err) => {
+                Assessment::OutsideWorkspace(format!("`{tool}` path `{path}` refused: {err}"))
+            }
         }
     }
 
@@ -215,21 +257,29 @@ impl WorkspacePolicy {
     /// is and is not.
     fn assess_command(&self, command: &str) -> Assessment {
         if command.len() > MAX_COMMAND_BYTES {
-            return Assessment::Refused(format!(
+            return Assessment::Destructive(format!(
                 "command is {} bytes, over the {MAX_COMMAND_BYTES}-byte limit this policy will reason about",
                 command.len()
             ));
         }
         if command.contains(":(){") {
-            return Assessment::Refused("refused: fork bomb".to_owned());
+            return Assessment::Destructive("refused: fork bomb".to_owned());
         }
-        for segment in segments(command) {
-            if let Some(reason) = refused_segment(&segment) {
-                return Assessment::Refused(reason);
+        let segments = segments(command);
+        // The floor is swept across EVERY segment before any path check, so a
+        // command that trips both is classified by the floor. Judging the two
+        // in one pass per segment would let `cat /etc/shadow && sudo x` be
+        // reported as a path problem, and a path problem is the kind this
+        // policy hands back to the model.
+        for segment in &segments {
+            if let Some(reason) = refused_segment(segment) {
+                return Assessment::Destructive(reason);
             }
-            for word in &segment {
+        }
+        for segment in &segments {
+            for word in segment {
                 if let Some(reason) = self.refused_word(word) {
-                    return Assessment::Refused(reason);
+                    return Assessment::OutsideWorkspace(reason);
                 }
             }
         }
@@ -375,7 +425,50 @@ fn contains_phrase(segment: &[String], phrase: &[&str]) -> bool {
         .any(|window| window.iter().zip(phrase).all(|(word, want)| word == want))
 }
 
+/// Deny-only floor for the closed destructive-command list, placed BEFORE
+/// [`WorkspaceBoundary`] and before the operator's rule layer.
+///
+/// It is a separate layer from the boundary for one reason: the agent loop
+/// keys its fold-back decision off the layer NAME, and these two refusals must
+/// be answered differently. A boundary refusal goes back to the model so it
+/// can work inside the workspace; a floor refusal ends the run, because the
+/// only thing a model can do with "`sudo` is refused" that it could not do
+/// before is look for a word the list does not carry.
+///
+/// Both halves are deny-or-defer, so putting the floor first cannot widen
+/// anything — it only decides which refusal a call that trips both is
+/// reported under, and the safe answer is the floor.
+pub struct DestructiveCommandFloor {
+    policy: Arc<WorkspacePolicy>,
+}
+
+impl DestructiveCommandFloor {
+    #[must_use]
+    pub const fn new(policy: Arc<WorkspacePolicy>) -> Self {
+        Self { policy }
+    }
+}
+
+#[async_trait]
+impl PermissionLayer for DestructiveCommandFloor {
+    fn name(&self) -> &'static str {
+        "destructive_command_floor"
+    }
+
+    async fn evaluate(&self, tool: &str, input: &Value) -> LayerDecision {
+        match self.policy.assess(tool, input) {
+            Assessment::Destructive(reason) => LayerDecision::Deny(reason),
+            Assessment::OutsideWorkspace(_)
+            | Assessment::InsideWorkspace
+            | Assessment::Unrecognised => LayerDecision::Defer,
+        }
+    }
+}
+
 /// Deny-only half of the policy, placed BEFORE the operator's rule layer.
+///
+/// Answers only the workspace-confinement half; the destructive-command floor
+/// is [`DestructiveCommandFloor`], which runs ahead of it.
 pub struct WorkspaceBoundary {
     policy: Arc<WorkspacePolicy>,
 }
@@ -395,8 +488,13 @@ impl PermissionLayer for WorkspaceBoundary {
 
     async fn evaluate(&self, tool: &str, input: &Value) -> LayerDecision {
         match self.policy.assess(tool, input) {
-            Assessment::Refused(reason) => LayerDecision::Deny(reason),
-            Assessment::InsideWorkspace | Assessment::Unrecognised => LayerDecision::Defer,
+            Assessment::OutsideWorkspace(reason) => LayerDecision::Deny(reason),
+            // Already denied by the floor layer ahead of this one. Repeating
+            // the verdict here would be harmless but would also hide a wiring
+            // mistake, so this half states only what it is for.
+            Assessment::Destructive(_) | Assessment::InsideWorkspace | Assessment::Unrecognised => {
+                LayerDecision::Defer
+            }
         }
     }
 }
@@ -422,10 +520,12 @@ impl PermissionLayer for WorkspaceAutoAllow {
     async fn evaluate(&self, tool: &str, input: &Value) -> LayerDecision {
         match self.policy.assess(tool, input) {
             Assessment::InsideWorkspace => LayerDecision::Allow,
-            // Already denied by the boundary layer; repeating the verdict here
-            // would be harmless but would also hide a wiring mistake, so this
-            // half states only what it is for.
-            Assessment::Refused(_) | Assessment::Unrecognised => LayerDecision::Defer,
+            // Already denied by the boundary/floor layers; repeating the
+            // verdict here would be harmless but would also hide a wiring
+            // mistake, so this half states only what it is for.
+            Assessment::OutsideWorkspace(_)
+            | Assessment::Destructive(_)
+            | Assessment::Unrecognised => LayerDecision::Defer,
         }
     }
 }
@@ -442,9 +542,9 @@ mod tests {
     }
 
     fn refusal(assessment: &Assessment) -> &str {
-        match assessment {
-            Assessment::Refused(reason) => reason,
-            other => panic!("expected a refusal, got {other:?}"),
+        match assessment.refusal_reason() {
+            Some(reason) => reason,
+            None => panic!("expected a refusal, got {assessment:?}"),
         }
     }
 
@@ -517,8 +617,12 @@ mod tests {
             "OUT=/etc/shadow cat $OUT",
         ] {
             let assessment = policy.assess("bash", &json!({ "command": command }));
+            // The KIND is asserted, not merely the refusal: this is the half
+            // the agent loop hands back to the model, and a misclassified
+            // destructive command would leak the refused-word list into a
+            // model's context under the guise of a path problem.
             assert!(
-                matches!(assessment, Assessment::Refused(_)),
+                matches!(assessment, Assessment::OutsideWorkspace(_)),
                 "{command}: {assessment:?}"
             );
         }
@@ -557,8 +661,12 @@ mod tests {
             ":(){ :|:& };:",
         ] {
             let assessment = policy.assess("bash", &json!({ "command": command }));
+            // Must be `Destructive`, never `OutsideWorkspace`: the agent loop
+            // ends the run on the former and hands the latter back to the
+            // model, so this assertion is what keeps the refused-command list
+            // out of a model's context.
             assert!(
-                matches!(assessment, Assessment::Refused(_)),
+                matches!(assessment, Assessment::Destructive(_)),
                 "{command}: {assessment:?}"
             );
         }

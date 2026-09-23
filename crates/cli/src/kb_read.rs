@@ -851,8 +851,16 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_any_capability_except_arcana_search() {
+        // The KB loop registers exactly one tool, so `bash` is refused at the
+        // `registry` layer. Since A2-204 that refusal is handed back to the
+        // model instead of ending the run on the spot, so a model that insists
+        // is stopped by the consecutive-denial cap rather than by the first
+        // refusal. The safety property is unchanged and is what the last two
+        // assertions pin: nothing but `arcana_search` can ever execute, and no
+        // request reached the backend.
         let server = MockServer::start().await;
-        let connector = ScriptedConnector::new(&[&tool_call("bash", json!({ "command": "true" }))]);
+        let bash = tool_call("bash", json!({ "command": "true" }));
+        let connector = ScriptedConnector::new(&[&bash, &bash, &bash]);
         let audit = tempdir().expect("audit dir");
 
         let error = run_kb_read_with(
@@ -864,8 +872,41 @@ mod tests {
         .await
         .expect_err("unregistered capability must fail closed");
 
-        assert!(error.to_string().to_lowercase().contains("permission"));
+        assert!(
+            error.to_string().to_lowercase().contains("permission"),
+            "{error}"
+        );
         assert!(server.received_requests().await.unwrap().is_empty());
+        let audit_text = std::fs::read_to_string(audit.path().join("audit.log")).unwrap();
+        assert!(
+            !audit_text.contains("\"tool\":\"bash\",\"ts\"")
+                || !audit_text.contains("\"outcome\":\"success\""),
+            "an unregistered tool executed: {audit_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_that_names_the_wrong_tool_can_correct_itself() {
+        // The other half of A2-204, in the second cascade this repository
+        // composes: no workspace layers here, only schema + registry + the
+        // fail-closed tail. A model that reaches for `bash` once and then uses
+        // the tool it actually has must still get an answer, where before the
+        // first wrong name ended the run.
+        let server = MockServer::start().await;
+        mount_hit(&server, "question", 1).await;
+        let connector = ScriptedConnector::new(&[
+            &tool_call("bash", json!({ "command": "true" })),
+            &tool_call("arcana_search", json!({ "query": "question" })),
+            "Answer [wiki/services/scrutator.md].",
+        ]);
+        let audit = tempdir().expect("audit dir");
+
+        let report = run_kb_read_with("question", &connector, search_tool(&server), audit.path())
+            .await
+            .expect("the corrected search must produce a grounded answer");
+
+        assert_eq!(report.hits, 1);
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use arcana_cli::run::{assemble, driver_config, RunRequest};
 use arcana_cli::workspace::WorkspacePolicy;
-use arcana_core::agent_loop::{RunOutput, TerminalReason};
+use arcana_core::agent_loop::{RunOutput, TerminalReason, MAX_CONSECUTIVE_DENIALS};
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, Usage,
 };
@@ -81,6 +81,61 @@ impl ModelConnector for ScriptedModel {
     }
 }
 
+/// A [`ScriptedModel`] that also keeps every prompt it was handed.
+///
+/// The fold-back is only observable from outside the driver as text in the
+/// NEXT prompt, so a test that asks "was the model actually told?" needs the
+/// prompts, not just the terminal reason.
+#[derive(Clone)]
+struct RecordingModel {
+    replies: Vec<String>,
+    turn: Arc<AtomicUsize>,
+    prompts: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl RecordingModel {
+    fn new(replies: &[&str]) -> Self {
+        Self {
+            replies: replies.iter().map(|reply| (*reply).to_owned()).collect(),
+            turn: Arc::new(AtomicUsize::new(0)),
+            prompts: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn prompts(&self) -> Vec<String> {
+        self.prompts.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl ModelConnector for RecordingModel {
+    async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
+        self.prompts.lock().unwrap().push(req.prompt.clone());
+        let index = self.turn.fetch_add(1, Ordering::SeqCst);
+        let result = self
+            .replies
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| "out of script".to_owned());
+        Ok(ConnectorResponse {
+            id: format!("recording-{index}"),
+            connector: "recording".to_owned(),
+            model: "scripted-model".to_owned(),
+            result,
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+                total_tokens: 2,
+                cost_usd: 0.0,
+            },
+            latency_ms: 0,
+            status: "success".to_owned(),
+            error: None,
+            first_dispatch_observation: None,
+        })
+    }
+}
+
 fn tool_call(name: &str, input: serde_json::Value) -> String {
     format!(
         "```tool_call\n{}\n```",
@@ -98,6 +153,11 @@ async fn drive(root: &Path, audit: &Path, replies: &[&str]) -> TerminalReason {
 /// The tool-call count is part of the verdict now, so a test that judges
 /// "did anything actually run?" needs more than the terminal reason.
 async fn drive_out(root: &Path, audit: &Path, replies: &[&str]) -> RunOutput {
+    drive_out_turns(root, audit, replies, 6).await
+}
+
+/// As [`drive_out`], with the connector-attempt cap named explicitly.
+async fn drive_out_turns(root: &Path, audit: &Path, replies: &[&str], max_turns: u32) -> RunOutput {
     let policy = Arc::new(WorkspacePolicy::new(root).unwrap());
     let workspace = assemble(
         root,
@@ -109,7 +169,7 @@ async fn drive_out(root: &Path, audit: &Path, replies: &[&str]) -> RunOutput {
     let request = RunRequest {
         cwd: root.to_path_buf(),
         prompt: "do the thing".to_owned(),
-        max_turns: 6,
+        max_turns,
         max_cost_usd: None,
         model: Some("scripted-model".to_owned()),
         // The scripted connector in this test is not the HTTP client, so the
@@ -217,7 +277,12 @@ async fn writing_outside_the_workspace_is_refused_and_writes_nothing() {
     )
     .await;
 
-    assert_eq!(reason, TerminalReason::PermissionDenied);
+    // The refusal is now handed BACK to the model (A2-204) instead of ending
+    // the run, so the verdict is no longer `PermissionDenied`: the scripted
+    // model has nothing more to say, never executes anything, and the run ends
+    // on `NoAction`. What this test is for is the line below it — the escape
+    // did not happen — and that is unchanged.
+    assert_eq!(reason, TerminalReason::NoAction, "{reason:?}");
     assert!(
         !target.exists(),
         "the policy let a write escape the workspace"
@@ -243,7 +308,12 @@ async fn a_relative_path_that_climbs_out_of_the_workspace_is_refused() {
     )
     .await;
 
-    assert_eq!(reason, TerminalReason::PermissionDenied);
+    // The refusal is now handed BACK to the model (A2-204) instead of ending
+    // the run, so the verdict is no longer `PermissionDenied`: the scripted
+    // model has nothing more to say, never executes anything, and the run ends
+    // on `NoAction`. What this test is for is the line below it — the escape
+    // did not happen — and that is unchanged.
+    assert_eq!(reason, TerminalReason::NoAction, "{reason:?}");
     assert!(!work.path().join("escaped.txt").exists());
 }
 
@@ -264,7 +334,12 @@ async fn a_shell_command_writing_outside_the_workspace_is_refused() {
     )
     .await;
 
-    assert_eq!(reason, TerminalReason::PermissionDenied);
+    // The refusal is now handed BACK to the model (A2-204) instead of ending
+    // the run, so the verdict is no longer `PermissionDenied`: the scripted
+    // model has nothing more to say, never executes anything, and the run ends
+    // on `NoAction`. What this test is for is the line below it — the escape
+    // did not happen — and that is unchanged.
+    assert_eq!(reason, TerminalReason::NoAction, "{reason:?}");
     assert!(!target.exists(), "the policy let a shell write escape");
 }
 
@@ -291,10 +366,13 @@ async fn a_destructive_command_is_refused_before_the_shell_is_spawned() {
 }
 
 #[tokio::test]
-async fn an_unregistered_tool_is_refused_at_the_schema_layer() {
+async fn an_unregistered_tool_is_refused_and_never_dispatched() {
     // The tool set is closed: `webfetch` exists in the binary but is not
     // registered for a headless run, and the cascade must say so rather than
-    // dispatch it.
+    // dispatch it. Since A2-204 that refusal is handed back to the model, so
+    // the verdict is `NoAction` — the scripted model never names a real tool —
+    // rather than `PermissionDenied`. Nothing was dispatched either way, which
+    // is what the test is for.
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     let reason = drive(
@@ -307,7 +385,8 @@ async fn an_unregistered_tool_is_refused_at_the_schema_layer() {
     )
     .await;
 
-    assert_eq!(reason, TerminalReason::PermissionDenied);
+    assert_eq!(reason, TerminalReason::NoAction, "{reason:?}");
+    assert!(!reason.is_success(), "{reason:?}");
 }
 
 #[tokio::test]
@@ -432,6 +511,428 @@ async fn a_refused_tool_call_does_not_count_as_an_executed_one() {
     )
     .await;
 
-    assert_eq!(out.reason, TerminalReason::PermissionDenied);
+    // Since A2-204 the boundary refusal is handed back to the model, so the
+    // scripted model runs out of script and the verdict is `NoAction`. The
+    // point of the test is the count below, and it is unchanged: a refused
+    // call is not evidence of work.
+    assert_eq!(out.reason, TerminalReason::NoAction, "{:?}", out.reason);
     assert_eq!(out.tool_calls, 0, "a refused call executed nothing");
+}
+
+// ---------------------------------------------------------------------------
+// A malformed tool call ends the whole run (A2-204)
+//
+// Measured by the control session on 2026-09-23, `arcana` 0.2.0 at ARAS
+// 14a8fc95, card A2-201, model `deepseek-flash`: on turn 1 the model called
+// `bash`, the audit log recorded
+//   {"decision":"Denied","layer":"schema","tool":"bash",...}
+// and the run ended `PermissionDenied`, `tool_calls: 0`, `rc 1`. The `schema`
+// layer means only that the ARGUMENTS did not match the tool's published JSON
+// schema — and the model was never told which constraint it had violated, so
+// it had no way to correct itself. One typo, and the whole task was lost.
+//
+// The exact denied input IS recoverable, and it is JSON `null`. The audit log
+// stores `blake3(serde_json::to_vec(input))[..16]`; `blake3("null")` is
+// `03f88b99c3d8073b`, the hash on record. Confirmed live on 2026-09-23: the
+// same model on a DIFFERENT task produced the same hash again, because the
+// input never depended on the task.
+//
+// `null` gets there through `interpret`/`parse_tool_call`, which reads
+// `{"name": ..., "input": ...}` and does
+//     let input = value.get("input").cloned().unwrap_or(Value::Null);
+// so a model that puts its arguments under `arguments`, `parameters` or
+// `args` — a common convention, and not ours — has them silently dropped,
+// dispatches `bash` with `null`, and fails `"type": "object"`.
+//
+// That silent default is a second defect and is deliberately NOT fixed here
+// (it belongs to the tool-call convention, not to the permission cascade).
+// What this card changes is that the model is now TOLD, and can correct
+// itself — which is exactly what the live run below did.
+
+/// The failure verbatim: a tool-call block naming `bash` whose arguments are
+/// under a key the driver does not read, so `input` defaults to `null`.
+///
+/// This is the exact shape behind audit hash `03f88b99c3d8073b`, not an
+/// analogue of it.
+fn tool_call_with_arguments_key(name: &str, input: serde_json::Value) -> String {
+    format!(
+        "```tool_call\n{}\n```",
+        serde_json::json!({ "name": name, "arguments": input })
+    )
+}
+
+/// A `bash` call the tool's own schema refuses: `additionalProperties: false`,
+/// and `timeout` is not `timeout_seconds`. A plausible model mistake, not a
+/// contrived one.
+fn schema_violating_bash(command: &str) -> String {
+    tool_call(
+        "bash",
+        serde_json::json!({ "command": command, "timeout": 30 }),
+    )
+}
+
+#[tokio::test]
+async fn a_schema_rejected_call_does_not_end_the_run_and_the_model_can_correct_it() {
+    // The whole card in one test: turn 1 is the malformed call that used to be
+    // fatal, turn 2 is the same work spelled correctly. The FILE is the
+    // verdict — the run must not merely survive, it must do the job.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[
+            &schema_violating_bash("echo RECOVERED > proof.txt"),
+            &tool_call(
+                "bash",
+                serde_json::json!({ "command": "echo RECOVERED > proof.txt" }),
+            ),
+            "wrote proof.txt",
+        ],
+    )
+    .await;
+
+    let written = std::fs::read_to_string(work.path().join("proof.txt"))
+        .unwrap_or_else(|err| panic!("proof.txt missing ({:?}): {err}", out.reason));
+    assert_eq!(written.trim(), "RECOVERED");
+    assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
+    assert_eq!(
+        out.tool_calls, 1,
+        "the rejected call executed nothing, so exactly one tool call ran"
+    );
+}
+
+#[tokio::test]
+async fn the_rejected_call_is_told_to_the_model_and_names_the_violated_constraint() {
+    // A denial the model cannot read is the defect itself: the run continuing
+    // is worthless if the next call is the same malformed one. The connector
+    // records the prompt it was handed on the turn AFTER the rejection, which
+    // is the only place the fold-back can be observed from outside.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let policy = Arc::new(WorkspacePolicy::new(work.path()).unwrap());
+    let model = RecordingModel::new(&[&schema_violating_bash("echo HI > proof.txt"), "gave up"]);
+    let workspace = assemble(
+        work.path(),
+        &policy,
+        Box::new(model.clone()),
+        audit.path().to_path_buf(),
+    )
+    .expect("compose the headless run");
+    let request = RunRequest {
+        cwd: work.path().to_path_buf(),
+        prompt: "do the thing".to_owned(),
+        max_turns: 6,
+        max_cost_usd: None,
+        model: Some("scripted-model".to_owned()),
+        // Inert against a scripted connector; stated so a change to the
+        // client default cannot silently change this fixture.
+        request_timeout: None,
+    };
+    let config = driver_config(&request, &workspace.tools, work.path());
+    let _ = workspace
+        .session
+        .run_task(&request.prompt, config, CancellationToken::new())
+        .await;
+
+    let prompts = model.prompts();
+    assert!(
+        prompts.len() >= 2,
+        "the run stopped at the denial: {prompts:?}"
+    );
+    let second = &prompts[1];
+    assert!(
+        second.contains("REJECTED at the schema layer"),
+        "the model was not told the call was rejected: {second}"
+    );
+    assert!(
+        second.contains("NOT executed"),
+        "the model was not told nothing ran: {second}"
+    );
+    // The violated constraint itself, carried through from the JSON schema.
+    assert!(
+        second.contains("timeout"),
+        "the reason does not name the offending property: {second}"
+    );
+}
+
+#[tokio::test]
+async fn three_consecutive_rejections_end_the_run() {
+    // The bound on the fold-back. Without it a model that cannot write a valid
+    // call spends `max_turns` dispatches of the operator's money proving it.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let bad = schema_violating_bash("echo NOPE > proof.txt");
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[&bad, &bad, &bad, &bad, &bad, &bad],
+    )
+    .await;
+
+    assert_eq!(out.reason, TerminalReason::PermissionDenied);
+    assert_eq!(out.tool_calls, 0, "nothing was ever executed");
+    assert_eq!(
+        out.turns, MAX_CONSECUTIVE_DENIALS,
+        "the run must stop at the denial cap, not at max_turns"
+    );
+    assert!(!work.path().join("proof.txt").exists());
+}
+
+#[tokio::test]
+async fn a_tool_call_that_runs_clears_the_rejection_streak() {
+    // The counter is CONSECUTIVE. A long, mostly-healthy run that makes three
+    // scattered typos must not die on the third.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let bad = schema_violating_bash("echo NOPE > nope.txt");
+    let good = tool_call(
+        "bash",
+        serde_json::json!({ "command": "echo OK >> ok.txt" }),
+    );
+    // Seven dispatches: three rejections, three executed calls, one answer.
+    // Under a cap of three CONSECUTIVE rejections this must complete; under a
+    // cumulative counter it would die on the third `bad`.
+    let out = drive_out_turns(
+        work.path(),
+        audit.path(),
+        &[&bad, &good, &bad, &good, &bad, &good, "done"],
+        8,
+    )
+    .await;
+
+    assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
+    assert_eq!(out.tool_calls, 3, "every well-formed call ran");
+    let written = std::fs::read_to_string(work.path().join("ok.txt")).unwrap();
+    assert_eq!(written.lines().count(), 3);
+    assert!(!work.path().join("nope.txt").exists());
+}
+
+#[tokio::test]
+async fn a_destructive_command_denial_stays_terminal() {
+    // The security half of the split. `rm -rf` is refused by the closed
+    // destructive-command floor, and that refusal must NOT be handed back:
+    // telling a model that wants the effect which word is on the list invites
+    // a hunt for one that is not. The run ends, as it did before this card.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let victim = work.path().join("keep/me.txt");
+    std::fs::create_dir(work.path().join("keep")).unwrap();
+    std::fs::write(&victim, "still here").unwrap();
+
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[
+            &tool_call("bash", serde_json::json!({ "command": "rm -rf keep" })),
+            &tool_call(
+                "bash",
+                serde_json::json!({ "command": "echo AFTER > after.txt" }),
+            ),
+            "done",
+        ],
+    )
+    .await;
+
+    assert_eq!(out.reason, TerminalReason::PermissionDenied);
+    assert_eq!(out.tool_calls, 0);
+    assert!(victim.exists(), "recursive force delete was not refused");
+    assert!(
+        !work.path().join("after.txt").exists(),
+        "the run continued past a destructive-command refusal"
+    );
+}
+
+#[tokio::test]
+async fn the_destructive_floor_reason_never_reaches_the_model() {
+    // The disclosure half, asserted directly rather than inferred from the
+    // terminal reason: the refused word must not appear in any prompt.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let policy = Arc::new(WorkspacePolicy::new(work.path()).unwrap());
+    let model = RecordingModel::new(&[
+        &tool_call("bash", serde_json::json!({ "command": "sudo id" })),
+        "gave up",
+    ]);
+    let workspace = assemble(
+        work.path(),
+        &policy,
+        Box::new(model.clone()),
+        audit.path().to_path_buf(),
+    )
+    .expect("compose the headless run");
+    let request = RunRequest {
+        cwd: work.path().to_path_buf(),
+        prompt: "do the thing".to_owned(),
+        max_turns: 6,
+        max_cost_usd: None,
+        model: Some("scripted-model".to_owned()),
+        // Inert against a scripted connector; stated so a change to the
+        // client default cannot silently change this fixture.
+        request_timeout: None,
+    };
+    let config = driver_config(&request, &workspace.tools, work.path());
+    let out = workspace
+        .session
+        .run_task(&request.prompt, config, CancellationToken::new())
+        .await;
+
+    assert_eq!(out.reason, TerminalReason::PermissionDenied);
+    assert_eq!(
+        model.prompts().len(),
+        1,
+        "the run bought a second dispatch after a floor refusal"
+    );
+    for prompt in model.prompts() {
+        assert!(
+            !prompt.contains("privilege escalation"),
+            "the floor's reason was disclosed to the model: {prompt}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_write_outside_the_workspace_is_handed_back_and_the_model_can_stay_inside() {
+    // `workspace_boundary` is the third folded-back layer. "that path is
+    // outside the working directory" names a directory the model was given as
+    // its cwd, and the recovery — work inside — is the behaviour we want.
+    let work = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let target = outside.path().join("outside-proof.txt");
+
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[
+            &tool_call(
+                "write",
+                serde_json::json!({ "path": target.to_string_lossy(), "content": "ESCAPED" }),
+            ),
+            &tool_call(
+                "write",
+                serde_json::json!({ "path": "inside.txt", "content": "STAYED" }),
+            ),
+            "wrote inside.txt",
+        ],
+    )
+    .await;
+
+    assert!(
+        !target.exists(),
+        "the policy let a write escape the workspace"
+    );
+    assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
+    assert_eq!(out.tool_calls, 1);
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("inside.txt")).unwrap(),
+        "STAYED"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_tool_name_is_handed_back_and_the_model_can_pick_a_real_one() {
+    // The `registry` layer. Same disclosure argument as `schema`: the tool
+    // list is already in the model's prompt, so naming the mistake tells it
+    // nothing it did not have.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[
+            &tool_call(
+                "webfetch",
+                serde_json::json!({ "url": "https://example.com" }),
+            ),
+            &tool_call(
+                "bash",
+                serde_json::json!({ "command": "echo REAL > proof.txt" }),
+            ),
+            "done",
+        ],
+    )
+    .await;
+
+    assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
+    assert_eq!(out.tool_calls, 1);
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("proof.txt"))
+            .unwrap()
+            .trim(),
+        "REAL"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_call_is_still_recorded_as_denied_in_the_audit_log() {
+    // The run recovering must not cost the operator the record of what was
+    // refused. Law 5: the refusal stays auditable whether or not it was fatal.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let _ = drive_out(
+        work.path(),
+        audit.path(),
+        &[
+            &schema_violating_bash("echo HI > proof.txt"),
+            &tool_call(
+                "bash",
+                serde_json::json!({ "command": "echo HI > proof.txt" }),
+            ),
+            "done",
+        ],
+    )
+    .await;
+
+    let log = std::fs::read_to_string(audit.path().join("audit.log")).unwrap();
+    assert!(
+        log.contains(r#""decision":"Denied""#) && log.contains(r#""layer":"schema""#),
+        "the folded-back denial left no audit record: {log}"
+    );
+    assert!(log.contains(r#""outcome":"denied""#), "audit log: {log}");
+}
+
+#[tokio::test]
+async fn the_exact_live_failure_is_reproduced_and_the_run_survives_it() {
+    // Audit hash `03f88b99c3d8073b` is `blake3("null")`, so the denied input
+    // was JSON `null` — a tool-call block whose arguments the driver never
+    // read. Before this card that one block ended the run with `tool_calls: 0`
+    // and `rc 1`; here the same block is followed by the same work in the
+    // encoding the driver does read, and the file appears.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[
+            &tool_call_with_arguments_key(
+                "bash",
+                serde_json::json!({ "command": "echo LIVE > proof.txt" }),
+            ),
+            &tool_call(
+                "bash",
+                serde_json::json!({ "command": "echo LIVE > proof.txt" }),
+            ),
+            "wrote proof.txt",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("proof.txt"))
+            .unwrap_or_else(|err| panic!("proof.txt missing ({:?}): {err}", out.reason))
+            .trim(),
+        "LIVE"
+    );
+    assert_eq!(out.reason, TerminalReason::Completed, "{:?}", out.reason);
+    assert_eq!(out.tool_calls, 1);
+
+    // The denial that is being recovered from is the one from the field: the
+    // `schema` layer, on `bash`, over exactly the input the live run hashed.
+    let log = std::fs::read_to_string(audit.path().join("audit.log")).unwrap();
+    assert!(
+        log.contains(r#""input_hash":"03f88b99c3d8073b""#),
+        "not the input the live failure denied: {log}"
+    );
+    assert!(log.contains(r#""layer":"schema""#), "audit log: {log}");
 }
