@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- **Exactly which permission denials may be retried is now pinned, name by
+  name.** `recoverable_denial_layers_are_exactly_pinned`
+  (`crates/core/src/agent_loop.rs`) writes down every layer the cascade or the
+  executor can hand the loop as a denial — the site that emits it and whether
+  folding it back to the model is intended — and compares that table against
+  `RECOVERABLE_DENIAL_LAYERS`. Before it, adding `hook_bridge` or `rule` to the
+  recoverable set failed no test (measured on `92a4a7a`), so an operator-owned
+  refusal could have become retryable in silence. With it, on `c24cd49`, adding
+  `destructive_command_floor`, `hook_bridge` or `rule`, or removing `schema`,
+  each fails this test. Test-only: no runtime behaviour changes. Written by the
+  `arcana` DeepSeek-lane pilot (A2-204c5); CHANGELOG entry drafted by A2-231.
+
 ### Fixed
 - **Three 502s from the edge no longer throw away a finished run.** Measured on
   pilot A2-204c5 (2026-09-23, `arcana` c24cd49): 94 turns, 61 tool calls, the
