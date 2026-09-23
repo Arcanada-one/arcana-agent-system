@@ -93,6 +93,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CallToolResult` unchanged.
 
 ### Fixed
+- **`arcana run --max-turns N` above 100 died on its first dispatch.** The
+  run-level connector-attempt cap was forwarded as the per-request Model
+  Connector field `maxTurns`, which that service validates as
+  `1..=100` and hands to CLI connectors (`claude-code --max-turns`) for a
+  single invocation. The two are different quantities, so a run budget of 120
+  was rejected as a per-request one: HTTP 400, zero tokens, before the model
+  was ever reached. The loop cap is no longer sent on the wire at all — no
+  run-level number is a correct per-request value, the upstream work of one
+  request stays bounded by `maxBudgetUsd`, and a caller who really wants to cap
+  an upstream agentic CLI still sets `max_turns` on its own `model_call`
+  request.
+- **An upstream error body that does not match the contract now says why.**
+  `upstream returned a non-contract error body (91 bytes)` was a byte count
+  where the diagnosis was: the body was the validation message naming the
+  offending field. A bounded excerpt of it is now appended — at most 200 bytes,
+  truncated on a character boundary, control characters stripped so an upstream
+  string cannot forge a log line or repaint the terminal. Body only: never a
+  response header, never the API key. This deliberately narrows the earlier
+  rule that such a body is never echoed at all; the text stays labelled as
+  non-contract, and the length is still reported in full.
 - **Path-traversal gap in the filesystem tools' path guard.** When neither a
   path nor its parent existed, `path_guard::resolve` returned the path with
   its `..` components intact, so any downstream "is this inside my directory?"

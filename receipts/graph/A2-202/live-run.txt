@@ -1,0 +1,18 @@
+A2-202 live check against production Model Connector (https://connector.arcanada.ai)
+host: arcana-devs  date: 2026-09-23T12:27:02Z
+
+--- RED: installed /home/dev/.local/bin/arcana 0.2.0 (built from main 14a8fc9), --max-turns 120
+arcana: connector dispatch failed: HTTP 400: upstream returned a non-contract error body (91 bytes)
+(no final text — the Model Connector could not complete the request)
+[0 in / 0 out tokens · $0.000000 this turn · $0.000000 session]
+arcana run: the Model Connector could not complete the request (ConnectorFatal)
+ARCANA_RUN_DONE {"completed":false,"cost_usd_micros":0,"error":null,"reason":"ConnectorFatal","tool_calls":0,"turns":1,"workspace":"/tmp/a2-202-live"}
+pong.txt after RED: ls: cannot access '/tmp/a2-202-live/pong.txt': No such file or directory
+
+--- GREEN: this branch, target/release/arcana, --max-turns 150
+arcana run: workspace /tmp/a2-202-live
+audit log: /home/dev/.local/state/arcana/run/audit.log
+Created `pong.txt` in the working directory containing the word `PONG`.
+[1491 in / 114 out tokens · $0.000241 this turn · $0.000241 session]
+ARCANA_RUN_DONE {"completed":true,"cost_usd_micros":241,"error":null,"reason":"Completed","tool_calls":1,"turns":2,"workspace":"/tmp/a2-202-live"}
+pong.txt after GREEN: PONG

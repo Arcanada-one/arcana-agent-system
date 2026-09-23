@@ -338,8 +338,19 @@ async fn http_429_unknown_envelope_status_fails_closed_without_body_fallback() {
     }
 }
 
+/// A malformed body is reported as a bounded excerpt, not as a bare byte
+/// count and not as upstream text taken at face value.
+///
+/// This assertion used to be the opposite — the body was never copied at all,
+/// on the grounds that it may be model output. A2-202 narrowed that rule
+/// rather than keeping it: the same redaction hid the one line that said which
+/// request field Model Connector had rejected, so a whole class of 400s became
+/// undiagnosable. The excerpt is bounded to 200 bytes and stripped of control
+/// characters (see `model_connector_error_body_excerpt.rs`); the headline
+/// still names it as non-contract, so nothing downstream reads it as contract
+/// text.
 #[tokio::test]
-async fn malformed_error_body_is_never_copied_into_the_error_message() {
+async fn malformed_error_body_is_reported_as_a_bounded_excerpt() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/execute"))
@@ -354,11 +365,11 @@ async fn malformed_error_body_is_never_copied_into_the_error_message() {
             assert_eq!(status, 502);
             assert_eq!(
                 message,
-                "upstream returned a non-contract error body (28 bytes)"
+                "upstream returned a non-contract error body (28 bytes): \
+                 secret-model-output-sentinel"
             );
-            assert!(!message.contains("secret-model-output-sentinel"));
         }
-        other => panic!("expected redacted ConnectorError::Http, got {other:?}"),
+        other => panic!("expected ConnectorError::Http, got {other:?}"),
     }
 }
 
@@ -379,8 +390,14 @@ async fn partial_json_error_body_is_never_treated_as_a_nest_exception() {
             status, message, ..
         }) => {
             assert_eq!(status, 502);
-            assert!(message.starts_with("upstream returned a non-contract error body ("));
-            assert!(!message.contains("secret-model-output-sentinel"));
+            assert!(
+                message.starts_with("upstream returned a non-contract error body ("),
+                "a partial envelope stays labelled non-contract: {message}"
+            );
+            assert!(
+                !message.starts_with("secret-model-output-sentinel"),
+                "its `message` field is never promoted to the error headline: {message}"
+            );
         }
         other => panic!("expected redacted ConnectorError::Http, got {other:?}"),
     }
