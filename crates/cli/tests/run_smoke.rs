@@ -143,3 +143,24 @@ fn run_help_says_it_is_always_live_and_costs_money() {
         .success()
         .stdout(predicate::str::contains("costs money"));
 }
+
+#[test]
+fn run_help_documents_the_model_budget_and_its_environment_variable() {
+    // A run that dies on a slow turn is worth an hour of work, so the knob
+    // that governs it has to be findable without reading the source — and the
+    // env var has to appear beside the flag, because a scheduled run sets the
+    // variable and passes no flags at all.
+    let out = Command::cargo_bin("arcana")
+        .unwrap()
+        .args(["run", "--help"])
+        .output()
+        .unwrap();
+    let help = String::from_utf8(out.stdout).unwrap();
+
+    assert!(help.contains("--request-timeout"), "{help}");
+    assert!(help.contains("ARCANA_MC_TIMEOUT_SECS"), "{help}");
+    assert!(
+        help.contains("Default 120"),
+        "the default a run gets when nobody passes the flag: {help}"
+    );
+}

@@ -141,6 +141,18 @@ enum Cmd {
         /// choice.
         #[arg(long)]
         model: Option<String>,
+        /// Seconds one model turn may take upstream (5..=600).
+        ///
+        /// Sent to the Model Connector as the dispatch's own budget, and used
+        /// to size how long `arcana` waits: queue time and the server's
+        /// second attempt are added on top, so the client never gives up on a
+        /// turn the server is still working on. Default 120; the environment
+        /// variable `ARCANA_MC_TIMEOUT_SECS` sets the same number. Note that
+        /// `connector.arcanada.ai` is fronted by an edge proxy that cuts any
+        /// single request at ~125 s (measured 2026-09-23), so values above 120
+        /// only help against a deployment reached without it.
+        #[arg(long, value_name = "SECONDS")]
+        request_timeout: Option<u64>,
     },
     /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
@@ -244,6 +256,7 @@ fn main() {
             max_turns,
             max_cost_usd,
             model,
+            request_timeout,
         }) => {
             std::process::exit(run_headless(
                 cwd,
@@ -252,6 +265,7 @@ fn main() {
                 max_turns,
                 max_cost_usd,
                 model,
+                request_timeout,
             ));
         }
         Some(Cmd::Mcp {
@@ -266,6 +280,7 @@ fn main() {
 }
 
 /// Resolve the task text and hand the run to `arcana_cli::run`.
+#[allow(clippy::too_many_arguments)]
 fn run_headless(
     cwd: PathBuf,
     prompt: Option<String>,
@@ -273,6 +288,7 @@ fn run_headless(
     max_turns: u32,
     max_cost_usd: Option<f64>,
     model: Option<String>,
+    request_timeout: Option<u64>,
 ) -> i32 {
     let prompt = match (prompt, prompt_stdin) {
         (Some(prompt), false) => prompt,
@@ -294,6 +310,7 @@ fn run_headless(
         max_turns,
         max_cost_usd,
         model,
+        request_timeout: request_timeout.map(std::time::Duration::from_secs),
     })
 }
 

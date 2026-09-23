@@ -33,6 +33,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use arcana_core::agent_loop::{DriverConfig, RunOutput, TerminalReason};
 use arcana_core::connector::ModelConnector;
@@ -86,6 +87,9 @@ pub struct RunRequest {
     pub max_cost_usd: Option<f64>,
     /// Pin a model id instead of using the operator's saved choice.
     pub model: Option<String>,
+    /// Per-attempt model budget. `None` leaves the client on its own default
+    /// (or on `ARCANA_MC_TIMEOUT_SECS`, when that is set).
+    pub request_timeout: Option<Duration>,
 }
 
 /// Entry point for `arcana run`. Returns a process exit code.
@@ -141,8 +145,17 @@ async fn run_async(request: &RunRequest) -> i32 {
     // Connector origin and refuses an override. A headless run that cannot go
     // live must say so and stop — never quietly become an offline replay.
     let connector: Box<dyn ModelConnector> =
-        match arcana_connectors::ModelConnectorClient::try_from_env() {
-            Ok(client) => Box::new(client),
+        match arcana_connectors::ModelConnectorClient::try_from_env_with_timeout(
+            request.request_timeout,
+        ) {
+            Ok(client) => {
+                println!(
+                    "model budget: {}s per attempt, waiting up to {}s for a reply",
+                    client.request_timeout().as_secs(),
+                    client.http_wait().as_secs()
+                );
+                Box::new(client)
+            }
             Err(err) => {
                 return exit_failed(&format!("the Model Connector is unavailable: {err}"), &root);
             }

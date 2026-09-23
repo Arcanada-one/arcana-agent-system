@@ -1,12 +1,12 @@
 //! Agent loop state machine exhaustiveness.
 //!
 //! Contract: `enum TurnOutcome { Continue(ContinueReason), Terminal(TerminalReason) }`
-//! has 6 `ContinueReason` and 8 `TerminalReason` variants. Regression is
+//! has 8 `ContinueReason` and 10 `TerminalReason` variants. Regression is
 //! blocked two independent ways:
 //!   1. Compile-time exhaustive match — adding a variant without updating
 //!      the driver produces a «non-exhaustive patterns» error.
 //!   2. Run-time enumeration — the explicit per-variant list confirms the
-//!      driver still covers the documented 6/8 surface.
+//!      driver still covers the documented 8/10 surface.
 
 #![allow(
     clippy::unwrap_used,
@@ -17,7 +17,7 @@
 
 use arcana_core::agent_loop::{ContinueReason, TerminalReason, TurnOutcome};
 
-const CONTINUE_VARIANTS: usize = 7;
+const CONTINUE_VARIANTS: usize = 8;
 // Was 8 while the enum had 9 variants, and the `all` array below simply left
 // `AuditFatal` out — a test named "exhaustive" that had stopped being so. Both
 // are corrected here rather than only extended for `NoAction`.
@@ -32,6 +32,7 @@ fn classify_continue(reason: ContinueReason) -> &'static str {
         ContinueReason::HookContinuation => "hook_continuation",
         ContinueReason::MicrocompactCompleted => "microcompact_completed",
         ContinueReason::NoActionRetry => "no_action_retry",
+        ContinueReason::ConnectorRetry => "connector_retry",
     }
 }
 
@@ -67,6 +68,7 @@ fn all_continue_variants_are_distinct() {
         ContinueReason::HookContinuation,
         ContinueReason::MicrocompactCompleted,
         ContinueReason::NoActionRetry,
+        ContinueReason::ConnectorRetry,
     ];
     assert_eq!(all.len(), CONTINUE_VARIANTS);
 

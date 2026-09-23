@@ -85,6 +85,8 @@ async fn opted_in_first_dispatch_context_reaches_the_exact_http_boundary() {
         .and(body_json(json!({
             "connector": "claude-code",
             "prompt": "ping",
+            // The client's default model budget travels with every request.
+            "timeout": 120_000,
             "firstDispatchMeasurement": {
                 "version": "first-dispatch-measurement/v0",
                 "corpusId": "corpus-v0",
@@ -401,4 +403,148 @@ async fn partial_json_error_body_is_never_treated_as_a_nest_exception() {
         }
         other => panic!("expected redacted ConnectorError::Http, got {other:?}"),
     }
+}
+
+// --- the model budget on the wire (A2-203) ---------------------------------
+//
+// Measured 2026-09-23 against the production Model Connector: a `/execute`
+// without a `timeout` field is given the connector's own default — 30 s for
+// deepseek — and retried once, so a long turn dies server-side however patient
+// the client is. The budget is therefore part of the request, not only a
+// property of the HTTP client.
+
+/// The request body a mock recorded, for assertions on single fields.
+async fn recorded_body(server: &MockServer) -> serde_json::Value {
+    let requests = server.received_requests().await.expect("requests recorded");
+    assert_eq!(requests.len(), 1, "exactly one dispatch");
+    serde_json::from_slice(&requests[0].body).expect("request body is JSON")
+}
+
+#[tokio::test]
+async fn the_default_model_budget_is_stated_on_the_wire() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(success_body()))
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .execute(ping())
+        .await
+        .expect("201 is Ok");
+
+    assert_eq!(
+        recorded_body(&server).await.get("timeout"),
+        Some(&json!(120_000)),
+        "the client's default budget must reach the server, or the server \
+         silently applies its own 30 s default"
+    );
+}
+
+#[tokio::test]
+async fn the_configured_budget_reaches_the_wire_and_the_client() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(success_body()))
+        .mount(&server)
+        .await;
+
+    let base = Url::parse(&server.uri()).expect("mock uri parses");
+    let client = ModelConnectorClient::with_request_timeout(
+        base,
+        arcana_connectors::model_connector::ApiKey::new("mc-test"),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("client builds");
+
+    assert_eq!(
+        client.request_timeout(),
+        std::time::Duration::from_secs(300)
+    );
+    // 60 s queue + two server attempts of 300 s + 10 s backoff.
+    assert_eq!(client.http_wait(), std::time::Duration::from_secs(670));
+
+    client.execute(ping()).await.expect("201 is Ok");
+    assert_eq!(
+        recorded_body(&server).await.get("timeout"),
+        Some(&json!(300_000))
+    );
+}
+
+#[tokio::test]
+async fn a_budget_the_caller_stated_is_never_overwritten() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(success_body()))
+        .mount(&server)
+        .await;
+
+    let mut req = ping();
+    req.timeout_ms = Some(45_000);
+    client_for(&server).execute(req).await.expect("201 is Ok");
+
+    assert_eq!(
+        recorded_body(&server).await.get("timeout"),
+        Some(&json!(45_000))
+    );
+}
+
+#[tokio::test]
+async fn a_budget_outside_the_upstream_range_is_refused_before_any_request() {
+    let base = Url::parse("https://connector.arcanada.ai").expect("url parses");
+    let err = ModelConnectorClient::with_request_timeout(
+        base,
+        arcana_connectors::model_connector::ApiKey::new("mc-test"),
+        std::time::Duration::from_secs(900),
+    )
+    .expect_err("900s is above the 600s the upstream accepts");
+    assert!(
+        matches!(&err, ConnectorError::Transport(message) if message.contains("600s")),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn a_stalled_response_is_a_retryable_timeout_not_a_fatal_transport_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(
+            ResponseTemplate::new(201)
+                .set_body_json(success_body())
+                .set_delay(std::time::Duration::from_secs(30)),
+        )
+        .mount(&server)
+        .await;
+
+    let base = Url::parse(&server.uri()).expect("mock uri parses");
+    // A stated wait: the point under test is the classification, and deriving
+    // the wait from the minimum budget would make this test take 80 s.
+    let client = ModelConnectorClient::with_timeouts(
+        base,
+        arcana_connectors::model_connector::ApiKey::new("mc-test"),
+        std::time::Duration::from_secs(5),
+        std::time::Duration::from_millis(250),
+    )
+    .expect("client builds");
+
+    let err = client
+        .execute(ping())
+        .await
+        .expect_err("a response that never arrives is an error");
+    assert!(
+        matches!(err, ConnectorError::Timeout(_)),
+        "a stall must be Timeout, not {err:?}"
+    );
+    assert!(
+        err.is_transient(),
+        "a timeout says nothing about the request and must be retryable"
+    );
+    assert!(
+        err.to_string().contains("timed out after 0s"),
+        "the message names the budget the failing client actually had: {err}"
+    );
 }

@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A slow model turn no longer ends the run.** `arcana run --request-timeout
+  <secs>` (or `ARCANA_MC_TIMEOUT_SECS`, default `120`) sets how long one model
+  turn may take, and the number is used twice: it travels with the request as
+  the dispatch's own budget, and it sizes how long the client waits — the
+  budget plus up to 60 s of upstream queue, a second server-side attempt and
+  its backoff, 310 s at the default. The client used to wait a fixed 120 s
+  while the server's own worst case was already about 121 s, so a healthy but
+  slow turn came back as `connector dispatch failed: timed out after 120s` and
+  the whole run ended `ConnectorFatal` — measured on a run that lost an hour of
+  work on turn 3. Sending the budget matters on its own: with no `timeout`
+  field the Model Connector applies the connector's default, 30 s for most API
+  connectors, which no amount of client patience can widen.
+
+  A connector error that says nothing about the request — a timeout, a gateway
+  status, or an envelope the upstream itself marked `retryable` — is now
+  re-dispatched up to twice (`ContinueReason::ConnectorRetry`) instead of
+  ending the run. Each re-dispatch is an ordinary attempt: it consumes a turn
+  from `--max-turns` and is charged against `--max-cost-usd`, so an upstream
+  that is simply down cannot spend the whole budget. A missing key, an unknown
+  connector id or a policy refusal is not retried — it would fail identically
+  forever, and retrying only delays the message the operator needs.
+
+  One ceiling is not ours to move and is documented rather than papered over:
+  the public Model Connector origin is fronted by an edge proxy that cuts any
+  single `/execute` at about 125 s (measured 2026-09-23 — three calls cut at
+  125.1 s, 125.2 s, 125.3 s with HTTP 524). A budget above 120 s helps only a
+  deployment reached without that proxy in the path.
 - **`arcana run` — one task, unattended, with real tools.** `arcana run --cwd
   DIR --prompt-stdin` drives a single task to completion in a working
   directory: the built-in `read`, `write`, `edit`, `grep` and `bash` tools are
