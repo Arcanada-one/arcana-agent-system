@@ -1,0 +1,851 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; admitted_with_exemptions requires every non-verified entity to have an unexpired exemption; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe or refused",
+  "verdict": "admitted"
+ },
+ "authored_by": {
+  "agent": "Arcanada worker agent, card A2-003, host arcana-devs",
+  "path": "agent_author",
+  "rule": "The agent that made the change computed the impact set with the bundled impact0 over a graph built at the base commit, ran the verifiers below itself, and recorded a tri-valued verdict per affected entity (DEC-AUP-0008)."
+ },
+ "captured_at_utc": "2026-09-23T10:51:52Z",
+ "change_set": {
+  "base": "6f7abb5259b8220fd63868cee193e0ef68e278e4",
+  "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:README.md",
+    "node_ids": [
+     "document:README.md"
+    ],
+    "path": "README.md",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/demo.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/demo.rs"
+    ],
+    "path": "crates/cli/src/demo.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/lib.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/lib.rs"
+    ],
+    "path": "crates/cli/src/lib.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/main.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/main.rs"
+    ],
+    "path": "crates/cli/src/main.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "new": true,
+    "path": "crates/cli/src/run.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "new": true,
+    "path": "crates/cli/src/workspace.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/demo_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/demo_smoke.rs"
+    ],
+    "path": "crates/cli/tests/demo_smoke.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "new": true,
+    "path": "crates/cli/tests/run_smoke.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "new": true,
+    "path": "crates/cli/tests/run_tool_execution.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/bash.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/bash.rs"
+    ],
+    "path": "crates/tools/src/bash.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/edit.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/edit.rs"
+    ],
+    "path": "crates/tools/src/edit.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/grep.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/grep.rs"
+    ],
+    "path": "crates/tools/src/grep.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/path_guard.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/path_guard.rs"
+    ],
+    "path": "crates/tools/src/path_guard.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/read.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/read.rs"
+    ],
+    "path": "crates/tools/src/read.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/tools/src/write.rs",
+    "node_ids": [
+     "code_unit:crates/tools/src/write.rs"
+    ],
+    "path": "crates/tools/src/write.rs",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/how-to/README.md",
+    "node_ids": [
+     "document:docs/how-to/README.md"
+    ],
+    "path": "docs/how-to/README.md",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "new": true,
+    "path": "docs/how-to/run-one-task-unattended.md",
+    "status": "A"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/reference/cli-exit-codes.md",
+    "node_ids": [
+     "document:docs/reference/cli-exit-codes.md"
+    ],
+    "path": "docs/reference/cli-exit-codes.md",
+    "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/change-admission-a2-003.json",
+    "status": "A"
+   }
+  ],
+  "head": "00465e7610a3aa2b80d9997d4e860a1bd128f731",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.0",
+  "built_at_utc": "2026-09-23T10:51:40Z",
+  "graph_digest": "sha256:119d63b87877d0cb0c306d3445ea38c56cbaf7f6e74cc0f9103033f10957e790",
+  "path": "/tmp/a2003-graph.json",
+  "source_commit": "6f7abb5259b8220fd63868cee193e0ef68e278e4"
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/repl.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/repl.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/demo.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/bash.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/bash_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/bash.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/edit_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/edit_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/edit.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/grep_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/grep_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/grep.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/path_guard.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/path_guard.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/edit.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/read_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/read_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/read.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/schema_validation.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/bash.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/tools/tests/write_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/write_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/tools/src/write.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/demo.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/tools",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/tools/src/bash.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/tools",
+      "via": "containment"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 11
+ },
+ "notes": "Card A2-003: `arcana run` (headless task execution with real tools + workspace permission policy), a `--live` that can no longer degrade silently to offline, and a path-traversal fix in path_guard::resolve. The live end-to-end measurements are in the pull-request body; they are evidence of the FEATURE, and the entity verdicts below rest on the three repeatable verifiers, not on them. The receipt lists ITSELF in the change set: it is committed in the same change it describes, and a change set that omitted the file being added would be incomplete by the gate's own C06. It carries no verdict because it is a new file with no node in the graph at the base commit, and because a receipt cannot verify itself.",
+ "producer": {
+  "path": "agent_author",
+  "tool": "tools/graph/impact.py + agent-authored verdicts",
+  "version": "1.0.0"
+ },
+ "receipt_id": "car-impact-20260923T105152Z",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/aup/arc2/wt/A2-003-aras"
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-09-23T10:51:52Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "tree": {
+  "commit": "00465e7610a3aa2b80d9997d4e860a1bd128f731",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/repl.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/lib.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/edit_tool.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/grep_tool.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/path_guard.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/read_tool.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/write_tool.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/tools",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "the document was reviewed against the behaviour it describes",
+   "verdict": "verified",
+   "verifier_ids": [
+    "doc-review"
+   ]
+  },
+  {
+   "entity": "document:README.md",
+   "reason": "the document was reviewed against the behaviour it describes",
+   "verdict": "verified",
+   "verifier_ids": [
+    "doc-review"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/demo.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/main.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/demo_smoke.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/bash.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/edit.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/grep.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/path_guard.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/read.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/write.rs",
+   "reason": "compiles with warnings denied, formatted, and covered by the targeted tests and the full workspace suite",
+   "verdict": "verified",
+   "verifier_ids": [
+    "clippy-workspace",
+    "fmt-check",
+    "targeted-tests",
+    "workspace-suite"
+   ]
+  },
+  {
+   "entity": "document:docs/how-to/README.md",
+   "reason": "the document was reviewed against the behaviour it describes",
+   "verdict": "verified",
+   "verifier_ids": [
+    "doc-review"
+   ]
+  },
+  {
+   "entity": "document:docs/reference/cli-exit-codes.md",
+   "reason": "the document was reviewed against the behaviour it describes",
+   "verdict": "verified",
+   "verifier_ids": [
+    "doc-review"
+   ]
+  }
+ ],
+ "verifiers": [
+  {
+   "command": "cargo clippy --workspace --all-targets -- -D warnings",
+   "entities": [
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/tools",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs"
+   ],
+   "exit_code": 0,
+   "id": "clippy-workspace",
+   "kind": "type_check",
+   "output_ref": "local:arcana-devs:00465e7610a3:cargo-clippy",
+   "summary": "compiles every crate and every target (lib, bins, tests) of the workspace with warnings denied; this is the type-check the `imports` edges of the impact set select."
+  },
+  {
+   "command": "cargo fmt --all -- --check",
+   "entities": [
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/tools",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs"
+   ],
+   "exit_code": 0,
+   "id": "fmt-check",
+   "kind": "fitness_rules",
+   "output_ref": "local:arcana-devs:00465e7610a3:cargo-fmt",
+   "summary": "repository-wide formatting rule, the same one CI's lint-test job enforces."
+  },
+  {
+   "command": "cargo test -p arcana-agent --test run_tool_execution --test run_smoke --test demo_smoke --lib ; cargo test -p arcana-tools --lib",
+   "entities": [
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/tools",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs"
+   ],
+   "exit_code": 0,
+   "id": "targeted-tests",
+   "kind": "targeted_test",
+   "output_ref": "local:arcana-devs:00465e7610a3:cargo-test-targeted",
+   "summary": "the tests that cover the changed behaviour: 9 tool-execution tests judging by the file on disk (each with a paired negative), 7 headless-entrypoint tests, 6 live-fallback tests, 12 workspace-policy unit tests, and the path_guard traversal tests. The tool-execution suite was proven able to go red by mutating the bash-tool registration (left: PermissionDenied, right: Completed)."
+  },
+  {
+   "command": "cargo test --workspace",
+   "entities": [
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/tools/src/lib.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/edit_tool.rs",
+    "code_unit:crates/tools/tests/grep_tool.rs",
+    "code_unit:crates/tools/tests/path_guard.rs",
+    "code_unit:crates/tools/tests/read_tool.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/write_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/tools",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/tests/demo_smoke.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/edit.rs",
+    "code_unit:crates/tools/src/grep.rs",
+    "code_unit:crates/tools/src/path_guard.rs",
+    "code_unit:crates/tools/src/read.rs",
+    "code_unit:crates/tools/src/write.rs"
+   ],
+   "exit_code": 0,
+   "id": "workspace-suite",
+   "kind": "other",
+   "output_ref": "local:arcana-devs:00465e7610a3:cargo-test-workspace",
+   "summary": "121 suites, 743 tests, 0 failed, 2 ignored. Recorded as kind `other` because the matrix reserves `targeted_test` for tests covering the affected node, never the whole suite."
+  },
+  {
+   "command": "read every changed document against the behaviour it describes (README usage + known limitations, CHANGELOG, how-to, exit-code reference)",
+   "entities": [
+    "document:CHANGELOG.md",
+    "document:README.md",
+    "document:docs/how-to/README.md",
+    "document:docs/reference/cli-exit-codes.md",
+    "document:CHANGELOG.md",
+    "document:README.md",
+    "document:docs/how-to/README.md",
+    "document:docs/reference/cli-exit-codes.md"
+   ],
+   "exit_code": 0,
+   "id": "doc-review",
+   "kind": "manual_review",
+   "output_ref": "https://github.com/Arcanada-one/arcana-agent-system/pull/182",
+   "summary": "No link checker was run: the claim is that each document matches the shipped behaviour, including the stated limits of the shell check, not that every link resolves."
+  }
+ ],
+ "work_item": "A2-003"
+}
