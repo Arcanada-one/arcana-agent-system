@@ -1,7 +1,7 @@
 {
  "admission": {
-  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
-  "verdict": "paused_safe"
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4) | control (admitting agent): 9 I14 historical-receipt entities exempted with owner + expiry; no other not_measured or failed verdicts.",
+  "verdict": "admitted"
  },
  "captured_at_utc": "2026-09-23T19:53:02Z",
  "change_set": {
@@ -93,7 +93,71 @@
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
- "exemptions": [],
+ "exemptions": [
+  {
+   "entity": "receipt:receipts/graph/A2-106/receipt.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/A2-106/receipt.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-003.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-003b.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-203.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-208.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-212.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-216.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-218.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+   "evidence": "git diff --name-only c24cd49..8b094ff lists 9 paths and none is under receipts/graph/ except this receipt; receipts/graph/change-admission-a2-219.json is byte-identical at base and head",
+   "expires_at_utc": "2026-10-07T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Historical receipt reached only through documents this change edits (CHANGELOG.md, docs/). I14 never re-verifies a past receipt by design; the file is unchanged by this PR and records the admission of a different, already-merged range. Not a measurement of this change. The class is structural (every doc edit reaches every receipt citing that doc) and is carried to the program repo as a gate defect; this exemption expires in 2 weeks so it cannot become the fix."
+  }
+ ],
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
