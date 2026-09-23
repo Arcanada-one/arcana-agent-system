@@ -161,3 +161,74 @@ async fn a_transport_failure_never_reads_as_a_bare_url() {
         "transport error: error sending request for url (http://127.0.0.1:1/execute)"
     );
 }
+
+/// A2-230 — the edge in front of Model Connector, end to end.
+///
+/// `connector.arcanada.ai` sits behind Cloudflare, and on pilot A2-204c5
+/// (2026-09-23) three consecutive `/execute` calls came back as HTTP 502 with
+/// the 16 bytes `error code: 502` — not the connector-response envelope, not a
+/// `NestJS` exception envelope, nothing this client can parse. The agent loop
+/// now gives that class its own retry budget, and it recognises it by the
+/// headline this parser writes. The two halves live in different crates, so
+/// the round trip is pinned here: change the words in `arcana-core` alone and
+/// production failures silently fall back to the short budget.
+#[tokio::test]
+async fn a_cloudflare_edge_502_is_recognised_as_a_gateway_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(
+            ResponseTemplate::new(502)
+                .set_body_raw("error code: 502", "text/plain")
+                .insert_header("content-type", "text/plain"),
+        )
+        .mount(&server)
+        .await;
+    let error = client(&server.uri())
+        .execute(ExecuteRequest::new("claude-code", "ping"))
+        .await
+        .expect_err("a 502 is a failure");
+
+    assert!(
+        error.is_edge_gateway_failure(),
+        "the loop cannot tell this from a refusal Model Connector authored: {error}"
+    );
+    assert!(error.is_transient());
+    assert!(
+        error.response_may_have_been_completed_upstream(),
+        "a cut response may already have been produced and billed"
+    );
+    let rendered = error.to_string();
+    assert!(rendered.contains("HTTP 502"), "{rendered}");
+    assert!(rendered.contains("error code: 502"), "{rendered}");
+}
+
+/// The other half of the pin: a body Model Connector DID author, at the same
+/// status, must not be treated as an edge verdict.
+#[tokio::test]
+async fn a_gateway_status_with_a_nest_envelope_is_not_an_edge_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/execute"))
+        .respond_with(ResponseTemplate::new(502).set_body_json(serde_json::json!({
+            "message": "Upstream provider refused the request",
+            "error": "Bad Gateway",
+            "statusCode": 502,
+        })))
+        .mount(&server)
+        .await;
+    let error = client(&server.uri())
+        .execute(ExecuteRequest::new("claude-code", "ping"))
+        .await
+        .expect_err("a 502 is a failure");
+
+    assert!(
+        !error.is_edge_gateway_failure(),
+        "Model Connector's own words must not buy the edge's longer budget: {error}"
+    );
+    assert!(
+        !error.response_may_have_been_completed_upstream(),
+        "an envelope Model Connector authored means the hold was released, not charged"
+    );
+    assert!(error.is_transient(), "a 502 is still worth one more try");
+}

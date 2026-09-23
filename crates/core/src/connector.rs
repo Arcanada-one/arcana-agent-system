@@ -274,6 +274,19 @@ pub struct LogicalError {
     pub retry_after: Option<u64>,
 }
 
+/// Headline of an error body that is neither the connector response envelope
+/// nor a `NestJS` exception envelope — i.e. nothing Model Connector itself
+/// speaks.
+///
+/// Declared here rather than at the formatting site because two parties depend
+/// on the exact words: `arcana-connectors` writes it when it gives up parsing a
+/// 4xx/5xx body, and [`ConnectorError::is_edge_gateway_failure`] reads it to
+/// tell a Cloudflare verdict apart from a refusal Model Connector authored. A
+/// silent edit to one half would silently reclassify production failures, so
+/// the string has one home and a test that pins the round trip
+/// (`crates/connectors/tests/model_connector_error_reporting.rs`).
+pub const NON_CONTRACT_BODY_HEADLINE: &str = "upstream returned a non-contract error body";
+
 /// Every way a connector call can fail. Phase 1 does not retry — pressure
 /// signals (`429`, logical `retryable`) are propagated to the agent loop.
 #[derive(Debug, thiserror::Error)]
@@ -428,6 +441,97 @@ impl ConnectorError {
             | Self::UpstreamNonJson { .. }
             | Self::UnexpectedStatus(_)
             | Self::UnexpectedEnvelopeStatus => false,
+        }
+    }
+
+    /// True when a transient failure was produced by the network edge in
+    /// front of Model Connector rather than by Model Connector itself.
+    ///
+    /// The distinction is about WHO refused. Model Connector answers in one of
+    /// two shapes it authors — the connector-response envelope (which reaches
+    /// us as [`Self::Logical`]) or a `NestJS` exception envelope (whose
+    /// `message` becomes [`Self::Http::message`] verbatim). A gateway status
+    /// whose body is neither is nobody's contract: measured on pilot
+    /// A2-204c5 (2026-09-23) the body was the 16 bytes `error code: 502`,
+    /// which is Cloudflare's, not ours.
+    ///
+    /// Why it earns its own class: an edge verdict says the request never
+    /// reached a decision at all, and the edge heals in tens of seconds, so it
+    /// is worth waiting out. A `retryable` envelope Model Connector authored
+    /// already has Model Connector's own server-side attempts behind it, so a
+    /// long client-side wait on top buys much less. The two therefore get
+    /// different retry budgets in [`crate::agent_loop`].
+    ///
+    /// Narrow on purpose: the status must be a gateway status AND the body
+    /// must have defeated both parsers. A 500 is excluded — an unhandled
+    /// exception inside Model Connector is Model Connector's, and retrying it
+    /// five times only delays the report.
+    #[must_use]
+    pub fn is_edge_gateway_failure(&self) -> bool {
+        match self {
+            Self::Http {
+                status, message, ..
+            } => {
+                matches!(*status, 502 | 503 | 504 | 520..=524)
+                    && message.contains(NON_CONTRACT_BODY_HEADLINE)
+            }
+            _ => false,
+        }
+    }
+
+    /// True when the request may nevertheless have been carried out upstream.
+    ///
+    /// This is a billing fact, not a transport one, and it decides what the
+    /// retry log is allowed to claim. Model Connector opens a hold, calls the
+    /// provider, and settles the charge in the same transaction as the request
+    /// row **before** the response is written to the socket
+    /// (`src/connectors/connectors.service.ts`, `ARAS-0058`: "nothing is
+    /// returned to the caller until the row and the charge have committed
+    /// together"; a provider that throws goes down the `releaseIntent` path and
+    /// is not charged). So:
+    ///
+    /// * an edge verdict or a client-side timeout cut a response that may
+    ///   already have been produced, billed and lost — a re-dispatch is a
+    ///   second provider call and a second charge, because `arcana` sends no
+    ///   `Idempotency-Key` (Model Connector supports one, and without it
+    ///   `src/billing/intent.ts` says a re-POST "is a second provider call and
+    ///   a second charge");
+    /// * an envelope Model Connector authored means the provider call failed
+    ///   and the hold was released, so nothing was charged and a retry is
+    ///   clean.
+    #[must_use]
+    pub fn response_may_have_been_completed_upstream(&self) -> bool {
+        matches!(self, Self::Timeout(_)) || self.is_edge_gateway_failure()
+    }
+
+    /// The status an operator can act on, whatever shape the failure took.
+    ///
+    /// [`Self::Logical`]'s `Display` deliberately leads with the upstream's
+    /// own words and never names the HTTP status; a terminal verdict has to
+    /// name it anyway, so the label is derived here once.
+    #[must_use]
+    pub fn status_label(&self) -> String {
+        match self {
+            Self::MissingApiKey => "no API key".to_owned(),
+            Self::InvalidApiKey { .. } => "unusable API key".to_owned(),
+            Self::Timeout(_) => "client timeout".to_owned(),
+            Self::Transport(_) => "transport failure".to_owned(),
+            Self::Http { status, .. } | Self::UnexpectedStatus(status) => format!("HTTP {status}"),
+            Self::UpstreamNonJson { .. } => "non-JSON body".to_owned(),
+            Self::UnexpectedEnvelopeStatus => "unexpected envelope status".to_owned(),
+            Self::Logical {
+                http_status, kind, ..
+            } => format!("HTTP {http_status} {kind}"),
+        }
+    }
+
+    /// The failure's own words, without the status [`Self::status_label`]
+    /// already states.
+    #[must_use]
+    pub fn detail_text(&self) -> String {
+        match self {
+            Self::Http { message, .. } => message.clone(),
+            other => other.to_string(),
         }
     }
 

@@ -65,6 +65,14 @@ the refusal costs nothing. Measured 2026-09-23: a run that had executed five
 tool calls and cloned a repository died at turn 10 on that 400, reported as
 `ConnectorFatal` — which names the connector for a limit the caller overran.
 
+`ConnectorFatal` carries the same `error` detail a denial does: the status, how
+many attempts were made this turn, over how long, and why the loop stopped —
+`HTTP 502 after 6 attempt(s) over 63s — the 5 re-dispatch(es) allowed for a
+transient gateway failure in front of the Model Connector are spent: …`. Pilot
+A2-204c5 (2026-09-23) printed `"error": null` beside it, and a reader could not
+tell an upstream that was down for an hour from a retry policy that gave up
+after four seconds.
+
 `UnsupportedToolCallFormat` is separate from `NoAction` for the same reason
 `NoAction` is separate from `Completed`: the two look identical in a marker
 line and call for opposite fixes. "The model would not act" is answered by a

@@ -8,6 +8,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Three 502s from the edge no longer throw away a finished run.** Measured on
+  pilot A2-204c5 (2026-09-23, `arcana` c24cd49): 94 turns, 61 tool calls, the
+  test written and four mutants run — ended `ConnectorFatal` at $0.34 when three
+  consecutive `HTTP 502: upstream returned a non-contract error body (16 bytes):
+  error code: 502` arrived from `connector.arcanada.ai`. The retry policy was
+  two re-dispatches two seconds apart, so the run spent about four seconds
+  finding out whether a Cloudflare edge would come back.
+
+  A gateway status (502/503/504/520–524) whose body is neither the
+  connector-response envelope nor a `NestJS` envelope is now its own class: it
+  is the edge speaking, not Model Connector, and it gets **five** re-dispatches
+  on a bounded exponential schedule with jitter — 2, 4, 8, 16, 30 s, each
+  shortened by up to half at random, so at worst 60 s of added waiting.
+  Everything else transient keeps the conservative two, because an envelope
+  Model Connector authored already has Model Connector's own server-side
+  attempts behind it. A single turn may spend at most 120 s asleep between
+  re-dispatches whatever the class, so an upstream-named `retryAfter` cannot
+  park an unattended run.
+
+  The retry line now warns when a re-dispatch may be paid for twice: Model
+  Connector settles the charge in the same transaction as the request row
+  *before* the response is written to the socket
+  (`src/connectors/connectors.service.ts`), and `arcana` sends no
+  `Idempotency-Key`, so a request the edge cut may already have been executed
+  and billed. A failure Model Connector itself reported carries no such warning
+  — there the provider call failed, the hold was released and nothing was
+  charged.
+- **`ConnectorFatal` says what killed the run.** The same pilot left
+  `"error": null` in its done-marker and `the Model Connector could not complete
+  the request` on stderr. Both now carry the status, the attempts made this
+  turn, the elapsed time and why the loop stopped — `HTTP 502 after 6
+  attempt(s) over 63s — the 5 re-dispatch(es) allowed for a transient gateway
+  failure in front of the Model Connector are spent: …`. A2-225 did this for
+  permission denials; this is the connector's half.
+- **`MAX_DENIALS_PER_DISTINCT_CALL` is now the rule it claimed to be.** It was
+  documented as the bound on how often one distinct call may be refused at a
+  correctable layer, while the code carried the rule in a `HashSet::insert` —
+  which can only ever mean "one". Editing the constant changed no behaviour and
+  broke no test. `RunState` now counts refusals per distinct call and checks
+  them against it. The dead `consecutive_denials` counter beside it, written
+  every refusal and read nowhere, is gone.
 - **A long run no longer loses its history to compaction.** Measured on pilot
   run A2-204c4 (2026-09-23, audit `~/.local/state/arcana/run/audit.log`): the
   request grew from 78 234 to 179 037 characters in one turn, and the guard

@@ -313,13 +313,67 @@ Two numbers govern a turn now, and both come from `--request-timeout`
   that is 310 s. The client never gives up on a turn the server is still
   working on.
 
-A turn that still fails in a way that says nothing about the request — a
-timeout, a gateway status, an upstream envelope marked `retryable` — is
-re-dispatched up to twice before the run ends. Each re-dispatch is an ordinary
-attempt: it consumes a turn from `--max-turns` and is charged against
-`--max-cost-usd`, so a connector that is down cannot quietly spend the run's
-whole budget. Errors that will fail identically forever — a missing key, an
-unknown connector id, a policy refusal — are not retried.
+A turn that still fails in a way that says nothing about the request is
+re-dispatched before the run ends. Each re-dispatch is an ordinary attempt: it
+consumes a turn from `--max-turns` and is charged against `--max-cost-usd`, so
+a connector that is down cannot quietly spend the run's whole budget. Errors
+that will fail identically forever — a missing key, an unknown connector id, a
+policy refusal — are not retried.
+
+How many re-dispatches depends on **who** refused, because the two answers heal
+on different clocks:
+
+| Failure | Re-dispatches | Pause |
+|---|---|---|
+| A gateway status (502, 503, 504, 520–524) whose body is neither the connector-response envelope nor a `NestJS` envelope — i.e. the edge in front of Model Connector, not Model Connector | 5 | 2 s, 4 s, 8 s, 16 s, 30 s, each shortened by up to half at random |
+| Anything else transient — a client timeout, a `retryable` envelope Model Connector authored, a 429 | 2 | 2 s flat |
+| An upstream that named its own `retryAfter` | as above | what it asked for, capped at 60 s |
+
+Worst case, five gateway re-dispatches add **60 s of waiting** to a turn on top
+of the five dispatches themselves; jitter only ever shortens a pause, so that
+is a ceiling and not an average. Across all classes a single turn may spend at
+most 120 s asleep between re-dispatches — the bound that matters when an
+upstream names a long `retryAfter` — and a turn that reaches it ends the run
+saying so rather than waiting on.
+
+The asymmetry is the point. An envelope Model Connector authored already has
+Model Connector's own server-side attempts behind it, so a long client wait on
+top buys little. An edge verdict means the request never reached a decision at
+all: measured on pilot A2-204c5 (2026-09-23), a 94-turn run with its work
+finished died on **three** `HTTP 502 … error code: 502` — 16 bytes of
+Cloudflare — inside about four seconds, which is not a serious attempt to
+outlast an edge.
+
+> **A gateway retry may be paid for twice.** Model Connector settles the charge
+> in the same transaction as the request row *before* the response is written
+> to the socket, and `arcana` sends no `Idempotency-Key`. A request the edge cut
+> may therefore already have been executed and billed, and the re-dispatch is a
+> second provider call and a second charge. The retry line says so:
+>
+> ```
+> arcana: HTTP 502 is the gateway in front of the Model Connector, not the Model
+> Connector — retrying this turn in 4.0s (2 of 5) — the cut request may already
+> have been executed and charged upstream, so this re-dispatch may be a paid
+> duplicate
+> ```
+>
+> A failure Model Connector itself reported carries no such warning: there the
+> provider call failed, the hold was released and nothing was charged.
+
+When the re-dispatches are spent, the run ends `ConnectorFatal` — and the
+verdict names the status, the attempts and how long they took, in the marker's
+`error` field and on stderr:
+
+```
+arcana run: the Model Connector could not complete the request (ConnectorFatal):
+HTTP 502 after 6 attempt(s) over 63s — the 5 re-dispatch(es) allowed for a
+transient gateway failure in front of the Model Connector are spent: upstream
+returned a non-contract error body (16 bytes): error code: 502
+```
+
+Without those three numbers "the upstream is down" and "the retry policy was
+four seconds long" read identically, which is exactly what the pilot's
+`"error": null` left behind.
 
 Raising the budget above 120 s only helps where the Model Connector is reached
 directly. The public origin sits behind an edge proxy that cuts any single
