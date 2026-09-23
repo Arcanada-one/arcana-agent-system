@@ -4,6 +4,12 @@
 *.pdb
 Cargo.lock.bak
 
+# Python bytecode. The vendored graph-admission tools are Python, and running
+# them writes `__pycache__/` beside them — which makes the working tree dirty
+# and the admission gate refuse its own run with STALE_GRAPH.
+__pycache__/
+*.pyc
+
 # IDE
 .idea/
 .vscode/
