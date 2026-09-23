@@ -79,6 +79,33 @@
 //! explaining the encoding it was told to use has answered, and an answer must
 //! not cost a turn.
 
+//! # Arguments written as siblings of `name` (A2-219)
+//!
+//! The third shape measured in the field, and the first one that reached this
+//! runner's OWN fence. On 2026-09-23, `deepseek-flash` through Model Connector
+//! opened a canonical ```` ```tool_call ```` block and wrote
+//!
+//! ```text
+//! {"name": "bash", "command": "git clone … && git log --oneline -3", "timeout_seconds": 600}
+//! ```
+//!
+//! — the fence it was told to use, the right tool, the right arguments, and no
+//! wrapper object around them (`/home/dev/aup/arc2/wt/A2-219-repro/.arcana/
+//! rejected/0001-turn1.txt`, kept by the save this card added). [`arguments_of`]
+//! looks only for a key holding the arguments, found none, and the reply became
+//! a correction. The same shape is what ended the A2-204c3 pilot at turn 34 on
+//! the one `edit` call that was about to write the patch.
+//!
+//! [`flat_arguments`] accepts it, and [`declared_call_arguments`] is where the
+//! two readers are combined. The form is unambiguous *inside markup that
+//! exists only to carry a tool call* — this runner's fence, or the
+//! `<tool_call>` wrapper — because there the model has already said the object
+//! is a call, so its remaining keys cannot be anything but the call's
+//! arguments. It is deliberately NOT accepted for a bare JSON object found in
+//! prose: `{"name": "Alice", "age": 30}` is a plausible answer, and reading it
+//! as a call to `Alice` would charge a correction turn to a model that
+//! answered the question.
+
 use serde_json::{Map, Value};
 
 /// Keys a model may put its arguments under, in the order they are believed.
@@ -182,6 +209,49 @@ fn decode_arguments(value: &Value) -> Value {
         }
     }
     value.clone()
+}
+
+/// Read arguments a model wrote as siblings of `name` rather than inside a
+/// wrapper object.
+///
+/// `{"name": "bash", "command": "ls", "timeout_seconds": 60}` yields
+/// `{"command": "ls", "timeout_seconds": 60}`. `None` when `name` is the only
+/// key there is — then the call really does carry no arguments, and the model
+/// is told so rather than dispatched empty.
+///
+/// The wrapper spellings are filtered out alongside `name`, so a reply that
+/// sent `{"name": …, "input": null, "command": "ls"}` does not smuggle a
+/// literal `input: null` into the tool's arguments: [`arguments_of`] already
+/// declined that `null`, and repeating it here would hand the schema layer a
+/// key the model never meant as an argument.
+///
+/// A metadata key that is not an argument — an `id` on an `OpenAI`-shaped
+/// object, say — does end up in the object and is then refused by the schema
+/// layer. That is not a regression: before this reader such a reply carried no
+/// arguments at all, so it was refused too, for a reason the model could do
+/// nothing with.
+#[must_use]
+pub fn flat_arguments(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    let rest: Map<String, Value> = object
+        .iter()
+        .filter(|(key, _)| key.as_str() != "name" && !INPUT_KEYS.contains(&key.as_str()))
+        .map(|(key, found)| (key.clone(), found.clone()))
+        .collect();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(Value::Object(rest))
+}
+
+/// The arguments of an object the model has already declared to be a tool
+/// call: a wrapper key if there is one, otherwise the siblings of `name`.
+///
+/// Only for markup that cannot plausibly be prose — the canonical fence and
+/// the `<tool_call>` wrapper. A bare JSON object keeps [`arguments_of`] alone.
+#[must_use]
+pub fn declared_call_arguments(value: &Value) -> Option<Value> {
+    arguments_of(value).or_else(|| flat_arguments(value))
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +396,7 @@ fn tool_call_wrapper(reply: &str) -> Option<DialectMatch> {
         let Some(name) = value.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let Some(input) = arguments_of(&value) else {
+        let Some(input) = declared_call_arguments(&value) else {
             return Some(DialectMatch::Attempt {
                 dialect: TOOL_CALL_TAG_DIALECT,
                 detail: format!(

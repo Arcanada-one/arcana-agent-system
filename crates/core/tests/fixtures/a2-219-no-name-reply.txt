@@ -1,0 +1,3 @@
+```tool_call
+{"command": "cd aras && pwd && git log --oneline -1 && echo \"STATUS<<$(git status --short | tr '\\n' '|')>>\" && echo \"CONST<<$(grep -n 'RECOVERABLE_DENIAL_LAYERS: \\[&str' crates/core/src/agent_loop.rs)>>\" && echo \"TESTFILE<<$(ls -l crates/core/tests/denial_layer_recoverability.rs 2>&1)>>\"", "timeout_seconds": 60}
+```

@@ -516,6 +516,38 @@ pub fn interpret(resp: &ConnectorResponse) -> AssistantAction {
     }
 }
 
+/// The operator's line for a reply rejected as an unreadable tool call.
+///
+/// A pure function and not an inline `format!` because the part that matters
+/// is the tail: `saved` is where the reply itself was kept, and an operator
+/// who cannot find that path has the same nothing the A2-204c3 post-mortem
+/// had. Pinning the line in a test is only possible if building it is separate
+/// from printing it.
+#[must_use]
+pub fn rejected_format_line(dialect: &str, detail: &str, saved: Option<&str>) -> String {
+    format!(
+        "arcana: the model asked for a tool as {dialect} — {detail}; nothing was executed{}",
+        saved_clause(saved)
+    )
+}
+
+/// The operator's line for a reply the model's output limit cut off.
+#[must_use]
+pub fn truncated_reply_line(bytes: usize, saved: Option<&str>) -> String {
+    format!(
+        "arcana: the model's reply was cut off after {bytes} bytes with an unclosed \
+         `tool_call` block — nothing was executed{}",
+        saved_clause(saved)
+    )
+}
+
+/// Name the file the rejected reply was kept in, when there is one.
+fn saved_clause(saved: Option<&str>) -> String {
+    saved.map_or_else(String::new, |path| {
+        format!(" — the reply as the model sent it is in {path}")
+    })
+}
+
 /// What a scan of a reply found where a `tool_call` block would be.
 enum ToolCallBlock<'a> {
     /// No `tool_call` fence in the reply at all.
@@ -570,19 +602,28 @@ fn parse_tool_call(body: &str) -> AssistantAction {
                 .to_owned(),
         );
     };
-    // `arguments` / `parameters` / `args` are accepted as `input`. The reader
-    // here was `value.get("input").cloned().unwrap_or(Value::Null)`, so a
-    // model that used any other spelling had its arguments silently discarded
-    // and its call dispatched empty — a `bash` with no command, refused for a
-    // reason that was never the model's mistake.
+    // `arguments` / `parameters` / `args` are accepted as `input`, and so are
+    // arguments written as plain siblings of `name`. The reader here was
+    // `value.get("input").cloned().unwrap_or(Value::Null)`, so a model that
+    // used any other spelling had its arguments silently discarded and its
+    // call dispatched empty — a `bash` with no command, refused for a reason
+    // that was never the model's mistake.
     //
-    // No spelling at all is the same defect with nothing to recover: a `null`
-    // dispatched into a tool that wants an object is a schema denial we can
-    // see coming, and the model is better served by being told its call has no
-    // arguments than by being told `null` is not an object. Measured live on
-    // 2026-09-23 — audit `input_hash 03f88b99c3d8073b`, `blake3("null")` — this
-    // is the one remaining way that hash could still be written.
-    let Some(input) = tool_dialect::arguments_of(&value) else {
+    // The sibling form is safe to dispatch *here* because the model opened
+    // this runner's own `tool_call` fence: inside markup whose only purpose is
+    // to carry a call, the keys that are not `name` are the call's arguments
+    // and can be nothing else (`crate::tool_dialect`, A2-219). Measured live
+    // the same day on `deepseek-flash`: `{"name": "bash", "command": …,
+    // "timeout_seconds": 600}` in a correct fence, corrected instead of run.
+    //
+    // No spelling and no siblings is the same defect with nothing to recover:
+    // a `null` dispatched into a tool that wants an object is a schema denial
+    // we can see coming, and the model is better served by being told its call
+    // has no arguments than by being told `null` is not an object. Measured
+    // live on 2026-09-23 — audit `input_hash 03f88b99c3d8073b`,
+    // `blake3("null")` — this is the one remaining way that hash could still
+    // be written.
+    let Some(input) = tool_dialect::declared_call_arguments(&value) else {
         return malformed(format!(
             "your `tool_call` block named `{name}` but carried no arguments; put them in an \
              `input` object (send `\"input\": {{}}` if the tool genuinely takes none)"
@@ -949,6 +990,32 @@ pub struct DriverConfig {
     /// workspace, so the path in the marker is one the model is allowed to
     /// read.
     pub tool_output_spill_dir: Option<std::path::PathBuf>,
+    /// Where a reply this loop refused to act on is kept, verbatim.
+    ///
+    /// `None` — the default, and what every test gets unless it says
+    /// otherwise — means a rejected reply survives only as the log line saying
+    /// it was rejected. That is exactly what a live run had when it died
+    /// `UnsupportedToolCallFormat` on the one call that mattered: the audit log
+    /// keeps `input_hash`/`output_hash` and no text, the transcript is never
+    /// written to disk, and the reply the runner threw away was therefore
+    /// unknowable afterwards — so the defect could be described but not
+    /// diagnosed (A2-219, `/home/dev/aup/arc2/runs/A2-204c3/log`). A headless
+    /// run sets this to a directory inside the workspace.
+    ///
+    /// It holds what the *model* sent, not what the runner made of it. A
+    /// correction is only ever as good as the reply it was written against.
+    pub rejected_reply_dir: Option<std::path::PathBuf>,
+    /// Append the exact request of every dispatch to this file.
+    ///
+    /// Off unless the operator names a path: a transcript is the whole
+    /// conversation in clear text, so keeping one is a decision about their
+    /// disk, not something a runner should start doing on its own.
+    ///
+    /// Appended per dispatch rather than written once at the end, because
+    /// compaction means the last request is not a superset of the earlier
+    /// ones — the turns a run folds away are precisely the ones a
+    /// post-mortem cannot otherwise see.
+    pub transcript_path: Option<std::path::PathBuf>,
     /// Opt-in paired-corpus metadata. The driver attaches it only to the first
     /// connector attempt; later tool-loop turns never inherit it.
     pub first_dispatch_measurement: Option<FirstDispatchMeasurementV0>,
@@ -996,6 +1063,8 @@ impl DriverConfig {
             context_budget_units: DEFAULT_CONTEXT_BUDGET_UTF16_UNITS,
             tool_result_budget_units: DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
             tool_output_spill_dir: None,
+            rejected_reply_dir: None,
+            transcript_path: None,
             first_dispatch_measurement: None,
             first_dispatch_prompt: None,
             policy: ModelPolicy::new(),
@@ -1152,6 +1221,12 @@ struct RunState {
     compactions: u32,
     /// Tool results spilled to disk so far; also the spill file's number.
     spilled: u32,
+    /// Replies the loop refused to act on and wrote out; also the rejected
+    /// file's number.
+    rejected: u32,
+    /// Whether a transcript append has already failed and been reported.
+    /// One line per run, not one per turn: a full disk is one fact.
+    transcript_broken: bool,
 }
 
 impl RunState {
@@ -1169,6 +1244,8 @@ impl RunState {
             malformed_calls: 0,
             compactions: 0,
             spilled: 0,
+            rejected: 0,
+            transcript_broken: false,
         }
     }
 
@@ -1327,6 +1404,47 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Serialize the transcript into the request this turn will send, and
+    /// refuse it if it is over the wall.
+    ///
+    /// The wall, not the budget. [`Self::fit_request`] has already compacted
+    /// to `context_budget_units`; this is the contract Model Connector will
+    /// enforce with an HTTP 400, and the only request that can reach it is one
+    /// the guard could not shrink or an exact first-dispatch prompt the caller
+    /// supplied. Refusing here costs nothing and names the limit; sending it
+    /// spends a roundtrip to be told the same thing by a validator that calls
+    /// it `ConnectorFatal`.
+    ///
+    /// # Errors
+    /// The terminal step to return when the request cannot be sent.
+    fn compose_request(
+        &self,
+        state: &RunState,
+        first_dispatch: bool,
+    ) -> Result<String, StepResult> {
+        let prompt = if first_dispatch {
+            self.config.first_dispatch_prompt.clone().map_or_else(
+                || serialize_history(&state.history),
+                FirstDispatchPromptV0::into_inner,
+            )
+        } else {
+            serialize_history(&state.history)
+        };
+        let ceiling = self
+            .config
+            .context_budget_units
+            .min(MC_FIELD_MAX_UTF16_UNITS);
+        if !prompt_budget::fits(&prompt, ceiling) {
+            eprintln!(
+                "arcana: the request is {} characters, over the {ceiling}-character ceiling \
+                 for this run — not sent",
+                prompt_budget::utf16_units(&prompt),
+            );
+            return Err(StepResult::Terminal(TerminalReason::RequestTooLarge, None));
+        }
+        Ok(prompt)
+    }
+
     /// One step: guards → select model → connector attempt → interpret → (tool
     /// turn | final). `attempts` is the shared connector-attempt counter that
     /// enforces `max_turns`; `selected` accumulates the ordered per-step model
@@ -1344,36 +1462,13 @@ impl<'a> Driver<'a> {
         if let Some(step) = self.fit_request(state) {
             return step;
         }
+        let first_dispatch = state.attempts == 0;
+        let prompt = match self.compose_request(state, first_dispatch) {
+            Ok(prompt) => prompt,
+            Err(step) => return step,
+        };
         let history = &mut state.history;
         let attempts = &mut state.attempts;
-        let first_dispatch = *attempts == 0;
-        let prompt = if first_dispatch {
-            self.config.first_dispatch_prompt.clone().map_or_else(
-                || serialize_history(history),
-                FirstDispatchPromptV0::into_inner,
-            )
-        } else {
-            serialize_history(history)
-        };
-        // The wall, not the budget. The guard above already compacted to
-        // `context_budget_units`; this is the contract Model Connector will
-        // enforce with an HTTP 400, and the only request that can reach it is
-        // one the guard could not shrink or an exact first-dispatch prompt the
-        // caller supplied. Refusing here costs nothing and names the limit;
-        // sending it spends a roundtrip to be told the same thing by a
-        // validator that calls it `ConnectorFatal`.
-        let ceiling = self
-            .config
-            .context_budget_units
-            .min(MC_FIELD_MAX_UTF16_UNITS);
-        if !prompt_budget::fits(&prompt, ceiling) {
-            eprintln!(
-                "arcana: the request is {} characters, over the {ceiling}-character ceiling \
-                 for this run — not sent",
-                prompt_budget::utf16_units(&prompt),
-            );
-            return StepResult::Terminal(TerminalReason::RequestTooLarge, None);
-        }
         // Per-step multi-model dispatch (D-REQ-01/03/05): classify the step
         // context, select the model, record it, and route it through the
         // connector on `ExecuteRequest.model`. Selection keys off the current
@@ -1387,6 +1482,13 @@ impl<'a> Driver<'a> {
         let choice = self.config.policy.select(classify(&ctx));
         state.selected.push(choice.model_id.clone());
         *attempts = attempts.saturating_add(1);
+        let turn = *attempts;
+        self.save_transcript(state, turn, &prompt);
+        // Before the dispatch, not after: a request whose size was never
+        // recorded must not be one that was nevertheless paid for.
+        if let Some(step) = self.record_dispatch(turn, &choice.model_id, &prompt) {
+            return step;
+        }
         let resp = match self
             .call_connector(prompt, Some(choice.model_id), first_dispatch)
             .await
@@ -1417,7 +1519,9 @@ impl<'a> Driver<'a> {
             // and the fragment is large by construction — the live one was
             // ~9148 output tokens — so carrying it would shrink the window for
             // the retry that has to succeed.
-            AssistantAction::Truncated { bytes } => Self::recover_from_truncation(state, bytes),
+            AssistantAction::Truncated { bytes } => {
+                self.recover_from_truncation(state, bytes, &resp.result)
+            }
             AssistantAction::Final { text } => {
                 state.accept_reply(&resp.result);
                 // An answer that arrived is DELIVERED even when the operator
@@ -1471,7 +1575,7 @@ impl<'a> Driver<'a> {
                 // finished saying it, and hiding it would make the correction
                 // that follows read as an answer to nothing.
                 state.accept_reply(&resp.result);
-                Self::correct_tool_format(state, dialect, &detail)
+                self.correct_tool_format(state, dialect, &detail, &resp.result)
             }
         }
     }
@@ -1485,12 +1589,18 @@ impl<'a> Driver<'a> {
     /// buy the same cut-off at the same token. The re-dispatch is a different
     /// request: it carries [`TRUNCATION_NUDGE`], and the fragment is dropped
     /// rather than echoed back.
-    fn recover_from_truncation(state: &mut RunState, bytes: usize) -> StepResult {
+    fn recover_from_truncation(
+        &self,
+        state: &mut RunState,
+        bytes: usize,
+        reply: &str,
+    ) -> StepResult {
+        // Saved before anything else is decided. The fragment is deliberately
+        // kept out of the transcript below, so without this write the only
+        // surviving evidence of a cut-off reply would be its length.
+        let saved = self.save_rejected_reply(state, reply);
         // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
-        eprintln!(
-            "arcana: the model's reply was cut off after {bytes} bytes with an unclosed \
-             `tool_call` block — nothing was executed"
-        );
+        eprintln!("{}", truncated_reply_line(bytes, saved.as_deref()));
         if state.truncation_retries >= TRUNCATION_RETRY_LIMIT {
             return StepResult::Terminal(TerminalReason::ResponseTruncated, None);
         }
@@ -1520,13 +1630,25 @@ impl<'a> Driver<'a> {
     ///
     /// Nothing executed: `tool_calls` is not incremented here, so a run whose
     /// every reply was in the wrong dialect still reports zero work done.
-    fn correct_tool_format(state: &mut RunState, dialect: &str, detail: &str) -> StepResult {
+    fn correct_tool_format(
+        &self,
+        state: &mut RunState,
+        dialect: &str,
+        detail: &str,
+        reply: &str,
+    ) -> StepResult {
+        // The reply, verbatim, before the run is allowed to end on it. What
+        // the runner made of the reply is already in `detail`; what the model
+        // actually sent is only here, and a correction can only be judged
+        // against the text it was written for.
+        let saved = self.save_rejected_reply(state, reply);
         // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
         // The operator needs this line — it is the difference between "the
         // model refused to work" and "this runner cannot read what the model
         // sent", and only one of those is the model's fault.
         eprintln!(
-            "arcana: the model asked for a tool as {dialect} — {detail}; nothing was executed"
+            "{}",
+            rejected_format_line(dialect, detail, saved.as_deref())
         );
         state.malformed_calls = state.malformed_calls.saturating_add(1);
         if state.malformed_calls >= MAX_DIALECT_CORRECTIONS {
@@ -1729,6 +1851,102 @@ No other markup is executed, whatever your training says. \
         }
         let spilled = self.spill_tool_result(state, name, &content);
         prompt_budget::elide_middle(&content, budget, spilled.as_deref())
+    }
+
+    /// Keep a reply the loop refused to act on, exactly as it arrived.
+    ///
+    /// Returns the path to name in the log line, or `None` when no directory
+    /// is configured or the write failed. A failed write is not fatal: the
+    /// run was already going to correct or end on this reply, and turning a
+    /// full disk into a second, different failure would hide the first.
+    ///
+    /// The file is named for the turn it belongs to, so it lines up with the
+    /// `dispatch` audit records and with the `turns` count in the done
+    /// marker. The reply is written as bytes with nothing prepended — a
+    /// header would mean the file is no longer what the model sent, which is
+    /// the one property it exists to have.
+    fn save_rejected_reply(&self, state: &mut RunState, reply: &str) -> Option<String> {
+        let dir = self.config.rejected_reply_dir.as_ref()?;
+        state.rejected = state.rejected.saturating_add(1);
+        let file = dir.join(format!("{:04}-turn{}.txt", state.rejected, state.attempts));
+        std::fs::create_dir_all(dir).ok()?;
+        std::fs::write(&file, reply).ok()?;
+        Some(file.display().to_string())
+    }
+
+    /// Record the size of the request this turn is about to send.
+    ///
+    /// Sizes, never text: this crate's audit log is hashes-only for anything
+    /// that could carry prompt content, and that rule is what makes it safe to
+    /// keep under `$XDG_STATE_HOME` forever. But "how big was the request"
+    /// is not content, and without it a run that died against the connector's
+    /// 100 000-unit field limit left nothing at all to reconstruct from —
+    /// the A2-216 post-mortem had to estimate the split from a token count and
+    /// say so (`/home/dev/aup/arc2/runs/A2-216/report.md`, § 2).
+    ///
+    /// Written BEFORE the dispatch and fail-closed, like every other append in
+    /// this crate: a turn whose size could not be recorded must not be one the
+    /// operator is nevertheless charged for.
+    fn record_dispatch(&self, turn: u32, model: &str, prompt: &str) -> Option<StepResult> {
+        let fields = serde_json::json!({
+            "turn": turn,
+            "model": model,
+            "prompt_utf16": prompt_budget::utf16_units(prompt),
+            // `null`, not `0`, when there is no system prompt: an absent field
+            // and an empty one are different requests.
+            "system_prompt_utf16": self
+                .config
+                .system_prompt
+                .as_deref()
+                .map(prompt_budget::utf16_units),
+        });
+        match self.executor.record_run_event("dispatch", &fields) {
+            Ok(()) => None,
+            Err(_) => Some(StepResult::Terminal(TerminalReason::AuditFatal, None)),
+        }
+    }
+
+    /// Append this dispatch's exact request to the operator's transcript file.
+    ///
+    /// Only when they asked for one. The system prompt is written with the
+    /// first dispatch alone — it does not change during a run, and repeating
+    /// it every turn would treble a file whose reason for existing is that it
+    /// is readable.
+    fn save_transcript(&self, state: &mut RunState, turn: u32, prompt: &str) {
+        let Some(path) = self.config.transcript_path.as_ref() else {
+            return;
+        };
+        if state.transcript_broken {
+            return;
+        }
+        let system = self.config.system_prompt.as_deref().unwrap_or("");
+        let mut block = format!(
+            "===== dispatch {turn} — prompt {} units, systemPrompt {} units =====\n",
+            prompt_budget::utf16_units(prompt),
+            prompt_budget::utf16_units(system),
+        );
+        if turn == 1 {
+            block.push_str("--- systemPrompt ---\n");
+            block.push_str(system);
+            block.push_str("\n--- prompt ---\n");
+        }
+        block.push_str(prompt);
+        block.push('\n');
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, block.as_bytes()));
+        if let Err(err) = written {
+            // Once per run. A disk that cannot take the first block cannot
+            // take the thirtieth either, and one fact deserves one line.
+            state.transcript_broken = true;
+            eprintln!(
+                "arcana: the transcript could not be written to {}: {err} — the run continues \
+                 without one",
+                path.display()
+            );
+        }
     }
 
     /// Write the full output to the spill directory; return the path to name

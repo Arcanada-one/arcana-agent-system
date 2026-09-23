@@ -46,7 +46,9 @@ use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::permission::{
     AutoFromEnv, InteractiveDirective, PermissionCascade, PermissionLayer, RuleLayer, SchemaLayer,
 };
-use arcana_core::prompt_budget::MC_FIELD_MAX_UTF16_UNITS;
+use arcana_core::prompt_budget::{
+    DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, MC_FIELD_MAX_UTF16_UNITS, MIN_ELISION_BUDGET,
+};
 use arcana_core::tool::{Tool, ToolDispatcher};
 use arcana_tools::{
     bash::BashTool, edit::EditTool, grep::GrepTool, read::ReadTool, write::WriteTool,
@@ -82,6 +84,12 @@ pub const DONE_MARKER: &str = "ARCANA_RUN_DONE";
 /// it is untracked, so `git diff` and a patch built from it are unaffected.
 pub const TOOL_OUTPUT_DIR: &str = ".arcana/tool-output";
 
+/// Where a reply the runner refused to act on is kept verbatim, relative to
+/// the workspace root. Beside the spilled tool output and untracked for the
+/// same reason: it is the runner's evidence about the run, not the task's
+/// output, so it must not turn up in a patch the task hands back.
+pub const REJECTED_DIR: &str = ".arcana/rejected";
+
 /// Everything a headless run needs.
 #[derive(Debug, Clone)]
 pub struct RunRequest {
@@ -109,6 +117,18 @@ pub struct RunRequest {
     /// evidence that folding works in a real run was an offline test
     /// (A2-216 report, § "what is NOT measured").
     pub context_budget: Option<usize>,
+    /// Ceiling on one tool result's contribution to the transcript, in UTF-16
+    /// code units. `None` keeps
+    /// [`arcana_core::prompt_budget::DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS`].
+    ///
+    /// Reachable from the command line for the same reason `--context-budget`
+    /// is: nothing an ordinary task does makes a single tool result cross
+    /// 8 000 units cheaply, so the elision-and-spill path could be shown to
+    /// work offline and nowhere else (A2-218 report, defect 4).
+    pub tool_result_budget: Option<usize>,
+    /// Append every dispatch's exact request to this file. `None` — the
+    /// default — writes no transcript at all.
+    pub save_transcript: Option<PathBuf>,
 }
 
 /// Reject a `--context-budget` that cannot be honoured, before anything is
@@ -135,6 +155,61 @@ pub fn check_context_budget(units: Option<usize>) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Reject a `--tool-result-budget` that cannot be honoured, before anything is
+/// spent.
+///
+/// Two ways the number is unusable, and neither shows up as an error later —
+/// which is the point of checking here. Below
+/// [`MIN_ELISION_BUDGET`] every oversized result is replaced by the elision
+/// marker ALONE, so the run keeps working and quietly tells the model nothing;
+/// above the transcript ceiling the setting cannot bind, because one result
+/// would be allowed to fill the whole request and the context guard would then
+/// have to fold away the task that explains it.
+///
+/// `context` is the ceiling this run will actually use, so the two flags are
+/// judged against each other rather than against the default.
+///
+/// # Errors
+/// The message to print, when the value cannot be used.
+pub fn check_tool_result_budget(units: Option<usize>, context: usize) -> Result<(), String> {
+    let Some(units) = units else { return Ok(()) };
+    if units < MIN_ELISION_BUDGET {
+        return Err(format!(
+            "--tool-result-budget {units} is below {MIN_ELISION_BUDGET} units, which is less \
+             than the marker that says what was elided and where the whole of it is kept; \
+             every oversized result would be replaced by that marker and nothing else"
+        ));
+    }
+    if units > context {
+        return Err(format!(
+            "--tool-result-budget {units} is above this run's {context}-unit transcript \
+             ceiling; a single tool result allowed to fill the whole request would leave the \
+             guard nothing to keep but the result"
+        ));
+    }
+    Ok(())
+}
+
+/// Open (creating) the operator's transcript file, so a run cannot get to turn
+/// thirty before discovering it has nowhere to write.
+///
+/// # Errors
+/// The message to print, when the path cannot be appended to.
+pub fn check_transcript_path(path: Option<&Path>) -> Result<(), String> {
+    let Some(path) = path else { return Ok(()) };
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map(|_| ())
+        .map_err(|err| {
+            format!(
+                "--save-transcript `{}` cannot be written: {err}",
+                path.display()
+            )
+        })
 }
 
 /// Entry point for `arcana run`. Returns a process exit code.
@@ -181,6 +256,15 @@ async fn run_async(request: &RunRequest) -> i32 {
         return exit_failed("the task is empty", &root);
     }
     if let Err(err) = check_context_budget(request.context_budget) {
+        return exit_failed(&err, &root);
+    }
+    let context = request
+        .context_budget
+        .unwrap_or(DEFAULT_CONTEXT_BUDGET_UTF16_UNITS);
+    if let Err(err) = check_tool_result_budget(request.tool_result_budget, context) {
+        return exit_failed(&err, &root);
+    }
+    if let Err(err) = check_transcript_path(request.save_transcript.as_deref()) {
         return exit_failed(&err, &root);
     }
 
@@ -232,6 +316,18 @@ async fn run_async(request: &RunRequest) -> i32 {
             " (default)"
         }
     );
+    println!(
+        "tool result budget: {} characters (UTF-16 units){}",
+        config.tool_result_budget_units,
+        if request.tool_result_budget.is_some() {
+            ""
+        } else {
+            " (default)"
+        }
+    );
+    if let Some(path) = request.save_transcript.as_ref() {
+        println!("transcript: appending every request to {}", path.display());
+    }
 
     let interrupt = crate::interrupt::Interrupt::install();
     let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
@@ -255,11 +351,19 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
     if let Some(units) = request.context_budget {
         config.context_budget_units = units;
     }
+    if let Some(units) = request.tool_result_budget {
+        config.tool_result_budget_units = units;
+    }
+    config.transcript_path.clone_from(&request.save_transcript);
     // Where a tool result too large to carry is kept in full. Inside the
     // workspace on purpose: the workspace boundary is what decides which paths
     // the model may read, and a spill file it is not allowed to open would be
     // a marker that promises something it cannot deliver.
     config.tool_output_spill_dir = Some(root.join(TOOL_OUTPUT_DIR));
+    // Beside it, and inside the workspace for the same reason: a reply the
+    // runner threw away is evidence about this run, and the operator reading
+    // the log line that names the file should find it where the run happened.
+    config.rejected_reply_dir = Some(root.join(REJECTED_DIR));
     // Nobody reads the prose of a headless run, so prose alone cannot end it.
     config.require_action = true;
     config

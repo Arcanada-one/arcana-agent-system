@@ -8,6 +8,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A reply the runner refuses to act on is kept, verbatim.** Measured
+  2026-09-23 (`runs/A2-204c3/log`, ARAS `92a4a7a`): a live run reached turn 34
+  with 21 executed tool calls and one compaction, then died
+  `UnsupportedToolCallFormat` on two replies that "named `edit` but carried no
+  arguments" — the call that was about to write the patch. What the model had
+  actually sent was unrecoverable: the audit log keeps `input_hash` /
+  `output_hash` and no text, and no transcript is written to disk, so the
+  defect could be reported and not diagnosed.
+
+  Every rejected reply — an unreadable dialect, or one the output limit cut off
+  mid-block — is now written to `.arcana/rejected/NNNN-turnT.txt` inside the
+  working directory, byte for byte with nothing prepended, and the operator's
+  line names the file. A failed write is not fatal: the run was already going
+  to correct or end on that reply, and turning a full disk into a second,
+  different failure would hide the first. A cut-off reply is deliberately kept
+  out of the transcript, so for that case the file is the only copy there is.
+- **Every dispatch records the size of its request in the audit log.** Sizes,
+  never text: `{"kind":"dispatch","fields":{"turn","model","prompt_utf16",
+  "system_prompt_utf16"}}`, written *before* the dispatch and fail-closed like
+  every other append, so a turn whose size could not be recorded is not a turn
+  the operator is charged for. An absent system prompt is `null`, not `0` — an
+  absent field and an empty one are different requests. Without this, a run
+  that died against the connector's 100 000-unit field limit left nothing to
+  reconstruct from and the post-mortem had to estimate the split from a token
+  count.
+- **Arguments written as siblings of `name` are the call's arguments.**
+  Measured 2026-09-23 on `deepseek-flash`: the model opened this runner's own
+  fence and wrote `{"name": "bash", "command": "git clone …",
+  "timeout_seconds": 600}` — right fence, right tool, right arguments, no
+  wrapper object around them — and the reply became a correction because
+  `arguments_of` looks only for a key that holds the arguments. The saved reply
+  is the test fixture (`crates/core/tests/fixtures/a2-219-flat-arguments-reply.txt`).
+
+  `tool_dialect::flat_arguments` reads the remaining keys as the input object,
+  and `declared_call_arguments` prefers a wrapper key when there is one. It
+  applies only inside markup that exists for no other purpose — this runner's
+  fence and the `<tool_call>` wrapper — because there the model has already
+  said the object is a call. A bare JSON object in prose is untouched:
+  `{"name": "Alice", "age": 30}` is a plausible answer, and reading it as a
+  call to `Alice` would charge a correction turn to a model that answered the
+  question. An object with nothing but a `name` still has no arguments and is
+  still told so.
+- **`arcana run --tool-result-budget <units>`** sets the ceiling on one tool
+  result's contribution to the transcript (`240`..=`--context-budget`; default
+  unchanged at 8 000). Refused before anything is spent when it is below the
+  elision marker itself — every oversized result would be replaced by the
+  marker and nothing else — or above the run's transcript ceiling, where it
+  cannot bind. It exists because no ordinary command crosses 8 000 units
+  cheaply, so the elision-and-spill path had offline evidence and nothing else;
+  at `--tool-result-budget 400` an 18 893-byte `cat` was elided in the
+  transcript, written whole to `.arcana/tool-output/0001-bash.txt`, and the
+  model answered from the spill file.
+- **`arcana run --save-transcript <path>`** appends the exact request of every
+  dispatch to a file. Off unless asked for: a transcript is the whole
+  conversation in clear text, so keeping one is a decision about the operator's
+  disk. Appended per dispatch rather than written once at the end, because a
+  run that compacts does not carry its early turns into the last request — the
+  turns folded away are precisely the ones a post-mortem cannot otherwise see.
+  The system prompt is written once. A path that cannot be appended to is
+  refused before the run starts, and a write that fails mid-run says so once
+  and the run continues.
 - **A tool call wrapped in `<tool_call>` XML no longer ends the run as an
   answer.** Measured 2026-09-23 on `deepseek-flash` through Model Connector
   (`runs/A2-216/live.log:9-12`, ARAS `92a4a7a`): the last reply of a real task

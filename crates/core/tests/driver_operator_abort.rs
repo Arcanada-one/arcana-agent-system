@@ -99,7 +99,14 @@ fn run_records(dir: &TempDir) -> Vec<Value> {
     let raw = std::fs::read_to_string(dir.path().join("audit.log")).expect("audit log");
     raw.lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("audit record is JSON"))
-        .filter(|record| record.get("phase").and_then(Value::as_str) == Some("run"))
+        // `phase: "run"` alone is not the abort: every dispatch writes a
+        // `run`/`dispatch` record of its request size as well (A2-219). The
+        // assertions below have always been about the abort record, so the
+        // kind is what they filter on.
+        .filter(|record| {
+            record.get("phase").and_then(Value::as_str) == Some("run")
+                && record.get("kind").and_then(Value::as_str) == Some("run_aborted")
+        })
         .collect()
 }
 
