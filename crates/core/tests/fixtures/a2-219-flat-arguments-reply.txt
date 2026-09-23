@@ -1,0 +1,5 @@
+I'll start by cloning the repo and inspecting the constant.
+
+```tool_call
+{"name": "bash", "command": "git clone https://github.com/Arcanada-one/arcana-agent-system.git aras 2>&1 | tail -5 && cd aras && git checkout 92a4a7a 2>&1 | tail -3 && git log --oneline -3", "timeout_seconds": 600}
+```

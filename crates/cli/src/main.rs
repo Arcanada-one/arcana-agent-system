@@ -163,6 +163,27 @@ enum Cmd {
         /// compaction deliberately.
         #[arg(long, value_name = "UNITS")]
         context_budget: Option<usize>,
+        /// Ceiling on ONE tool result inside the transcript, in UTF-16 code
+        /// units (240..=`--context-budget`).
+        ///
+        /// Output past it is elided head-and-tail, the whole of it is written
+        /// to `.arcana/tool-output/`, and the marker left in its place names
+        /// that file. Default 8000. Lower it to exercise the elision and
+        /// spill path in a real run: no ordinary command produces 8000 units
+        /// cheaply, so until this flag existed that path had only offline
+        /// evidence.
+        #[arg(long, value_name = "UNITS")]
+        tool_result_budget: Option<usize>,
+        /// Append the exact request of every dispatch to this file.
+        ///
+        /// Off unless asked for. The file is the conversation in clear text —
+        /// the task, every reply, every tool result carried in the
+        /// transcript — so point it somewhere you are willing to keep that,
+        /// not into a checkout you are about to commit. Appended per
+        /// dispatch, because a run that compacts does not carry its early
+        /// turns into the last request.
+        #[arg(long, value_name = "PATH")]
+        save_transcript: Option<PathBuf>,
     },
     /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
@@ -268,6 +289,8 @@ fn main() {
             model,
             request_timeout,
             context_budget,
+            tool_result_budget,
+            save_transcript,
         }) => {
             std::process::exit(run_headless(
                 cwd,
@@ -278,6 +301,8 @@ fn main() {
                 model,
                 request_timeout,
                 context_budget,
+                tool_result_budget,
+                save_transcript,
             ));
         }
         Some(Cmd::Mcp {
@@ -302,6 +327,8 @@ fn run_headless(
     model: Option<String>,
     request_timeout: Option<u64>,
     context_budget: Option<usize>,
+    tool_result_budget: Option<usize>,
+    save_transcript: Option<PathBuf>,
 ) -> i32 {
     let prompt = match (prompt, prompt_stdin) {
         (Some(prompt), false) => prompt,
@@ -325,6 +352,8 @@ fn run_headless(
         model,
         request_timeout: request_timeout.map(std::time::Duration::from_secs),
         context_budget,
+        tool_result_budget,
+        save_transcript,
     })
 }
 

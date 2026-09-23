@@ -50,7 +50,12 @@ pub const DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS: usize = 8_000;
 
 /// Smallest elision this module will perform. Below it the marker would be a
 /// larger share of the result than the text it introduces.
-const MIN_ELISION_BUDGET: usize = 240;
+///
+/// Public because a caller that lets an operator choose the tool-result budget
+/// has to be able to refuse a number below it before the run starts:
+/// [`elide_middle`] honours a smaller budget by returning the marker ALONE,
+/// which is a silently useless setting rather than an error.
+pub const MIN_ELISION_BUDGET: usize = 240;
 
 /// Length of `text` in the unit Model Connector counts in.
 #[must_use]

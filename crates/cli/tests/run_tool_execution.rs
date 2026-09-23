@@ -179,6 +179,8 @@ async fn drive_out_turns(root: &Path, audit: &Path, replies: &[&str], max_turns:
         // Default budget: these fixtures are about tool execution, not about
         // the transcript ceiling.
         context_budget: None,
+        tool_result_budget: None,
+        save_transcript: None,
     };
     let config = driver_config(&request, &workspace.tools, root);
     workspace
@@ -637,6 +639,8 @@ async fn the_rejected_call_is_told_to_the_model_and_names_the_violated_constrain
         // Default budget: these fixtures are about tool execution, not about
         // the transcript ceiling.
         context_budget: None,
+        tool_result_budget: None,
+        save_transcript: None,
     };
     let config = driver_config(&request, &workspace.tools, work.path());
     let _ = workspace
@@ -782,6 +786,8 @@ async fn the_destructive_floor_reason_never_reaches_the_model() {
         // Default budget: these fixtures are about tool execution, not about
         // the transcript ceiling.
         context_budget: None,
+        tool_result_budget: None,
+        save_transcript: None,
     };
     let config = driver_config(&request, &workspace.tools, work.path());
     let out = workspace

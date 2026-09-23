@@ -25,6 +25,8 @@ TASK
 | `--model <id>` | Pin a model instead of the saved `arcana models use` choice. |
 | `--request-timeout <secs>` | How long one model turn may take upstream, `5`..`600` (default `120`). `ARCANA_MC_TIMEOUT_SECS` sets the same number. The separate TCP+TLS connect budget is `ARCANA_MC_CONNECT_TIMEOUT_SECS` (`1`..`60`, default `10`). |
 | `--context-budget <units>` | Ceiling the serialized transcript is held under, in UTF-16 code units, `1`..`100000` (default `90000`). Lower it for a model whose own context window is below the connector's field limit, or to exercise compaction deliberately. A value above `100000` is refused before the run starts. The run prints the number it is working to. |
+| `--tool-result-budget <units>` | Ceiling on ONE tool result inside the transcript, in UTF-16 code units, `240`..=`--context-budget` (default `8000`). Output past it is elided head-and-tail, the whole of it goes to `.arcana/tool-output/`, and the marker left behind names that file. Lower it to exercise that path deliberately. Below `240` (the marker's own size) or above this run's transcript ceiling is refused before the run starts. |
+| `--save-transcript <path>` | Append the exact request of every dispatch to this file. Off by default — it is the conversation in clear text. Per dispatch, not once at the end: a run that compacts does not carry its early turns into the last request. A path that cannot be appended to is refused before the run starts. |
 
 Exactly one of `--prompt` and `--prompt-stdin` is required.
 
@@ -257,6 +259,40 @@ naming the limit — never on `ConnectorFatal`, which would blame the connector
 for keeping its contract. The counting is in UTF-16 code units, the unit the
 server counts in: on Russian or Chinese text a byte count is wrong by a factor
 of three, in the direction that sends an over-limit request.
+
+## When the runner throws a reply away
+
+A reply the loop cannot act on — a tool call in a format it cannot read, or one
+the model's output limit cut off mid-block — is written to
+`.arcana/rejected/NNNN-turnT.txt` inside the working directory, byte for byte
+with nothing prepended, and the line on stderr names the file:
+
+```
+arcana: the model asked for a tool as a fenced `tool_call` block — your `tool_call`
+block named `edit` but carried no arguments; put them in an `input` object …;
+nothing was executed — the reply as the model sent it is in
+/path/to/worktree/.arcana/rejected/0003-turn34.txt
+```
+
+Read the file, not the message. The message is what the runner made of the
+reply; the file is what the model sent, and a correction is only ever as good as
+the reply it was written against. This exists because a run that died
+`UnsupportedToolCallFormat` on the one call that mattered used to leave nothing
+at all: the audit log keeps `input_hash`/`output_hash` and no text.
+
+Two more things the same defect asked for:
+
+* **`audit.log` carries per-turn request sizes** — one
+  `{"kind":"dispatch","fields":{"turn","model","prompt_utf16","system_prompt_utf16"}}`
+  record per dispatch, written before the request goes out. Sizes, never text:
+  that is what makes the log safe to keep. `system_prompt_utf16` is `null` when
+  there is no system prompt, not `0`.
+* **`--save-transcript <path>`** keeps the requests themselves, when you ask for
+  them. That is the only way to read a compacted run afterwards.
+
+The directory is untracked, like `.arcana/tool-output/`: it is the runner's
+evidence about the run, not the task's output, so it does not turn up in a patch
+the task hands back.
 
 ## Slow turns
 

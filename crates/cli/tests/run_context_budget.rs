@@ -24,6 +24,8 @@ fn request(context_budget: Option<usize>) -> RunRequest {
         model: Some("scripted-model".to_owned()),
         request_timeout: None,
         context_budget,
+        tool_result_budget: None,
+        save_transcript: None,
     }
 }
 
