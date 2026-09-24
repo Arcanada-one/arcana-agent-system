@@ -108,6 +108,18 @@ fn what_the_prompt_says_about_a_command_is_what_the_floor_does_to_it() {
         "git push --force origin main",
         "git stash push -m wip",
         "git push origin HEAD",
+        // A2-259: the `git stash` rule is decided by the SUBCOMMAND, and the
+        // prompt has to carry the split or a model reading it loses the two
+        // forms that only read the stack — which is how pilot A2-240d died
+        // with its work finished.
+        "git stash",
+        "git stash pop",
+        "git stash drop",
+        "git stash clear",
+        "git --no-pager stash drop",
+        "git stash list",
+        "git stash show",
+        "git stash show stash@{0}",
         "git commit -m 'work'",
         "git add -A",
         // Plainly fine.
@@ -255,6 +267,14 @@ struct PromptFloorRules {
     /// `rm -rf`. A candidate that starts with one of these, on a word
     /// boundary, is refused.
     forms: Vec<String>,
+    /// Multi-word command forms quoted in the "use these instead" half as
+    /// permitted, e.g. `git stash list`, `git commit`.
+    ///
+    /// A second list is needed because the prompt states a rule and then an
+    /// exception to it, and both are true: `git stash` is refused, `git stash
+    /// list` is not. The two are reconciled by [`Self::refuses`] the way a
+    /// reader reconciles them — the more specific sentence wins.
+    permitted: Vec<String>,
 }
 
 impl PromptFloorRules {
@@ -286,30 +306,69 @@ impl PromptFloorRules {
         // Every backquoted run in the section that is itself a command line
         // (more than one word) — the phrase list and the shape examples both
         // arrive this way, and neither needs its own parser.
-        let forms = section
-            .split('`')
-            .skip(1)
-            .step_by(2)
-            .filter(|quoted| quoted.contains(' '))
-            .map(str::to_owned)
-            .collect();
+        let forms = quoted_command_forms(section);
 
-        Self { names, forms }
+        // The other half of the same block: what it says to use instead,
+        // read the same way.
+        let instead = match prompt.find("Use these instead") {
+            Some(start) => {
+                let rest = &prompt[start..];
+                let end = rest.find("REFUSED CALLS").unwrap_or(rest.len());
+                &rest[..end]
+            }
+            None => "",
+        };
+        let permitted = quoted_command_forms(instead);
+
+        Self {
+            names,
+            forms,
+            permitted,
+        }
     }
 
     /// Does the prompt, as parsed, say this command is refused?
+    ///
+    /// The longer statement wins, which is the only rule that reads both
+    /// halves without knowing what any particular command means: `git stash
+    /// list` beats `git stash` (permitted), `git push --force` beats `git
+    /// push` (refused).
     fn refuses(&self, command: &str) -> bool {
         let head = command.split_whitespace().next().unwrap_or_default();
         if self.names.iter().any(|name| name == head) {
             return true;
         }
-        self.forms.iter().any(|form| {
-            command == form
+        longest_match(&self.forms, command) > longest_match(&self.permitted, command)
+    }
+}
+
+/// Every backquoted run in `section` that is itself a command line (more than
+/// one word). The phrase list, the shape examples and the permitted forms all
+/// arrive this way, and none of them needs its own parser.
+fn quoted_command_forms(section: &str) -> Vec<String> {
+    section
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|quoted| quoted.contains(' '))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Words in the longest entry of `forms` that `command` starts with, on a word
+/// boundary; 0 when none matches.
+fn longest_match(forms: &[String], command: &str) -> usize {
+    forms
+        .iter()
+        .filter(|form| {
+            command == form.as_str()
                 || command
                     .strip_prefix(form.as_str())
                     .is_some_and(|rest| rest.starts_with(' '))
         })
-    }
+        .map(|form| form.split_whitespace().count())
+        .max()
+        .unwrap_or(0)
 }
 
 /// A model with one goal — clear `scratch/` — that consults the prompt before
