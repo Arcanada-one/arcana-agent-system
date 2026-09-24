@@ -503,8 +503,16 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
     av = adm.get("verdict")
     # an inferred/observed edge across a service boundary never alone waives the canary: a claim of `verified`
     # or an admission needs a canary listing the entity or a valid exemption; an honest not_measured + paused_safe/refused is conformant
+    #
+    # A2-270: the condition is named ONCE, because the same predicate decides below whether a canary
+    # row's listing is load-bearing. A boundary entity that owes no canary here cannot be the reason
+    # some canary row is being spent there.
+    def owes_canary(ent: str) -> bool:
+        return ent not in valid_exempt and (verdict_of.get(ent) == "verified"
+                                            or av in ("admitted", "admitted_with_exemptions"))
+
     for ent in boundary_inferred:
-        if ent not in canary_entities and ent not in valid_exempt and (verdict_of.get(ent) == "verified" or av in ("admitted", "admitted_with_exemptions")):
+        if ent not in canary_entities and owes_canary(ent):
             c.add("INFERRED_BOUNDARY_WITHOUT_CANARY", f"{ent}: verdict={verdict_of.get(ent)} admission={av}")
     # DEC-AUP-0037 R1 — a canary claim the gate cannot open is testimony, not measurement.
     #
@@ -516,9 +524,23 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
     # being what keeps INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary entity. A canary row
     # that discharges nothing claims nothing, and an honest not_measured must stay conformant or the
     # rule would punish the very receipt that refused to overstate itself.
+    #
+    # A2-270: `quieted` is the entities whose INFERRED_BOUNDARY_WITHOUT_CANARY finding the row's
+    # listing is ACTUALLY suppressing — the same predicate the rule above applies, not membership of
+    # the list alone. Reading the bare list made every `verify.py` receipt of a code change a
+    # violation: `v-canary` writes every boundary entity into its row even when it consumed zero
+    # canary documents (`0 canary result(s); 0 verified / 0 failed / 86 not_measured`), so a row that
+    # measured nothing, that no verdict rests on and whose entities are all exempted or honestly
+    # `not_measured`, was called cashed and refused for its `output_ref`. Measured on muneral#163
+    # (A2-267): as `verify.py` wrote it the receipt is a violation naming three EXEMPTED entities as
+    # "resting on" the row, and it was made conformant only by hand-editing `entities` to `[]` — an
+    # edit that erases the record of which entities the canary verifier ran over. DEC-AUP-0037 R2 is
+    # the side that was wrong here: the entities a canary COVERS are the ones its document lists;
+    # the row's `entities` is the scope the verifier ran over ("what actually ran", the receipt
+    # contract's own words for `verifiers`), and scope is not a claim of coverage.
     cashed_ids = {vid for rec in vds if isinstance(rec, dict) and rec.get("verdict") == "verified"
                   for vid in (rec.get("verifier_ids") or []) if isinstance(vid, str)}
-    quieted = {e for e in boundary_inferred if e in canary_entities}
+    quieted = {e for e in boundary_inferred if e in canary_entities and owes_canary(e)}
     for v in canary_rows:
         ents = set(v.get("entities") or [])
         resting = sorted({e for e, verdict in verdict_of.items()
