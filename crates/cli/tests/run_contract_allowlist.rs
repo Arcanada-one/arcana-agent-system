@@ -118,6 +118,7 @@ async fn drive(
         tool_result_budget: None,
         save_transcript: None,
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     };
     let config = driver_config(&request, &workspace.tools, root);
     workspace
@@ -251,6 +252,7 @@ fn the_prompt_offers_only_the_tools_the_contract_admits() {
         tool_result_budget: None,
         save_transcript: None,
         contract: Some(binding(&["read", "grep"])),
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     };
     let prompt = driver_config(&bound, &workspace.tools, work.path())
         .system_prompt
@@ -268,6 +270,7 @@ fn the_prompt_offers_only_the_tools_the_contract_admits() {
     // The paired negative: without a contract the catalogue is unchanged.
     let unbound = RunRequest {
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
         ..bound
     };
     let prompt = driver_config(&unbound, &workspace.tools, work.path())

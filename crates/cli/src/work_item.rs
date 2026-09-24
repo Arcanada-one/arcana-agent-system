@@ -108,8 +108,8 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
     request.run.prompt = task_prompt(&item, &binding);
     request.run.contract = Some(binding.clone());
 
-    let out = match crate::run::execute(&request.run).await {
-        Ok(out) => out,
+    let summary = match crate::run::execute(&request.run).await {
+        Ok(summary) => summary,
         Err(err) => return refuse("RUN_NOT_STARTED", &err),
     };
 
@@ -123,7 +123,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         &binding,
         source.as_ref(),
         &root,
-        &out,
+        &summary,
         // Resolved again rather than carried from the run: the rule is a pure
         // function of the flag, the environment and two files, so asking it
         // twice in one process cannot disagree with itself — and threading a
@@ -144,7 +144,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         }
     };
     println!("receipt: {}", receipt_path.display());
-    crate::run::report_run(&out, &root)
+    crate::run::report_run(&summary, &root)
 }
 
 /// The prompt a contract-bound run is given.

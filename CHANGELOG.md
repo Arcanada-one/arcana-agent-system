@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`arcana run` said "Completed" for work it never wrote.** The done-marker's
+  `completed` was decided by the terminal reason and the number of tool calls
+  that executed, and a count cannot tell reading from writing. Pilot A2-278
+  (2026-09-24, `deepseek-v4-flash`, live) ran one Muneral work item twice: runs
+  2 and 4 executed nine and three calls, every one a `read` or a `grep`, wrote
+  nothing, and both ended `"completed":true` with rc `0` while the model
+  described "the documentation page `docs/how-to/run-work-item.md`" — a file
+  that does not exist, containing commands this binary does not have. The guard
+  documented in `docs/how-to/run-one-task-unattended.md` ("`completed` is never
+  `true` with `tool_calls` at `0`") counted the reads and passed them.
+
+  Completion is now tied to an effect a third party can check. The working tree
+  under `--cwd` is digested before the first model call and again after the last
+  one — tracked and untracked files alike, excluding `.git/`, the runner's own
+  `.arcana/`, and everything the repository's `.gitignore` files exclude, so a
+  `cargo build` is not mistaken for an artefact. A run that completed with the
+  digest unmoved ends on **`NoEffect`**: `"completed":false`, exit `1`. Both
+  digests, the executed tools by name, and the successful `write`/`edit` calls
+  are carried in `ARCANA_RUN_DONE` and in the `ReadinessReceipt/v1`.
+
+  Two things beside the verdict. The paths the model's final message claims are
+  looked up on disk, and the ones that are not there are reported as
+  `effect.claimed_but_absent` (on stderr as well as in the marker) — a string
+  scan and a `stat`, no model call. And a task that legitimately changes nothing
+  is declared `--read-only` **by the caller, before the run**; nothing the model
+  does during the run can set it. An unmeasurable tree — an unreadable directory
+  or more than 200 000 files — reports `tree_changed: null` and refuses nothing,
+  because `NoEffect` is a refusal and a refusal has to be provable.
 - **A tool call may carry a code fence.** The closing fence of a `tool_call`
   block used to be the first ```` ``` ```` after the opening one — including a
   fence inside the JSON payload. Asked on a live contract-bound run for a

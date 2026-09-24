@@ -33,6 +33,7 @@ fn request(tool_result_budget: Option<usize>, save_transcript: Option<PathBuf>) 
         tool_result_budget,
         save_transcript,
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     }
 }
 

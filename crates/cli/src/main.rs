@@ -217,6 +217,21 @@ enum Cmd {
         /// turns into the last request.
         #[arg(long, value_name = "PATH")]
         save_transcript: Option<PathBuf>,
+        /// Declare that this task is not expected to change any file.
+        ///
+        /// Without it a run that ends with the working tree byte-for-byte as
+        /// it found it is reported `NoEffect` and exits non-zero, however
+        /// confidently the model's closing sentence describes the file it
+        /// wrote. Pilot A2-278 saw that sentence twice, about a page that does
+        /// not exist, from runs whose every tool call was a `read` or a
+        /// `grep`.
+        ///
+        /// It is a DECLARATION, made before the run by whoever dispatched it,
+        /// for a task whose output is the answer on stdout — an audit, a
+        /// review, a question. Nothing the model does or says during the run
+        /// can set it.
+        #[arg(long)]
+        read_only: bool,
     },
     /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
@@ -337,6 +352,7 @@ fn main() {
             context_budget,
             tool_result_budget,
             save_transcript,
+            read_only,
         }) => {
             std::process::exit(run_headless(
                 cwd,
@@ -351,6 +367,7 @@ fn main() {
                 context_budget,
                 tool_result_budget,
                 save_transcript,
+                read_only,
             ));
         }
         Some(Cmd::Mcp {
@@ -379,7 +396,13 @@ fn run_headless(
     context_budget: Option<usize>,
     tool_result_budget: Option<usize>,
     save_transcript: Option<PathBuf>,
+    read_only: bool,
 ) -> i32 {
+    let expect_effect = if read_only {
+        arcana_cli::effect::EffectExpectation::ReadOnly
+    } else {
+        arcana_cli::effect::EffectExpectation::Artefact
+    };
     // A contract-bound run takes its task from the work item and the contract,
     // so the prompt is resolved LAST and from neither flag. Building the
     // request first would mean a `--work-item` invocation had to carry a
@@ -400,6 +423,7 @@ fn run_headless(
                 tool_result_budget,
                 save_transcript,
                 contract: None,
+                expect_effect,
             },
         });
     }
@@ -430,6 +454,7 @@ fn run_headless(
         tool_result_budget,
         save_transcript,
         contract: None,
+        expect_effect,
     })
 }
 

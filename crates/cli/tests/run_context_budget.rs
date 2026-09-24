@@ -27,6 +27,7 @@ fn request(context_budget: Option<usize>) -> RunRequest {
         tool_result_budget: None,
         save_transcript: None,
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     }
 }
 

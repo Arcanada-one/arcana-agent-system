@@ -48,16 +48,17 @@ interpret its absence — which looks identical to a crash.
 
 | Field | Meaning |
 |-------|---------|
-| `completed` | The run did the work. Never `true` with `tool_calls` at `0`. |
+| `completed` | The run did the work. Never `true` with `tool_calls` at `0`, and never `true` when `effect.tree_changed` is `false` unless the task was declared `--read-only`. |
 | `reason` | The terminal verdict (`Completed`, `NoAction`, `ResponseTruncated`, `UnsupportedToolCallFormat`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
 | `turns` | Connector attempts consumed. |
 | `tool_calls` | Tool calls the executor **actually carried out**. Not intent: a call the policy refused, or one the model only described in prose, is not counted. |
 | `cost_usd_micros` | Spend for the run, in micro-USD. |
+| `effect` | What the run left on disk. `null` only for a run that never started — see below. |
 
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | The run completed and executed at least one tool call. `completed` is `true`. |
-| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
+| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `NoEffect`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
 | `130` | The operator interrupted it. The spend line above the marker is what the interrupted dispatch cost. |
 
 ### A run that claimed to have done the work
@@ -76,11 +77,71 @@ Two things stop it now:
   `"completed":false`, exit `1`. The final text is still printed — it is paid
   for — but it is not a verdict.
 
-A run that legitimately needs no change ("check whether X is true") must
-therefore still demonstrate it with a tool call, for example by reading the
-file it is reporting on. That is the intended trade: the command exists to
-change a working directory, and an unattended run that changed nothing and was
-read as success is the failure this whole surface is for.
+### A run that called its tools and still did nothing — `NoEffect`
+
+The two guards above count tool calls, and a count cannot tell reading from
+writing. Pilot A2-278 (2026-09-24, `deepseek-v4-flash`, live) ran the same
+Muneral work item twice. Runs 2 and 4 executed **nine** and **three** tool
+calls — every one of them a `read` or a `grep` — wrote nothing, and ended
+`"completed":true`, rc `0`, with the model describing "the documentation page
+`docs/how-to/run-work-item.md`" and the sections in it. That file does not
+exist, and the commands the model listed inside it are not commands this
+binary has. $0.051 for two receipts for work nobody did.
+
+So completion is now tied to an effect a third party can check. The working
+tree is digested before the first model call and again after the last one:
+
+```json
+"effect": {
+  "expectation": "artefact",
+  "tree_digest_before": "sha256:1f0a…",
+  "tree_digest_after": "sha256:1f0a…",
+  "tree_changed": false,
+  "changed_paths": [],
+  "changed_count": 0,
+  "writes": [],
+  "executed_tools": { "grep": 2, "read": 7 },
+  "claimed_paths": ["docs/how-to/run-work-item.md"],
+  "claimed_but_absent": ["docs/how-to/run-work-item.md"],
+  "claimed_but_unchanged": []
+}
+```
+
+* The digest covers every file under `--cwd`, tracked and untracked, minus
+  `.git/`, minus the runner's own `.arcana/`, and minus everything the
+  repository's `.gitignore` files exclude. A `cargo build` is not an artefact.
+* `tree_changed: false` with `expectation: "artefact"` ends the run on
+  **`NoEffect`**: `"completed":false`, exit `1`. The tools ran; nothing came
+  of them.
+* `writes` names the executed `write`/`edit` calls. It is corroboration, not
+  the verdict — `bash` can create a file too, and the digest catches that
+  whether or not a write tool was involved.
+* `claimed_but_absent` lists the paths the model's closing sentence named that
+  are not on disk; `claimed_but_unchanged` the ones that are on disk exactly as
+  they were. Both are a string scan and a `stat`; neither costs a model call.
+  They are also printed on stderr, so the most expensive thing this runner can
+  do is visible without `jq`.
+* `tree_changed: null` is the third verdict: the walk could not complete (an
+  unreadable directory, or more than 200 000 files). `NoEffect` is a refusal
+  and a refusal has to be provable, so a `null` refuses nothing — it is
+  recorded and the run is judged on its other evidence.
+
+### Declaring a read-only task
+
+Some tasks are finished when the answer is on stdout: an audit, a review, a
+question about the corpus. Pass `--read-only`:
+
+```bash
+arcana run --cwd /path/to/worktree --read-only \
+  --prompt 'Which of the runbooks under docs/ still name arcana-agents?'
+```
+
+`expectation` then reads `read-only`, an unchanged tree is the expected
+outcome, and the run may complete. The declaration is made **by the caller,
+before the run starts**. Nothing the model does or says during the run can set
+it — a run able to declare itself read-only afterwards could excuse having done
+nothing, which is the failure this surface exists to catch. A read-only run
+still has to execute at least one tool call: `NoAction` is unchanged.
 
 ### A reply that ran out of room
 
