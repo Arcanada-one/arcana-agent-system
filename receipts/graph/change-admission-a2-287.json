@@ -5,9 +5,9 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-09-24T20:54:38Z",
+ "captured_at_utc": "2026-09-24T21:54:09Z",
  "change_set": {
-  "base": "22cbea94595a128f938fbaa2f23f8d645ff76195",
+  "base": "e75a97bd788540ff539754a561340c371d469d6d",
   "files": [
    {
     "kind": "other",
@@ -62,9 +62,18 @@
     ],
     "path": "crates/core/src/hooks/audit.rs",
     "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-a2-287.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-a2-287.json"
+    ],
+    "path": "receipts/graph/change-admission-a2-287.json",
+    "status": "A"
    }
   ],
-  "head": "4a4dde62f0b0cc5e521e8ad1e08b511175693115",
+  "head": "1e7d898f8930e119ea96bbe86c634fa07eee9a59",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -72,19 +81,19 @@
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:768f7d5a9d7b1fbd6a06d865411f11f010e4c7add9392157558b05ad09abe9b6",
-  "path": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/graph-22cbea94595a.json",
-  "source_commit": "22cbea94595a128f938fbaa2f23f8d645ff76195"
+  "graph_digest": "sha256:500ce7bdac9b71bbf6b2dd7a9851dae3d4b88e751dadc0e3b6b92072b1e4f326",
+  "path": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/graph-e75a97bd7885.json",
+  "source_commit": "e75a97bd788540ff539754a561340c371d469d6d"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:97eea9b86286396c7bd458c6632ce4e1fc13d5de59e5ea4be6e0b46c70c65f76",
-  "path": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/graph-head-4a4dde62f0b0.json",
-  "source_commit": "4a4dde62f0b0cc5e521e8ad1e08b511175693115",
+  "graph_digest": "sha256:9a6aab42b9b872772564d626c19e85f729423eb496ebaee2284d8aed4ee7649d",
+  "path": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/graph-head-1e7d898f8930.json",
+  "source_commit": "1e7d898f8930e119ea96bbe86c634fa07eee9a59",
   "staleness": {
-   "checked_at_utc": "2026-09-24T20:54:41Z",
-   "checked_nodes": 345,
+   "checked_at_utc": "2026-09-24T21:54:12Z",
+   "checked_nodes": 349,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -332,45 +341,31 @@
    },
    {
     "boundary": "intra_unit",
-    "depth": 2,
+    "depth": 1,
     "entity": "code_unit:crates/cli/src/receipt.rs",
     "node_type": "code_unit",
     "path": [
      {
       "edge_type": "imports",
-      "from": "code_unit:crates/core/src/agent_loop.rs",
-      "provenance": "deterministic",
-      "to": "code_unit:crates/core/src/execution.rs",
-      "via": "rust-use-crate-path"
-     },
-     {
-      "edge_type": "imports",
       "from": "code_unit:crates/cli/src/receipt.rs",
       "provenance": "deterministic",
-      "to": "code_unit:crates/core/src/agent_loop.rs",
-      "via": "rust-use-workspace-crate"
+      "to": "code_unit:crates/cli/src/run.rs",
+      "via": "rust-use-crate-path"
      }
     ],
     "revision_paths": [
      {
       "boundary": "intra_unit",
-      "depth": 2,
+      "depth": 1,
       "entity": "code_unit:crates/cli/src/receipt.rs",
       "node_type": "code_unit",
       "path": [
        {
         "edge_type": "imports",
-        "from": "code_unit:crates/core/src/agent_loop.rs",
-        "provenance": "deterministic",
-        "to": "code_unit:crates/core/src/execution.rs",
-        "via": "rust-use-crate-path"
-       },
-       {
-        "edge_type": "imports",
         "from": "code_unit:crates/cli/src/receipt.rs",
         "provenance": "deterministic",
-        "to": "code_unit:crates/core/src/agent_loop.rs",
-        "via": "rust-use-workspace-crate"
+        "to": "code_unit:crates/cli/src/run.rs",
+        "via": "rust-use-crate-path"
        }
       ],
       "revision": "base",
@@ -379,23 +374,16 @@
      },
      {
       "boundary": "intra_unit",
-      "depth": 2,
+      "depth": 1,
       "entity": "code_unit:crates/cli/src/receipt.rs",
       "node_type": "code_unit",
       "path": [
        {
         "edge_type": "imports",
-        "from": "code_unit:crates/core/src/agent_loop.rs",
-        "provenance": "deterministic",
-        "to": "code_unit:crates/core/src/execution.rs",
-        "via": "rust-use-crate-path"
-       },
-       {
-        "edge_type": "imports",
         "from": "code_unit:crates/cli/src/receipt.rs",
         "provenance": "deterministic",
-        "to": "code_unit:crates/core/src/agent_loop.rs",
-        "via": "rust-use-workspace-crate"
+        "to": "code_unit:crates/cli/src/run.rs",
+        "via": "rust-use-crate-path"
        }
       ],
       "revision": "head",
@@ -8010,7 +7998,8 @@
   "tool": "tools/graph/verify.py",
   "version": "1.0.1"
  },
- "receipt_id": "car-verify-20260924T205438Z-4a4dde62",
+ "receipt_id": "car-verify-20260924T215409Z-1e7d898f",
+ "receipt_path": "receipts/graph/change-admission-a2-287.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
   "path": "/home/dev/aup/arc2/runs/A2-287/work/aras"
@@ -8243,21 +8232,38 @@
    "deployable_unit:crates/mcp",
    "deployable_unit:crates/skills",
    "deployable_unit:crates/supervisor",
-   "deployable_unit:crates/tools"
+   "deployable_unit:crates/tools",
+   "receipt:receipts/graph/change-admission-a2-287.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-24T20:54:41Z",
+  "checked_at_utc": "2026-09-24T21:54:12Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [],
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:80beb4b777740c606d9625a712a157bb81281e1769e25c0463df23355c631cd9"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-287.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-287.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-a2-287.json for work item A2-287",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-a2-287.json",
+    "work_item": "A2-287"
+   }
+  }
+ ],
  "tree": {
-  "commit": "4a4dde62f0b0cc5e521e8ad1e08b511175693115",
+  "commit": "1e7d898f8930e119ea96bbe86c634fa07eee9a59",
   "dirty": false
  },
  "verdicts": [
@@ -9403,13 +9409,25 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness.json",
-   "started_at_utc": "2026-09-24T20:54:42Z",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/v-fitness.json",
+   "started_at_utc": "2026-09-24T21:54:13Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   }
  ],
  "verify": {
-  "events": [],
+  "events": [
+   {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-a2-287.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-a2-287.json is the previous version of the one this run is writing, for the same work item A2-287 — superseded by construction, so it owes this change no verdict"
+   },
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "1 affected entity(ies) owe no verdict (receipt: 1): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
   "required_by_entity": {
    "code_unit:crates/cli/src/bootstrap.rs": [
     "fitness_rules"
@@ -9749,11 +9767,12 @@
    ],
    "deployable_unit:crates/tools": [
     "fitness_rules"
-   ]
+   ],
+   "receipt:receipts/graph/change-admission-a2-287.json": []
   },
   "seconds": {
-   "prepare": 1.34,
-   "total": 4.08,
+   "prepare": 1.38,
+   "total": 4.37,
    "verifiers": 0.0
   }
  },
