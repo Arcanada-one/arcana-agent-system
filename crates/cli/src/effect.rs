@@ -203,14 +203,61 @@ pub struct Effect {
     pub claimed_but_unchanged: Vec<String>,
 }
 
+/// Why a run that the driver ended happily is refused anyway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The working tree is byte-for-byte what it was.
+    NoEffect,
+    /// The final message named a path that is not on disk.
+    ClaimedButAbsent,
+}
+
+impl Refusal {
+    /// The word the marker and the receipt print as `reason`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoEffect => "NoEffect",
+            Self::ClaimedButAbsent => "ClaimedButAbsent",
+        }
+    }
+}
+
 impl Effect {
-    /// Whether the run must be refused for having produced nothing.
+    /// Why this run may not be called completed, if it may not.
     ///
-    /// Only a MEASURED unchanged tree refuses. `None` — an incomplete walk —
-    /// does not, because the refusal would then rest on a guess.
+    /// Two refusals, and the second was measured into existence. The first
+    /// live run under the tree digest (2026-09-24, `deepseek-v4-flash`, work
+    /// item `d931525f-…`, $0.0339) executed six calls including two `write`s
+    /// — both of which created the same EMPTY probe file, `test-write-check.md`
+    /// — and closed by describing
+    /// `docs/how-to/run-work-item-under-kc2-contract.md` in four numbered
+    /// points. The page does not exist. The tree HAD changed, so the digest
+    /// alone said `Completed`: an incidental write buys a run out of
+    /// [`Refusal::NoEffect`]. A model that names its artefact is held to that
+    /// name.
+    ///
+    /// Both refusals need a MEASURED tree. An incomplete walk gives
+    /// `tree_changed: null` and every path looks absent, so it refuses
+    /// nothing — a refusal has to be provable.
+    #[must_use]
+    pub fn refusal(&self, expectation: EffectExpectation) -> Option<Refusal> {
+        if !expectation.requires_effect() || self.tree_changed.is_none() {
+            return None;
+        }
+        if self.tree_changed == Some(false) {
+            return Some(Refusal::NoEffect);
+        }
+        if !self.claimed_but_absent.is_empty() {
+            return Some(Refusal::ClaimedButAbsent);
+        }
+        None
+    }
+
+    /// Whether the run must be refused at all.
     #[must_use]
     pub fn refuses_completion(&self, expectation: EffectExpectation) -> bool {
-        expectation.requires_effect() && self.tree_changed == Some(false)
+        self.refusal(expectation).is_some()
     }
 }
 

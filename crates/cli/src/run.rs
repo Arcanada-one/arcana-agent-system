@@ -815,7 +815,8 @@ block.",
 ///
 /// Not a [`TerminalReason`]: the driver ended the run legitimately and has no
 /// business knowing what a working tree is. The refusal belongs to the layer
-/// that can see the disk.
+/// that can see the disk. Its sibling is
+/// [`crate::effect::Refusal::ClaimedButAbsent`].
 pub const NO_EFFECT: &str = "NoEffect";
 
 /// The marker's verdict for a run that reached the driver.
@@ -843,8 +844,10 @@ pub fn verdict_of(summary: &RunSummary) -> (bool, String) {
     if out.reason.is_success() && out.tool_calls == 0 {
         return (false, format!("{:?}", TerminalReason::NoAction));
     }
-    if out.reason.is_success() && summary.effect.refuses_completion(summary.expectation) {
-        return (false, NO_EFFECT.to_owned());
+    if out.reason.is_success() {
+        if let Some(refusal) = summary.effect.refusal(summary.expectation) {
+            return (false, refusal.as_str().to_owned());
+        }
     }
     (out.reason.is_success(), format!("{:?}", out.reason))
 }

@@ -28,10 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   digests, the executed tools by name, and the successful `write`/`edit` calls
   are carried in `ARCANA_RUN_DONE` and in the `ReadinessReceipt/v1`.
 
-  Two things beside the verdict. The paths the model's final message claims are
-  looked up on disk, and the ones that are not there are reported as
-  `effect.claimed_but_absent` (on stderr as well as in the marker) — a string
-  scan and a `stat`, no model call. And a task that legitimately changes nothing
+  A second refusal, measured into existence by the first live run under the new
+  check: that run executed two `write` calls, both of which created the same
+  EMPTY probe file `test-write-check.md`, then described
+  `docs/how-to/run-work-item-under-kc2-contract.md` in four numbered points. The
+  page does not exist — but the tree HAD changed, so the digest alone said
+  `Completed`. An incidental write must not buy a run out of its own claim, so
+  the paths the final message names are looked up on disk and a non-empty
+  `effect.claimed_but_absent` ends the run on **`ClaimedButAbsent`**, exit `1`
+  (printed on stderr as well as carried in the marker). A string scan and a
+  `stat`; no model call. `claimed_but_unchanged` is reported and not refused —
+  a rewrite with identical bytes is ambiguous. And a task that legitimately changes nothing
   is declared `--read-only` **by the caller, before the run**; nothing the model
   does during the run can set it. An unmeasurable tree — an unreadable directory
   or more than 200 000 files — reports `tree_changed: null` and refuses nothing,

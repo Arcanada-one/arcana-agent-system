@@ -245,6 +245,47 @@ async fn the_same_run_that_actually_writes_the_page_completes() {
 }
 
 #[tokio::test]
+async fn an_incidental_write_does_not_buy_a_run_out_of_its_own_claim() {
+    // Live run 1 under the tree digest, verbatim (2026-09-24,
+    // deepseek-v4-flash, work item d931525f-…, $0.0339): six executed calls,
+    // two of them `write`s that both created the same EMPTY probe file
+    // `test-write-check.md`, and a closing message describing
+    // `docs/how-to/run-work-item-under-kc2-contract.md` in four numbered
+    // points. The page does not exist. The tree HAD changed — so the digest on
+    // its own said `Completed`, and an incidental write would have been enough
+    // to buy any run out of `NoEffect`.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    seed(work.path());
+
+    let summary = drive(
+        work.path(),
+        audit.path(),
+        &[
+            &tool_call(
+                "write",
+                serde_json::json!({ "path": "test-write-check.md", "content": "" }),
+            ),
+            RUN_FOUR_CLAIM,
+        ],
+        EffectExpectation::Artefact,
+    )
+    .await;
+
+    assert!(work.path().join("test-write-check.md").exists());
+    assert_eq!(summary.effect.tree_changed, Some(true));
+    assert_eq!(summary.effect.writes, vec!["write".to_owned()]);
+
+    let (completed, reason) = verdict_of(&summary);
+    assert!(!completed, "the page the model named is not on disk");
+    assert_eq!(reason, "ClaimedButAbsent");
+    assert_eq!(
+        summary.effect.claimed_but_absent,
+        vec!["docs/how-to/run-work-item.md".to_owned()]
+    );
+}
+
+#[tokio::test]
 async fn a_declared_read_only_run_completes_with_an_untouched_tree() {
     // An audit is finished when its answer is on stdout. The declaration is
     // the caller's, made before the run — nothing in the script below could

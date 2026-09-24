@@ -58,7 +58,7 @@ interpret its absence — which looks identical to a crash.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | The run completed and executed at least one tool call. `completed` is `true`. |
-| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `NoEffect`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
+| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `NoEffect`, `ClaimedButAbsent`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
 | `130` | The operator interrupted it. The spend line above the marker is what the interrupted dispatch cost. |
 
 ### A run that claimed to have done the work
@@ -117,10 +117,15 @@ tree is digested before the first model call and again after the last one:
   the verdict — `bash` can create a file too, and the digest catches that
   whether or not a write tool was involved.
 * `claimed_but_absent` lists the paths the model's closing sentence named that
-  are not on disk; `claimed_but_unchanged` the ones that are on disk exactly as
-  they were. Both are a string scan and a `stat`; neither costs a model call.
-  They are also printed on stderr, so the most expensive thing this runner can
-  do is visible without `jq`.
+  are not on disk, and a non-empty list ends the run on **`ClaimedButAbsent`**:
+  `"completed":false`, exit `1`. It is a separate refusal because the digest
+  alone does not cover it — the first live run under this check wrote an empty
+  probe file `test-write-check.md`, which moved the digest, and then described a
+  how-to page it never wrote. An incidental write must not buy a run out of its
+  own claim. `claimed_but_unchanged` names the paths that are on disk exactly as
+  they were; it is reported, not refused, because a rewrite with identical bytes
+  is ambiguous. Both are a string scan and a `stat`; neither costs a model call,
+  and both are printed on stderr as well as in the marker.
 * `tree_changed: null` is the third verdict: the walk could not complete (an
   unreadable directory, or more than 200 000 files). `NoEffect` is a refusal
   and a refusal has to be provable, so a `null` refuses nothing — it is
