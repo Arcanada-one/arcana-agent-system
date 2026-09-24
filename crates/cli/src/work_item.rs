@@ -108,8 +108,8 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
     request.run.prompt = task_prompt(&item, &binding);
     request.run.contract = Some(binding.clone());
 
-    let out = match crate::run::execute(&request.run).await {
-        Ok(out) => out,
+    let summary = match crate::run::execute(&request.run).await {
+        Ok(summary) => summary,
         Err(err) => return refuse("RUN_NOT_STARTED", &err),
     };
 
@@ -123,7 +123,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         &binding,
         source.as_ref(),
         &root,
-        &out,
+        &summary,
         // Resolved again rather than carried from the run: the rule is a pure
         // function of the flag, the environment and two files, so asking it
         // twice in one process cannot disagree with itself — and threading a
@@ -144,7 +144,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         }
     };
     println!("receipt: {}", receipt_path.display());
-    crate::run::report_run(&out, &root)
+    crate::run::report_run(&summary, &root)
 }
 
 /// The prompt a contract-bound run is given.
@@ -174,7 +174,18 @@ THE WORK ITEM:\n\
 \n\
 CONTRACT TOOL ALLOWLIST. This contract admits exactly these tools: {admitted}. A call to any \
 other tool is refused by the permission cascade and recorded; it is not a call to re-send in \
-another shape, and it cannot be argued into the contract.\n",
+another shape, and it cannot be argued into the contract.\n\
+\n\
+HOW THIS RUN IS JUDGED. Not by your closing message. The working directory is digested before \
+your first turn and again after your last one, and the two digests are compared. If they are \
+equal the run is recorded `NoEffect` and fails, however the work is described. If your closing \
+message names a file that is not on disk, the run is recorded `ClaimedButAbsent` and fails — a \
+path you name is a claim you are held to. Writing a probe or placeholder file to check that \
+writing works does not count and does not help.\n\
+\n\
+So: produce the deliverable with a `write` call, in one piece, before you say anything about \
+it. Write the whole file in a single call rather than describing its sections — a description \
+of a file is not a file. Then, and only then, say in plain text which path you wrote.\n",
         id = item.id,
         digest = binding.digest(),
         projection = binding.projection(),

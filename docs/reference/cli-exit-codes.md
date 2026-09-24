@@ -42,8 +42,8 @@ message instead:
 
 | Code | Condition |
 |------|-----------|
-| `0` | The run reached `Completed` **and** executed at least one tool call. |
-| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), `UnsupportedToolCallFormat` (the model asked for a tool in an encoding this runner cannot execute, and repeated it after being told the one it reads), `RequestTooLarge` (the transcript could not be compacted into the connector's 100 000-character per-field request limit), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `0` | The run reached `Completed`, executed at least one tool call, **and** left an effect — the working tree after the run differs from the working tree before it, unless the task was dispatched with `--read-only`. |
+| `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), `UnsupportedToolCallFormat` (the model asked for a tool in an encoding this runner cannot execute, and repeated it after being told the one it reads), `RequestTooLarge` (the transcript could not be compacted into the connector's 100 000-character per-field request limit), `NoEffect` (the run completed and the working tree is byte-for-byte what it was — see below), `ClaimedButAbsent` (the run changed something, and the final message named a path that is not on disk), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
 | `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
 
 The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when
@@ -53,6 +53,22 @@ counts the turns on which the transcript had to be shortened to stay inside the
 request contract; non-zero means the model answered from a summary of part of
 its own history, which is worth knowing before comparing two runs of the same
 card.
+
+`NoEffect` is not a `TerminalReason`: the driver ended the run legitimately and
+has no business knowing what a working tree is. It is decided above the driver,
+where the disk is visible, by comparing a digest of `--cwd` taken before the
+first model call with one taken after the last — excluding `.git/`, the
+runner's own `.arcana/`, and everything `.gitignore` excludes. It exists
+because a tool-call count cannot tell reading from writing: pilot A2-278's runs
+2 and 4 executed nine and three calls, all of them `read` or `grep`, wrote
+nothing, and exited `0` with `"completed":true` while describing a file that
+does not exist. The marker's `effect` object carries both digests, the executed
+tools by name, and `claimed_but_absent` — the paths the model's closing
+sentence named and the disk denies — a non-empty `claimed_but_absent` is its own
+refusal, `ClaimedButAbsent`, because the digest alone does not cover it: the
+first live run under this check wrote an empty probe file, which moved the
+digest, and then described a page it never wrote. `effect.tree_changed: null` means the walk
+could not complete and refuses nothing; a refusal has to be provable.
 
 `RequestTooLarge` is separate from `ContextWindowExhausted`, and the difference
 is which side refused. `ContextWindowExhausted` is about the **model** — its

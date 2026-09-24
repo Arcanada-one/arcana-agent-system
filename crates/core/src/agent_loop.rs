@@ -1476,6 +1476,18 @@ pub struct RunOutput {
     /// `tool_calls_attempted - tool_calls_denied - tool_calls` is what
     /// reached a tool and failed inside it.
     pub tool_calls_denied: u32,
+    /// The tools that actually executed, by name, in call order.
+    ///
+    /// [`Self::tool_calls`] is this list's length, and the length alone was
+    /// what let pilot A2-278's runs 2 and 4 be reported as completed: nine and
+    /// three calls, every one of them a `read` or a `grep`, nothing written,
+    /// and a closing sentence describing a file that does not exist. A count
+    /// cannot tell reading from writing; the names can.
+    ///
+    /// Names, not effects. `bash` can change a file and `read` cannot, but a
+    /// `write` that produced the bytes already there changed nothing — what
+    /// the run DID is decided by comparing the tree, not by reading this list.
+    pub executed_tools: Vec<String>,
     /// Cost accounting snapshot at termination.
     pub cost: CostSnapshot,
     /// The ordered sequence of model ids selected, one per connector call
@@ -1751,6 +1763,8 @@ struct RunState {
     first_dispatch_observation: Option<UnverifiedFirstDispatchObservationV0>,
     /// Tool calls the executor actually carried out.
     tool_calls: u32,
+    /// The name of each of them, in call order.
+    executed_tools: Vec<String>,
     /// Whether the one no-action nudge has been used.
     nudge_spent: bool,
     /// Consecutive transient connector failures since the last response.
@@ -1825,6 +1839,7 @@ impl RunState {
             selected: Vec::new(),
             first_dispatch_observation: None,
             tool_calls: 0,
+            executed_tools: Vec::new(),
             nudge_spent: false,
             connector_retries: 0,
             in_flight_polls_total: 0,
@@ -1922,6 +1937,7 @@ impl<'a> Driver<'a> {
                 final_text: None,
                 turns: 0,
                 tool_calls: 0,
+                executed_tools: Vec::new(),
                 tool_calls_attempted: 0,
                 tool_calls_denied: 0,
                 cost: self.cost.snapshot(),
@@ -1956,6 +1972,7 @@ impl<'a> Driver<'a> {
                         final_text,
                         turns: state.attempts,
                         tool_calls: state.tool_calls,
+                        executed_tools: std::mem::take(&mut state.executed_tools),
                         tool_calls_attempted: state.tool_calls_attempted,
                         tool_calls_denied: state.denied,
                         cost,
@@ -3129,6 +3146,7 @@ same call again, unchanged, ends the run."
         // dispatch error folds back as a tool result without reaching this
         // line, because a tool that failed to dispatch did no work either.
         state.tool_calls = state.tool_calls.saturating_add(1);
+        state.executed_tools.push(name.to_owned());
         // The refusal memory is consecutive, so a call that ran clears it.
         // Otherwise a long, mostly-healthy run that made the same slip twice an
         // hour apart would die on the second — and the bound is meant for a

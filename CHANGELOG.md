@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`arcana run` said "Completed" for work it never wrote.** The done-marker's
+  `completed` was decided by the terminal reason and the number of tool calls
+  that executed, and a count cannot tell reading from writing. Pilot A2-278
+  (2026-09-24, `deepseek-v4-flash`, live) ran one Muneral work item twice: runs
+  2 and 4 executed nine and three calls, every one a `read` or a `grep`, wrote
+  nothing, and both ended `"completed":true` with rc `0` while the model
+  described "the documentation page `docs/how-to/run-work-item.md`" — a file
+  that does not exist, containing commands this binary does not have. The guard
+  documented in `docs/how-to/run-one-task-unattended.md` ("`completed` is never
+  `true` with `tool_calls` at `0`") counted the reads and passed them.
+
+  Completion is now tied to an effect a third party can check. The working tree
+  under `--cwd` is digested before the first model call and again after the last
+  one — tracked and untracked files alike, excluding `.git/`, the runner's own
+  `.arcana/`, and everything the repository's `.gitignore` files exclude, so a
+  `cargo build` is not mistaken for an artefact. A run that completed with the
+  digest unmoved ends on **`NoEffect`**: `"completed":false`, exit `1`. Both
+  digests, the executed tools by name, and the successful `write`/`edit` calls
+  are carried in `ARCANA_RUN_DONE` and in the `ReadinessReceipt/v1`.
+
+  A second refusal, measured into existence by the first live run under the new
+  check: that run executed two `write` calls, both of which created the same
+  EMPTY probe file `test-write-check.md`, then described
+  `docs/how-to/run-work-item-under-kc2-contract.md` in four numbered points. The
+  page does not exist — but the tree HAD changed, so the digest alone said
+  `Completed`. An incidental write must not buy a run out of its own claim, so
+  the paths the final message names are looked up on disk and a non-empty
+  `effect.claimed_but_absent` ends the run on **`ClaimedButAbsent`**, exit `1`
+  (printed on stderr as well as carried in the marker). A string scan and a
+  `stat`; no model call. `claimed_but_unchanged` is reported and not refused —
+  a rewrite with identical bytes is ambiguous. And a task that legitimately changes nothing
+  is declared `--read-only` **by the caller, before the run**; nothing the model
+  does during the run can set it. An unmeasurable tree — an unreadable directory
+  or more than 200 000 files — reports `tree_changed: null` and refuses nothing,
+  because `NoEffect` is a refusal and a refusal has to be provable.
 - **A tool call may carry a code fence.** The closing fence of a `tool_call`
   block used to be the first ```` ``` ```` after the opening one — including a
   fence inside the JSON payload. Asked on a live contract-bound run for a
@@ -21,6 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block with no line-initial fence is still `Unterminated`.
 
 ### Changed
+- **A contract-bound run is told how it will be judged.** The brief a
+  `--work-item` run is given now states, in the prompt, that the working
+  directory is digested before the first turn and after the last, that equal
+  digests are `NoEffect`, that a path named in the closing message and absent
+  from disk is `ClaimedButAbsent`, and that a probe file does not help — then
+  asks for the deliverable in a single `write` before anything is said about
+  it. An enforced-but-undisclosed rule is the same defect as no rule at all
+  (A2-231), and this one decides whether the run counts.
+
+  Measured on the same work item and model as the failures above: four live
+  runs under the old brief produced nothing while reporting success, the fifth
+  wrote an empty probe file and described a page it had not written, and the
+  first run under this brief wrote the whole page in one `write` call for
+  $0.009045 (`claimed_but_absent: []`, `changed_paths` naming exactly the page).
 - **The model choice is configuration, and survives an isolated state
   directory.** It used to be read from `$XDG_STATE_HOME/arcana/model.json`.
   Every isolated runner overrides that directory so one run's audit log cannot

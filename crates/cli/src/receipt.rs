@@ -15,8 +15,10 @@
 use std::path::{Path, PathBuf};
 
 use arcana_connectors::contract_source::ContractSource;
-use arcana_core::agent_loop::RunOutput;
 use arcana_core::contract::ContractBinding;
+
+use crate::effect::Effect;
+use crate::run::RunSummary;
 
 use crate::models::ResolvedModel;
 use serde::Serialize;
@@ -129,6 +131,15 @@ pub struct ReadinessReceipt {
     pub worktree: Worktree,
     pub mc_usage: McUsage,
     pub tool_calls: ToolCalls,
+    /// What the run left on disk — the one section a third party can check
+    /// without trusting a word of the rest.
+    ///
+    /// `tree_digest_before` and `tree_digest_after` are taken inside the run,
+    /// the second one BEFORE this file is written, so the receipt is never its
+    /// own evidence. Equal digests with `expectation: "artefact"` are why
+    /// `run.reason` reads `NoEffect`; `claimed_but_absent` names the paths the
+    /// model's closing sentence asserted and the disk denies.
+    pub effect: Effect,
     pub denials: Vec<Denial>,
     pub run: RunSection,
 }
@@ -145,12 +156,13 @@ pub fn build(
     binding: &ContractBinding,
     source: &dyn ContractSource,
     root: &Path,
-    out: &RunOutput,
+    summary: &RunSummary,
     model: &ResolvedModel,
     produced_by: String,
     measured_at: String,
 ) -> ReadinessReceipt {
-    let (completed, reason) = crate::run::verdict_of(out);
+    let out = &summary.out;
+    let (completed, reason) = crate::run::verdict_of(summary);
     ReadinessReceipt {
         schema: SCHEMA,
         measured_at,
@@ -185,6 +197,7 @@ pub fn build(
             attempted: out.tool_calls_attempted,
             denied: out.tool_calls_denied,
         },
+        effect: summary.effect.clone(),
         denials: denials(root),
         run: RunSection {
             completed,

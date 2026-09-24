@@ -482,6 +482,7 @@ async fn drive_with_prompt(
         tool_result_budget: None,
         save_transcript: None,
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     };
     let mut config = driver_config(&request, &workspace.tools, root);
     if let Some(prompt) = prompt_override {

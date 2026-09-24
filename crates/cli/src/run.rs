@@ -57,6 +57,7 @@ use arcana_tools::{
 };
 
 use crate::demo::Session;
+use crate::effect::{Effect, EffectExpectation, TreeSnapshot};
 use crate::workspace::{
     DestructiveCommandFloor, WorkspaceAutoAllow, WorkspaceBoundary, WorkspacePolicy,
 };
@@ -151,6 +152,31 @@ pub struct RunRequest {
     /// nothing for the layer to enforce. It is NOT a permissive mode — the
     /// whole cascade below it is unchanged either way.
     pub contract: Option<ContractBinding>,
+    /// What the caller declared this task must leave behind.
+    ///
+    /// [`EffectExpectation::Artefact`] — the default — refuses a run that ends
+    /// with the working tree exactly as it found it. Declared HERE, by the
+    /// caller, before the first model call: a run that could declare itself
+    /// read-only afterwards would be able to excuse having done nothing, which
+    /// is the failure this field exists to catch.
+    pub expect_effect: EffectExpectation,
+}
+
+/// A finished run and the effect it had.
+///
+/// Two facts that must travel together. [`RunOutput`] is what the driver saw —
+/// turns, cost, terminal reason, the model's closing words. [`Effect`] is what
+/// an outsider can check afterwards: the working tree before and after. The
+/// verdict is a function of BOTH, so nothing downstream may be handed one
+/// without the other.
+#[derive(Debug, Clone)]
+pub struct RunSummary {
+    /// What the driver measured.
+    pub out: RunOutput,
+    /// What the run left on disk.
+    pub effect: Effect,
+    /// The expectation the effect is judged against.
+    pub expectation: EffectExpectation,
 }
 
 /// Reject a `--context-budget` that cannot be honoured, before anything is
@@ -278,7 +304,7 @@ async fn run_async(request: &RunRequest) -> i32 {
 /// # Errors
 /// An operator-facing message for every way the run could not START. A run
 /// that started and failed returns `Ok` with the terminal reason inside.
-pub async fn execute(request: &RunRequest) -> Result<RunOutput, String> {
+pub async fn execute(request: &RunRequest) -> Result<RunSummary, String> {
     let root = match request.cwd.canonicalize() {
         Ok(root) if root.is_dir() => root,
         Ok(root) => {
@@ -381,13 +407,52 @@ pub async fn execute(request: &RunRequest) -> Result<RunOutput, String> {
         println!("transcript: appending every request to {}", path.display());
     }
 
+    // Taken before the first model call and again after the last one, and in
+    // that order for a reason: everything this process writes afterwards — the
+    // receipt above all, which lands in `receipts/` inside this very tree —
+    // would otherwise be counted as the run's own effect.
+    let before = crate::effect::snapshot(&root);
+    println!(
+        "working tree before: {} ({} files)",
+        before.reported_digest().unwrap_or("not_measured"),
+        before.file_count()
+    );
+
     let interrupt = crate::interrupt::Interrupt::install();
     let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
     let out = session.run_task(&request.prompt, config, cancel).await;
     drop(turn_guard);
     release_sandbox_home(&sandbox_home);
 
-    Ok(out)
+    Ok(summarize(&root, &before, out, request.expect_effect))
+}
+
+/// Digest the tree a second time and pair the result with the run.
+///
+/// Separate from [`execute`] so a scripted-model test can measure exactly what
+/// a live run measures without an HTTP client: the run-4 reproduction in
+/// `crates/cli/tests/run_effect.rs` drives the real driver, the real cascade
+/// and the real tools, and reaches the same verdict through this function.
+#[must_use]
+pub fn summarize(
+    root: &Path,
+    before: &TreeSnapshot,
+    out: RunOutput,
+    expectation: EffectExpectation,
+) -> RunSummary {
+    let after = crate::effect::snapshot(root);
+    let effect = crate::effect::measure(
+        expectation,
+        before,
+        &after,
+        &out.executed_tools,
+        out.final_text.as_deref(),
+    );
+    RunSummary {
+        out,
+        effect,
+        expectation,
+    }
 }
 
 /// Give the per-run sandbox `HOME` back, if the run left it empty.
@@ -746,18 +811,43 @@ block.",
     )
 }
 
+/// Reason reported when the run succeeded and the working tree did not move.
+///
+/// Not a [`TerminalReason`]: the driver ended the run legitimately and has no
+/// business knowing what a working tree is. The refusal belongs to the layer
+/// that can see the disk. Its sibling is
+/// [`crate::effect::Refusal::ClaimedButAbsent`].
+pub const NO_EFFECT: &str = "NoEffect";
+
 /// The marker's verdict for a run that reached the driver.
 ///
-/// The driver already refuses to call a no-action run `Completed` — `run` sets
-/// [`DriverConfig::require_action`]. This says it a second time at the one line
-/// a runner reads, because that is where the damage happens: `"completed":true`
-/// beside `"tool_calls":0` is a receipt for work with no evidence that anything
-/// did it, and the marker must be unable to print that pair whatever the layer
-/// above decided.
+/// Three refusals, in widening order, and the third is the one that matters:
+///
+/// 1. The driver already refuses to call a no-action run `Completed` — `run`
+///    sets [`DriverConfig::require_action`].
+/// 2. Said again here, at the one line a runner reads: `"completed":true`
+///    beside `"tool_calls":0` is a receipt for work with no evidence that
+///    anything did it.
+/// 3. And a count is not evidence either. Pilot A2-278's runs 2 and 4 executed
+///    nine and three calls — every one a `read` or a `grep` — wrote nothing,
+///    exited `0` with `"completed":true`, and closed with a sentence
+///    describing a documentation page that does not exist. Both passed checks
+///    1 and 2. So a run whose declared job was to produce something, and whose
+///    working tree is byte-for-byte what it was, is [`NO_EFFECT`] — and the
+///    caller gets a non-zero exit code.
+///
+/// The third refusal needs a MEASURED tree on both sides. An incomplete walk
+/// gives `tree_changed: null`, and a refusal on a `null` would be a guess.
 #[must_use]
-pub fn verdict_of(out: &RunOutput) -> (bool, String) {
+pub fn verdict_of(summary: &RunSummary) -> (bool, String) {
+    let out = &summary.out;
     if out.reason.is_success() && out.tool_calls == 0 {
         return (false, format!("{:?}", TerminalReason::NoAction));
+    }
+    if out.reason.is_success() {
+        if let Some(refusal) = summary.effect.refusal(summary.expectation) {
+            return (false, refusal.as_str().to_owned());
+        }
     }
     (out.reason.is_success(), format!("{:?}", out.reason))
 }
@@ -768,7 +858,8 @@ pub fn verdict_of(out: &RunOutput) -> (bool, String) {
 /// done-marker a runner reads must be the same shape whether the task came
 /// from `--prompt` or from a work item.
 #[must_use]
-pub fn report_run(out: &RunOutput, root: &Path) -> i32 {
+pub fn report_run(summary: &RunSummary, root: &Path) -> i32 {
+    let out = &summary.out;
     match out.final_text.as_deref() {
         Some(text) => println!("{text}"),
         None => println!("(no final text — {})", out.reason),
@@ -778,7 +869,30 @@ pub fn report_run(out: &RunOutput, root: &Path) -> i32 {
         "{}",
         crate::usage::turn_line(&spend, out.cost.total_cost_usd_micros)
     );
-    let (completed, reason) = verdict_of(out);
+    let (completed, reason) = verdict_of(summary);
+    let effect = &summary.effect;
+    println!(
+        "working tree after: {} — {}",
+        effect
+            .tree_digest_after
+            .as_deref()
+            .unwrap_or("not_measured"),
+        match effect.tree_changed {
+            Some(true) => format!("{} file(s) changed", effect.changed_count),
+            Some(false) => "unchanged".to_owned(),
+            None => "not measured".to_owned(),
+        }
+    );
+    // Said on stderr, where a run that ends badly is read: a model that
+    // announced a file it never wrote is the single most expensive thing this
+    // runner can do, and it must not take a `jq` to find out.
+    if !effect.claimed_but_absent.is_empty() {
+        eprintln!(
+            "arcana run: the final message names {} path(s) that are not on disk: {}",
+            effect.claimed_but_absent.len(),
+            effect.claimed_but_absent.join(", ")
+        );
+    }
     // Whatever the driver could say about the cause, said here and carried in
     // the marker. Pilot A2-204c4 ended `PermissionDenied` with `"error": null`
     // and the single stderr line `the permission cascade refused the tool
@@ -802,6 +916,7 @@ pub fn report_run(out: &RunOutput, root: &Path) -> i32 {
             compactions: out.compactions,
             root,
             error: detail,
+            effect: Some(effect),
         })
     );
     let code = crate::interrupt::exit_code(out.reason);
@@ -833,6 +948,9 @@ fn exit_failed(error: &str, root: &Path) -> i32 {
             compactions: 0,
             root,
             error: Some(error),
+            // A run that never started had no tree to compare. `null`, not an
+            // empty object that would read as "measured, and nothing changed".
+            effect: None,
         })
     );
     1
@@ -864,6 +982,8 @@ struct DoneMarker<'a> {
     compactions: u32,
     root: &'a Path,
     error: Option<&'a str>,
+    /// What the run left on disk, or `None` when there was no run to measure.
+    effect: Option<&'a Effect>,
 }
 
 fn done_marker_body(marker: &DoneMarker<'_>) -> String {
@@ -878,6 +998,7 @@ fn done_marker_body(marker: &DoneMarker<'_>) -> String {
         compactions,
         root,
         error,
+        effect,
     } = *marker;
     let body = serde_json::json!({
         "completed": completed,
@@ -898,6 +1019,10 @@ fn done_marker_body(marker: &DoneMarker<'_>) -> String {
         "compactions": compactions,
         "workspace": root.display().to_string(),
         "error": error,
+        // The evidence the count above cannot give: two tree digests, the
+        // tools that ran by name, and every path the model's closing sentence
+        // claimed that is not on disk. `null` only when there was no run.
+        "effect": effect,
     });
     body.to_string()
 }
@@ -1014,6 +1139,7 @@ mod tests {
             compactions: 2,
             root: Path::new("/tmp"),
             error: Some(detail),
+            effect: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["error"], detail, "the marker must not report null");
@@ -1036,6 +1162,7 @@ mod tests {
             compactions: 3,
             root: Path::new("/tmp"),
             error: None,
+            effect: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], true);
@@ -1064,19 +1191,21 @@ mod tests {
             compactions: 0,
             root: Path::new("/tmp"),
             error: Some("boom"),
+            effect: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], false);
         assert_eq!(parsed["error"], "boom");
     }
 
-    /// One `RunOutput` for the verdict tests; only the two fields it reads.
+    /// One `RunOutput` for the verdict tests; only the fields it reads.
     fn outcome(reason: TerminalReason, tool_calls: u32) -> RunOutput {
         RunOutput {
             reason,
             final_text: Some("The file has been created successfully.".to_owned()),
             turns: 1,
             tool_calls,
+            executed_tools: std::iter::repeat_n("read".to_owned(), tool_calls as usize).collect(),
             tool_calls_attempted: tool_calls,
             tool_calls_denied: 0,
             cost: arcana_core::cost::CostTracker::new().snapshot(),
@@ -1087,12 +1216,26 @@ mod tests {
         }
     }
 
+    /// Pair an outcome with an effect, without touching a disk.
+    fn summary(out: RunOutput, tree_changed: bool, expectation: EffectExpectation) -> RunSummary {
+        let dir = tempfile::TempDir::new().unwrap();
+        let before = crate::effect::snapshot(dir.path());
+        if tree_changed {
+            std::fs::write(dir.path().join("artefact.md"), "written").unwrap();
+        }
+        summarize(dir.path(), &before, out, expectation)
+    }
+
     #[test]
     fn a_completed_run_that_executed_nothing_is_not_reported_as_completed() {
         // The live failure verbatim: one turn, zero tool calls, a confident
         // sentence. Even if the layer below said `Completed`, the marker does
         // not.
-        let (completed, reason) = verdict_of(&outcome(TerminalReason::Completed, 0));
+        let (completed, reason) = verdict_of(&summary(
+            outcome(TerminalReason::Completed, 0),
+            false,
+            EffectExpectation::Artefact,
+        ));
         assert!(!completed);
         assert_eq!(reason, "NoAction");
     }
@@ -1101,15 +1244,82 @@ mod tests {
     fn a_completed_run_with_an_executed_tool_call_is_reported_as_completed() {
         // The green half: the same check must be able to say yes, or it is
         // just a constant.
-        let (completed, reason) = verdict_of(&outcome(TerminalReason::Completed, 1));
+        let (completed, reason) = verdict_of(&summary(
+            outcome(TerminalReason::Completed, 1),
+            true,
+            EffectExpectation::Artefact,
+        ));
         assert!(completed);
         assert_eq!(reason, "Completed");
     }
 
     #[test]
     fn a_failure_keeps_its_own_reason_rather_than_becoming_no_action() {
-        let (completed, reason) = verdict_of(&outcome(TerminalReason::PermissionDenied, 0));
+        let (completed, reason) = verdict_of(&summary(
+            outcome(TerminalReason::PermissionDenied, 0),
+            false,
+            EffectExpectation::Artefact,
+        ));
         assert!(!completed);
         assert_eq!(reason, "PermissionDenied");
+    }
+
+    #[test]
+    fn a_completed_run_that_executed_reads_and_changed_nothing_is_no_effect() {
+        // Pilot A2-278, runs 2 and 4: nine and three executed calls, all of
+        // them reads, `"completed":true`, rc 0, and a closing sentence about a
+        // file that does not exist. Both passed the `tool_calls > 0` guard.
+        let (completed, reason) = verdict_of(&summary(
+            outcome(TerminalReason::Completed, 9),
+            false,
+            EffectExpectation::Artefact,
+        ));
+        assert!(!completed, "a run that changed nothing is not completed");
+        assert_eq!(reason, NO_EFFECT);
+    }
+
+    #[test]
+    fn a_declared_read_only_run_that_changed_nothing_still_completes() {
+        // The green half of the same check: `NoEffect` must be refusable, or
+        // it would only ever be a second name for `Completed`.
+        let (completed, reason) = verdict_of(&summary(
+            outcome(TerminalReason::Completed, 9),
+            false,
+            EffectExpectation::ReadOnly,
+        ));
+        assert!(completed);
+        assert_eq!(reason, "Completed");
+    }
+
+    #[test]
+    fn the_marker_carries_the_effect_of_the_run() {
+        let run = summary(
+            outcome(TerminalReason::Completed, 9),
+            false,
+            EffectExpectation::Artefact,
+        );
+        let body = done_marker_body(&DoneMarker {
+            completed: false,
+            reason: NO_EFFECT,
+            turns: 4,
+            tool_calls: 9,
+            tool_calls_attempted: 12,
+            tool_calls_denied: 1,
+            cost_usd_micros: 35_160,
+            compactions: 0,
+            root: Path::new("/tmp"),
+            error: None,
+            effect: Some(&run.effect),
+        });
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["reason"], NO_EFFECT);
+        assert_eq!(parsed["effect"]["tree_changed"], false);
+        assert_eq!(parsed["effect"]["expectation"], "artefact");
+        assert_eq!(
+            parsed["effect"]["tree_digest_before"],
+            parsed["effect"]["tree_digest_after"]
+        );
+        assert_eq!(parsed["effect"]["executed_tools"]["read"], 9);
+        assert!(parsed["effect"]["writes"].as_array().unwrap().is_empty());
     }
 }

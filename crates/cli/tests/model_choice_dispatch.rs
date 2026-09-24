@@ -151,6 +151,7 @@ async fn drive(
         tool_result_budget: None,
         save_transcript: None,
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     };
     let config = driver_config(&request, &workspace.tools, root);
     let out = workspace
@@ -223,6 +224,22 @@ fn binding() -> ContractBinding {
     verify(&document.digest.clone(), &document).expect("the fixture binds")
 }
 
+/// Pair a driven run with the effect it had, the way `arcana run` does.
+///
+/// These two tests assert about the model fields, so the tree is measured
+/// either side of nothing at all — but the receipt is built from a
+/// `RunSummary` now, and building one by hand here would let the two paths
+/// drift apart.
+fn summarize(root: &std::path::Path, out: &RunOutput) -> arcana_cli::run::RunSummary {
+    let before = arcana_cli::effect::snapshot(root);
+    arcana_cli::run::summarize(
+        root,
+        &before,
+        out.clone(),
+        arcana_cli::effect::EffectExpectation::default(),
+    )
+}
+
 #[tokio::test]
 async fn the_receipt_records_both_the_model_and_who_chose_it() {
     let work = TempDir::new().unwrap();
@@ -237,7 +254,7 @@ async fn the_receipt_records_both_the_model_and_who_chose_it() {
         &binding(),
         &source,
         work.path(),
-        &out,
+        &summarize(work.path(), &out),
         &ResolvedModel {
             model: Some("lane-model".to_owned()),
             source: ModelSource::Env,
@@ -270,7 +287,7 @@ async fn a_receipt_for_an_unconfigured_run_says_tier_policy_rather_than_a_model(
         &binding(),
         &source,
         work.path(),
-        &out,
+        &summarize(work.path(), &out),
         &ResolvedModel {
             model: None,
             source: ModelSource::TierPolicy,
