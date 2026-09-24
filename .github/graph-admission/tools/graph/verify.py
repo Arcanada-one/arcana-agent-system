@@ -909,8 +909,23 @@ class Verify:
 
     def record(self, vid: str, kind: str, command: str, entities: list[str], exit_code: int, output: str, started: str,
                secs: float, summary: str, verdicts: dict[str, tuple[str, str]], ext: str = "txt"):
+        # A `.json` path must hold JSON. Callers that pass ext="json" hand us a JSON blob with a
+        # human-readable log appended after it, which no parser can read: 23 such files are committed
+        # under receipts/ and carried in tools/ci/self-check-baseline.json as `Extra data` debt. The
+        # log is kept — it is what a reader of a verifier's output actually reads — and moved INSIDE
+        # the document, so the extension stops lying about the content.
+        body = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False, indent=1)
+        if ext == "json":
+            head, _, log = body.partition("\n\n")
+            try:
+                doc = json.loads(head)
+                body = json.dumps({**doc, "log": log.splitlines()} if isinstance(doc, dict)
+                                  else {"output": doc, "log": log.splitlines()},
+                                  ensure_ascii=False, indent=1)
+            except ValueError:
+                ext = "txt"   # not JSON at all: say so in the name rather than in a parse error
         ref = self.out_dir / f"{vid}.{ext}"
-        ref.write_text(output if isinstance(output, str) else json.dumps(output, ensure_ascii=False, indent=1))
+        ref.write_text(body)
         self.verifiers.append({"id": vid, "kind": kind, "command": command, "entities": sorted(entities), "exit_code": int(exit_code),
                                "output_ref": rel_ref(ref), "started_at_utc": started, "duration_s": secs, "summary": summary})
         self.ev.setdefault(vid, {}).update(verdicts)
@@ -1750,20 +1765,35 @@ class Verify:
                     return str(value[k])
         return None
 
+    @staticmethod
+    def _receipt_state(tree, path: str) -> tuple[str, str | None]:
+        """What stands at `path` in `tree`, as a NAMED state rather than a bare truth value.
+
+        `_declared_work_item` below collapses four different situations into `False`, which is all
+        the RULE needs — every one of them blocks it. A reader does not get off so lightly: A2-244
+        lost a cycle to a receipt that DEC-AUP-0035 silently declined to supersede, and the reason
+        («the file on disk declares no work item, because it was issued without --work-item») was
+        nowhere in the receipt. States: absent, unreadable, not_a_receipt, no_work_item, work_item."""
+        if not tree.exists(path):
+            return "absent", None
+        try:
+            doc = json.loads(tree.text(path))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return "unreadable", None
+        if not (isinstance(doc, dict) and str(doc.get("schema", "")).endswith("Receipt/v1")):
+            return "not_a_receipt", None
+        wid = Verify._work_item_id(doc.get("work_item"))
+        return ("work_item", wid) if wid else ("no_work_item", None)
+
     def _declared_work_item(self, tree, path: str) -> str | None | bool:
         """The work item of the receipt stored at `path` in `tree`.
 
         False means "there is a file there and it is not a receipt of a readable work item" — a
         distinct answer from None ("no file there"), because only the first one may block the rule."""
-        if not tree.exists(path):
+        state, wid = self._receipt_state(tree, path)
+        if state == "absent":
             return None
-        try:
-            doc = json.loads(tree.text(path))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return False
-        if not (isinstance(doc, dict) and str(doc.get("schema", "")).endswith("Receipt/v1")):
-            return False
-        return self._work_item_id(doc.get("work_item")) or False
+        return wid if state == "work_item" else False
 
     def superseded_self_exclusions(self) -> dict[str, dict]:
         """The one entity this run supersedes by construction (DEC-AUP-0035).
@@ -1815,26 +1845,85 @@ class Verify:
                       "rule": "DEC-AUP-0035",
                       "superseded": {"work_item": self.work_item, "receipt_path": path}}}
 
-    def superseded_self_note(self) -> str | None:
-        """Why the rule did NOT apply, when a caller was one step away from it.
+    def superseded_self_notes(self) -> list[str]:
+        """Why the rule did NOT apply, NAMED, whenever a caller was one step away from it.
 
-        Writing the receipt outside the repository is the documented workaround for older defects,
-        and under it the rule is unreachable: nothing in the tree is the path this run writes to. A
-        reader seeing I14 on a receipt of their own work item has to be told that, or the absence of
-        the exclusion looks like a judgement about the document."""
-        if self.self_receipt_rel or not self.work_item:
-            return None
+        A2-244 §6.2: the previous receipt at the path had been issued without `--work-item`, so
+        condition 3 read `no_work_item` and `superseded_self_exclusions` returned `{}` — leaving a
+        bare I14 on a document the reader knows is their own draft. The absence of the exclusion then
+        looks like a judgement about that document, and the actual remedy (re-issue naming the work
+        item) is nowhere on the page. Widening the rule to «any receipt at this path» is exactly the
+        forgery its condition 3 exists to exclude, so the rule does not move; what moves is that it
+        now SAYS, by name, which condition failed.
+
+        Nothing here changes a verdict. It is the sentence a paused author needs in order to act.
+        There is no «did the rule apply?» flag: when it applies, the very comparison that made it
+        apply — the document at the path declares this run's work item — makes every branch below
+        fall through. A flag here was an unkillable line, and a mutation run said so (2026-09-24)."""
         out = getattr(self.a, "out", None)
+        notes: list[str] = []
+        rel = self.self_receipt_rel
+        if rel:
+            eid = f"receipt:{rel}"
+            if eid not in self.entities:
+                return []
+            state, declared = self._receipt_state(self.tree_head, rel)
+            if state == "absent":
+                state, declared = self._receipt_state(self.tree_base, rel)
+            if not self.work_item:
+                notes.append(f"DEC-AUP-0035 not applied to {eid}: this run was given no --work-item, and "
+                             f"condition 3 compares the work item of the document at {rel} with this run's. "
+                             f"Re-issue with --work-item <ID> and the previous draft is superseded instead of "
+                             f"owing an I14 that no verifier can ever discharge.")
+            elif state == "no_work_item":
+                notes.append(f"DEC-AUP-0035 not applied to {eid}: the document at {rel} is a receipt whose "
+                             f"`work_item` is null — it was issued without --work-item — so condition 3 "
+                             f"(«every version at base or head declares the SAME work item as this run, "
+                             f"{self.work_item}») cannot hold. The rule is NOT widened to «any receipt at "
+                             f"this path»: that is the forgery condition 3 exists to exclude. The receipt "
+                             f"that names its work item is the one that can be re-issued at its own path.")
+            elif state == "work_item" and declared != self.work_item:
+                notes.append(f"DEC-AUP-0035 not applied to {eid}: the document at {rel} declares work item "
+                             f"{declared}, not this run's {self.work_item}. Another work item's record at "
+                             f"this path is a different record and keeps its verdict.")
+            elif state in ("unreadable", "not_a_receipt"):
+                notes.append(f"DEC-AUP-0035 not applied to {eid}: the file at {rel} is {state.replace('_', ' ')}, "
+                             f"so nothing there can be shown to be the previous version of this run's receipt.")
+            return notes
+        if not self.work_item:
+            return []
         for eid, ent in self.entities.items():
             if not eid.startswith("receipt:"):
                 continue
             path = ent["node"].get("path")
             if path and self._declared_work_item(self.tree_head, path) == self.work_item:
-                return (f"DEC-AUP-0035 not applied to {eid}: it declares this run's work item "
-                        f"{self.work_item}, but the receipt is being written to "
-                        f"{out if out else '(no --out)'}, which is outside this repository, so no "
-                        f"path in the tree is the one this run supersedes.")
-        return None
+                notes.append(f"DEC-AUP-0035 not applied to {eid}: it declares this run's work item "
+                             f"{self.work_item}, but the receipt is being written to "
+                             f"{out if out else '(no --out)'}, which is outside this repository, so no "
+                             f"path in the tree is the one this run supersedes.")
+        return notes
+
+    # A receipt filed under this directory is a record other runs will have to supersede at its own
+    # path; one that names no work item can never be.
+    RECEIPT_DIR = "receipts/graph/"
+
+    def work_item_absence_warning(self) -> str | None:
+        """A receipt written INTO the repository without --work-item is a dead end, said out loud.
+
+        Measured (A2-227, reported by A2-244 §6.2): that run wrote receipts/graph/… with a null
+        `work_item`, and nothing anywhere said so. The file is a perfectly good record until somebody
+        has to re-issue it at the same path — at which point DEC-AUP-0035 condition 3 has nothing to
+        compare, the entity keeps its I14, and the change is paused with no way out but a
+        hand-written exemption. The cost is paid by a later run, which is precisely why this run has
+        to be the one that warns."""
+        rel = self.self_receipt_rel
+        if not rel or self.work_item or not rel.startswith(self.RECEIPT_DIR):
+            return None
+        return (f"this receipt is being filed at {rel} with `work_item: null` — no --work-item was given. "
+                f"A record under {self.RECEIPT_DIR} is re-issued at its own path after a rebase or a second "
+                f"commit, and DEC-AUP-0035 supersedes the previous draft only when both declare the SAME "
+                f"work item. Without one, this file can never be superseded at this path: a later run will "
+                f"carry an I14 on it that no verifier can discharge. Re-issue with --work-item <ID>.")
 
     def aggregate(self, q: dict) -> dict:
         m = self.matrix
@@ -1849,10 +1938,14 @@ class Verify:
                                     "text": f"the receipt at {x['path']} is the previous version of the one this "
                                             f"run is writing, for the same work item {x['superseded']['work_item']} "
                                             f"— superseded by construction, so it owes this change no verdict"})
-        note = self.superseded_self_note()
-        if note:
+        for note in self.superseded_self_notes():
             self.notes.append(note)
             self.events.append({"code": "SUPERSEDED_SELF_NOT_APPLICABLE", "rule": "DEC-AUP-0035", "text": note})
+        warning = self.work_item_absence_warning()
+        if warning:
+            self.notes.append(warning)
+            self.events.append({"code": "RECEIPT_WITHOUT_WORK_ITEM", "rule": "DEC-AUP-0035", "text": warning})
+            print("WARNING: " + warning, file=sys.stderr)
         if self.excluded:
             by_type: dict[str, int] = {}
             for x in self.excluded.values():
@@ -2253,8 +2346,16 @@ def selftest(a) -> int:
         if rec.get("schema") != "ChangeAdmissionReceipt/v1":
             check(f"{fid}: draft produced", False, refusal=rec.get("refusal"))
             continue
-        cls = schema_check.classify(rec, gs, rs)
-        check(f"{fid}: draft is ChangeAdmissionReceipt/v1 conformant", cls["verdict"] == "conformant", codes=cls.get("codes"))
+        # DEC-AUP-0037 R1 asks whether the canary evidence a receipt cashes lives INSIDE the
+        # repository the receipt is about. A selftest scenario is a draft over a scratch tree in
+        # TMPDIR, so `rel_ref` (verify.py:133) can only ever emit an absolute path for it: the
+        # scenario cannot satisfy that rule by construction, and turning the rule off for real
+        # receipts to make this battery green would be the exact inversion of what it is for. The
+        # rule is measured instead where it applies — on committed receipts, by
+        # tools/graph/test_canary_claim_binding.py and by fixture violation-56 with its mutant.
+        cls = schema_check.classify(rec, gs, rs, disabled=frozenset({"CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE"}))
+        check(f"{fid}: draft is ChangeAdmissionReceipt/v1 conformant (bar the committed-evidence "
+              f"rule, which a scratch-tree draft cannot satisfy)", cls["verdict"] == "conformant", codes=cls.get("codes"))
         imp = rec["impact_set"]
         # Under a global fallback the whole repository is ONE measurement, and impact.py still lists
         # every node in deterministic_core so a reader can see the blast radius — those rows ARE the

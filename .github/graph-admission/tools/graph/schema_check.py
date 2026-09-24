@@ -21,7 +21,7 @@ import json
 import re
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -46,6 +46,21 @@ def sha256_text(s: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def repo_relative(ref: str) -> bool:
+    """Is this a path a checkout of the repository can resolve? (DEC-AUP-0037 R1)
+
+    Rejects the absolute path (`/home/dev/aup/arc2/runs/A2-233/...` is how #112's evidence left the
+    repository), the URL, the home-relative path and anything with a `..` component. Deliberately
+    textual: this validator never touches a filesystem, so it may not resolve, stat or normalise.
+    """
+    if not ref or not ref.strip():
+        return False
+    ref = ref.strip()
+    if ref.startswith(("/", "~", "\\")) or re.match(r"^[A-Za-z]+://", ref) or re.match(r"^[A-Za-z]:[\\/]", ref):
+        return False
+    return ".." not in PurePosixPath(ref.replace("\\", "/")).parts
 
 
 def load_schema(path: Path) -> dict:
@@ -361,6 +376,7 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
     vspec = F["verifier"]
     ver_ids = set()
     canary_entities = set()
+    canary_rows = []
     for v in vers:
         if not isinstance(v, dict):
             c.add("VERIFIER_WITHOUT_OUTPUT_REF", "verifier is not an object"); continue
@@ -375,6 +391,7 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
                 c.add("RECEIPT_MISSING_FIELD", f"verifier {v.get('id')}: {f}")
         if v.get("kind") == "canary":
             canary_entities.update(v.get("entities") or [])
+            canary_rows.append(v)
     # exemptions
     exs = doc.get("exemptions") if isinstance(doc.get("exemptions"), list) else []
     captured = parse_iso(doc.get("captured_at_utc"))
@@ -425,6 +442,32 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
     for ent in boundary_inferred:
         if ent not in canary_entities and ent not in valid_exempt and (verdict_of.get(ent) == "verified" or av in ("admitted", "admitted_with_exemptions")):
             c.add("INFERRED_BOUNDARY_WITHOUT_CANARY", f"{ent}: verdict={verdict_of.get(ent)} admission={av}")
+    # DEC-AUP-0037 R1 — a canary claim the gate cannot open is testimony, not measurement.
+    #
+    # This validator holds only the document, so it checks the one thing a document can carry: that
+    # the claim POINTS INTO the repository. Whether the pointed-at bytes exist and say what the row
+    # says is admit_change.canary_coverage's half, which has the repo (R2).
+    #
+    # The rule fires only where a claim is CASHED — a `verified` verdict citing the row, or the row
+    # being what keeps INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary entity. A canary row
+    # that discharges nothing claims nothing, and an honest not_measured must stay conformant or the
+    # rule would punish the very receipt that refused to overstate itself.
+    cashed_ids = {vid for rec in vds if isinstance(rec, dict) and rec.get("verdict") == "verified"
+                  for vid in (rec.get("verifier_ids") or []) if isinstance(vid, str)}
+    quieted = {e for e in boundary_inferred if e in canary_entities}
+    for v in canary_rows:
+        ents = set(v.get("entities") or [])
+        resting = sorted({e for e, verdict in verdict_of.items()
+                          if verdict == "verified" and v.get("id") in
+                          {i for rec in vds if isinstance(rec, dict) and rec.get("entity") == e
+                           for i in (rec.get("verifier_ids") or [])}} | (ents & quieted))
+        if v.get("id") not in cashed_ids and not (ents & quieted):
+            continue
+        ref = v.get("output_ref")
+        if not isinstance(ref, str) or not repo_relative(ref):
+            c.add("CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE",
+                  f"{v.get('id')}: output_ref={ref!r} is not a path inside the repository; "
+                  f"{len(resting)} entity(ies) rest on it: " + ", ".join(resting[:6]))
     if av is not None and av not in F["admission"]["verdict_values"]:
         c.add("ADMISSION_VERDICT_INVALID", str(av))
     non_verified = [e for e, v in verdict_of.items() if v != "verified"]
@@ -471,7 +514,7 @@ ALL_RECEIPT_RULES = ("RECEIPT_SCHEMA_MISMATCH", "RECEIPT_MISSING_FIELD", "RECEIP
                      "VERIFIER_KIND_UNKNOWN", "ENTITY_WITHOUT_VERDICT", "VERDICT_NOT_TRIVALUED", "VERIFIED_WITHOUT_VERIFIER",
                      "NOT_MEASURED_WITHOUT_REASON", "EXEMPTION_WITHOUT_OWNER", "EXEMPTION_WITHOUT_EXPIRY", "EXEMPTION_EXPIRED",
                      "ADMISSION_CONTRADICTS_VERDICTS", "ADMISSION_VERDICT_INVALID", "HEAD_GRAPH_BINDING_INVALID", "REVISION_SELECTION_INCOMPLETE",
-                     "STRUCTURAL_EXCLUSION_INVALID")
+                     "STRUCTURAL_EXCLUSION_INVALID", "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE")
 
 
 # -------------------------------------------------------------------------------- selftest

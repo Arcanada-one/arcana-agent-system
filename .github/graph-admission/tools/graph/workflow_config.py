@@ -24,6 +24,105 @@ class OutOfScope(Exception):
     """
 
 
+# ---------------------------------------------------------------------------------------------
+# `schedule:` (A2-246). ARAS `.github/workflows/ci.yml` has carried `schedule: - cron: '17 6 * * *'`
+# since `release-pending` was added, and this module listed `schedule` only among the events it does
+# NOT cover: every ARAS change touching that file came back not_measured, and one not_measured
+# without an exemption pauses the admission. The pause reported a gap in the checker, never anything
+# about the change — the same collapse the OutOfScope docstring above describes for
+# `workflow_dispatch.inputs`, and taught here for the same reason: the shape IS bounded.
+#
+# What is measured: the SHAPE, exactly as GitHub documents it — `schedule` is a nonempty list of
+# mappings whose only key is `cron`, whose value is a POSIX cron expression of five whitespace-
+# separated fields. What is NOT measured, and never claimed: whether a run ever fires. GitHub only
+# schedules the default branch, throttles to one run per five minutes, delays under load, and
+# disables the schedule after 60 days without repository activity. None of that is readable from the
+# file, and all of it stays under the blanket "hosted execution NOT_MEASURED" of the verified reason.
+CRON_FIELDS = (
+    ('minute', 0, 59, ()),
+    ('hour', 0, 23, ()),
+    ('day-of-month', 1, 31, ()),
+    ('month', 1, 12, ('JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                      'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC')),
+    ('day-of-week', 0, 6, ('SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT')),
+)
+# GitHub documents these as unsupported by name: the nickname forms and the vixie extensions. They
+# are `failed`, not OutOfScope — a workflow that uses them is one GitHub itself rejects, which is the
+# same class as any other shape GitHub rejects.
+CRON_UNSUPPORTED = {'L': 'the `L` (last) extension', 'W': 'the `W` (weekday) extension',
+                    '#': 'the `#` (nth weekday) extension', '?': 'the `?` (no-specific-value) extension'}
+
+
+def cron_point(token, lo, hi, names, field):
+    """One endpoint of a cron field: a number in the documented range, or a documented name."""
+    if token.isdigit():
+        value = int(token)
+        if not (lo <= value <= hi):
+            # The one place this checker knows a documented range and refuses to guess past it:
+            # day-of-week 7 is POSIX Sunday and GitHub documents 0-6. Which of the two GitHub's own
+            # parser implements is NOT something this checker has measured, and `failed` would claim
+            # it had. That is the third verdict's case, so it is raised as one.
+            if field == 'day-of-week' and value == 7:
+                raise OutOfScope('cron day-of-week 7: POSIX cron reads it as Sunday, GitHub documents '
+                                 '0-6 only, and which one the hosted scheduler implements is not measured here')
+            raise ValueError(f'cron {field} {token} outside the documented range {lo}-{hi}')
+        return value
+    upper = token.upper()
+    if upper in names:
+        return lo + names.index(upper)
+    raise ValueError(f'unsupported cron {field} value {token!r}')
+
+
+def cron_field(spec, index):
+    """A comma-separated list of `*`, a value, or a range — each optionally with a `/step`."""
+    field, lo, hi, names = CRON_FIELDS[index]
+    for part in spec.split(','):
+        if not part:
+            raise ValueError(f'empty element in cron {field} {spec!r}')
+        body, sep, step = part.partition('/')
+        if sep:
+            if not step.isdigit() or int(step) == 0:
+                raise ValueError(f'unsupported cron {field} step {step!r}')
+        if body == '*':
+            continue
+        first, dash, last = body.partition('-')
+        start = cron_point(first, lo, hi, names, field)
+        if not dash:
+            continue
+        if '-' in last:
+            raise ValueError(f'unsupported cron {field} range {body!r}')
+        end = cron_point(last, lo, hi, names, field)
+        if end < start:
+            raise ValueError(f'cron {field} range {body!r} ends before it starts')
+
+
+def cron_expression(expr):
+    """Five fields, each in the documented grammar. Raises ValueError / OutOfScope, returns None."""
+    if not isinstance(expr, str):
+        raise ValueError('cron must be a scalar')
+    for char, what in CRON_UNSUPPORTED.items():
+        if char in expr:
+            raise ValueError(f'GitHub Actions does not support {what} in a cron expression')
+    if expr.lstrip().startswith('@'):
+        raise ValueError('GitHub Actions does not support the non-standard @yearly/@monthly/@weekly/'
+                         '@daily/@hourly/@reboot cron syntax')
+    fields = expr.split()
+    if len(fields) != 5:
+        raise ValueError(f'cron takes exactly five fields, got {len(fields)}: {expr!r}')
+    for index, spec in enumerate(fields):
+        cron_field(spec, index)
+
+
+def schedule_config(cfg):
+    """`schedule:` is a nonempty list of `{cron: <expression>}` mappings and nothing else."""
+    if not isinstance(cfg, list) or not cfg:
+        raise ValueError('schedule requires a nonempty list of cron entries')
+    for entry in cfg:
+        if not isinstance(entry, dict) or set(entry) != {'cron'}:
+            raise ValueError('each schedule entry is a mapping whose only key is `cron`')
+        cron_expression(entry['cron'])
+
+
 def is_workflow(path):
     return bool(re.fullmatch(r'\.github/workflows/[^/]+\.ya?ml', path))
 
@@ -106,12 +205,12 @@ def validate(raw):
         if not doc.get('on') or not isinstance(doc['on'], (str, list, dict)):
             raise ValueError('nonempty on declaration required')
         trigger = doc['on']
-        events = {'push', 'pull_request', 'workflow_dispatch', 'workflow_run'}
+        events = {'push', 'pull_request', 'workflow_dispatch', 'workflow_run', 'schedule'}
         names = [trigger] if isinstance(trigger, str) else trigger
         if isinstance(trigger, list):
             string_list(trigger)
         github_events = events | {
-            'workflow_call', 'schedule', 'release', 'issues', 'issue_comment',
+            'workflow_call', 'release', 'issues', 'issue_comment',
             'pull_request_target', 'pull_request_review', 'pull_request_review_comment',
             'create', 'delete', 'fork', 'gollum', 'label', 'milestone', 'page_build',
             'project', 'project_card', 'project_column', 'public', 'registry_package',
@@ -122,11 +221,13 @@ def validate(raw):
         if any(not isinstance(k, str) or k not in events for k in names):
             unknown = [k for k in names if not isinstance(k, str) or k not in github_events]
             if unknown:
-                raise ValueError('unsupported trigger; supported: push, pull_request, workflow_dispatch, workflow_run')
+                raise ValueError('unsupported trigger; supported: push, pull_request, schedule, workflow_dispatch, workflow_run')
             raise OutOfScope('trigger outside this bounded checker: '
                              + ', '.join(k for k in names if k not in events))
         if 'workflow_run' in names and not isinstance(trigger, dict):
             raise ValueError('workflow_run requires explicit workflows configuration')
+        if 'schedule' in names and not isinstance(trigger, dict):
+            raise ValueError('schedule requires an explicit cron configuration')
         if isinstance(trigger, dict):
             for event, cfg in trigger.items():
                 if event == 'workflow_run':
@@ -138,6 +239,9 @@ def validate(raw):
                         raise ValueError('unsupported workflow_run activity type')
                     if 'branches' in cfg and 'branches-ignore' in cfg:
                         raise ValueError('workflow_run branch filters are mutually exclusive')
+                    continue
+                if event == 'schedule':
+                    schedule_config(cfg)
                     continue
                 if cfg == '':
                     continue

@@ -85,16 +85,44 @@ BUNDLE_FILES = [
 DEFAULT_RECEIPT_GLOBS = ["receipts/graph/**/*.json", "receipts/**/change-admission-*.json"]
 
 # AUP-GRAPH-006:gate2b — the bundle's cryptographic half.
+BUNDLE_MANIFEST_FILE = "BUNDLE.json"
 SIGNATURE_NAME = "BUNDLE.json.sig"
 PUBKEY_NAME = "SIGNING-KEY.pub"
 SIGNING_NAMESPACE = "graph-admission-bundle"
 PROGRAM_PUBKEY_PATH = "contracts/graph-verified-change/bundle-signing-key.pub"
+# KB-039 / A2-243 defect 4. This import writes tools/graph/__pycache__/sshsig.*.pyc INTO THE VENDORED
+# BUNDLE DIRECTORY unless bytecode is off — a file the manifest does not list, created by the gate
+# itself, before verify_bundle has walked the directory and now refuses it (BUNDLE_UNLISTED_FILE).
+# Worse than untidy: a PEP 552 `unchecked_hash` .pyc is imported in preference to the .py WITHOUT
+# validating the source the manifest does hash, so the stray file is a loadable code path outside the
+# signature. Set BEFORE the first sibling import, because by the import it is already too late.
+# The interpreter flag, not PYTHONDONTWRITEBYTECODE in the environment: every child process this
+# tool starts that imports a bundled module already sets that variable explicitly where it starts it,
+# and exporting it here would add a config key to `.env.example` — a FALLBACK_KIND path whose blast
+# radius is the whole repository — for a value nothing ever reads back.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sshsig  # noqa: E402  (sibling tool, stdlib-only, reused as a library)
 
 
+def sha256_bytes(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
 def sha256_file(p: Path) -> str:
-    return "sha256:" + hashlib.sha256(p.read_bytes()).hexdigest()
+    return sha256_bytes(p.read_bytes())
+
+
+def git_blob_oid_of_bytes(data: bytes) -> str:
+    """The git object id these bytes would have as a blob — `git hash-object` without git.
+
+    DEC-AUP-0036 R2. A caller vendoring this bundle holds the bytes and holds git; it does not hold a
+    credential for the private program repository. Recording the OID turns «these bytes stand at
+    program_ref» from a string nobody can check into an assertion the caller can CONTRADICT offline:
+    `git hash-object <file>` must equal what the manifest says, and one day `git cat-file -e
+    <oid>` in the program repository decides the rest. Falsifiability is the whole point — this
+    proves nothing on its own, and R3's B5a is where it becomes a verdict."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def git(repo: Path, *args: str) -> str:
@@ -102,9 +130,75 @@ def git(repo: Path, *args: str) -> str:
 
 
 # --------------------------------------------------------------------------------------- bundle
+BUNDLE_WORKFLOW_REL = ".github/workflows/graph-admission.yml"
+
+
+def git_bytes(repo: Path, *args: str) -> tuple[int, bytes]:
+    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    return r.returncode, r.stdout
+
+
 def cmd_bundle(a) -> int:
+    """Build a GraphAdmissionBundle FROM THE GIT OBJECT STORE at the ref it claims (DEC-AUP-0036 R1).
+
+    What this replaces, and why, measured in card A2-243 rather than reasoned about: the producer used
+    to take `program_ref` as a string and copy each bundled file with `shutil.copyfile` out of the
+    WORKING TREE. A backdoor added to `tools/graph/ci_gate.py` in the working tree and committed
+    nowhere was bundled under an unchanged `program_ref`, signed, and then passed B1/B2/B3/B4/B6 and
+    admitted a caller pull request that carried no receipt at all. The one arm that compares the bytes
+    to the ref — B5 — is `not_measured` by construction, so nothing in the whole battery was looking.
+
+    A bundle is an assertion about a commit. Building it from uncommitted bytes is a false assertion,
+    and the TOOL is what must refuse — not the discipline of whoever runs it. Two refusals:
+    BUNDLE_REF_UNRESOLVABLE (the claim names a commit the repository does not have) and
+    BUNDLE_SOURCE_NOT_AT_REF (a bundled path in the working tree differs from that commit). Neither
+    writes a signature: a `.sig` on disk is the thing that gets shipped, so a refusal that still
+    produced one would refuse nothing.
+
+    R2: every file entry additionally carries the git blob OID it was read at, so a caller holding
+    only the bytes and git — and no credential for the private program repository — can contradict
+    the provenance claim offline."""
     out = Path(a.out).resolve()
-    ref = a.program_ref or git(PROGRAM_ROOT, "rev-parse", "HEAD").strip()
+    program_root = Path(getattr(a, "program_root", None) or PROGRAM_ROOT).resolve()
+    rc, raw = git_bytes(program_root, "rev-parse", "--verify", "--quiet",
+                        f"{a.program_ref or 'HEAD'}^{{commit}}")
+    ref = raw.decode().strip()
+    if rc != 0 or len(ref) != 40:
+        print(f"BUNDLE_REF_UNRESOLVABLE: {a.program_ref or 'HEAD'!r} does not resolve to a commit in "
+              f"{program_root} — a bundle names the commit its bytes stand at, and a name nothing can "
+              f"resolve is not a claim, it is a string", file=sys.stderr)
+        return 5
+
+    # every bundled path, the vendored executing workflow included: it is in the manifest, so it is
+    # part of what the signature covers and part of what R1 binds to the ref.
+    wanted = list(BUNDLE_FILES)
+    if getattr(a, "workflow_out", None):
+        wanted.insert(0, BUNDLE_WORKFLOW_REL)
+    blobs: dict[str, bytes] = {}
+    oids: dict[str, str] = {}
+    drift, missing = [], []
+    for rel in wanted:
+        rc_b, data = git_bytes(program_root, "cat-file", "blob", f"{ref}:{rel}")
+        rc_o, oid = git_bytes(program_root, "rev-parse", f"{ref}:{rel}")
+        if rc_b != 0 or rc_o != 0:
+            missing.append(rel)
+            continue
+        blobs[rel], oids[rel] = data, oid.decode().strip()
+        wt = program_root / rel
+        if not wt.exists() or wt.read_bytes() != data:
+            drift.append(rel)
+    if missing:
+        print(f"BUNDLE_SOURCE_NOT_AT_REF: {len(missing)} bundled path(s) do not exist at {ref[:12]}: "
+              f"{', '.join(missing[:6])}", file=sys.stderr)
+        return 5
+    if drift:
+        print(f"BUNDLE_SOURCE_NOT_AT_REF: {len(drift)} bundled path(s) differ between the working tree "
+              f"and {ref[:12]} — {', '.join(drift[:6])}. The bundle would claim bytes that stand at no "
+              f"commit (A2-243: a backdoor that was never committed was signed and shipped this way). "
+              f"Commit them, or build at the ref that carries them. NO SIGNATURE WAS WRITTEN.",
+              file=sys.stderr)
+        return 5
+
     files = []
     if getattr(a, "workflow_out", None):
         # The reusable workflow itself, vendored next to the tools. A caller CAN call it across
@@ -114,21 +208,30 @@ def cmd_bundle(a) -> int:
         # — the same file, its sha256 recorded here against the same pinned program SHA.
         wf = Path(a.workflow_out)
         wf.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(PROGRAM_ROOT / ".github/workflows/graph-admission.yml", wf)
-        files.append({"path": ".github/workflows/graph-admission.yml", "sha256": sha256_file(wf),
+        wf.write_bytes(blobs[BUNDLE_WORKFLOW_REL])
+        files.append({"path": BUNDLE_WORKFLOW_REL, "sha256": sha256_bytes(blobs[BUNDLE_WORKFLOW_REL]),
+                      "blob_oid": oids[BUNDLE_WORKFLOW_REL],
                       "vendored_to": str(wf.name), "verified_by_the_job": False,
-                      "note": "the workflow file itself; it is already running by the time the job checks the bundle"})
+                      # KB-039: `verified_by_the_job` is still true as a statement about THIS run — the
+                      # job cannot hash the file that launched it, because by then it has launched. It
+                      # is no longer a statement that NOTHING checks the file: verify_bundle hashes it
+                      # against this entry for the NEXT run, and B8 refuses a self-update whose head
+                      # workflow does not match it. The honest note stays; the hole it described does not.
+                      "note": "the workflow file itself; it is already running by the time the job checks "
+                              "the bundle — so THIS run cannot vouch for it. The next run's verify_bundle "
+                              "hashes it against this entry (BUNDLE_WORKFLOW_DIGEST_MISMATCH) and the "
+                              "self-update battery's B8 refuses a change to it that this manifest does "
+                              "not attest (KB-039, DEC-AUP-0036)"})
     for rel in BUNDLE_FILES:
-        src = PROGRAM_ROOT / rel
         dst = out / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
-        files.append({"path": rel, "sha256": sha256_file(src)})
+        dst.write_bytes(blobs[rel])
+        files.append({"path": rel, "sha256": sha256_bytes(blobs[rel]), "blob_oid": oids[rel]})
     manifest = {
         "schema": "GraphAdmissionBundle/v1",
         "program_repo": "Arcanada-one/arcanada-universal-program",
         "program_ref": ref,
-        "producer": {"tool": TOOL, "version": VERSION},
+        "producer": {"tool": TOOL, "version": VERSION, "source": "git object store at program_ref"},
         "model": MODEL,
         "provisional_until_fable_review": True,
         "files": files,
@@ -136,7 +239,11 @@ def cmd_bundle(a) -> int:
                  "`program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned "
                  "program-repo SHA (the program repository is private and no shared credential exists to check it "
                  "out from a caller's CI). A pull request that changes anything under the bundle directory is "
-                 "refused by the gate job — a bundle refresh is its own pull request."),
+                 "refused by the gate job — a bundle refresh is its own pull request. Each entry's `blob_oid` is "
+                 "the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a "
+                 "caller with no credential for the program repository can CONTRADICT this manifest offline "
+                 "(DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a "
+                 "working tree (R1)."),
     }
     manifest["bundle_digest"] = "sha256:" + hashlib.sha256(
         json.dumps(files, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -170,8 +277,8 @@ def cmd_bundle(a) -> int:
         pub = key.with_suffix(".pub") if key.suffix != ".pub" else key
         shutil.copyfile(pub, out / PUBKEY_NAME)
         # the same public key is committed in the program repository, so a caller's copy is comparable
-        (PROGRAM_ROOT / PROGRAM_PUBKEY_PATH).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(pub, PROGRAM_ROOT / PROGRAM_PUBKEY_PATH)
+        (program_root / PROGRAM_PUBKEY_PATH).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(pub, program_root / PROGRAM_PUBKEY_PATH)
         kt, aa = sshsig.parse_public_key((out / PUBKEY_NAME).read_text())
         fp = sshsig.fingerprint(kt, aa)
         ok, reason, _ = sshsig.verify_detached(mp.read_bytes(), sig.read_text(),
@@ -186,7 +293,8 @@ def cmd_bundle(a) -> int:
 
 
 def verify_bundle(tools: Path, program_ref: str | None,
-                  key_fingerprint: str | None = None) -> tuple[dict | None, list[str], dict]:
+                  key_fingerprint: str | None = None,
+                  repo: Path | None = None) -> tuple[dict | None, list[str], dict]:
     """→ (manifest, problems, signature record). A problem is a typed one-line reason for the check text.
 
     AUP-GRAPH-006:gate2b. The SIGNATURE is checked BEFORE anything in BUNDLE.json is believed: the
@@ -222,15 +330,61 @@ def verify_bundle(tools: Path, program_ref: str | None,
     except json.JSONDecodeError as e:
         return None, [f"BUNDLE_MALFORMED: {e}"], sigrec
     problems = []
+    listed: set[Path] = {tools / BUNDLE_MANIFEST_FILE, tools / SIGNATURE_NAME, tools / PUBKEY_NAME}
     for f in man.get("files", []):
         if f.get("verified_by_the_job") is False:
+            # KB-039, closed here. The entry is the vendored EXECUTING workflow, which lives at the
+            # caller's repository ROOT, not under the bundle directory — so it needs `repo` to be
+            # found at all, which is why it was skipped and not merely unchecked. `verified_by_the_job`
+            # stays true of THIS run: by the time the job reaches this line the workflow has already
+            # launched it, and no amount of hashing un-launches it. What it buys is the NEXT run: a
+            # workflow edited without a re-signed manifest turns the following pull request red, and
+            # the self-update battery's B8 refuses the editing pull request itself. Detection on the
+            # next run, not prevention of this one — and that distinction is the whole honest claim.
+            sigrec.setdefault("workflow", {})
+            wfp = (repo / f["path"]) if repo else None
+            if wfp is None:
+                sigrec["workflow"] = {"path": f["path"], "verdict": "not_measured",
+                                      "reason": "no repository root was given to verify_bundle"}
+            elif not wfp.exists():
+                # Not a refusal: a caller MAY invoke the program repository's workflow across
+                # repositories instead of vendoring a copy, and then there is nothing here to hash.
+                # Recorded as not_measured — never read as a pass (DEC-AUP-0008 I4).
+                sigrec["workflow"] = {"path": f["path"], "verdict": "not_measured",
+                                      "reason": "the manifest lists a vendored workflow this repository "
+                                                "does not carry — the caller does not vendor it, so this "
+                                                "run measured nothing about it"}
+            elif sha256_file(wfp) != f["sha256"]:
+                sigrec["workflow"] = {"path": f["path"], "verdict": "failed",
+                                      "expected": f["sha256"], "actual": sha256_file(wfp)}
+                problems.append(
+                    f"BUNDLE_WORKFLOW_DIGEST_MISMATCH: {f['path']} is not the workflow the SIGNED manifest "
+                    f"records for program_ref {str(man.get('program_ref'))[:12]} — the executing workflow was "
+                    f"edited without re-signing the bundle. The manifest counts this file as bundle-managed, "
+                    f"so an edit to it is a change to the gate, and a change to the gate that the signing key "
+                    f"has not attested is refused (KB-039)")
+            else:
+                sigrec["workflow"] = {"path": f["path"], "verdict": "verified", "sha256": f["sha256"]}
             continue
         p = tools / f["path"]
+        listed.add(p)
         if not p.exists():
             problems.append(f"BUNDLE_FILE_MISSING: {f['path']}")
         elif sha256_file(p) != f["sha256"]:
             problems.append(f"BUNDLE_DIGEST_MISMATCH: {f['path']} is not the file of program_ref "
                             f"{str(man.get('program_ref'))[:12]}")
+    # A2-243 defect 4: the loop above walks the MANIFEST and never the DIRECTORY, so it cannot learn
+    # what else is there. Anything under the bundle directory that the manifest does not list is
+    # refused. This is not tidiness: a PEP 552 `unchecked_hash` .pyc beside a vendored module is
+    # imported in preference to the .py the manifest hashes, WITHOUT validating that source — a
+    # loadable code path entirely outside the signature. Committed `__pycache__/*.pyc` under a bundle
+    # directory is how this was found, by accident, in a caller that had them.
+    unlisted = sorted(str(q.relative_to(tools)) for q in tools.rglob("*")
+                      if q.is_file() and q not in listed)
+    if unlisted:
+        problems.append(f"BUNDLE_UNLISTED_FILE: {len(unlisted)} file(s) under {tools} are not in "
+                        f"BUNDLE.json and are therefore covered by no signature: {', '.join(unlisted[:6])}"
+                        + (f" (+{len(unlisted) - 6} more)" if len(unlisted) > 6 else ""))
     if program_ref and man.get("program_ref") != program_ref:
         problems.append(f"BUNDLE_REF_MISMATCH: caller pinned program_ref {program_ref[:12]}, "
                         f"bundle carries {str(man.get('program_ref'))[:12]}")
@@ -359,7 +513,8 @@ def cmd_run(a) -> int:
         print(text)
         return rc
 
-    man, problems, sigrec = verify_bundle(tools, a.program_ref, getattr(a, "signing_key_fingerprint", None))
+    man, problems, sigrec = verify_bundle(tools, a.program_ref,
+                                          getattr(a, "signing_key_fingerprint", None), repo=repo)
     result["bundle"] = {"path": str(tools.relative_to(repo)) if tools.is_relative_to(repo) else str(tools),
                         "program_ref": (man or {}).get("program_ref"),
                         "bundle_digest": (man or {}).get("bundle_digest"), "problems": problems,
@@ -598,8 +753,8 @@ def selftest() -> int:
     # that could not flip an already-red control was scored a failure too.
     F = admit_change.make_fixtures(base, head, repo)
     bundle = root / "bundle"
-    cmd_bundle(argparse.Namespace(out=str(bundle), program_ref="0" * 40, workflow_out=None, sign_key=None))
-    sign_bundle(bundle)  # gate2b: an unsigned bundle is refused, so every fixture bundle is signed
+    # gate2b: an unsigned bundle is refused, so every fixture bundle is signed
+    fixture_bundle(bundle, root / "fixture-program")
     (repo / ".github").mkdir(exist_ok=True)
     shutil.copytree(bundle, repo / ".github/graph-admission")
     rdir = repo / "receipts/graph"
@@ -780,9 +935,13 @@ def selftest() -> int:
     b7_checks, b7_red = selftest_b7()
     red += b7_red
     checks += b7_checks
+    print("\n--- KB-039 / DEC-AUP-0036:B8 — the executing-workflow and producer-provenance battery ---")
+    b8_checks, b8_red = selftest_b8()
+    red += b8_red
+    checks += b8_checks
     measured = [c for c in checks if c.get("ok") is not None]
     print(f"\nTOTAL {'PASS' if not red else 'FAIL'}: {len(measured) - red}/{len(measured)} checks across "
-          f"six batteries ({len(checks) - len(measured)} not_measured)")
+          f"seven batteries ({len(checks) - len(measured)} not_measured)")
     return 0 if not red else 1
 
 
@@ -830,8 +989,7 @@ def selftest_gate2a() -> tuple[list[dict], int]:
     base = g("rev-parse", "HEAD").strip()
 
     bundle = root / "bundle"
-    cmd_bundle(argparse.Namespace(out=str(bundle), program_ref="0" * 40, workflow_out=None, sign_key=None))
-    sign_bundle(bundle)
+    fixture_bundle(bundle, root / "fixture-program")
     shutil.copytree(bundle, repo / ".github/graph-admission")
     g("add", "-A"); g("commit", "-q", "-m", "install the gate bundle")
     base = g("rev-parse", "HEAD").strip()
@@ -991,24 +1149,81 @@ def sign_bundle(bundle: Path, seed: bytes = SELFTEST_SEED, namespace: str = SIGN
     return sshsig.fingerprint(sshsig.SUPPORTED_KEY_TYPE, pub)
 
 
-def reseal_bundle(bundle: Path, seed: bytes = SELFTEST_SEED, program_ref: str | None = None) -> str:
+def reseal_bundle(bundle: Path, seed: bytes = SELFTEST_SEED, program_ref: str | None = None,
+                  workflow_src: Path | None = None) -> str:
     """Recompute BUNDLE.json over the bundle's current bytes and sign it. A mutant that rewrites a
     tool AND its manifest entry AND the signature is exactly the attacker gate2b was built for, so
-    the batteries below must be able to build one."""
+    the batteries below must be able to build one.
+
+    `workflow_src` is the vendored EXECUTING workflow, which does not live under the bundle directory
+    and so cannot be found by walking it. A legitimate refresh moves that file AND its manifest entry
+    together; B8 is the arm that refuses the one without the other, and a battery that could not build
+    the legitimate case would only ever prove the refusal, never that it is narrow."""
     mp = bundle / "BUNDLE.json"
     man = json.loads(mp.read_text())
     if program_ref:
         man["program_ref"] = program_ref
     for f in man.get("files", []):
         if f.get("verified_by_the_job") is False:
+            if workflow_src is not None:
+                f["sha256"] = sha256_file(Path(workflow_src))
+                f["blob_oid"] = git_blob_oid_of_bytes(Path(workflow_src).read_bytes())
             continue
         p = bundle / f["path"]
         if p.exists():
             f["sha256"] = sha256_file(p)
+            f["blob_oid"] = git_blob_oid_of_bytes(p.read_bytes())
     man["bundle_digest"] = "sha256:" + hashlib.sha256(
         json.dumps(man["files"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     mp.write_text(json.dumps(man, indent=1, sort_keys=True) + "\n")
     return sign_bundle(bundle, seed)
+
+
+FIXTURE_GIT_ENV = {"GIT_AUTHOR_NAME": "f", "GIT_AUTHOR_EMAIL": "f@x", "GIT_COMMITTER_NAME": "f",
+                   "GIT_COMMITTER_EMAIL": "f@x", "GIT_AUTHOR_DATE": "2026-09-24T00:00:00Z",
+                   "GIT_COMMITTER_DATE": "2026-09-24T00:00:00Z"}
+
+
+def fixture_program_repo(dest: Path) -> tuple[Path, str]:
+    """A scratch git repository holding the CURRENT working tree's bundled files, committed → (root, ref).
+
+    Since DEC-AUP-0036 R1 the producer reads from the git object store at the ref it claims and refuses
+    a working tree that differs from it. That is exactly the property the batteries must not be able to
+    opt out of — a test-only «build from my working tree anyway» flag is the shape of every bypass this
+    repository has had to remove afterwards. So the batteries do not opt out: they COMMIT the code under
+    test into a scratch repository and build from that ref. The fixture bundle then carries the bytes
+    being developed (not the bytes of the last commit, which would quietly test the previous gate), the
+    producer keeps ONE code path, and there is nothing reachable from the CLI that skips R1."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for rel in [*BUNDLE_FILES, BUNDLE_WORKFLOW_REL]:
+        src = PROGRAM_ROOT / rel
+        if not src.exists():
+            continue
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest / rel)
+    env = {**os.environ, **FIXTURE_GIT_ENV}
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "fixture program"]):
+        r = subprocess.run(["git", "-C", str(dest), *args], capture_output=True, text=True, env=env)
+        if r.returncode != 0:
+            raise RuntimeError(f"fixture program repo: git {args[0]}: {r.stderr[:200]}")
+    return dest, git(dest, "rev-parse", "HEAD").strip()
+
+
+def fixture_bundle(out: Path, scratch: Path, *, workflow: bool = False,
+                   program_ref: str = "0" * 40, seed: bytes = SELFTEST_SEED) -> tuple[str, Path | None]:
+    """Build a signed fixture bundle through the REAL producer → (key fingerprint, vendored workflow).
+
+    `program_ref` is the fixture pin the batteries assert against; the producer builds at the scratch
+    repository's real commit and `reseal_bundle` then rewrites the pin and signs, which is the same
+    two-step a real refresh goes through."""
+    root, ref = fixture_program_repo(scratch)
+    wf_out = (scratch.parent / f"{out.name}.workflow.yml") if workflow else None
+    rc = cmd_bundle(argparse.Namespace(out=str(out), program_ref=ref, program_root=str(root),
+                                       workflow_out=(str(wf_out) if wf_out else None), sign_key=None))
+    if rc != 0:
+        raise RuntimeError(f"fixture bundle: the producer refused (exit {rc})")
+    return reseal_bundle(out, seed, program_ref=program_ref, workflow_src=wf_out), wf_out
+
 
 
 def selftest_gate4b() -> tuple[list[dict], int]:
@@ -1052,8 +1267,7 @@ def selftest_gate4b() -> tuple[list[dict], int]:
                "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
     pristine = root / "pristine-bundle"
-    cmd_bundle(argparse.Namespace(out=str(pristine), program_ref="0" * 40, workflow_out=None, sign_key=None))
-    BASE_FP = sign_bundle(pristine)
+    BASE_FP, _ = fixture_bundle(pristine, root / "fixture-program")
 
     def new_repo(name: str, with_bundle: bool = True, extra_under_bundle: bool = False):
         repo = root / name / "repo"
@@ -1296,9 +1510,18 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         repo_f, base_f, head_f,
         [{"path": ".github/graph-admission/NOTES.md", "status": "M"}])
     ci_f = run_ci(repo_f, base_f, head_f, None, tag="f")
+    # Since KB-039's fix this fixture is refused ONE STEP EARLIER than it used to be, and the arm
+    # records which step rather than pretending the code did not move: NOTES.md sits under the bundle
+    # directory and the manifest does not list it, so `verify_bundle` now refuses the bundle itself
+    # (BUNDLE_UNLISTED_FILE) before the diff shape is ever considered. The property under test is
+    # unchanged — such a change is not a self-update, is refused, and is offered no exemption — so the
+    # arm asserts the property and accepts either code. BUNDLE_MODIFIED_BY_PR keeps its own mutant in
+    # the gate2b battery, where the edited file IS bundle-managed and the bundle is otherwise clean.
     check("(e) MUTANT: a non-bundle change that merely touches a file under the bundle path is NOT a "
-          "self-update — BUNDLE_MODIFIED_BY_PR still stands and no exemption is on offer",
-          case_f is None and ci_f["_rc"] != 0 and "BUNDLE_MODIFIED_BY_PR" in ci_f["reason_codes"]
+          "self-update — it is refused (BUNDLE_UNLISTED_FILE now, BUNDLE_MODIFIED_BY_PR before) and no "
+          "exemption is on offer",
+          case_f is None and ci_f["_rc"] != 0
+          and {"BUNDLE_MODIFIED_BY_PR", "BUNDLE_UNLISTED_FILE"} & set(ci_f["reason_codes"])
           and not any(c["code"] == "SELF_UPDATE_CANDIDATE" for c in ci_f["checks"]),
           case=case_f, rc=ci_f["_rc"], codes=ci_f["reason_codes"])
 
@@ -1439,8 +1662,7 @@ def selftest_gate5b() -> tuple[list[dict], int]:
     ART = "data/derived.txt"
 
     pristine = root / "pristine-bundle"
-    cmd_bundle(argparse.Namespace(out=str(pristine), program_ref="0" * 40, workflow_out=None, sign_key=None))
-    BASE_FP = sign_bundle(pristine)
+    BASE_FP, _ = fixture_bundle(pristine, root / "fixture-program")
 
     def declaration(paths=(ART,), job="lint-and-test", argv=None, glob=False) -> dict:
         return {"schema": admit_change.DECLARATION_SCHEMA,
@@ -2073,6 +2295,377 @@ def selftest_b7() -> tuple[list[dict], int]:
     return checks, red
 
 
+def selftest_b8() -> tuple[list[dict], int]:
+    """KB-039 + DEC-AUP-0036 R1/R2 — the executing-workflow and producer-provenance battery.
+
+    Two measured holes, closed together because they are the same mistake at the two ends of one
+    pipe: the bundle asserts things about bytes nobody compares.
+
+    KB-039 (SECURITY-RELEVANT, measured live in four repositories on 2026-09-24, card A2-243): the
+    FIRST entry of BUNDLE.json is the vendored, EXECUTING workflow, carrying `verified_by_the_job:
+    false`. `verify_bundle` skipped its hash; `bundle_paths_at` counted it as bundle-managed anyway.
+    A caller pull request editing ONLY that file — no key, BUNDLE.json and its signature untouched —
+    classified as `gate_self_update` and passed B1/B2/B3/B4/B6. The file it rewrites is the job that
+    judges it.
+
+    DEC-AUP-0036 R1/R2: `cmd_bundle` copied bytes out of the WORKING TREE while recording a
+    `program_ref` it never compared them against, so a backdoor that was never committed was signed
+    and shipped (A2-243's end-to-end experiment). R1 builds from the git object store at the declared
+    ref and refuses a dirty tree; R2 records each file's git blob OID so a caller with no credential
+    for the private program repository can CONTRADICT the provenance claim offline.
+
+    Every mutant below must FLIP a control that is green. Both controls matter: a refusal that also
+    refuses the legitimate refresh is not a fix, it is an outage."""
+    # Same bound as gate4b, and for the same measured reason: B3 runs the head bundle's OWN
+    # ci_gate.py --selftest, so a battery that runs there too recurses without bound. Nested it
+    # reports not_measured — never a pass — and base and head bundles are counted the same way, so
+    # B4's like-for-like arm comparison is unaffected. This battery has a second reason besides:
+    # it reads the PROGRAM repository's own files, which a vendored bundle does not carry.
+    if os.environ.get("AUP_GATE4B_NESTED"):
+        name = ("B8 battery not run inside a nested bundle selftest (AUP_GATE4B_NESTED): it would "
+                "recurse through B3, and it reads program-repository files a bundle does not vendor")
+        print("n/m  " + name)
+        return [{"name": name, "ok": None}], 0
+    import tempfile
+    root = Path(tempfile.mkdtemp(prefix="b8-selftest-"))
+    checks, red = [], 0
+
+    def check(name, ok, **kw):
+        nonlocal red
+        checks.append({"name": name, "ok": bool(ok), **kw})
+        if not ok:
+            red += 1
+        print(("ok   " if ok else "FAIL ") + name
+              + ("" if ok else "  " + json.dumps(kw, ensure_ascii=False, default=str)[:600]))
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import admit_change  # noqa: E402
+
+    GIT_ENV = {"GIT_AUTHOR_NAME": "f", "GIT_AUTHOR_EMAIL": "f@x", "GIT_COMMITTER_NAME": "f",
+               "GIT_COMMITTER_EMAIL": "f@x", "GIT_AUTHOR_DATE": "2026-09-24T00:00:00Z",
+               "GIT_COMMITTER_DATE": "2026-09-24T00:00:00Z",
+               "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    WF_REL = ".github/workflows/graph-admission.yml"
+
+    # ---------------------------------------------------------------- the pristine bundle, WITH the workflow
+    # Every pre-existing battery builds its bundle with workflow_out=None, so the manifest has no
+    # `verified_by_the_job: false` entry at all — which is why no fixture ever touched the surface
+    # KB-039 lives on. This one vendors the workflow, exactly as the four live callers do.
+    pristine = root / "pristine-bundle"
+    BASE_FP, wf_src = fixture_bundle(pristine, root / "fixture-program", workflow=True)
+    man0 = json.loads((pristine / "BUNDLE.json").read_text())
+    wf_entries = [f for f in man0["files"] if f.get("verified_by_the_job") is False]
+    check("(setup) the fixture bundle carries the vendored executing workflow as a manifest entry with "
+          "verified_by_the_job: false — the surface KB-039 lives on, which no earlier battery built",
+          len(wf_entries) == 1 and wf_entries[0]["path"] == WF_REL,
+          entries=[f.get("path") for f in wf_entries])
+
+    def new_repo(name: str, extra_under_bundle: str | None = None):
+        repo = root / name / "repo"
+        repo.mkdir(parents=True)
+        env = {**GIT_ENV, "HOME": str(root / name)}
+
+        def g(*a):
+            r = subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True, env=env)
+            if r.returncode != 0:
+                raise RuntimeError(f"git {' '.join(a)}: {r.stderr[:300]}")
+            return r.stdout
+        g("init", "-q", "-b", "main")
+        (repo / "src").mkdir()
+        (repo / "src/a.ts").write_text("export const a = 1;\n")
+        (repo / ".github").mkdir(exist_ok=True)
+        shutil.copytree(pristine, repo / ".github/graph-admission")
+        (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(wf_src, repo / WF_REL)
+        (repo / ".github/workflows/ci.yml").write_text(
+            "jobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
+            "    with:\n      program_ref: '" + "0" * 40 + "'\n"
+            "      signing_key_fingerprint: 'SHA256:fixture'\n")
+        if extra_under_bundle:
+            p = repo / ".github/graph-admission" / extra_under_bundle
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"not listed in the manifest\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "base: the bundle, the vendored workflow and the caller's pin")
+        return repo, g, g("rev-parse", "HEAD").strip()
+
+    def su_receipt(repo: Path, base: str, head: str) -> dict:
+        changed = [l.split("\t") for l in
+                   admit_change.git(repo, "diff", "--name-status", base, head).splitlines() if l]
+        files = [{"path": c[-1], "status": c[0][0], "kind": "config", "node_id": None} for c in changed]
+        return {
+            "schema": "ChangeAdmissionReceipt/v1", "receipt_id": f"car-b8-{head[:8]}",
+            "captured_at_utc": "2026-09-24T12:00:00Z",
+            "producer": {"tool": "tools/graph/verify.py", "version": "1.0.0"},
+            "decision_ref": "DEC-AUP-0008", "repo": {"name": "Arcanada-one/fixture"},
+            "graph": {"source_commit": base, "graph_digest": "sha256:" + "a" * 64,
+                      "builder_version": "1.0.0", "built_at_utc": "2026-09-24T11:00:00Z"},
+            "tree": {"commit": head, "dirty": False},
+            "staleness": {"method": "graph.source_commit == change_set.base; clean tree",
+                          "verdict": "fresh", "checked_at_utc": "2026-09-24T12:00:00Z"},
+            "change_set": {"mode": "diff", "base": base, "head": head, "files": files},
+            "impact_set": {"method": "reverse traversal (dependents; seeds excluded)", "max_depth": 3,
+                           "deterministic_core": [], "inferred_tail": [],
+                           "global_fallback": {"triggered": False}},
+            "verifiers": [], "verdicts": [], "exemptions": [],
+            "admission": {"verdict": "paused_safe",
+                          "rule": "admitted requires every verdict = verified; zero verdicts ⇒ paused_safe"},
+            "work_item": {"system": "muneral", "id": "A2-247"},
+        }
+
+    def issue(repo: Path, base: str, head: str, receipt: dict) -> tuple[int, dict]:
+        d = root / f"issue-{head[:8]}"
+        d.mkdir(parents=True, exist_ok=True)
+        rp, out = d / "draft.json", d / "exempted.json"
+        rp.write_text(json.dumps(receipt, indent=1, sort_keys=True) + "\n")
+        rc = admit_change.cmd_exempt(argparse.Namespace(
+            repo=str(repo), range=f"{base}..{head}", base=None, head=None, receipt=str(rp), out=str(out),
+            evidence_out=str(d / "evidence.json"), bundle_dir=admit_change.DEFAULT_BUNDLE_DIR, owner=None,
+            program_receipt=None, policy=None, repo_name="Arcanada-one/fixture", workdir=str(d / "wd")))
+        return rc, (json.loads(out.read_text()) if out.exists() else receipt)
+
+    def battery(repo: Path, base: str, head: str) -> dict:
+        d = root / f"ev-{head[:8]}"
+        d.mkdir(parents=True, exist_ok=True)
+        files = [{"path": c.split("\t")[-1], "status": c.split("\t")[0][0]}
+                 for c in admit_change.git(repo, "diff", "--name-status", base, head).splitlines() if c]
+        return admit_change.evaluate_self_update(repo, base, head, files, d)
+
+    def run_ci(repo: Path, base: str, head: str, receipt: dict | None, *, tag: str,
+               pin: str | None = BASE_FP, program_ref: str = "0" * 40) -> dict:
+        d = root / f"ci-{tag}"
+        d.mkdir(parents=True, exist_ok=True)
+        body = "" if receipt is None else "```json\n" + json.dumps(receipt, indent=1, sort_keys=True) + "\n```\n"
+        (d / "body.txt").write_text(body)
+        out = d / "result.json"
+        rc = cmd_run(argparse.Namespace(
+            repo=str(repo), repo_name="Arcanada-one/fixture", tools=str(repo / ".github/graph-admission"),
+            program_ref=program_ref, base=base, head=head, pr_body_file=str(d / "body.txt"),
+            receipt_glob=["receipts/graph/*.json"], enforcement="off", build_graph=False,
+            workdir=str(d / "work"), out=str(out), summary=None, signing_key_fingerprint=pin))
+        doc = json.loads(out.read_text())
+        doc["_rc"] = rc
+        return doc
+
+    # ========================================================== KB-039 — the keyless bypass
+    # A2-243's fixture, reproduced byte for byte in shape: edit ONLY the vendored executing workflow.
+    repo_a, ga, base_a = new_repo("A-kb039")
+    (repo_a / WF_REL).write_text(
+        (repo_a / WF_REL).read_text()
+        + "\n# a caller pull request rewrote the job that judges it — no key, manifest untouched\n")
+    ga("add", "-A"); ga("commit", "-q", "-m", "edit only the vendored executing workflow")
+    head_a = ga("rev-parse", "HEAD").strip()
+    changed_a = [l.split("\t")[-1] for l in
+                 admit_change.git(repo_a, "diff", "--name-status", base_a, head_a).splitlines() if l]
+    check("(setup) the KB-039 pull request changes EXACTLY the vendored executing workflow and nothing else",
+          changed_a == [WF_REL], changed=changed_a)
+
+    ev_a = battery(repo_a, base_a, head_a)
+    b8_a = [c for c in ev_a["checks"] if c.get("id") == "B8"]
+    check("(a) MUTANT KB-039: a pull request that edits ONLY the vendored executing workflow, leaving "
+          "BUNDLE.json and its signature valid and untouched, is NOT eligible for GATE_SELF_UPDATE — "
+          "the bytes of the workflow at head do not hash to the sha256 the signed manifest records for "
+          "it, so the change rewrites the judge without the key that attests the judge (B8)",
+          ev_a.get("eligible") is False
+          and any(c.get("verdict") == "failed" and c.get("code") == "SELF_UPDATE_WORKFLOW_INTEGRITY"
+                  for c in ev_a["checks"]),
+          eligible=ev_a.get("eligible"),
+          arms={c.get("id"): c.get("verdict") for c in ev_a["checks"]}, b8=b8_a)
+
+    rc_a, rec_a = issue(repo_a, base_a, head_a, su_receipt(repo_a, base_a, head_a))
+    check("(a) …and the gate REFUSES to issue the exemption for it — measured today as issued, "
+          "admitted_with_exemptions, which is the whole of KB-039",
+          rc_a != 0 and not [x for x in (rec_a.get("exemptions") or [])
+                             if x.get("code") == "GATE_SELF_UPDATE"],
+          rc=rc_a, exemptions=[x.get("code") for x in (rec_a.get("exemptions") or [])])
+
+    ci_a = run_ci(repo_a, base_a, head_a, None, tag="a")
+    check("(a) …and the CI gate's own bundle verification refuses it with a NAMED code "
+          "(BUNDLE_WORKFLOW_DIGEST_MISMATCH): the run in progress cannot un-launch the workflow that "
+          "started it, but the NEXT run refuses a workflow edited without a re-signed manifest",
+          ci_a["_rc"] != 0 and "BUNDLE_WORKFLOW_DIGEST_MISMATCH" in ci_a["reason_codes"],
+          rc=ci_a["_rc"], codes=ci_a["reason_codes"])
+
+    # ---- POSITIVE CONTROL: the legitimate refresh, where the workflow moves WITH its manifest entry
+    repo_b, gb, base_b = new_repo("B-legit")
+    newb = root / "B-newbundle"
+    shutil.copytree(pristine, newb)
+    (newb / "tools/graph/build_graph.py").write_text(
+        (newb / "tools/graph/build_graph.py").read_text() + "\n# refreshed at a newer program ref\n")
+    new_wf = root / "new-workflow.yml"
+    new_wf.write_text((repo_b / WF_REL).read_text() + "\n# the program's workflow really did change\n")
+    reseal_bundle(newb, SELFTEST_SEED, program_ref="1" * 40, workflow_src=new_wf)
+    shutil.rmtree(repo_b / ".github/graph-admission")
+    shutil.copytree(newb, repo_b / ".github/graph-admission")
+    shutil.copyfile(new_wf, repo_b / WF_REL)
+    wfp = repo_b / ".github/workflows/ci.yml"
+    wfp.write_text(wfp.read_text().replace("0" * 40, "1" * 40))
+    gb("add", "-A"); gb("commit", "-q", "-m", "a real bundle refresh: the workflow AND its manifest entry")
+    head_b = gb("rev-parse", "HEAD").strip()
+    ev_b = battery(repo_b, base_b, head_b)
+    check("(b) CONTROL: a legitimate refresh that moves the vendored workflow AND its manifest entry AND "
+          "re-signs is still eligible — B8 refuses an unattested workflow, never a workflow change. A "
+          "rule that also refuses the legitimate refresh is an outage, not a fix",
+          ev_b.get("eligible") is True
+          and any(c.get("id") == "B8" and c.get("verdict") == "verified" for c in ev_b["checks"]),
+          eligible=ev_b.get("eligible"),
+          arms={c.get("id"): c.get("verdict") for c in ev_b["checks"]},
+          failing=[c for c in ev_b["checks"] if c.get("verdict") != "verified"])
+    ci_b = run_ci(repo_b, base_b, head_b, None, tag="b", program_ref="1" * 40,
+                  pin=sshsig.fingerprint(sshsig.SUPPORTED_KEY_TYPE, sshsig.ed25519_keypair(SELFTEST_SEED)[1]))
+    check("(b) …and that refresh's bundle passes verify_bundle's workflow digest check too — the "
+          "positive control for BUNDLE_WORKFLOW_DIGEST_MISMATCH, so its green is not vacuous",
+          "BUNDLE_WORKFLOW_DIGEST_MISMATCH" not in ci_b["reason_codes"], codes=ci_b["reason_codes"])
+
+    # ---- MUTANT: the workflow is DELETED from the caller rather than edited
+    repo_c, gc, base_c = new_repo("C-wfgone")
+    (repo_c / WF_REL).unlink()
+    gc("add", "-A"); gc("commit", "-q", "-m", "delete the vendored executing workflow")
+    head_c = gc("rev-parse", "HEAD").strip()
+    ev_c = battery(repo_c, base_c, head_c)
+    check("(c) MUTANT: DELETING the vendored workflow is not a self-update either — absent bytes are not "
+          "bytes that match the manifest, and the arm says so rather than passing vacuously",
+          ev_c.get("eligible") is False, eligible=ev_c.get("eligible"),
+          arms={c.get("id"): c.get("verdict") for c in ev_c["checks"]})
+
+    # ========================================================== the unlisted file under the bundle dir
+    repo_d, gd, base_d = new_repo("D-unlisted", extra_under_bundle="tools/graph/__pycache__/x.pyc")
+    ci_d = run_ci(repo_d, base_d, base_d, None, tag="d")
+    check("(d) MUTANT: a file under the bundle directory that the manifest does not list is REFUSED "
+          "(BUNDLE_UNLISTED_FILE). verify_bundle walked the manifest and never the directory, so a "
+          "stray .pyc beside a vendored module was invisible to it — and an unchecked-hash .pyc is "
+          "imported in preference to the .py the manifest does hash",
+          ci_d["_rc"] != 0 and "BUNDLE_UNLISTED_FILE" in ci_d["reason_codes"],
+          rc=ci_d["_rc"], codes=ci_d["reason_codes"])
+    repo_e, ge, base_e = new_repo("E-listedok")
+    ci_e = run_ci(repo_e, base_e, base_e, None, tag="e")
+    check("(e) CONTROL: the very same bundle with nothing extra under its directory passes — "
+          "BUNDLE_UNLISTED_FILE's green is measured, not assumed",
+          "BUNDLE_UNLISTED_FILE" not in ci_e["reason_codes"], codes=ci_e["reason_codes"])
+
+    # ========================================================== pin_only_edit on a non-UTF-8 path
+    repo_f, gf, base_f = new_repo("F-binary")
+    (repo_f / "assets").mkdir()
+    (repo_f / "assets/logo.bin").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00seed\n")
+    gf("add", "-A"); gf("commit", "-q", "-m", "a binary file at base")
+    base_f2 = gf("rev-parse", "HEAD").strip()
+    (repo_f / "assets/logo.bin").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00changed\n")
+    gf("add", "-A"); gf("commit", "-q", "-m", "change the binary file")
+    head_f = gf("rev-parse", "HEAD").strip()
+    try:
+        ok_f, why_f = admit_change.pin_only_edit(repo_f, base_f2, head_f, "assets/logo.bin", "1" * 40)
+        raised = None
+    except Exception as e:
+        ok_f, why_f, raised = None, None, f"{type(e).__name__}: {e}"
+    check("(f) MUTANT: a changed path outside the bundle whose bytes are not UTF-8 gets a VERDICT, not an "
+          "unhandled UnicodeDecodeError. A gate that crashes is not a gate that refuses: the traceback "
+          "leaves the job red with no reason code, indistinguishable from infrastructure failure",
+          raised is None and ok_f is False, raised=raised, verdict=ok_f, why=why_f)
+    ev_f = battery(repo_f, base_f2, head_f)
+    check("(f) …and the whole battery returns a refusal for that change instead of propagating the "
+          "exception out of evaluate_self_update",
+          ev_f.get("eligible") is False, eligible=ev_f.get("eligible"))
+
+    # ========================================================== DEC-AUP-0036 R1/R2 — the producer
+    # A scratch stand-in for the program repository: cmd_bundle must read the git object store of the
+    # root it is given, never the bytes lying in its working tree.
+    prog, prog_ref = fixture_program_repo(root / "prog")
+    penv = {**os.environ, **FIXTURE_GIT_ENV}
+
+    def gp(*a):
+        r = subprocess.run(["git", "-C", str(prog), *a], capture_output=True, text=True, env=penv)
+        if r.returncode != 0:
+            raise RuntimeError(f"git {' '.join(a)}: {r.stderr[:300]}")
+        return r.stdout
+
+    def build(out: Path, ref: str | None, sign: bool = False) -> tuple[int, str]:
+        """→ (exit code, the producer's stderr). A2-247b measured why the stderr is needed: with R1's
+        drift refusal disabled this arm stayed GREEN, because `sign` points `sign_key` at a key that
+        does not exist and ssh-keygen's exit 4 satisfies `rc != 0` on its own. An arm that binds only
+        «non-zero» is satisfied by any failure at all, which is how a refusal comes to look measured
+        while nothing measures it. The arms below bind the exit code AND the named reason code."""
+        ns = argparse.Namespace(out=str(out), program_ref=ref, workflow_out=str(out.parent / f"{out.name}.wf.yml"),
+                                sign_key=None, program_root=str(prog))
+        if sign:
+            ns.sign_key = str(root / "nonexistent-key")
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = cmd_bundle(ns)
+        sys.stderr.write(buf.getvalue())
+        return rc, buf.getvalue()
+
+    clean_out = root / "bundle-clean"
+    rc_clean, _ = build(clean_out, prog_ref)
+    man_clean = json.loads((clean_out / "BUNDLE.json").read_text()) if (clean_out / "BUNDLE.json").exists() else {}
+    same = []
+    for f in man_clean.get("files", []):
+        got = subprocess.run(["git", "-C", str(prog), "show", f"{prog_ref}:{f['path']}"],
+                             capture_output=True).stdout
+        same.append(f["sha256"] == "sha256:" + hashlib.sha256(got).hexdigest())
+    check("(g) CONTROL R1: on a CLEAN tree the bundle builds (exit 0) and every shipped file's sha256 is "
+          "the sha256 of `git show <program_ref>:<path>` — DEC-AUP-0036 reverse_if R-1 is the claim "
+          "that these two can differ for any reason but uncommitted edits, and this arm is where it "
+          "would show",
+          rc_clean == 0 and bool(same) and all(same), rc=rc_clean, n=len(same), all_equal=all(same) if same else None)
+
+    check("(h) CONTROL R2: every manifest entry carries the git blob OID it was read at, and that OID is "
+          "what `git hash-object` gives for the bytes actually shipped — a caller with NO credential "
+          "for the private program repository can recompute it and CONTRADICT the claim offline",
+          bool(man_clean.get("files")) and all(
+              f.get("blob_oid") == subprocess.run(
+                  ["git", "hash-object", str((clean_out / f["path"]) if f.get("verified_by_the_job") is not False
+                                             else (clean_out.parent / f"{clean_out.name}.wf.yml"))],
+                  capture_output=True, text=True).stdout.strip()
+              for f in man_clean.get("files", [])),
+          oids=[(f["path"], (f.get("blob_oid") or "")[:12]) for f in man_clean.get("files", [])][:3])
+
+    # ---- MUTANT R1: the A2-243 experiment — a backdoor that exists ONLY in the working tree
+    (prog / "tools/graph/ci_gate.py").write_text(
+        (prog / "tools/graph/ci_gate.py").read_text()
+        + "\n# A2-243's backdoor: present in the working tree, in no commit\n")
+    dirty_out = root / "bundle-dirty"
+    rc_dirty, err_dirty = build(dirty_out, prog_ref, sign=True)
+    check("(i) MUTANT R1: with a bundled file modified in the WORKING TREE only, the producer REFUSES "
+          "with exit 5 and the NAMED code BUNDLE_SOURCE_NOT_AT_REF instead of signing bytes that stand "
+          "at no commit — this is A2-243's end-to-end experiment, where the backdoored gate was bundled "
+          "under an unchanged program_ref and then passed B1/B2/B3/B4/B6 and admitted a pull request "
+          "carrying no receipt at all. The code and the name, not merely a non-zero exit: this build "
+          "also asks for a key that does not exist, so «non-zero» is satisfied by the signing failure "
+          "alone, and an arm that accepted it stayed green with R1 removed (measured, A2-247b)",
+          rc_dirty == 5 and "BUNDLE_SOURCE_NOT_AT_REF" in err_dirty
+          and "tools/graph/ci_gate.py" in err_dirty,
+          rc=rc_dirty, stderr=err_dirty[:300])
+    check("(i) …and NO signature file is written by the refused build (DEC-AUP-0036 R1: the refusal is a "
+          "non-zero exit AND the absence of a .sig, because a .sig on disk is the thing that gets shipped)",
+          not (dirty_out / SIGNATURE_NAME).exists(), sig=str(dirty_out / SIGNATURE_NAME))
+    gp("checkout", "--", "tools/graph/ci_gate.py")
+
+    # ---- MUTANT R1: an unresolvable ref
+    rc_badref, err_badref = build(root / "bundle-badref", "deadbeef" * 5)
+    check("(j) MUTANT R1: a program_ref that does not resolve in the program repository is refused with "
+          "exit 5 and BUNDLE_REF_UNRESOLVABLE rather than recorded as a string nobody checks — the "
+          "string was the whole of the old claim",
+          rc_badref == 5 and "BUNDLE_REF_UNRESOLVABLE" in err_badref,
+          rc=rc_badref, stderr=err_badref[:300])
+
+    # ---- backward compatibility: the callers' CURRENT verifier must still read the new manifest
+    check("(k) COMPAT: the new manifest stays readable by the verifier the four live callers vendor "
+          "TODAY — blob_oid is an ADDITIONAL key, so a bundle built now still verifies under a reader "
+          "that knows nothing about it (DEC-AUP-0036 reversal_means depends on this)",
+          bool(man_clean.get("files")) and all(
+              set(f) >= {"path", "sha256"} and isinstance(f["sha256"], str) and f["sha256"].startswith("sha256:")
+              for f in man_clean["files"])
+          and man_clean.get("schema") == "GraphAdmissionBundle/v1"
+          and man_clean.get("bundle_digest", "").startswith("sha256:"),
+          schema=man_clean.get("schema"), keys=sorted(set().union(*[set(f) for f in man_clean.get("files", [{}])])))
+
+    print(f"\nB8 SELFTEST {'PASS' if not red else 'FAIL'}: {len(checks) - red}/{len(checks)} checks, "
+          f"{red} failing")
+    shutil.rmtree(root, ignore_errors=True)
+    return checks, red
+
+
 def selftest_gate2b() -> tuple[list[dict], int]:
     """AUP-GRAPH-006:gate2b — the bundle stops being a tripwire and becomes a signature.
 
@@ -2097,8 +2690,7 @@ def selftest_gate2b() -> tuple[list[dict], int]:
     import admit_change  # noqa: E402
 
     pristine = root / "pristine-bundle"
-    cmd_bundle(argparse.Namespace(out=str(pristine), program_ref="0" * 40, workflow_out=None, sign_key=None))
-    FP = sign_bundle(pristine)
+    FP, _ = fixture_bundle(pristine, root / "fixture-program")
     OTHER_FP = sshsig.fingerprint(sshsig.SUPPORTED_KEY_TYPE, sshsig.ed25519_keypair(SELFTEST_OTHER_SEED)[1])
 
     def scenario(name: str, mutate=None, pin: str | None = FP) -> dict:

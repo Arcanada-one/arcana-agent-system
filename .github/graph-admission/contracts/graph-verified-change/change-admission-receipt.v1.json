@@ -314,7 +314,8 @@
   "ADMISSION_VERDICT_INVALID": "admission.verdict outside verdict_values",
   "HEAD_GRAPH_BINDING_INVALID": "Paired receipt has missing/invalid head revision, digest or freshness.",
   "REVISION_SELECTION_INCOMPLETE": "Paired selection malformed or selected entities omitted from verdict/required mapping, or unmeasured head code admitted.",
-  "STRUCTURAL_EXCLUSION_INVALID": "a structural_exclusions entry is malformed, carries a content_hash that is not one equal sha256:<64 hex> at base and head (DEC-AUP-0034) or not a sha256/null pair naming at least one revision (DEC-AUP-0035), names an entity that also has a verdict, names an entity the change set contains (DEC-AUP-0034), or claims supersession of a path that is not this receipt's own receipt_path or of a work item that is not this receipt's own (DEC-AUP-0035)"
+  "STRUCTURAL_EXCLUSION_INVALID": "a structural_exclusions entry is malformed, carries a content_hash that is not one equal sha256:<64 hex> at base and head (DEC-AUP-0034) or not a sha256/null pair naming at least one revision (DEC-AUP-0035), names an entity that also has a verdict, names an entity the change set contains (DEC-AUP-0034), or claims supersession of a path that is not this receipt's own receipt_path or of a work item that is not this receipt's own (DEC-AUP-0035)",
+  "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE": "DEC-AUP-0037: a verifier of kind canary whose output_ref is not a repository-relative path (absolute path, URL, or a path escaping the repository) while some entity CASHES that claim — a verdict of verified citing the verifier id, or the verifier being what keeps INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary entity. Evidence the gate cannot open at the receipt's head is testimony, not measurement; the entities a canary covers are the ones its document lists, never the ones the receipt's verifier row lists."
  },
  "verdicts": {
   "conformant": "0 violations",
