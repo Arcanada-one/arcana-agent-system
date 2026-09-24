@@ -33,8 +33,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# KB-039 / A2-243 defect 4, the same reason as in ci_gate.py: importing a sibling writes
+# tools/graph/__pycache__/*.pyc, and under a VENDORED bundle that is an unlisted file beside a
+# hashed one — and a PEP 552 `unchecked_hash` .pyc is imported in preference to the .py the
+# manifest hashes, without validating it. Before the first sibling import.
+sys.dont_write_bytecode = True
 import schema_check  # noqa: E402  (sibling tool, reused as a library)
 import impact_pair  # noqa: E402
+import canary_evidence  # noqa: E402  (DEC-AUP-0037: the gate reads the canary document, not the claim)
 
 TOOL = "tools/graph/admit_change.py"
 VERSION = "1.0.0"
@@ -95,6 +101,24 @@ def git(repo: Path, *args: str, check=True) -> str:
 
 def git_ok(repo: Path, *args: str) -> bool:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True).returncode == 0
+
+
+def git_text_or_none(repo: Path, *args: str) -> str | None:
+    """git output decoded as UTF-8, or None when the bytes are not UTF-8 at all.
+
+    A2-243 defect 3: `git(..., text=True)` raises UnicodeDecodeError on a non-UTF-8 blob, and
+    `pin_only_edit` reads EVERY changed path outside the bundle-managed set as text. A committed
+    `__pycache__/*.pyc` — or any image, any binary fixture — made the gate raise instead of return.
+    A gate that crashes is not a gate that refuses: the job goes red with a traceback and no reason
+    code, which is indistinguishable from the CI runner having a bad day, and the reflex it teaches
+    is to re-run rather than to read. The verdict belongs in the return value."""
+    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    if r.returncode != 0:
+        return ""
+    try:
+        return r.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 def load_policy(path: Path | None) -> dict:
@@ -525,8 +549,13 @@ PROGRAM_REF_PIN_RE = re.compile(r"^\s*program_ref:\s*['\"]?([0-9a-f]{40})['\"]?\
 def pin_only_edit(repo: Path, base: str, head: str, path: str, expect_ref: str | None) -> tuple[bool, str]:
     """→ (is a program_ref pin update and nothing else, why). Blobs are read from git, never the tree."""
     import difflib
-    old = git(repo, "show", f"{base}:{path}", check=False)
-    new = git(repo, "show", f"{head}:{path}", check=False)
+    old = git_text_or_none(repo, "show", f"{base}:{path}")
+    new = git_text_or_none(repo, "show", f"{head}:{path}")
+    if old is None or new is None:
+        side = "base" if old is None else "head"
+        return False, (f"the file is not UTF-8 text at {side}, so it cannot be a `program_ref:` pin line "
+                       f"— a binary path outside the bundle makes this an ordinary change, which is a "
+                       f"verdict, not a traceback (A2-243 defect 3)")
     if not old or not new:
         return False, "the file is added or removed by this change, which is not an in-place pin update"
     diff = [l for l in difflib.unified_diff(old.splitlines(), new.splitlines(), n=0, lineterm="")
@@ -542,6 +571,80 @@ def pin_only_edit(repo: Path, base: str, head: str, path: str, expect_ref: str |
                            f"{str(expect_ref)[:12]} — a caller that pins one SHA and vendors another")
     return True, (f"{len(diff)} changed line(s), every one a program_ref pin, every new value equal to the "
                   f"head bundle's program_ref {str(expect_ref)[:12]}")
+
+
+# ============================================================================================
+# DEC-AUP-0038 — the self-update's OWN receipt, as a file.
+#
+# B1's model is «a bundle refresh changes nothing but the bundle». A ChangeAdmissionReceipt/v1 is
+# not part of the bundle, so committing one turned the refresh into an ordinary change — and the
+# only carrier left was the pull-request body, which GitHub caps at 65 536 characters. Measured on
+# the four refreshes of bundle 21d0f8fb8e60 (A2-244, re-read from the GitHub API on 2026-09-24):
+# auth-arcana #150 body 33 879, arcana-agent-system #201 body 37 355, scrutator #98 body 33 786 —
+# and muneral #158 body 65 092, i.e. 444 characters of headroom, and only because the receipt was
+# minified (74 385 bytes pretty-printed, 63 093 compact). DEC-AUP-0008 says «no receipt, no merge»;
+# B1 said the receipt may not be a file; GitHub said the body has a ceiling. The next arm added to
+# the B-battery removes the 444, and there is then no way to deliver the receipt at all.
+#
+# This is the THIRD instance of B1's model being false about a caller (the program_ref pin was the
+# first, the declared derived artefact the second), and it is admitted the same way: one exactly
+# identified path, every condition re-derived from Git, and nothing about the document's CONTENT
+# taken on trust — setting the path aside only decides WHICH CASE the diff belongs to. The receipt
+# is then bound, schema-checked, re-measured by impact_pair and coverage-checked exactly as a
+# receipt handed in from the body is.
+RECEIPT_ISSUE_RE = re.compile(r"^receipts/graph/[^/]+\.json$")
+
+
+def _self_update_receipt_ok(repo: Path, base: str, head: str, path: str, changed: dict) -> tuple[bool, str]:
+    """DEC-AUP-0038 R2, condition by condition. → (is this refresh's own receipt, why)."""
+    if changed.get(path) != "A" or git_ok(repo, "cat-file", "-e", f"{base}:{path}"):
+        return False, (f"{path} is not ADDED by this range (git status {changed.get(path)!r}); the licence covers "
+                       f"the record this refresh FILES, never an edit to a receipt that already stood there")
+    raw = git(repo, "show", f"{head}:{path}", check=False)
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return False, f"{path} is not JSON at head ({e})"
+    if not isinstance(doc, dict) or not str(doc.get("schema", "")).startswith("ChangeAdmissionReceipt"):
+        return False, f"{path} carries schema {(doc or {}).get('schema')!r}, not ChangeAdmissionReceipt/v1"
+    wid = work_item_id(doc.get("work_item"))
+    if not wid:
+        return False, (f"{path} declares no work item — a record nobody owns is not this change's receipt "
+                       f"(re-issue with --work-item <ID>)")
+    cs = doc.get("change_set") or {}
+    if cs.get("mode") != "diff":
+        return False, f"{path} was taken in {cs.get('mode')!r} mode, not over a diff, so it names no range"
+    if cs.get("base") != base:
+        return False, (f"{path} is about {str(cs.get('base'))[:12]}..{str(cs.get('head'))[:12]}, and this "
+                       f"admission is about {base[:12]}..{head[:12]}")
+    rhead = cs.get("head")
+    if not isinstance(rhead, str) or rhead not in set(range_commits(repo, base, head)):
+        return False, (f"{path} names head {str(rhead)[:12]}, which is not a commit of {base[:12]}..{head[:12]}")
+    return True, (f"{path} is this refresh's own ChangeAdmissionReceipt/v1 for work item {wid} over "
+                  f"{base[:12]}..{rhead[:12]} — added by this range, and judged on its merits by every "
+                  f"check below (DEC-AUP-0038)")
+
+
+def split_self_update_receipt(repo: Path, base: str, head: str, outside: list[str],
+                              changed: dict) -> tuple[list[str], list[str], dict]:
+    """→ (0 or 1 receipt path, the rest of `outside`, evidence). DEC-AUP-0038 R1/R2/R4."""
+    candidates = [p for p in outside if RECEIPT_ISSUE_RE.match(p)]
+    ev: dict = {"rule": "DEC-AUP-0038", "candidates": candidates, "admitted": None}
+    if not candidates:
+        ev["why"] = "no receipts/graph/*.json among the changed paths outside the bundle"
+        return [], list(outside), ev
+    if len(candidates) > 1:
+        ev["why"] = (f"{len(candidates)} receipts under receipts/graph/ ({', '.join(candidates[:4])}) — a refresh "
+                     f"files exactly one record of itself, and «at most one» is what makes the licence checkable")
+        return [], list(outside), ev
+    path = candidates[0]
+    ok, why = _self_update_receipt_ok(repo, base, head, path, changed)
+    ev["why"] = why
+    if not ok:
+        return [], list(outside), ev
+    ev["admitted"] = path
+    ev["work_item"] = work_item_id((json.loads(git(repo, "show", f"{head}:{path}")) or {}).get("work_item"))
+    return [path], [p for p in outside if p != path], ev
 
 
 def split_outside(repo: Path, base: str, head: str, outside: list[str],
@@ -948,13 +1051,22 @@ def structural_case(repo: Path, base: str, head: str, files: list[dict],
     declared, _bad = declared_artefacts(decl)
     if _boot:
         outside = [x for x in outside if x != DEFAULT_DECLARATION_REL]
+    # DEC-AUP-0038. Set aside BEFORE the pin/derived split, and only when there is a bundle to
+    # refresh at all: the receipt of a self-update is admissible because the diff IS a self-update,
+    # never the other way round.
+    self_receipt, outside, receipt_ev = (split_self_update_receipt(repo, base, head, outside, changed)
+                                         if managed else ([], outside, {"rule": "DEC-AUP-0038",
+                                                                        "candidates": [], "admitted": None,
+                                                                        "why": "no bundle at base or head"}))
     pin_only, derived, outside_real = (
         split_outside(repo, base, head, outside, (man_h or {}).get("program_ref"), frozenset(declared))
         if outside and managed else ([], [], outside))
     ev.update({"edited": sorted(edited), "outside_the_bundle": outside_real[:12],
                "program_ref_pin_updates": pin_only, "declared_derived_artefacts": derived,
+               "self_update_receipt": receipt_ev,
                "managed_at_base": len(managed_base), "managed_at_head": len(managed_head)})
     if managed and not outside_real and any(p in managed_base for p in edited):
+        ev["self_update_receipt_admitted"] = self_receipt
         ev["program_ref"] = {"base": (man_b or {}).get("program_ref"), "head": (man_h or {}).get("program_ref")}
         return "gate_self_update", ev
     # AUP-GRAPH-006:gate5b. The declared-derived-artefact exception is NOT specific to a bundle refresh, and
@@ -1491,6 +1603,91 @@ def evaluate_derived(repo: Path, base: str, head: str, derived: list[str], decl:
                 + "; ".join(f"{x['id']} {x['detail'][:110]}" for x in sub))
 
 
+def evaluate_workflow_integrity(repo: Path, head: str, man_h: dict | None, ev: dict) -> bool:
+    """B8 SELF_UPDATE_WORKFLOW_INTEGRITY — KB-039, measured live in four repositories on 2026-09-24.
+
+    BUNDLE.json's first entry is not a tool: it is the vendored, EXECUTING workflow, carrying
+    `verified_by_the_job: false`. `ci_gate.verify_bundle` skipped its hash on the strength of that
+    flag; `bundle_paths_at` counted it as bundle-managed anyway. Each half was defensible and together
+    they said: this file is inside the bundle's authority and nothing checks it. A caller pull request
+    editing ONLY that file — no key, BUNDLE.json and its signature untouched and still valid —
+    classified as `gate_self_update` and passed B1/B2/B3/B4/B6, and for a `pull_request` event GitHub
+    runs the workflow as of the pull-request HEAD, so the file the change rewrites is the job that
+    judges it.
+
+    The arm: the workflow's bytes AT HEAD, read from git, must hash to the sha256 the head manifest
+    records for it. A legitimate refresh moves the file and its entry together and re-signs, so it
+    passes; the bypass moves the file alone, so it fails. Deletion fails too — absent bytes are not
+    bytes that match, and a vacuous pass here is how the arm would have been written to look like
+    coverage while being none.
+
+    WHICH SIDE VERIFIES IT, since the job cannot trust itself. This arm runs in `admit_change.py`, and
+    that is sound for the reason B2 is sound, not despite it. Two invocations matter and they differ:
+
+      * The LOCAL run — `tools/graph/admit_change.py gate|exempt`, which DEC-AUP-0007 makes the
+        authoritative admission — executes the PROGRAM repository's own copy of this file. The caller's
+        pull request did not write it. There the arm is base-side in the strongest sense available.
+      * The CI run executes the caller's VENDORED copy, whose bytes `verify_bundle` has already checked
+        against a manifest that B2 verified with the BASE tree's `sshsig.py` against the BASE tree's
+        key. So the code running this arm is attested by the key, in the same chain every other arm
+        hangs from. The vendored workflow was the ONE file the manifest named and the chain did not
+        reach; this puts it inside.
+
+    WHAT NEITHER BUYS, written here rather than left for someone to discover: a head workflow rewritten
+    so that it never invokes the gate at all reports whatever it likes under the same job name, and no
+    arm of any battery runs to contradict it. That residual is closed by branch protection requiring
+    the check and by nothing in this file — DEC-AUP-0036 card C3, which measured `graph-admission` as
+    required in ONE of four callers."""
+    entries = [f for f in ((man_h or {}).get("files") or [])
+               if isinstance(f, dict) and f.get("verified_by_the_job") is False and f.get("path")]
+    if man_h is None:
+        return _chk(ev, "B8", "SELF_UPDATE_WORKFLOW_INTEGRITY", None,
+                    "there is no readable bundle manifest at head, so the vendored workflow cannot be "
+                    "compared against one. not_measured is not a pass: no exemption, the change pauses")
+    if not entries:
+        return _chk(ev, "B8", "SELF_UPDATE_WORKFLOW_INTEGRITY", True,
+                    "this bundle vendors no executing workflow (no manifest entry carries "
+                    "verified_by_the_job: false), so there is no such file for a pull request to rewrite. "
+                    "Vacuous, and recorded as vacuous")
+    results, bad = [], []
+    for f in entries:
+        path = f["path"]
+        rc = subprocess.run(["git", "-C", str(repo), "cat-file", "blob", f"{head}:{path}"],
+                            capture_output=True)
+        if rc.returncode != 0:
+            results.append({"path": path, "verdict": "failed", "reason": "absent at head"})
+            bad.append(f"{path}: the manifest lists it but it does not exist at head {head[:12]} — "
+                       f"deleting the executing workflow is not a bundle refresh either")
+            continue
+        got = sha256_bytes(rc.stdout)
+        oid = git(repo, "rev-parse", f"{head}:{path}", check=False).strip() or None
+        want_oid = f.get("blob_oid")
+        entry = {"path": path, "sha256_at_head": got, "sha256_in_manifest": f.get("sha256"),
+                 "blob_oid_at_head": oid, "blob_oid_in_manifest": want_oid}
+        if got != f.get("sha256"):
+            entry["verdict"] = "failed"
+            bad.append(f"{path}: {got[:23]}… at head {head[:12]} is not the {str(f.get('sha256'))[:23]}… "
+                       f"the SIGNED manifest records — the job that judges this change was rewritten by it, "
+                       f"and the key that attests the gate has attested no such workflow")
+        elif want_oid and oid and want_oid != oid:
+            # DEC-AUP-0036 R2 used as a verdict rather than a note: same bytes cannot have two OIDs, so
+            # this is a manifest that contradicts itself, not a workflow that moved.
+            entry["verdict"] = "failed"
+            bad.append(f"{path}: the bytes hash to the manifest's sha256 but its recorded blob_oid "
+                       f"{str(want_oid)[:12]} is not the git object id of those bytes ({str(oid)[:12]})")
+        else:
+            entry["verdict"] = "verified"
+        results.append(entry)
+    ev["vendored_workflow"] = results
+    return _chk(ev, "B8", "SELF_UPDATE_WORKFLOW_INTEGRITY", not bad,
+                ("; ".join(bad) if bad else
+                 f"all {len(results)} vendored executing workflow(s) hash at head {head[:12]} to the sha256 "
+                 f"the signed head manifest records"
+                 + (" and to its recorded git blob OID" if any(r.get("blob_oid_in_manifest") for r in results)
+                    else " (this manifest predates DEC-AUP-0036 R2 and records no blob OID to cross-check)")
+                 + " — a workflow change is admissible, a workflow change the manifest does not attest is not"))
+
+
 def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], workdir: Path,
                          bundle_rel: str = DEFAULT_BUNDLE_DIR, *,
                          declaration_rel: str = DEFAULT_DECLARATION_REL,
@@ -1513,11 +1710,13 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
     if boot:
         outside = [x for x in outside if x != declaration_rel]
         ev["declaration_bootstrap"] = declaration_rel
+    self_receipt, outside, receipt_ev = split_self_update_receipt(repo, base, head, outside, changed)
     pin_only, derived, outside_real = (
         split_outside(repo, base, head, outside, (man_h or {}).get("program_ref"), frozenset(declared))
         if outside else ([], [], []))
     ev["program_ref_pin_updates"] = pin_only
     ev["declared_derived_artefacts"] = derived
+    ev["self_update_receipt"] = receipt_ev
     b1 = _chk(ev, "B1", "SELF_UPDATE_SHAPE", not outside_real,
               (f"{len(outside_real)} changed path(s) are neither bundle-managed, nor a bare program_ref pin "
                f"update, nor a declared derived artefact ({'; '.join(outside_real[:3])}) — this is an ordinary "
@@ -1533,7 +1732,11 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
                + (f", and {declaration_rel}, which this refresh ADDS: the BOOTSTRAP clause of B6.1, "
                   f"admissible only here because B1 has proved every other path is bundle-managed or the "
                   f"pin, so this change may introduce the caller's DECLARATION but never its VERIFIER"
-                  if boot else "")))
+                  if boot else "")
+               + (f", and {self_receipt[0]}, this refresh's OWN ChangeAdmissionReceipt/v1 for work item "
+                  f"{receipt_ev.get('work_item')} over this very range (DEC-AUP-0038: at most one, ADDED by "
+                  f"the range, re-derived from Git — set aside as a CASE, then judged by every check below "
+                  f"exactly as a receipt handed in from the pull-request body)" if self_receipt else "")))
     b6 = evaluate_derived(repo, base, head, derived, decl, decl_why, bad_entries, files, wd, ev,
                           declaration_rel=declaration_rel, case="gate_self_update",
                           verifier_job=verifier_job, verifier_conclusion=verifier_conclusion)
@@ -1612,8 +1815,9 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
          f"program_ref {str((man_b or {}).get('program_ref'))[:12]} → {str((man_h or {}).get('program_ref'))[:12]}; "
          f"a caller's CI cannot read the private program repository, so this is the pointer an auditor follows, "
          f"never an enforced check")
+    b8 = evaluate_workflow_integrity(repo, head, man_h, ev)
     ev["program_ref"] = {"base": (man_b or {}).get("program_ref"), "head": (man_h or {}).get("program_ref")}
-    ev["eligible"] = bool(b1 and b2 and b3 and b4 and b6)
+    ev["eligible"] = bool(b1 and b2 and b3 and b4 and b6 and b8)
     return ev
 
 
@@ -1798,47 +2002,76 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                        workdir: Path, bundle_rel: str = DEFAULT_BUNDLE_DIR,
                        declaration_rel: str = DEFAULT_DECLARATION_REL,
                        verifier_job: str | None = None,
-                       verifier_conclusion: str | None = None) -> tuple[list[str], dict]:
+                       verifier_conclusion: str | None = None,
+                       receipt_head: str | None = None) -> tuple[list[str], dict]:
     """C16 — the gate RE-MEASURES the battery of every structural exemption it is shown.
 
-    The cheap discriminators run first (binding digest, then the git-status classification), so a
-    receipt presenting a stale or forged exemption is refused without ever building a graph."""
+    The cheap discriminators run first (the git-status classification, then the binding digest), so
+    a receipt presenting a stale or forged exemption is refused without ever building a graph.
+
+    DEC-AUP-0038 R6 is why the classification now runs FIRST: a receipt cannot bind a range that
+    contains the commit that files the receipt, so committing it moved the head and the binding
+    failed. Measured on the scrutator refresh replayed on this host (2026-09-24, base 21d6ce968f41):
+    `STRUCTURAL_EXEMPTION_UNSOUND … sha256:e576eb4e… / 21d6ce96..46a4a922 does not bind this diff
+    (sha256:7cfe2790… / 21d6ce96..8870dcea)`. B1 admitting the receipt file was therefore necessary
+    and not sufficient. The tolerance is exactly one alternative binding and no other: the range up
+    to the receipt's OWN head, admitted only when the single path separating that head from this one
+    is the very receipt file DEC-AUP-0038 R2 has already proved to be this refresh's own record."""
     problems: list[str] = []
     ev: dict = {}
     codes = {x.get("code") for x in exemptions}
     if len(codes) > 1:
         return [f"a receipt may carry at most one structural exemption code; it carries {sorted(codes)}"], ev
+    case, cev = structural_case(repo, base, head, files, bundle_rel)
     digest = diff_digest(repo, base, head)
+    admissible = {(digest, base, head)}
+    filed = (cev.get("self_update_receipt") or {}).get("admitted") if case == "gate_self_update" else None
+    record_note, record_head = "", None
+    if filed and receipt_head and receipt_head != head and receipt_head in set(range_commits(repo, base, head)):
+        moved = _names(repo, "diff", "--name-only", "--no-renames", receipt_head, head)
+        if moved == {filed}:
+            admissible.add((diff_digest(repo, base, receipt_head), base, receipt_head))
+            record_head = receipt_head
+            record_note = (f" (the range up to the receipt's own head {receipt_head[:12]} is admissible too, "
+                           f"and ONLY it: the single path between that head and {head[:12]} is {filed}, this "
+                           f"refresh's own receipt under DEC-AUP-0038)")
     bad = [x for x in exemptions
-           if (x.get("change_binding") or {}).get("digest") != digest
-           or (x.get("change_binding") or {}).get("base") != base
-           or (x.get("change_binding") or {}).get("head") != head]
+           if ((x.get("change_binding") or {}).get("digest"),
+               (x.get("change_binding") or {}).get("base"),
+               (x.get("change_binding") or {}).get("head")) not in admissible]
     if bad:
         cb = bad[0].get("change_binding") or {}
         return [f"{bad[0].get('code')}: change_binding {str(cb.get('digest'))[:23]}… / "
                 f"{str(cb.get('base'))[:12]}..{str(cb.get('head'))[:12]} does not bind this diff "
                 f"({digest[:23]}… / {base[:12]}..{head[:12]}) — a structural exemption expires WITH the change, "
-                f"never on a calendar"], ev
-    case, cev = structural_case(repo, base, head, files, bundle_rel)
+                f"never on a calendar" + record_note], ev
+    ev["binding"] = {"admissible": sorted(f"{b[:12]}..{h[:12]}" for _d, b, h in admissible),
+                     "self_update_receipt": filed}
     want = CODE_OF_CASE.get(case or "")
     code = sorted(codes)[0]
     if want != code:
         return [f"{code}: the gate's own classification of this diff is "
                 f"{want or 'an ordinary change'} — {cev.get('reason') or 'the exemption does not apply here'}"], ev
     synth = f"{ENTITY_PREFIX_OF_CASE[case]}:{repo_name}@{head[:12]}"
+    # DEC-AUP-0038 R6, second half. The synthesized entity names the head, so the record commit that
+    # files the receipt renames it out from under the exemption for exactly the reason the binding
+    # failed above — and under exactly the same proof. Measured on the same scrutator replay:
+    # `the synthesized entity gate_self_update:…@8870dcea3979 carries no exemption`, on a receipt
+    # whose exemption named …@46a4a922322f, one commit earlier, that commit being the receipt itself.
+    synths = {synth} | ({f"{ENTITY_PREFIX_OF_CASE[case]}:{repo_name}@{record_head[:12]}"} if record_head else set())
     managed, _ = bundle_paths_at(repo, head, bundle_rel)
     managed |= bundle_paths_at(repo, base, bundle_rel)[0]
     allowed = structural_covered_entities(case, synth, verdict_entities, managed,
-                                          matrix_declared_unverifiable(repo, base, bundle_rel))
+                                          matrix_declared_unverifiable(repo, base, bundle_rel)) | synths
     named = {x.get("entity") for x in exemptions}
     extra = sorted(named - allowed)
     if extra:
         problems.append(f"{code}: exempts {len(extra)} entity(ies) outside what this code may cover "
                         f"({', '.join(map(str, extra[:4]))}); it may name {sorted(allowed)[:1]}"
                         + (" plus the bundle-managed nodes" if case == "gate_self_update" else " and nothing else"))
-    if synth not in named:
+    if not (named & synths):
         problems.append(f"{code}: the synthesized entity {synth} carries no exemption — the code exists to cover "
-                        f"exactly that entity")
+                        f"exactly that entity" + record_note)
     b7meta = (exemptions[0].get("evidence") or {}).get("b7") or {} if case == "declaration_amend" else {}
     ev = evaluate_structural(repo, base, head, files, case, Path(workdir), bundle_rel,
                              declaration_rel=declaration_rel, verifier_job=verifier_job,
@@ -1934,6 +2167,89 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
                              "derived": sorted(p for p in trailing_paths if p in derived_ok
                                                and p not in in_receipt_ranges)}
     return out
+
+
+def cashed_canary_ids(doc: dict, boundary_inferred: set[str]) -> set[str]:
+    """Which canary verifier ids a receipt actually SPENDS (DEC-AUP-0037's `cashed` condition).
+
+    The same condition `schema_check.classify` applies to the same rule, in one place both halves
+    can be asked: a claim is cashed when a `verified` verdict cites the row, or when the row's
+    claimed entities are what would keep INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary
+    entity reached over an inferred or observed edge.
+
+    A2-242b. Without this, the gate refused this decision's OWN receipt — two `not_measured`
+    verdicts, nothing resting on the row — for citing a `verify.py` canary output that is not a
+    CanaryResult, while the validator called the same bytes conformant. A rule that punishes the
+    receipt which refused to overstate itself teaches authors to cite nothing instead."""
+    vds = doc.get("verdicts") if isinstance(doc.get("verdicts"), list) else []
+    cited = {vid for rec in vds if isinstance(rec, dict) and rec.get("verdict") == "verified"
+             for vid in (rec.get("verifier_ids") or []) if isinstance(vid, str)}
+    out = set()
+    for v in doc.get("verifiers") or []:
+        if not isinstance(v, dict) or v.get("kind") != "canary":
+            continue
+        vid = v.get("id")
+        if vid in cited or (set(v.get("entities") or []) & boundary_inferred):
+            out.add(vid)
+    return out
+
+
+def canary_coverage(repo: Path, rows: list[dict], cashed: set[str] | None = None) -> tuple[set[str], list[str]]:
+    """Which entities a receipt's canary rows ACTUALLY cover (DEC-AUP-0037 R1/R2).
+
+    The coverage is read out of the evidence document, never out of the row that cites it. A row is
+    a claim; the document is the measurement. `#112` (A2-233) merged with a row naming two entities
+    verified from a canary whose plan, result and source evidence were never committed and whose
+    output_ref pointed at one worker's disk — and nothing here opened it, so nothing noticed.
+
+    Refusals are total, never partial: a path outside the repository is not opened at all (an
+    absolute output_ref is exactly how the evidence left the tree), an absent or unreadable document
+    covers nothing, and a document that is not a CanaryResult covers nothing. Every refusal is
+    named, because an entity silently losing its coverage looks identical to one that never had any.
+
+    `cashed` — when given, the ids of the rows something actually RESTS on
+    (`cashed_canary_ids`). Coverage is still read from every row, because a row nobody cashes can
+    still be the reason a boundary entity is covered; but a problem is only REPORTED for a row whose
+    claim is being spent. With `cashed=None` every problem is reported, which is what a caller that
+    holds no verdicts (a test, a direct call) should get.
+    """
+    covered: set[str] = set()
+    problems: list[str] = []
+    root = repo.resolve()
+
+    def report(vid, text: str) -> None:
+        if cashed is None or vid in cashed:
+            problems.append(f"{vid}: {text}")
+
+    for v in rows:
+        if not isinstance(v, dict) or v.get("kind") != "canary":
+            continue
+        vid, ref = v.get("id"), v.get("output_ref")
+        if not isinstance(ref, str) or not schema_check.repo_relative(ref):
+            report(vid, f"output_ref {ref!r} is not a path inside the repository — "
+                        f"evidence the gate cannot open is testimony, not measurement")
+            continue
+        path = (root / ref).resolve()
+        if not str(path).startswith(str(root) + os.sep):
+            report(vid, f"output_ref {ref!r} resolves outside the repository")
+            continue
+        try:
+            doc = json.loads(canary_evidence.read_regular(path))
+        except (OSError, ValueError) as exc:
+            report(vid, f"canary evidence {ref} cannot be read ({type(exc).__name__})")
+            continue
+        if not isinstance(doc, dict) or not str(doc.get("schema", "")).startswith("CanaryResult/"):
+            report(vid, f"{ref} is not a CanaryResult document (schema="
+                        f"{doc.get('schema') if isinstance(doc, dict) else type(doc).__name__!r})")
+            continue
+        listed = {r.get("entity") for r in (doc.get("entity_verdicts") or [])
+                  if isinstance(r, dict) and isinstance(r.get("entity"), str)}
+        surplus = sorted(set(v.get("entities") or []) - listed)
+        if surplus:
+            report(vid, f"the row names {len(surplus)} entity(ies) the document does not "
+                        f"list, which are therefore not covered: " + ", ".join(surplus[:6]))
+        covered |= listed
+    return covered, problems
 
 
 def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: dict, *,
@@ -2153,7 +2469,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                                                repo_name=repo_name or repo_remote_name(repo),
                                                verdict_entities=list(verdict_of), workdir=swd,
                                                bundle_rel=bundle_rel, verifier_job=verifier_job,
-                                               verifier_conclusion=verifier_conclusion)
+                                               verifier_conclusion=verifier_conclusion,
+                                               receipt_head=_receipt_head(doc))
             rec["structural_exemption"] = {"code": sorted({x.get("code") for x in struct})[0],
                                            "entities": sorted(str(x.get("entity")) for x in struct),
                                            "re_measured": [c for c in (sev.get("checks") or [])],
@@ -2187,19 +2504,33 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         elif av not in ("admitted", "admitted_with_exemptions"):
             add("C11", f"{Path(rec['path']).name}: admission.verdict={av!r}")
 
-        # C12 — inferred/observed hop onto a service boundary without a canary
-        canary_entities = {e for v in (doc.get("verifiers") or [])
-                           if isinstance(v, dict) and v.get("kind") == "canary" for e in (v.get("entities") or [])}
+        # C12 — inferred/observed hop onto a service boundary without a canary.
+        # DEC-AUP-0037 R2: the entities a canary covers are the ones its committed document lists.
+        # This used to read `verifiers[kind=canary].entities` — the receipt's own claim about its own
+        # coverage, twelve lines from impact_pair.py's docstring saying a receipt may not do that.
+        #
+        # A2-242b. The boundary set is computed FIRST, because it is half of the `cashed` condition:
+        # a row is being spent when a `verified` verdict cites it, or when its claim is what would
+        # keep this very check quiet for a boundary entity. Reporting a row's problems without that
+        # condition refused this decision's own receipt, whose canary row carries two `not_measured`
+        # verdicts and discharges nothing — while `schema_check`, which does apply it, called the
+        # same bytes conformant.
         imp = doc.get("impact_set") or {}
-        boundary = []
+        boundary_inferred = []
         for section in ("deterministic_core", "inferred_tail"):
             for e in imp.get(section) or []:
                 if not isinstance(e, dict) or e.get("boundary") not in ("service", "repo"):
                     continue
                 hops = e.get("path") if isinstance(e.get("path"), list) else []
                 if any(isinstance(h, dict) and h.get("provenance") in ("inferred", "observed") for h in hops):
-                    if e["entity"] not in canary_entities and e["entity"] not in valid_exempt:
-                        boundary.append(e["entity"])
+                    boundary_inferred.append(e["entity"])
+        canary_entities, canary_problems = canary_coverage(
+            repo, doc.get("verifiers") or [],
+            cashed=cashed_canary_ids(doc, set(boundary_inferred)))
+        for problem in canary_problems:
+            add("C12", f"{Path(rec['path']).name}: {problem}")
+        boundary = [e for e in boundary_inferred
+                    if e not in canary_entities and e not in valid_exempt]
         if boundary:
             add("C12", f"{Path(rec['path']).name}: {len(boundary)} boundary entity(ies) reached over an "
                        f"inferred/observed edge with no canary", sorted(set(boundary)))

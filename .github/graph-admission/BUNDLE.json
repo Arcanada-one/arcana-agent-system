@@ -1,86 +1,104 @@
 {
- "bundle_digest": "sha256:9ad21c3fdb67165ec2453333af56e640e3b5fa10efbb858a6a82d58d4b63f0e4",
+ "bundle_digest": "sha256:b889d8f5233f5fe09e8b7ccbf266fb1850a7556857e05c68568c9df15a845fe4",
  "files": [
   {
-   "note": "the workflow file itself; it is already running by the time the job checks the bundle",
+   "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
+   "note": "the workflow file itself; it is already running by the time the job checks the bundle \u2014 so THIS run cannot vouch for it. The next run's verify_bundle hashes it against this entry (BUNDLE_WORKFLOW_DIGEST_MISMATCH) and the self-update battery's B8 refuses a change to it that this manifest does not attest (KB-039, DEC-AUP-0036)",
    "path": ".github/workflows/graph-admission.yml",
    "sha256": "sha256:fa4cabe05e988e12ed5f3f5d49a240332b68efb076dba7b0a508a691695fabcb",
    "vendored_to": "graph-admission.yml",
    "verified_by_the_job": false
   },
   {
+   "blob_oid": "b4a7d4f51b863f20f735cea8678098f1e2171acc",
    "path": "tools/graph/admit_change.py",
-   "sha256": "sha256:ac58ccb467ee515e39a2b344707fcfd0fd5f4956ecaa9a59338ca34a4ac93d6f"
+   "sha256": "sha256:88458a7f49c5419140b7b7f093f4864e86526d0a019b050f0531a06e20f56056"
   },
   {
+   "blob_oid": "9b341c189a30f7d114442640c366fb7e10b4eabf",
    "path": "tools/graph/schema_check.py",
-   "sha256": "sha256:2dcbff28af8d88081aa65e276cd51c1330443e067ef1067b56a72d68ef72c14d"
+   "sha256": "sha256:567e0490b0899caacf654e29c8fcc0a52c2dd8363dedf78fa340732cb70efe05"
   },
   {
+   "blob_oid": "0866d87a99b778507bad7d26804e01200e7cb0c1",
    "path": "tools/graph/build_graph.py",
    "sha256": "sha256:f9f5fe2179d05fc7e4d7452537e464d4d9e0263c8e73db2e7173d2e75b89c417"
   },
   {
+   "blob_oid": "fbff394a20f7de4f45f847a699369764f0818979",
    "path": "tools/graph/workflow_config.py",
-   "sha256": "sha256:b58a5c826134e34cc6a2477b544f7b3d2d15db91c608d83176550621bbd5a479"
+   "sha256": "sha256:81ce3b7e88c3692e4fd89973f67859bab4002009b5d8c903d551a587bbf02dd2"
   },
   {
+   "blob_oid": "903cb52e25e73c240c62eace1348c027e57d5181",
    "path": "tools/graph/impact.py",
    "sha256": "sha256:021e0d0d5be7e24a1f67f595b8823ef21aafc9190116612df107f748c14806f4"
   },
   {
+   "blob_oid": "f0c669ebd0569db8c21c1ae3e784133b2d370a02",
    "path": "tools/graph/impact_pair.py",
    "sha256": "sha256:8a3a49a1625a4f66793d4658c926dd7a234ddb1614dfeea2fc5ba416d41fef68"
   },
   {
+   "blob_oid": "c07aee9555a1e019125b23c3be8e525ff25676c0",
    "path": "tools/graph/verify.py",
-   "sha256": "sha256:7998acd51a0db0d90cac4d6020f15809059eade89e6adc4bbecc9754a89e32f4"
+   "sha256": "sha256:2ba106d9a1af7f8c9549a1944bcc562fda2c8ef05db66e99495d77d585066489"
   },
   {
+   "blob_oid": "e8385eb6ca1180e2094d6937a5fdefcd2828e66d",
    "path": "tools/graph/contract_diff.py",
    "sha256": "sha256:57af3f18aaa3005f66d05e49134f9c5c431b88ff3de07bcf6b2adc72f019ce62"
   },
   {
+   "blob_oid": "1059a151dab9b4468e37222b3932af1bf4d67dce",
    "path": "tools/graph/canary_evidence.py",
    "sha256": "sha256:ffa59d834844777910c4d6323a49f62284a82ca094587330cd09fee6509c6b97"
   },
   {
+   "blob_oid": "7064c797cf6198df5f594f30daddea76c8df2c29",
    "path": "tools/graph/process_observation.py",
    "sha256": "sha256:13194cc0a226bad876f864d45d72c710f6ef47266173d25ad514f4f9b2a35f67"
   },
   {
+   "blob_oid": "e9defbc9f662f6dd0f75e2bf1f0567b31f37119d",
    "path": "tools/graph/sshsig.py",
    "sha256": "sha256:c599bd4a27a19aa975cef8a208e5f629ba9f8bfee61e4c13168322ca02ef59ff"
   },
   {
+   "blob_oid": "be0717a132a8083013fda0942f7c125986e52b5f",
    "path": "tools/graph/ci_gate.py",
-   "sha256": "sha256:aa669a21ec4aa811b8bc7b8492342dd6cc12d29ad1b3274af4549b4276dc7d1e"
+   "sha256": "sha256:8da64b9e7e99a6e4015b5b0a1528a9e57c31a779b584d8c301f5f8ff997082a4"
   },
   {
+   "blob_oid": "36b996f9d763ab0121e295ff22669ea57f8f7b1c",
    "path": "contracts/graph-verified-change/admission-gate.v1.json",
-   "sha256": "sha256:38cc7cce38883f29d77e3af6653cae477c258438aa74da0ac0161e05a35240e9"
+   "sha256": "sha256:7a4baf2a8806113337c335fe41469198fcaa043d17a13cad63f6e3d329aba09b"
   },
   {
+   "blob_oid": "bdcf1b1c7f8a37da5155558cced9405803bb80fe",
    "path": "contracts/graph-verified-change/relationship-graph.v1.json",
    "sha256": "sha256:ca363f881bc97489a94aad3ede0a1d37baf16473bbb12acbd34d2bea04ac0321"
   },
   {
+   "blob_oid": "c1caa4abb92c1fb6822bdba8a46f61388e49f92a",
    "path": "contracts/graph-verified-change/change-admission-receipt.v1.json",
-   "sha256": "sha256:15a75004e5d9696f062c9ed8afb06039bceed270b934d8f03b2616797a2abbb4"
+   "sha256": "sha256:53f7fe0c7e78a39687af4798889ba4b87c597b32c7e06e2cb84252bcc4cea7db"
   },
   {
+   "blob_oid": "014c1ddd4e7f2b65d23f0c2a65232c51493b3644",
    "path": "contracts/graph-verified-change/verifier-matrix.v1.json",
    "sha256": "sha256:86b822981cba6940644eb28cc00a165f817ec9a9f00cff9ada0083f980f65475"
   }
  ],
  "model": "claude-opus-5",
  "producer": {
+  "source": "git object store at program_ref",
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "21d0f8fb8e60af34db55c6458d45f12cc0319930",
+ "program_ref": "9350c47449d7a0ef185ea195c27cb87bddd6b475",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
- "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request.",
+ "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",
  "schema": "GraphAdmissionBundle/v1"
 }
