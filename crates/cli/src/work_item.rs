@@ -124,6 +124,12 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         source.as_ref(),
         &root,
         &out,
+        // Resolved again rather than carried from the run: the rule is a pure
+        // function of the flag, the environment and two files, so asking it
+        // twice in one process cannot disagree with itself — and threading a
+        // value through `execute` for the receipt alone would put the model
+        // choice into the run's signature, which is where it does not belong.
+        &crate::models::resolve(request.run.model.as_deref()),
         produced_by(),
         measured_at(),
     );

@@ -1,0 +1,1449 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted_with_exemptions"
+ },
+ "captured_at_utc": "2026-09-24T17:22:56Z",
+ "change_set": {
+  "base": "4d46dbe6f4a9535362b275c49d499a2747dc6bfb",
+  "files": [
+   {
+    "kind": "other",
+    "path": ".gitignore",
+    "status": "M",
+    "uncovered": true
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/main.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/main.rs"
+    ],
+    "path": "crates/cli/src/main.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/models.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/models.rs"
+    ],
+    "path": "crates/cli/src/models.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/receipt.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/receipt.rs"
+    ],
+    "path": "crates/cli/src/receipt.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/repl.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/repl.rs"
+    ],
+    "path": "crates/cli/src/repl.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/run.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/run.rs"
+    ],
+    "path": "crates/cli/src/run.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/work_item.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/work_item.rs"
+    ],
+    "path": "crates/cli/src/work_item.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/model_choice.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/model_choice.rs"
+    ],
+    "path": "crates/cli/tests/model_choice.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/model_choice_dispatch.rs"
+    ],
+    "path": "crates/cli/tests/model_choice_dispatch.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/models_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/models_smoke.rs"
+    ],
+    "path": "crates/cli/tests/models_smoke.rs",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/how-to/run-one-task-unattended.md",
+    "node_ids": [
+     "document:docs/how-to/run-one-task-unattended.md"
+    ],
+    "path": "docs/how-to/run-one-task-unattended.md",
+    "status": "M"
+   }
+  ],
+  "head": "70db71243de340882a8d1e552ddc4be45bf54d6d",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [
+  {
+   "entity": "code_unit:crates/cli/src/models.rs",
+   "evidence": "What IS measured about this entity at this head, and is recorded in this receipt's other verdicts: v-cargo-check and v-cargo-test over the workspace (1020 tests, 0 failed). The new environment read is itself exercised end-to-end by crates/cli/tests/model_choice.rs::the_environment_carries_the_model_into_an_isolated_state_dir, which runs the real binary with ARCANA_MODEL set and both XDG homes isolated and asserts the resolved model on stdout — and that test goes RED under the mutant that reads only the state directory (5 of 9 cases in that file fail). That is a behavioural probe of the boundary, NOT a deploy canary, and it is offered as evidence of what was checked rather than as a discharge of the canary obligation.",
+   "expires_at_utc": "2026-10-24T00:00:00Z",
+   "owner": "A2-276 worker (arcana-devs, user dev) on behalf of the control session (Mac orchestrator, Arcanada) / ARAS owner",
+   "reason": "Two verifiers produced no verdict, and neither is something this change can supply. v-config-schema: the repository declares no env source (.env.example / env.schema / compose environment) — `arcana` is a Rust CLI whose configuration is XDG files and process environment, so there is no declared schema to compare `ARCANA_MODEL` against. This change ADDS a read of that variable, which is why the verifier speaks about this file now and did not before; the gap is the repository's, not this commit's, and closing it is a config-schema declaration for the whole binary rather than a line in a model resolver. v-canary: INFERRED_BOUNDARY_WITHOUT_CANARY — the deploy canary is AUP-GRAPH-008 and this binary has no live contour to run one against; the same exemption was issued for crates/cli/src/demo.rs on PR #182 for the same two reasons. not_measured is KEPT as the third verdict and is never read as a pass.",
+   "ref": "https://github.com/Arcanada-one/arcana-agent-system/pull/182",
+   "verdict_kept": "not_measured"
+  }
+ ],
+ "graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:63ee15dc76366b32a249590086c083b807fc20987bf486fdc00528b43989e463",
+  "path": "/home/dev/aup/arc2/runs/A2-276/work/verifier-out/graph-4d46dbe6f4a9.json",
+  "source_commit": "4d46dbe6f4a9535362b275c49d499a2747dc6bfb"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:46d34373fd81e69405935ebb4ed65b1e7c30c5f2f98496323adfc05346e044d2",
+  "path": "/home/dev/aup/arc2/runs/A2-276/work/verifier-out/graph-head-70db71243de3.json",
+  "source_commit": "70db71243de340882a8d1e552ddc4be45bf54d6d",
+  "staleness": {
+   "checked_at_utc": "2026-09-24T17:22:58Z",
+   "checked_nodes": 342,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/models.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/models.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/models.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/main.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/main.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/main.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-003.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-003b.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003b.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003b.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-203.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-203.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-203.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-208.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-208.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-208.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-212.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-212.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-212.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-216.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-216.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-216.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-218.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-218.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-218.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-219.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-219.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-219.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-230.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-230.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-230.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-234.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-234.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-234.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-241.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-241.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-241.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-241.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-241.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-241.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-245.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-245.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-245.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-245.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-245.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-245.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-272.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-one-task-unattended.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-272.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-272.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/run-one-task-unattended.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 15
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.0.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.0.1"
+ },
+ "receipt_id": "car-verify-20260924T172256Z-70db7124",
+ "receipt_path": "receipts/graph/change-admission-a2-276.json",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/aup/arc2/wt/A2-276-aras"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/models.rs",
+   "code_unit:crates/cli/src/receipt.rs",
+   "code_unit:crates/cli/src/repl.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/work_item.rs",
+   "code_unit:crates/cli/tests/models_smoke.rs",
+   "deployable_unit:crates/cli",
+   "document:CHANGELOG.md",
+   "document:docs/how-to/run-one-task-unattended.md",
+   "receipt:receipts/graph/change-admission-a2-003.json",
+   "receipt:receipts/graph/change-admission-a2-003b.json",
+   "receipt:receipts/graph/change-admission-a2-203.json",
+   "receipt:receipts/graph/change-admission-a2-208.json",
+   "receipt:receipts/graph/change-admission-a2-212.json",
+   "receipt:receipts/graph/change-admission-a2-216.json",
+   "receipt:receipts/graph/change-admission-a2-218.json",
+   "receipt:receipts/graph/change-admission-a2-219.json",
+   "receipt:receipts/graph/change-admission-a2-230.json",
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-241.json",
+   "receipt:receipts/graph/change-admission-a2-245.json",
+   "receipt:receipts/graph/change-admission-a2-272.json"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/models.rs",
+   "code_unit:crates/cli/src/receipt.rs",
+   "code_unit:crates/cli/src/repl.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/work_item.rs",
+   "code_unit:crates/cli/tests/model_choice.rs",
+   "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+   "code_unit:crates/cli/tests/models_smoke.rs",
+   "deployable_unit:crates/cli",
+   "document:CHANGELOG.md",
+   "document:docs/how-to/run-one-task-unattended.md",
+   "receipt:receipts/graph/change-admission-a2-003.json",
+   "receipt:receipts/graph/change-admission-a2-003b.json",
+   "receipt:receipts/graph/change-admission-a2-203.json",
+   "receipt:receipts/graph/change-admission-a2-208.json",
+   "receipt:receipts/graph/change-admission-a2-212.json",
+   "receipt:receipts/graph/change-admission-a2-216.json",
+   "receipt:receipts/graph/change-admission-a2-218.json",
+   "receipt:receipts/graph/change-admission-a2-219.json",
+   "receipt:receipts/graph/change-admission-a2-230.json",
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-241.json",
+   "receipt:receipts/graph/change-admission-a2-245.json",
+   "receipt:receipts/graph/change-admission-a2-272.json"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-09-24T17:22:58Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": "sha256:f08dcf06010c70f9c0195c9b381f69e4ab66ef039312873a1a7aee4cab37ee76",
+    "head": "sha256:f08dcf06010c70f9c0195c9b381f69e4ab66ef039312873a1a7aee4cab37ee76"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-003.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:74418a869a3dc9331e14a49a658fd7193f7d4771a174fb110ca4485986553e7c",
+    "head": "sha256:74418a869a3dc9331e14a49a658fd7193f7d4771a174fb110ca4485986553e7c"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-003b.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:9ba19f464c50b4e06f0fc7d3181c120ed13419a6c3f03871fd29b8b20b5e18b5",
+    "head": "sha256:9ba19f464c50b4e06f0fc7d3181c120ed13419a6c3f03871fd29b8b20b5e18b5"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-203.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-203.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:3fb4f6eea6850f5413b62874eb8007997073000a72bbccbe793836816a1368df",
+    "head": "sha256:3fb4f6eea6850f5413b62874eb8007997073000a72bbccbe793836816a1368df"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-208.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:e38997f0ebbda7d9c96716c0f3225fca76ab4ea62cb7c69eed62ed6058d497ab",
+    "head": "sha256:e38997f0ebbda7d9c96716c0f3225fca76ab4ea62cb7c69eed62ed6058d497ab"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-212.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:676c56c4327c93540c2797b2a2a61afa9c3eb2db059d5c2bf7d7a93cdeb3ec2e",
+    "head": "sha256:676c56c4327c93540c2797b2a2a61afa9c3eb2db059d5c2bf7d7a93cdeb3ec2e"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-216.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:40967d491a639b6df2d684e28c023f622692b191ad7ad6af49c2035217d00de3",
+    "head": "sha256:40967d491a639b6df2d684e28c023f622692b191ad7ad6af49c2035217d00de3"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-218.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-218.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:baada3d7895b9fd26af81ebe9327fd7ab8a355747d36128cee5096caa78cc975",
+    "head": "sha256:baada3d7895b9fd26af81ebe9327fd7ab8a355747d36128cee5096caa78cc975"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-219.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-219.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:6f3c72a7c03f47bd911ede189763e0ec6798791b471abed704b667b1bc0f2dff",
+    "head": "sha256:6f3c72a7c03f47bd911ede189763e0ec6798791b471abed704b667b1bc0f2dff"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-230.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf",
+    "head": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-234.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:b610ce2dea6e4ebdb1049d7c0cfa3826a30b7cca7b2518a81e7a0d2d5163a010",
+    "head": "sha256:b610ce2dea6e4ebdb1049d7c0cfa3826a30b7cca7b2518a81e7a0d2d5163a010"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-241.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-241.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:9a0b23acc2a8dd627dabed1243529218ec33d83c4693e40e513355f32a22c175",
+    "head": "sha256:9a0b23acc2a8dd627dabed1243529218ec33d83c4693e40e513355f32a22c175"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-245.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-245.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:34f00f2284d7bbc045f731d2fe3a5ec0eb47efbd0ce39c06eac5c62932f3909b",
+    "head": "sha256:34f00f2284d7bbc045f731d2fe3a5ec0eb47efbd0ce39c06eac5c62932f3909b"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-272.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  }
+ ],
+ "tree": {
+  "commit": "70db71243de340882a8d1e552ddc4be45bf54d6d",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/main.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/models.rs",
+   "reason": "v-config-schema: the repository declares no env source (.env.example / env.schema / compose environment); v-canary: INFERRED_BOUNDARY_WITHOUT_CANARY: no canary result lists this entity (matrix P6, observed-edges-and-deploy-gate.v1 rule C1)",
+   "verdict": "not_measured",
+   "verifier_ids": [
+    "v-canary",
+    "v-config-schema",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/receipt.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/repl.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/run.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/work_item.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/model_choice.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/models_smoke.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 2 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/how-to/run-one-task-unattended.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifiers": [
+  {
+   "command": "verify.py config_schema: keys read at head ⊆ declared keys",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/models.rs"
+   ],
+   "exit_code": 0,
+   "id": "v-config-schema",
+   "kind": "config_schema",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-276/work/verifier-out/v-config-schema.json",
+   "started_at_utc": "2026-09-24T17:23:00Z",
+   "summary": "0 source(s), 0 new / 0 frozen undeclared reads, 0 failed"
+  },
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/models.rs",
+    "code_unit:crates/cli/src/receipt.rs",
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/src/work_item.rs",
+    "code_unit:crates/cli/tests/model_choice.rs",
+    "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+    "code_unit:crates/cli/tests/models_smoke.rs",
+    "deployable_unit:crates/cli"
+   ],
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-276/work/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-24T17:23:00Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md",
+    "document:docs/how-to/run-one-task-unattended.md"
+   ],
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-276/work/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-09-24T17:23:00Z",
+   "summary": "2 document(s), 0 failed"
+  },
+  {
+   "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/models.rs"
+   ],
+   "exit_code": 0,
+   "id": "v-canary",
+   "kind": "canary",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-276/work/verifier-out/v-canary.json",
+   "started_at_utc": "2026-09-24T17:23:00Z",
+   "summary": "0 canary result(s); 0 verified / 0 failed / 1 not_measured of 1 entities"
+  }
+ ],
+ "verify": {
+  "events": [
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "13 affected entity(ies) owe no verdict (receipt: 13): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/main.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/models.rs": [
+    "canary",
+    "config_schema",
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/receipt.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/repl.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/run.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/work_item.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/model_choice.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/model_choice_dispatch.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/models_smoke.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
+   "document:docs/how-to/run-one-task-unattended.md": [
+    "doc_reference"
+   ],
+   "receipt:receipts/graph/change-admission-a2-003.json": [],
+   "receipt:receipts/graph/change-admission-a2-003b.json": [],
+   "receipt:receipts/graph/change-admission-a2-203.json": [],
+   "receipt:receipts/graph/change-admission-a2-208.json": [],
+   "receipt:receipts/graph/change-admission-a2-212.json": [],
+   "receipt:receipts/graph/change-admission-a2-216.json": [],
+   "receipt:receipts/graph/change-admission-a2-218.json": [],
+   "receipt:receipts/graph/change-admission-a2-219.json": [],
+   "receipt:receipts/graph/change-admission-a2-230.json": [],
+   "receipt:receipts/graph/change-admission-a2-234.json": [],
+   "receipt:receipts/graph/change-admission-a2-241.json": [],
+   "receipt:receipts/graph/change-admission-a2-245.json": [],
+   "receipt:receipts/graph/change-admission-a2-272.json": []
+  },
+  "seconds": {
+   "prepare": 1.26,
+   "total": 3.87,
+   "verifiers": 0.01
+  }
+ },
+ "work_item": "A2-276"
+}

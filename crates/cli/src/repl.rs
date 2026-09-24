@@ -346,7 +346,7 @@ fn drive(
     // into single-model would disable cost-tiered dispatch for everyone who
     // never ran `models use`.
     let mut config = DriverConfig::new(REPL_CONNECTOR_ID);
-    if let Some(chosen) = crate::models::explicit_model() {
+    if let Some(chosen) = crate::models::resolve(None).model {
         config.policy = ModelPolicy::single_model(&chosen);
         config.model = Some(chosen);
     }

@@ -301,6 +301,15 @@ pub async fn execute(request: &RunRequest) -> Result<RunOutput, String> {
     check_tool_result_budget(request.tool_result_budget, context)?;
     check_transcript_path(request.save_transcript.as_deref())?;
 
+    // Said before anything is bought, and before the Model Connector client
+    // exists: which model a run uses is the operator's decision, so a run that
+    // silently used another one should be arguable from its own stdout rather
+    // than reconstructed afterwards from a receipt.
+    println!(
+        "model: {}",
+        crate::models::resolve(request.model.as_deref()).describe()
+    );
+
     let policy = match WorkspacePolicy::new(&root) {
         Ok(policy) => Arc::new(policy),
         Err(err) => return Err(format!("workspace policy: {err}")),
@@ -402,7 +411,14 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
     let mut config = DriverConfig::new(RUN_CONNECTOR_ID);
     config.max_turns = request.max_turns;
     config.max_cost_usd = request.max_cost_usd;
-    if let Some(model) = request.model.clone().or_else(crate::models::explicit_model) {
+    // One model for the whole run unless the tiered policy was asked for.
+    //
+    // `config.model` alone is not enough and never was: it only supplies the
+    // policy's `Default` arm, so a task-typed turn keeps routing by tier and
+    // the lane's choice is ignored on exactly the turns that cost the most.
+    // Pinning the policy is what makes "every dispatch in this run uses the
+    // model I chose" true rather than approximately true.
+    if let Some(model) = crate::models::resolve(request.model.as_deref()).model {
         config.policy = ModelPolicy::single_model(&model);
         config.model = Some(model);
     }
