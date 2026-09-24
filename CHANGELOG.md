@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A command line printed in our documentation is now parsed by the CLI's real
+  clap definition.** `crates/cli/tests/docs_truth.rs` extracts every command in
+  every fenced block under `docs/` and in `README.md`, and runs it through
+  `Cli::try_parse_from`; every `NAME=` assignment in those blocks must occur
+  somewhere in the program outside the docs. It exists because PR #214's
+  `docs/how-to/run-work-item-under-kc2-contract.md` — written end to end by the
+  agent under its KC2 contract, reviewed as an artefact, green on all eight
+  checks — named a binary `aras` (it is `arcana`), a flag `--contract` (it is
+  `--contract-file`, which requires `--work-item`), a flag `--item` (it is
+  `--work-item`), and two environment variables, `KC2_CONTRACT` and
+  `KC2_SNAPSHOT`, that exist nowhere in this repository. "The page was written"
+  and "the page is true" were being measured by the same check, which was the
+  first one only (A2-292).
+
+  Run against that page unedited, the check reports twelve findings and two
+  unknown variables; the page is kept as a fixture so the red is reproducible
+  rather than described. The clap definition moved out of `main.rs` into
+  `arcana_cli::cli` for this: a test parsing against a second copy of the
+  surface would have accepted `--contract` as soon as the copy drifted.
+
+  Names that are not `arcana` but are this tool (`aras`, `arcana-agent-system`,
+  …) are findings in themselves — without that list the check would have passed
+  #214's page in silence, because the page never mentioned the binary at all.
+  Printed OUTPUT is out of scope and stated as such: a parser cannot judge a
+  success line a model invented. Nine dated allowances cover shell locals of the
+  runbooks' own example scripts (`VAULT_*`, `BROKER`, `TAG`); an allowance that
+  excuses nothing any more is itself a failing test.
+
+### Fixed
+- **`write` reported success for writing nothing.** Measured in the A2-285 live
+  run: the model called `write` twice, each call created the same 0-byte file,
+  each was recorded `outcome: success` in the audit log, and the run's effect
+  check read the moved tree digest as progress. Empty or whitespace-only
+  `content` is now refused before any filesystem I/O, with a refusal that names
+  the way to ask for it on purpose — `allow_empty: true`, which is in the schema
+  the model is shown, because an enforced rule nobody stated is a defect of its
+  own (A2-231). Truncating a file still works; it is now declared (A2-292).
+- **The audit log could not tell a written page from a written nothing.** The
+  `result` record kept `output_hash` and nothing else, so the two 0-byte writes
+  above were indistinguishable in the log from a call that wrote the
+  deliverable. The record now carries `bytes_written`, lifted from the tool's own
+  metadata under the constant both ends share
+  (`arcana_core::hooks::audit::BYTES_WRITTEN`). A count carries no file text and
+  no model text, so it can be written in clear where the output cannot; it is
+  `null`, not `0`, for every tool that does not write (A2-292).
+
 ### Fixed
 - **`arcana run` said "Completed" for work it never wrote.** The done-marker's
   `completed` was decided by the terminal reason and the number of tool calls
