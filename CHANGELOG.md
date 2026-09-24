@@ -7,7 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A call the permission cascade refused is now readable afterwards.** The
+  `reason` built in `CapabilityExecutor::deny` reached the model and stopped
+  there: `audit_decision` was handed the layer and nothing else, so the log
+  said a call had been refused and never why, or with what arguments. Pilot
+  A2-240b spent **21 of its 100 paid turns** on refused calls — 14 at the
+  `schema` layer, 7 at `workspace_boundary`, the run's largest single sink of
+  turns — and the post-mortem could count them but not read one
+  (`/home/dev/aup/arc2/runs/A2-248/report.md` § 1 and D1).
+
+  Two records now exist where there was one. The `decision` entry carries a
+  `reason_hash`, so denials refused with the same sentence group in the log;
+  and the call itself, with the sentence in full, is written to
+  `.arcana/denied/NNNN-turnN.json` under the same counter discipline as
+  `.arcana/rejected/`. The operator also gets a line per denial naming that
+  file, where before a refused turn was simply a gap in the log.
+
+  The reason is **hashed** in `audit.log` and kept whole only in the workspace
+  file, and that split is the audit's own rule rather than a new one: the
+  module refuses to persist raw inputs and error strings, and a refusal
+  sentence is both — `schema` quotes the offending argument (`"…" is not of
+  type "integer"`), `workspace_boundary` quotes the path. `audit.log` lives
+  under `$XDG_STATE_HOME` and is never rotated; `.arcana/denied/` lives inside
+  the workspace beside a `.arcana/rejected/` file that would have held the same
+  text inside the whole reply anyway. `driver_denied_calls.rs` pins both halves,
+  including the stated limit of the log-only view: a sentence that quotes the
+  model's own text does not group, which is why the file has to exist.
+
+- **`ARCANA_RUN_DONE` says what the model tried, not only what worked.**
+  `tool_calls` counts executions and always has, so a refused call and a call
+  never made are the same number: pilot A2-240b reported `"tool_calls":72` for
+  a run that made **98** attempts, 21 of them refused. Read as intent, 72 says
+  "the model barely used its tools"; the truth was "it used them constantly and
+  often wrongly", and the two point at opposite fixes. `tool_calls_attempted`
+  and `tool_calls_denied` are now reported beside it. `tool_calls` keeps its
+  meaning exactly — evidence of work done — so nothing that reads it today
+  changes.
+
 ### Fixed
+- **One reply can no longer erase the history of a run.** A tool result has
+  been bounded when it enters the transcript since this loop was written
+  (`carry_tool_result`, 8 000 units); a model **reply** was not.
+  `prompt_budget::entry_ceiling` reached an oversized reply only from inside
+  compaction — after the budget had already been blown, when the guard's
+  remaining move was to fold earlier turns away. Measured on pilot A2-240b:
+  between turn 36 and turn 37 the transcript grew 63 485 → 111 713 UTF-16 units
+  (**+48 228 from a single reply, 54 % of the whole budget**) and compaction #1
+  folded **28 earlier entries** into a summary. Thirty-six turns of history
+  were spent on one turn of output — the mechanism a reader would have
+  attributed to "the context window is too small".
+
+  A reply is now cut at intake to `entry_ceiling` of the run's budget — the
+  same number compaction would have imposed, applied before the damage instead
+  of after it — head and tail kept, with an explicit marker in the middle
+  stating how much went and why. Nothing else changes: the whole reply is read
+  first, so the tool call the loop executes and the final answer the operator
+  is handed are both taken from the complete text.
+  (`crates/core/tests/driver_reply_intake_cap.rs`.)
+
 - **A complete tool call followed by one surplus `}` is that call, not
   garbage.** Turn 62 of pilot A2-240b opened this runner's own
   ```` ```tool_call ```` fence and wrote a whole `write` call — right tool,

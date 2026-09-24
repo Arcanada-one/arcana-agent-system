@@ -130,14 +130,44 @@ pub fn suffix_within(text: &str, units: usize) -> &str {
 /// because a smaller result could not honestly describe itself.
 #[must_use]
 pub fn elide_middle(text: &str, budget: usize, source: Option<&str>) -> String {
+    elide_with(text, budget, &|elided| marker(elided, source))
+}
+
+/// Bound one model reply as it enters the transcript, saying so where it cut.
+///
+/// A tool result has been bounded at ingestion since the loop was written; a
+/// reply was not, and `entry_ceiling` only reached it from inside compaction —
+/// after the budget was already blown, when the guard's only remaining move
+/// was to fold earlier turns away. Measured on pilot A2-240b: turn 36 → 37 the
+/// transcript grew 63 485 → 111 713 units, **+48 228 from one reply**, and the
+/// compaction that followed folded 28 earlier entries into a summary. One turn
+/// of output destroyed thirty-six turns of history (A2-249).
+///
+/// Head and tail, for the same reason a tool result keeps both: a reply is
+/// read for its reasoning at the top and its `tool_call` block at the bottom.
+/// Nothing is silently lost — the marker states how much went, and the runner
+/// had already read the whole reply before the cut, so the call it executes
+/// and the answer it delivers are taken from the complete text.
+#[must_use]
+pub fn elide_reply(text: &str, budget: usize) -> String {
+    elide_with(text, budget, &|elided| reply_marker(elided, budget))
+}
+
+/// Keep the ends of `text` within `budget`, with `note` naming the gap.
+///
+/// Shared by [`elide_middle`] and [`elide_reply`] because the arithmetic —
+/// not the wording — is the hard part: the marker states the elided count, its
+/// own length depends on that count, and the count depends on how much the
+/// marker leaves room for. Two markers with one fixed point beats two copies
+/// of the loop that finds it.
+fn elide_with(text: &str, budget: usize, note_for: &dyn Fn(usize) -> String) -> String {
     if fits(text, budget) {
         return text.to_owned();
     }
     let total = utf16_units(text);
-    // The marker states the elided count, and its own length depends on that
-    // count, which depends on how much the marker leaves room for. Two rounds
-    // settle it: the second is computed from the first round's real marker.
-    let mut keep = budget.saturating_sub(marker(total, source).len());
+    // Two rounds settle it: the second is computed from the first round's
+    // real marker.
+    let mut keep = budget.saturating_sub(note_for(total).len());
     for _ in 0..3 {
         if keep < MIN_ELISION_BUDGET {
             break;
@@ -145,19 +175,31 @@ pub fn elide_middle(text: &str, budget: usize, source: Option<&str>) -> String {
         let head = prefix_within(text, keep * 2 / 3);
         let tail = suffix_within(text, keep - utf16_units(head));
         let elided = total.saturating_sub(utf16_units(head) + utf16_units(tail));
-        let note = marker(elided, source);
+        let note = note_for(elided);
         let assembled = utf16_units(head) + utf16_units(&note) + utf16_units(tail);
         if assembled <= budget {
             return format!("{head}{note}{tail}");
         }
         keep = keep.saturating_sub(assembled - budget);
     }
-    let note = marker(total, source);
+    let note = note_for(total);
     if fits(&note, budget) {
         note
     } else {
         prefix_within(&note, budget).to_owned()
     }
+}
+
+/// The reply elision marker. One line, addressed to the model, and phrased as
+/// a fact about the machine: what was removed, from what, and what the runner
+/// nevertheless read.
+fn reply_marker(elided: usize, budget: usize) -> String {
+    format!(
+        "\n[... {elided} characters (UTF-16 units) of this reply elided by the runner as it was \
+recorded: one reply may take at most {budget} units of the transcript, so that a single long \
+answer cannot evict the history of the turns before it. The WHOLE reply was read first — any \
+tool call in it was taken from the complete text, and any final answer was delivered in full ...]\n"
+    )
 }
 
 /// The elision marker. One line, addressed to the model.

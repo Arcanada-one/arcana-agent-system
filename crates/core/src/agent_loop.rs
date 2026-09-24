@@ -655,6 +655,22 @@ pub fn truncated_reply_line(bytes: usize, saved: Option<&str>) -> String {
     )
 }
 
+/// The operator's line for a tool call the permission cascade refused.
+///
+/// Before A2-249 a denial printed nothing at all: the reason went to the model
+/// as a tool result and the operator's log showed a gap between one turn and
+/// the next. Pilot A2-240b lost 21 of its 100 paid turns that way, and its log
+/// is silent about every one of them.
+#[must_use]
+pub fn denied_call_line(layer: &str, tool: &str, reason: &str, saved: Option<&str>) -> String {
+    format!(
+        "arcana: the {layer} layer refused `{tool}` — {reason}; nothing was executed{}",
+        saved.map_or_else(String::new, |path| format!(
+            " — the call as the model wrote it is in {path}"
+        ))
+    )
+}
+
 /// Name the file the rejected reply was kept in, when there is one.
 fn saved_clause(saved: Option<&str>) -> String {
     saved.map_or_else(String::new, |path| {
@@ -1315,6 +1331,23 @@ pub struct DriverConfig {
     /// It holds what the *model* sent, not what the runner made of it. A
     /// correction is only ever as good as the reply it was written against.
     pub rejected_reply_dir: Option<std::path::PathBuf>,
+    /// Where a tool call the permission cascade refused is kept, with the
+    /// reason it was refused for.
+    ///
+    /// `None` — the default, and what every test gets unless it says
+    /// otherwise — means a denial survives as `decision`/`layer`/`input_hash`
+    /// in the audit log and a `reason_hash` beside them, and the call itself
+    /// is gone. That is what pilot A2-240b had: 21 of its 100 paid turns were
+    /// cascade refusals, the largest single sink of the run, and none of them
+    /// could be read afterwards (A2-249). A headless run sets this to a
+    /// directory inside the workspace.
+    ///
+    /// It holds what the *model* wrote and what the cascade said back — the
+    /// two halves a correction has to be judged against. It is the workspace
+    /// counterpart of [`Self::rejected_reply_dir`], and it is where the
+    /// reason text lives precisely because the audit log refuses it: a
+    /// refusal sentence quotes the argument or the path that caused it.
+    pub denied_call_dir: Option<std::path::PathBuf>,
     /// Append the exact request of every dispatch to this file.
     ///
     /// Off unless the operator names a path: a transcript is the whole
@@ -1383,6 +1416,7 @@ impl DriverConfig {
             tool_result_budget_units: DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
             tool_output_spill_dir: None,
             rejected_reply_dir: None,
+            denied_call_dir: None,
             transcript_path: None,
             first_dispatch_measurement: None,
             first_dispatch_prompt: None,
@@ -1441,6 +1475,23 @@ pub struct RunOutput {
     /// model only described in prose, is not counted. Zero here means the run
     /// changed nothing through a tool, whatever its final text claims.
     pub tool_calls: u32,
+    /// Tool calls that reached the capability executor in this run.
+    ///
+    /// Intent, where [`Self::tool_calls`] is evidence: it counts the refused
+    /// and the failed as well as the executed. A model that called tools
+    /// constantly and got the arguments wrong reports a large number here and
+    /// a small one there — pilot A2-240b made 98 attempts and reported 72,
+    /// and 72 alone reads as "the model barely used its tools" (A2-249).
+    ///
+    /// A reply this runner could not parse as a call never reached the
+    /// executor and is not counted; `RunOutput` has no field for those yet,
+    /// and inventing one here would make this number mean two things.
+    pub tool_calls_attempted: u32,
+    /// Tool calls the permission cascade or a pre-tool hook refused.
+    ///
+    /// `tool_calls_attempted - tool_calls_denied - tool_calls` is what
+    /// reached a tool and failed inside it.
+    pub tool_calls_denied: u32,
     /// Cost accounting snapshot at termination.
     pub cost: CostSnapshot,
     /// The ordered sequence of model ids selected, one per connector call
@@ -1733,6 +1784,13 @@ struct RunState {
     /// Replies the loop refused to act on and wrote out; also the rejected
     /// file's number.
     rejected: u32,
+    /// Calls the cascade refused and the loop wrote out; also the denied
+    /// file's number. Counted even when no directory is configured, so the
+    /// number in the done-marker does not depend on where the run keeps its
+    /// evidence.
+    denied: u32,
+    /// Calls that reached the executor, whatever became of them.
+    tool_calls_attempted: u32,
     /// Whether a transcript append has already failed and been reported.
     /// One line per run, not one per turn: a full disk is one fact.
     transcript_broken: bool,
@@ -1761,6 +1819,8 @@ impl RunState {
             terminal_detail: None,
             spilled: 0,
             rejected: 0,
+            denied: 0,
+            tool_calls_attempted: 0,
             transcript_broken: false,
             intent: TurnIntentSeries::new(),
         }
@@ -1779,12 +1839,28 @@ impl RunState {
 
     /// Record a reply the loop could read.
     ///
-    /// It goes into the history verbatim, and it is proof the model can still
-    /// finish a turn — so the truncation budget starts over here rather than
-    /// counting cut-offs across a whole run.
-    fn accept_reply(&mut self, text: &str) {
+    /// It is proof the model can still finish a turn, so the truncation budget
+    /// starts over here rather than counting cut-offs across a whole run.
+    ///
+    /// It used to go in verbatim, at any size. A tool result has been bounded
+    /// at ingestion since this loop was written, and a reply was the one thing
+    /// that could enter the transcript unbounded: `entry_ceiling` reached it
+    /// only from inside compaction, once the budget was already blown. On
+    /// pilot A2-240b one reply added 48 228 units in a single turn and the
+    /// compaction it forced folded 28 earlier entries into a summary — the
+    /// history of thirty-six turns, spent on one turn's output (A2-249).
+    ///
+    /// `ceiling` is [`prompt_budget::entry_ceiling`] of the run's budget: the
+    /// same number compaction would have imposed, applied before the damage
+    /// instead of after it. Nothing else changes — the call the loop executes
+    /// and the answer it delivers are both taken from the complete reply,
+    /// which this function is given after both have been read.
+    fn accept_reply(&mut self, text: &str, ceiling: usize) {
         self.truncation_retries = 0;
-        self.history.push(HistoryEntry::Assistant(text.to_owned()));
+        self.history
+            .push(HistoryEntry::Assistant(prompt_budget::elide_reply(
+                text, ceiling,
+            )));
     }
 }
 
@@ -1827,6 +1903,8 @@ impl<'a> Driver<'a> {
                 final_text: None,
                 turns: 0,
                 tool_calls: 0,
+                tool_calls_attempted: 0,
+                tool_calls_denied: 0,
                 cost: self.cost.snapshot(),
                 selected_models: Vec::new(),
                 first_dispatch_observation: None,
@@ -1859,6 +1937,8 @@ impl<'a> Driver<'a> {
                         final_text,
                         turns: state.attempts,
                         tool_calls: state.tool_calls,
+                        tool_calls_attempted: state.tool_calls_attempted,
+                        tool_calls_denied: state.denied,
                         cost,
                         selected_models: state.selected,
                         first_dispatch_observation: state.first_dispatch_observation,
@@ -2078,7 +2158,7 @@ impl<'a> Driver<'a> {
                 self.recover_from_truncation(state, bytes, &resp.result)
             }
             AssistantAction::Final { text } => {
-                state.accept_reply(&resp.result);
+                state.accept_reply(&resp.result, self.reply_ceiling());
                 // An answer that arrived is DELIVERED even when the operator
                 // interrupted: it is already paid for, and withholding it would
                 // be a second harm. But the verdict still says they stopped the
@@ -2114,7 +2194,7 @@ impl<'a> Driver<'a> {
                 // should not then watch a bash command run. The final-text
                 // branch above deliberately does NOT check: that answer is
                 // already paid for, and discarding it would be a second harm.
-                state.accept_reply(&resp.result);
+                state.accept_reply(&resp.result, self.reply_ceiling());
                 if self.cancel.is_cancelled() {
                     return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
                 }
@@ -2129,7 +2209,7 @@ impl<'a> Driver<'a> {
                 // The reply is kept, unlike a truncated fragment: the model
                 // finished saying it, and hiding it would make the correction
                 // that follows read as an answer to nothing.
-                state.accept_reply(&resp.result);
+                state.accept_reply(&resp.result, self.reply_ceiling());
                 self.correct_tool_format(state, dialect, &detail, &resp.result)
             }
         }
@@ -2567,14 +2647,32 @@ No other markup is executed, whatever your training says. \
     /// terminal on its first refusal, as before.
     ///
     /// Nothing executed either way: `tool_calls` is not incremented here, so a
-    /// run whose every call was refused still reports zero work done.
+    /// run whose every call was refused still reports zero work done. It is
+    /// counted in `tool_calls_denied` instead, and written out, because "the
+    /// model called tools and every call was refused" and "the model never
+    /// called a tool" are opposite facts that used to produce the same
+    /// artefacts (A2-249).
     fn fold_denial(
+        &self,
         state: &mut RunState,
         name: &str,
         layer: &'static str,
         reason: &str,
         input: &Value,
     ) -> StepResult {
+        // Counted and written out before the run decides what the denial
+        // means, so a terminal policy refusal leaves the same evidence as a
+        // correctable one — a run that ENDS on a denial is the case where
+        // the call that was refused matters most.
+        state.denied = state.denied.saturating_add(1);
+        let saved = self.save_denied_call(state, name, layer, reason, input);
+        // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
+        // Without this line a refused turn is a gap in the operator's log —
+        // pilot A2-240b lost 21 turns to denials and its log names none.
+        eprintln!(
+            "{}",
+            denied_call_line(layer, name, reason, saved.as_deref())
+        );
         // Whatever ends the run says which layer refused, which tool, and what
         // the error was. `PermissionDenied` alone made a misspelt argument and
         // an operator-written policy rule read identically in the done-marker,
@@ -2657,6 +2755,63 @@ same call again, unchanged, ends the run."
         let file = dir.join(format!("{:04}-turn{}.txt", state.rejected, state.attempts));
         std::fs::create_dir_all(dir).ok()?;
         std::fs::write(&file, reply).ok()?;
+        Some(file.display().to_string())
+    }
+
+    /// The most one model reply may contribute to the transcript.
+    ///
+    /// [`prompt_budget::entry_ceiling`] of this run's budget, and deliberately
+    /// the same number compaction already imposes on an oversized entry: the
+    /// cap at intake changes WHEN a reply that size is shortened, not how
+    /// much of it survives.
+    fn reply_ceiling(&self) -> usize {
+        prompt_budget::entry_ceiling(self.config.context_budget_units)
+    }
+
+    /// Keep a call the cascade refused, with the reason it was refused for.
+    ///
+    /// Returns the path to name in the log line, or `None` when no directory
+    /// is configured or the write failed. A failed write is not fatal, for the
+    /// same reason a failed rejected-reply write is not: the run was already
+    /// going to correct or end on this call, and a full disk must not become a
+    /// second, different failure that hides the first.
+    ///
+    /// JSON rather than the verbatim bytes a rejected reply gets, because
+    /// there are no verbatim bytes to keep: the input reaching here has been
+    /// parsed out of the reply, and the reply itself is already the thing
+    /// `.arcana/rejected/` exists for. The record is therefore a statement
+    /// about the denial — turn, tool, layer, reason, input — plus the audit's
+    /// own `input_hash`, which is the only way to join this file to the
+    /// `decision` record that refused it.
+    ///
+    /// This is where the reason text lives. The audit log stores its hash and
+    /// not the sentence, because the sentence quotes what the model wrote —
+    /// `"…" is not of type "integer"` from the schema layer, the path itself
+    /// from the workspace boundary. That file is under `$XDG_STATE_HOME` and
+    /// is never rotated; this one is in the workspace the run was confined to,
+    /// beside a `.arcana/rejected/` file that would have held the same text
+    /// inside the whole reply anyway.
+    fn save_denied_call(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        layer: &str,
+        reason: &str,
+        input: &Value,
+    ) -> Option<String> {
+        let dir = self.config.denied_call_dir.as_ref()?;
+        let file = dir.join(format!("{:04}-turn{}.json", state.denied, state.attempts));
+        let record = serde_json::json!({
+            "turn": state.attempts,
+            "tool": name,
+            "layer": layer,
+            "reason": reason,
+            "input": input,
+            "input_hash": crate::hooks::audit::hash_value(input),
+        });
+        let text = serde_json::to_string_pretty(&record).ok()?;
+        std::fs::create_dir_all(dir).ok()?;
+        std::fs::write(&file, text).ok()?;
         Some(file.display().to_string())
     }
 
@@ -2765,12 +2920,21 @@ same call again, unchanged, ends the run."
         // The executor consumes the value, and a denial has to be able to say
         // whether this is the same call the model already sent.
         let attempted = input.clone();
+        // Counted before the attempt, not after it: this is the number that
+        // says what the model tried, and a call that is about to be refused
+        // was still a call.
+        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
         let capability = match self.executor.execute(&ctx, name, input).await {
             Ok(capability) => capability,
             Err(CapabilityError::Denied { layer, reason }) => {
-                return Self::fold_denial(state, name, layer, &reason, &attempted);
+                return self.fold_denial(state, name, layer, &reason, &attempted);
             }
             Err(CapabilityError::HookAborted) => {
+                // A refusal by operator-owned code, audited as `Denied` at the
+                // `hook` layer, so it is counted as one. No file: the abort
+                // reaches this loop without the hook's reason, and a record
+                // whose `reason` had to be invented would be worse than none.
+                state.denied = state.denied.saturating_add(1);
                 return StepResult::Terminal(TerminalReason::AbortedByHook, None);
             }
             Err(
