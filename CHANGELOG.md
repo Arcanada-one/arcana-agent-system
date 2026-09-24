@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A complete tool call followed by one surplus `}` is that call, not
+  garbage.** Turn 62 of pilot A2-240b opened this runner's own
+  ```` ```tool_call ```` fence and wrote a whole `write` call — right tool,
+  right path, the entire file content, in the A2-219 flat form the parser
+  already accepts — and then one more `}`. `serde_json::from_str` refuses
+  trailing data, so the reply was classified "not valid JSON", nothing ran, and
+  one of that run's hundred turns went on a correction for a character that
+  carried no information (the reply as the model sent it is now
+  `crates/core/tests/fixtures/a2-248-surplus-brace-reply.txt`, sha256
+  `252d444b5fe0dd…`; run log `/home/dev/aup/arc2/runs/A2-240b/log`).
+
+  A body that does not parse whole now gets exactly one more reading, and it is
+  a **truncation, never an edit**: the JSON value at the front of the block is
+  used only when everything after it is `}`, `]` or whitespace. That licence is
+  a property of the text rather than a guess about the model — surplus closing
+  punctuation cannot name a tool, add an argument or change a value, so
+  dropping it leaves exactly one reading and the dispatch is still only what
+  was written. Everything that *could* change what runs stays a correction, and
+  `crates/core/tests/driver_surplus_closer.rs` is what keeps it that way: a
+  second JSON object after the first is a second call and is refused rather
+  than silently dropped, and a trailing comma (`{"name":"bash",}`) never
+  reaches the rule at all because it fails *inside* the braces — a parser that
+  truncates a suffix is reading, a parser that edits between the braces is
+  guessing at intent.
+
+  The correction handed back for a body that still does not parse now carries
+  serde's own message, so it names the line and column of the fault instead of
+  only "not valid JSON".
+
 ### Tests
 - **Exactly which permission denials may be retried is now pinned, name by
   name.** `recoverable_denial_layers_are_exactly_pinned`
