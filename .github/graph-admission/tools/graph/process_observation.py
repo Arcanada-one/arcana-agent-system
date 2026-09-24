@@ -180,11 +180,17 @@ def result_errors(result):
     return errors
 
 
-def bound_errors(doc, path, read_regular):
-    """Read original hash-bound plan and recompute its full entity/probe coverage."""
+def bound_errors(doc, read):
+    """Read original hash-bound plan and recompute its full entity/probe coverage.
+
+    `read` maps a reference the result carries to the bytes of the document BESIDE it — from git
+    objects at the admitted head for a consumer, from disk for the producer (A2-263). It replaced a
+    `Path(result).parent / ref["path"]` join, which followed `plan.path` — an absolute path on the
+    producing host — and so made a committed result verifiable on exactly one machine.
+    """
     try:
         ref = doc["plan"]
-        raw = read_regular(Path(path).parent / ref["path"])
+        raw = read(ref["path"])
         if ref.get("digest") not in (digest(raw), "sha256:" + digest(raw)):
             return ["original process plan digest mismatch"]
         plan = json.loads(raw)
@@ -194,6 +200,18 @@ def bound_errors(doc, path, read_regular):
             return ["process plan identity/subject differs from result"]
         if doc.get("source_binding_errors") != []:
             return ["producer could not preserve source attribution"]
+        unmeasured = []
+        # A2-263 §5.2. Is the producer's scratch tree HERE at all? `execution_files` and
+        # `artifacts` are absolute paths on the machine that ran the probes, and re-digesting them
+        # asks "have those bytes changed since the observation" — a question only that machine can
+        # answer. #119's committed result names 36 such files under /home/dev/aup/arc2/runs/A2-247b/
+        # and produced 36 refusals on every other machine (measured). The discriminator is the
+        # whole inventory, not the single entry: if ANY of it resolves, the tree is here and a
+        # missing member is a removal, which stays a refusal; if NONE of it resolves, the tree is
+        # simply not on this host and the document is judged on its committed pins instead.
+        inventory = [item["path"] for pr in plan["probes"] for key in ("execution_files", "artifacts")
+                     for item in pr.get(key, []) if isinstance(item, dict) and isinstance(item.get("path"), str)]
+        tree_present = any(os.path.exists(x) for x in inventory)
         plans = {p["id"]: p for p in plan["probes"]}
         if {p["id"] for p in doc["probes"]} != set(plans): return ["process result omits or adds original probes"]
         expected_entities = {}
@@ -216,7 +234,11 @@ def bound_errors(doc, path, read_regular):
                 if result.get("executable_sha256") != p["executable_sha256"]: errors.append("executable identity differs from original plan")
                 try:
                     if file_digest(p["argv"][0])[0] != p["executable_sha256"]: errors.append("executable changed since observation")
-                except (OSError, ValueError): errors.append("executable is no longer verifiable")
+                except (OSError, ValueError) as exc:
+                    if tree_present or not isinstance(exc, FileNotFoundError):
+                        errors.append("executable is no longer verifiable")
+                    else:
+                        unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
             cap = p.get("capture_limit_bytes", MAX_CAPTURE)
             captured = sum(x["captured_bytes"] for x in result["streams"].values())
             if captured > cap:
@@ -233,8 +255,32 @@ def bound_errors(doc, path, read_regular):
                     try:
                         h, size = file_digest(item["path"], MAX_CAPTURE if key == "artifacts" else 512 * 1024 * 1024)
                         if actual.get("sha256") != h or actual.get("bytes") != size or actual["matched"] != (h == item["sha256"]): errors.append("artifact or execution input changed/unverifiable")
-                    except (OSError, ValueError):
-                        if result["outcome"] != "not_measured": errors.append("required artifact or execution input unavailable")
+                    except (OSError, ValueError) as exc:
+                        # A2-263 §5.2. This is a FRESHNESS re-read of the producer's scratch tree —
+                        # "the bytes the harness ran have not changed since". It is measurable only
+                        # where that tree still exists, and #119's result named 36 files under
+                        # /home/dev/aup/arc2/runs/A2-247b/: on any other machine the committed,
+                        # digest-pinned document produced 36 refusals (reproduced here in a private
+                        # mount namespace with that one directory hidden). A refusal that depends on
+                        # one worker's disk is a host verdict, not a verdict about the change.
+                        #
+                        # What the committed record still supports is asked instead, and it is not
+                        # nothing: the plan is pinned by `plan.digest`, so `item["sha256"]` is fixed,
+                        # and the result's own `matched` must agree with its own recorded digest. A
+                        # forged pair is refused here exactly as before; only the re-read is
+                        # downgraded, and it is downgraded to not_measured by name, never to pass.
+                        if tree_present or not isinstance(exc, FileNotFoundError):
+                            # the tree IS here (or the path is here and unreadable — a FIFO, a
+                            # symlink, an oversize blob): unchanged, fail closed.
+                            if result["outcome"] != "not_measured":
+                                errors.append("required artifact or execution input unavailable")
+                        elif not re.fullmatch(r"[0-9a-f]{64}", str(actual.get("sha256"))) or not isinstance(actual.get("bytes"), int):
+                            errors.append("execution manifest entry records no usable digest")
+                        elif actual["matched"] != (actual["sha256"] == item["sha256"]):
+                            errors.append("artifact or execution input changed/unverifiable")
+                        else:
+                            unmeasured.append(f"{result['id']}: {key} {item['path']}")
+        doc["execution_freshness_not_measured"] = unmeasured
         return errors
     except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError):
         return ["original process plan cannot be verified"]

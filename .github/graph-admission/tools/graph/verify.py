@@ -1515,7 +1515,10 @@ class Verify:
                 dirty=self.mode != "diff" and self.repo.dirty())
             sources.append({"path": rel_ref(Path(path)), "errors": errors,
                             "subject": doc.get("subject"), "environment": doc.get("environment"),
-                            "captured_at_utc": doc.get("captured_at_utc")})
+                            "captured_at_utc": doc.get("captured_at_utc"),
+                            # A2-263: a freshness re-read the consuming host could not perform is a
+                            # third verdict and is named here, never folded into the green.
+                            "freshness_not_measured": doc.get("execution_freshness_not_measured") or []})
             if errors:
                 rows = {e: {"entity": e, "verdict": "not_measured",
                             "reason": "CANARY_EVIDENCE_UNVERIFIABLE: " + "; ".join(errors)} for e in ents}

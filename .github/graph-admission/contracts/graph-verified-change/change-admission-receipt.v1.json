@@ -36,7 +36,8 @@
    "head_graph",
    "revision_selection",
    "structural_exclusions",
-   "receipt_path"
+   "receipt_path",
+   "observed"
   ],
   "producer": {
    "required": [
@@ -194,7 +195,8 @@
     "canary",
     "doc_reference",
     "manual_review",
-    "other"
+    "other",
+    "endpoint_probe"
    ],
    "optional": [
     "started_at_utc",
@@ -285,6 +287,29 @@
   "receipt_path": {
    "note": "DEC-AUP-0035. The path, relative to the repository, that this receipt was written to (`verify.py --out` inside the tree; absent when it is written outside). It is the anchor of a superseded-self exclusion: a claim that an entity is «the previous version of me» is checkable only against the path this document actually occupies, and admit_change.py compares this field with where it FOUND the receipt.",
    "type": "string (repository-relative POSIX path) or absent"
+  },
+  "observed": {
+   "note": "DEC-AUP-0039. The measurement an endpoint probe makes is of a RUNNING contour, so unlike a type-check it cannot be re-derived from the tree at head: whoever reads the receipt later has only what the receipt carries. This section IS that evidence, one row per probe — what was asked, what shape was expected, what was observed, a tri-valued verdict, and which run produced it. Before this section existed, A2-251 wrote its fifteen probe results into an `observed` key the validator tolerated and no rule read: a receipt every one of whose observations had failed was still `conformant` (measured on program 574fd08). A section nobody's verdict rests on claims nothing, so the binding is explicit and one-directional: a row names the `verifier_id` of the `endpoint_probe` row it belongs to, and that verifier row is the ONLY path by which a probe can support an entity's verdict. Granularity is the verifier row, not the probe: a claim that some of its probes were green and others were not is two claims and needs two rows. An honest `not_measured` probe is conformant and must stay conformant — what is refused is CASHING it as `verified`.",
+   "required": [
+    "probe",
+    "verifier_id",
+    "expected",
+    "observed",
+    "verdict",
+    "source"
+   ],
+   "optional": [
+    "detail",
+    "http_status",
+    "target",
+    "observed_at_utc"
+   ],
+   "verdict_values": [
+    "verified",
+    "failed",
+    "not_measured"
+   ],
+   "rule": "probe ids are unique within the receipt; verifier_id names a verifier of this receipt whose kind is endpoint_probe; a row whose verdict is failed or not_measured carries a detail saying what was seen instead (the tri-valued discipline of verdict.rule, applied one level down)"
   }
  },
  "rules": {
@@ -315,7 +340,10 @@
   "HEAD_GRAPH_BINDING_INVALID": "Paired receipt has missing/invalid head revision, digest or freshness.",
   "REVISION_SELECTION_INCOMPLETE": "Paired selection malformed or selected entities omitted from verdict/required mapping, or unmeasured head code admitted.",
   "STRUCTURAL_EXCLUSION_INVALID": "a structural_exclusions entry is malformed, carries a content_hash that is not one equal sha256:<64 hex> at base and head (DEC-AUP-0034) or not a sha256/null pair naming at least one revision (DEC-AUP-0035), names an entity that also has a verdict, names an entity the change set contains (DEC-AUP-0034), or claims supersession of a path that is not this receipt's own receipt_path or of a work item that is not this receipt's own (DEC-AUP-0035)",
-  "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE": "DEC-AUP-0037: a verifier of kind canary whose output_ref is not a repository-relative path (absolute path, URL, or a path escaping the repository) while some entity CASHES that claim — a verdict of verified citing the verifier id, or the verifier being what keeps INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary entity. Evidence the gate cannot open at the receipt's head is testimony, not measurement; the entities a canary covers are the ones its document lists, never the ones the receipt's verifier row lists."
+  "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE": "DEC-AUP-0037: a verifier of kind canary whose output_ref is not a repository-relative path (absolute path, URL, or a path escaping the repository) while some entity CASHES that claim — a verdict of verified citing the verifier id, or the verifier being what keeps INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary entity. Evidence the gate cannot open at the receipt's head is testimony, not measurement; the entities a canary covers are the ones its document lists, never the ones the receipt's verifier row lists.",
+  "OBSERVED_ENTRY_INVALID": "an `observed` row is malformed: it is not an object, lacks probe/verifier_id/expected/observed/verdict/source, carries a verdict outside {verified, failed, not_measured}, repeats a probe id, omits `detail` on a failed/not_measured row, or names a verifier_id that is not a verifier of kind endpoint_probe in this receipt",
+  "ENDPOINT_PROBE_WITHOUT_OBSERVATION": "a verifier of kind endpoint_probe that some entity CASHES — a `verified` verdict cites it — while no `observed` row names it: a claim of measurement with no measurement recorded. A probe row nothing rests on claims nothing and is not reported, the same `cashed` condition DEC-AUP-0037 applies to a canary",
+  "PROBE_CLAIM_CONTRADICTS_OBSERVATION": "an entity whose verdict is `verified` cites a verifier of kind endpoint_probe among whose `observed` rows at least one carries verdict failed or not_measured — the receipt claims more than the contour was observed to do. An exemption cannot waive this: an exemption is the instrument for a NON-verified entity, and this rule fires precisely where the receipt says `verified`. The honest shapes are a `not_measured`/`failed` verdict for the entity, or a second endpoint_probe row that carries only the probes that were green"
  },
  "verdicts": {
   "conformant": "0 violations",

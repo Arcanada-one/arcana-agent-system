@@ -185,6 +185,13 @@
    "verdict": "paused_safe",
    "order": 18,
    "rule": "Rebuild base/head graphs from actual committed change paths. New head obligations require matching head revision/digest and complete base/head selection and verdict coverage. Deleted base dependents remain required. Unmeasured head code or failed recomputation pauses admission; receipt node_ids and manual exemptions cannot substitute this measurement."
+  },
+  {
+   "id": "C19",
+   "code": "PROBE_CLAIM_CONTRADICTS_OBSERVATION",
+   "verdict": "refuse",
+   "order": 19,
+   "rule": "DEC-AUP-0039. An entity claimed `verified` on a verifier of kind endpoint_probe among whose `observed` rows one is failed or not_measured, or on a probe row under which no observation is recorded at all. The gate also COUNTS the probe before it counts the verdict: the entity's verdict is lowered to what was actually observed, so C08/C09 and the ordinary exemption rules then treat a failed probe exactly as they treat a failed type-check. Measured on A2-251: while `observed` was an unread key, a receipt every one of whose fifteen observations had failed was admitted by both the validator and the gate."
   }
  ],
  "work_item_evidence": {
