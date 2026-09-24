@@ -5,9 +5,9 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-09-24T22:46:10Z",
+ "captured_at_utc": "2026-09-24T23:37:40Z",
  "change_set": {
-  "base": "e75a97bd788540ff539754a561340c371d469d6d",
+  "base": "6171d1c1ebfdd4b167744d7b24aad8b69cb4959e",
   "files": [
    {
     "kind": "doc",
@@ -53,9 +53,18 @@
     ],
     "path": "crates/core/tests/driver_upstream_attempt_timeout.rs",
     "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-a2-290-20260924T224545Z.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-a2-290-20260924T224545Z.json"
+    ],
+    "path": "receipts/graph/change-admission-a2-290-20260924T224545Z.json",
+    "status": "A"
    }
   ],
-  "head": "a6000575a9ba829ae2bf17965568c539a218eedf",
+  "head": "dda73bd2b31e58bff8ad3e13499aa270433ad6f3",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -63,19 +72,19 @@
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:500ce7bdac9b71bbf6b2dd7a9851dae3d4b88e751dadc0e3b6b92072b1e4f326",
-  "path": "/home/dev/aup/arc2/runs/A2-290/live/verifier-out.json/graph-e75a97bd7885.json",
-  "source_commit": "e75a97bd788540ff539754a561340c371d469d6d"
+  "graph_digest": "sha256:b8a32a8c1cb4a368de8ce8e104ae1b4a4098773b0396fd3576cf4ddcb63ba0aa",
+  "path": "/tmp/arcana-verify/verifier-out/graph-6171d1c1ebfd.json",
+  "source_commit": "6171d1c1ebfdd4b167744d7b24aad8b69cb4959e"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:254b91a36e4aafa2c7e191c66ae6988e32da6a203f4143cdf76e86b1036bc7c3",
-  "path": "/home/dev/aup/arc2/runs/A2-290/live/verifier-out.json/graph-head-a6000575a9ba.json",
-  "source_commit": "a6000575a9ba829ae2bf17965568c539a218eedf",
+  "graph_digest": "sha256:bc958ffc89d6129f8f42f18c218b4c514d51120ff25bb834c7724a40d8b5a9a7",
+  "path": "/tmp/arcana-verify/verifier-out/graph-head-dda73bd2b31e.json",
+  "source_commit": "dda73bd2b31e58bff8ad3e13499aa270433ad6f3",
   "staleness": {
-   "checked_at_utc": "2026-09-24T22:46:16Z",
-   "checked_nodes": 348,
+   "checked_at_utc": "2026-09-24T23:37:43Z",
+   "checked_nodes": 351,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -234,6 +243,60 @@
        {
         "edge_type": "imports",
         "from": "code_unit:crates/cli/src/kb_read.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/learning_trace.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/learning_trace.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/learning_trace.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/learning_trace.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/core/src/agent_loop.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/learning_trace.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/learning_trace.rs",
         "provenance": "deterministic",
         "to": "code_unit:crates/core/src/agent_loop.rs",
         "via": "rust-use-workspace-crate"
@@ -566,7 +629,7 @@
     "path": [
      {
       "edge_type": "imports",
-      "from": "code_unit:crates/cli/src/run.rs",
+      "from": "code_unit:crates/cli/src/learning_trace.rs",
       "provenance": "deterministic",
       "to": "code_unit:crates/core/src/agent_loop.rs",
       "via": "rust-use-workspace-crate"
@@ -575,7 +638,7 @@
       "edge_type": "imports",
       "from": "code_unit:crates/cli/src/work_item.rs",
       "provenance": "deterministic",
-      "to": "code_unit:crates/cli/src/run.rs",
+      "to": "code_unit:crates/cli/src/learning_trace.rs",
       "via": "rust-use-crate-path"
      }
     ],
@@ -588,7 +651,7 @@
       "path": [
        {
         "edge_type": "imports",
-        "from": "code_unit:crates/cli/src/run.rs",
+        "from": "code_unit:crates/cli/src/learning_trace.rs",
         "provenance": "deterministic",
         "to": "code_unit:crates/core/src/agent_loop.rs",
         "via": "rust-use-workspace-crate"
@@ -597,7 +660,7 @@
         "edge_type": "imports",
         "from": "code_unit:crates/cli/src/work_item.rs",
         "provenance": "deterministic",
-        "to": "code_unit:crates/cli/src/run.rs",
+        "to": "code_unit:crates/cli/src/learning_trace.rs",
         "via": "rust-use-crate-path"
        }
       ],
@@ -613,7 +676,7 @@
       "path": [
        {
         "edge_type": "imports",
-        "from": "code_unit:crates/cli/src/run.rs",
+        "from": "code_unit:crates/cli/src/learning_trace.rs",
         "provenance": "deterministic",
         "to": "code_unit:crates/core/src/agent_loop.rs",
         "via": "rust-use-workspace-crate"
@@ -622,7 +685,7 @@
         "edge_type": "imports",
         "from": "code_unit:crates/cli/src/work_item.rs",
         "provenance": "deterministic",
-        "to": "code_unit:crates/cli/src/run.rs",
+        "to": "code_unit:crates/cli/src/learning_trace.rs",
         "via": "rust-use-crate-path"
        }
       ],
@@ -4928,7 +4991,7 @@
   "inferred_tail": [],
   "max_depth": 3,
   "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
-  "total": 81
+  "total": 82
  },
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.0.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
@@ -4938,16 +5001,18 @@
   "tool": "tools/graph/verify.py",
   "version": "1.0.1"
  },
- "receipt_id": "car-verify-20260924T224610Z-a6000575",
+ "receipt_id": "car-verify-20260924T233740Z-dda73bd2",
+ "receipt_path": "receipts/graph/change-admission-a2-290-20260924T224545Z.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/aup/arc2/runs/A2-290/work/aas"
+  "path": "/home/dev/aup/arc2/ctl-fix216"
  },
  "revision_selection": {
   "base": [
    "code_unit:crates/cli/src/demo.rs",
    "code_unit:crates/cli/src/interrupt.rs",
    "code_unit:crates/cli/src/kb_read.rs",
+   "code_unit:crates/cli/src/learning_trace.rs",
    "code_unit:crates/cli/src/lib.rs",
    "code_unit:crates/cli/src/main.rs",
    "code_unit:crates/cli/src/receipt.rs",
@@ -5035,6 +5100,7 @@
    "code_unit:crates/cli/src/demo.rs",
    "code_unit:crates/cli/src/interrupt.rs",
    "code_unit:crates/cli/src/kb_read.rs",
+   "code_unit:crates/cli/src/learning_trace.rs",
    "code_unit:crates/cli/src/lib.rs",
    "code_unit:crates/cli/src/main.rs",
    "code_unit:crates/cli/src/receipt.rs",
@@ -5117,21 +5183,38 @@
    "deployable_unit:crates/core",
    "deployable_unit:crates/skills",
    "deployable_unit:crates/tools",
-   "document:CHANGELOG.md"
+   "document:CHANGELOG.md",
+   "receipt:receipts/graph/change-admission-a2-290-20260924T224545Z.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-24T22:46:15Z",
+  "checked_at_utc": "2026-09-24T23:37:43Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [],
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:cc57022c2b9c927eabc689245897ea54632bc17fd3de1d1896ecc0a1d8dbeb8b"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-290-20260924T224545Z.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-290-20260924T224545Z.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-a2-290-20260924T224545Z.json for work item A2-290",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-a2-290-20260924T224545Z.json",
+    "work_item": "A2-290"
+   }
+  }
+ ],
  "tree": {
-  "commit": "a6000575a9ba829ae2bf17965568c539a218eedf",
+  "commit": "dda73bd2b31e58bff8ad3e13499aa270433ad6f3",
   "dirty": false
  },
  "verdicts": [
@@ -5153,6 +5236,14 @@
   },
   {
    "entity": "code_unit:crates/cli/src/kb_read.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/learning_trace.rs",
    "reason": "v-fitness: no new fitness violation",
    "verdict": "verified",
    "verifier_ids": [
@@ -5827,11 +5918,12 @@
  "verifiers": [
   {
    "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
-   "duration_s": 0.01,
+   "duration_s": 0.0,
    "entities": [
     "code_unit:crates/cli/src/demo.rs",
     "code_unit:crates/cli/src/interrupt.rs",
     "code_unit:crates/cli/src/kb_read.rs",
+    "code_unit:crates/cli/src/learning_trace.rs",
     "code_unit:crates/cli/src/lib.rs",
     "code_unit:crates/cli/src/main.rs",
     "code_unit:crates/cli/src/receipt.rs",
@@ -5915,11 +6007,99 @@
     "deployable_unit:crates/skills",
     "deployable_unit:crates/tools"
    ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/demo.rs": "verified",
+    "code_unit:crates/cli/src/interrupt.rs": "verified",
+    "code_unit:crates/cli/src/kb_read.rs": "verified",
+    "code_unit:crates/cli/src/learning_trace.rs": "verified",
+    "code_unit:crates/cli/src/lib.rs": "verified",
+    "code_unit:crates/cli/src/main.rs": "verified",
+    "code_unit:crates/cli/src/receipt.rs": "verified",
+    "code_unit:crates/cli/src/repl.rs": "verified",
+    "code_unit:crates/cli/src/run.rs": "verified",
+    "code_unit:crates/cli/src/work_item.rs": "verified",
+    "code_unit:crates/cli/tests/model_choice_dispatch.rs": "verified",
+    "code_unit:crates/cli/tests/run_boundary_relative_path_recovery.rs": "verified",
+    "code_unit:crates/cli/tests/run_contract_allowlist.rs": "verified",
+    "code_unit:crates/cli/tests/run_destructive_floor_prompt.rs": "verified",
+    "code_unit:crates/cli/tests/run_effect.rs": "verified",
+    "code_unit:crates/cli/tests/run_envelope_premise.rs": "verified",
+    "code_unit:crates/cli/tests/run_tool_execution.rs": "verified",
+    "code_unit:crates/connectors/src/lib.rs": "verified",
+    "code_unit:crates/connectors/src/model_connector.rs": "verified",
+    "code_unit:crates/connectors/src/ops_bot.rs": "verified",
+    "code_unit:crates/connectors/tests/idempotent_turn_retry.rs": "verified",
+    "code_unit:crates/connectors/tests/model_connector_contract.rs": "verified",
+    "code_unit:crates/connectors/tests/model_connector_error_body_excerpt.rs": "verified",
+    "code_unit:crates/connectors/tests/model_connector_error_reporting.rs": "verified",
+    "code_unit:crates/connectors/tests/ops_bot_contract.rs": "verified",
+    "code_unit:crates/connectors/tests/skill_store_cutover.rs": "verified",
+    "code_unit:crates/core/src/agent_loop.rs": "verified",
+    "code_unit:crates/core/src/connector.rs": "verified",
+    "code_unit:crates/core/src/dispatch.rs": "verified",
+    "code_unit:crates/core/src/lib.rs": "verified",
+    "code_unit:crates/core/tests/agent_loop_exhaustive.rs": "verified",
+    "code_unit:crates/core/tests/capstone_vertical_prototype.rs": "verified",
+    "code_unit:crates/core/tests/common/mod.rs": "verified",
+    "code_unit:crates/core/tests/dispatch_multi_model.rs": "verified",
+    "code_unit:crates/core/tests/dispatch_policy.rs": "verified",
+    "code_unit:crates/core/tests/dispatch_request_max_turns.rs": "verified",
+    "code_unit:crates/core/tests/dispatch_request_model.rs": "verified",
+    "code_unit:crates/core/tests/driver_audit_inherited.rs": "verified",
+    "code_unit:crates/core/tests/driver_completes_small_task.rs": "verified",
+    "code_unit:crates/core/tests/driver_config_validation.rs": "verified",
+    "code_unit:crates/core/tests/driver_connector_retry.rs": "verified",
+    "code_unit:crates/core/tests/driver_context_window.rs": "verified",
+    "code_unit:crates/core/tests/driver_cost_accounting.rs": "verified",
+    "code_unit:crates/core/tests/driver_denied_calls.rs": "verified",
+    "code_unit:crates/core/tests/driver_edge_gateway_retry.rs": "verified",
+    "code_unit:crates/core/tests/driver_flat_tool_call.rs": "verified",
+    "code_unit:crates/core/tests/driver_idempotent_turn.rs": "verified",
+    "code_unit:crates/core/tests/driver_input_envelope.rs": "verified",
+    "code_unit:crates/core/tests/driver_interpret.rs": "verified",
+    "code_unit:crates/core/tests/driver_operator_abort.rs": "verified",
+    "code_unit:crates/core/tests/driver_rejected_replies.rs": "verified",
+    "code_unit:crates/core/tests/driver_reply_intake_cap.rs": "verified",
+    "code_unit:crates/core/tests/driver_request_contract.rs": "verified",
+    "code_unit:crates/core/tests/driver_retry_denial_independence.rs": "verified",
+    "code_unit:crates/core/tests/driver_schema_refusal_recovery.rs": "verified",
+    "code_unit:crates/core/tests/driver_surplus_closer.rs": "verified",
+    "code_unit:crates/core/tests/driver_terminal_mapping.rs": "verified",
+    "code_unit:crates/core/tests/driver_tool_call_attempt_counts.rs": "verified",
+    "code_unit:crates/core/tests/driver_tool_dialects.rs": "verified",
+    "code_unit:crates/core/tests/driver_tool_results_feedback.rs": "verified",
+    "code_unit:crates/core/tests/driver_truncated_response.rs": "verified",
+    "code_unit:crates/core/tests/driver_upstream_attempt_timeout.rs": "verified",
+    "code_unit:crates/core/tests/execution_invariant_replaceinput.rs": "verified",
+    "code_unit:crates/core/tests/execution_invariant_single_audit.rs": "verified",
+    "code_unit:crates/core/tests/first_dispatch_measurement.rs": "verified",
+    "code_unit:crates/skills/src/interpreter.rs": "verified",
+    "code_unit:crates/skills/src/lib.rs": "verified",
+    "code_unit:crates/skills/src/store.rs": "verified",
+    "code_unit:crates/skills/tests/audit.rs": "verified",
+    "code_unit:crates/skills/tests/builder.rs": "verified",
+    "code_unit:crates/skills/tests/common/mod.rs": "verified",
+    "code_unit:crates/skills/tests/interpreter.rs": "verified",
+    "code_unit:crates/skills/tests/maturity_gate.rs": "verified",
+    "code_unit:crates/skills/tests/multi_model.rs": "verified",
+    "code_unit:crates/skills/tests/production_artifact.rs": "verified",
+    "code_unit:crates/skills/tests/reload.rs": "verified",
+    "code_unit:crates/skills/tests/source.rs": "verified",
+    "code_unit:crates/skills/tests/store.rs": "verified",
+    "code_unit:crates/tools/src/lib.rs": "verified",
+    "code_unit:crates/tools/src/model_call.rs": "verified",
+    "code_unit:crates/tools/tests/model_call_capability.rs": "verified",
+    "deployable_unit:crates/cli": "verified",
+    "deployable_unit:crates/connectors": "verified",
+    "deployable_unit:crates/core": "verified",
+    "deployable_unit:crates/skills": "verified",
+    "deployable_unit:crates/tools": "verified"
+   },
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/arc2/runs/A2-290/live/verifier-out.json/v-fitness.json",
-   "started_at_utc": "2026-09-24T22:46:18Z",
+   "output_ref": "/tmp/arcana-verify/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-24T23:37:44Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -5928,16 +6108,31 @@
    "entities": [
     "document:CHANGELOG.md"
    ],
+   "entity_verdicts": {
+    "document:CHANGELOG.md": "verified"
+   },
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/arc2/runs/A2-290/live/verifier-out.json/v-doc-reference.txt",
-   "started_at_utc": "2026-09-24T22:46:18Z",
+   "output_ref": "/tmp/arcana-verify/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-09-24T23:37:44Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
  "verify": {
-  "events": [],
+  "events": [
+   {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-a2-290-20260924T224545Z.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-a2-290-20260924T224545Z.json is the previous version of the one this run is writing, for the same work item A2-290 — superseded by construction, so it owes this change no verdict"
+   },
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "1 affected entity(ies) owe no verdict (receipt: 1): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
   "required_by_entity": {
    "code_unit:crates/cli/src/demo.rs": [
     "fitness_rules"
@@ -5946,6 +6141,9 @@
     "fitness_rules"
    ],
    "code_unit:crates/cli/src/kb_read.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/learning_trace.rs": [
     "fitness_rules"
    ],
    "code_unit:crates/cli/src/lib.rs": [
@@ -6196,12 +6394,13 @@
    ],
    "document:CHANGELOG.md": [
     "doc_reference"
-   ]
+   ],
+   "receipt:receipts/graph/change-admission-a2-290-20260924T224545Z.json": []
   },
   "seconds": {
-   "prepare": 1.79,
-   "total": 7.77,
-   "verifiers": 0.02
+   "prepare": 1.45,
+   "total": 4.57,
+   "verifiers": 0.01
   }
  },
  "work_item": "A2-290"
