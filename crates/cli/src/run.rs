@@ -406,7 +406,24 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
         config.policy = ModelPolicy::single_model(&model);
         config.model = Some(model);
     }
-    config.system_prompt = Some(system_prompt(tools, root));
+    // The catalogue lists what may ACTUALLY be called. Under a contract that
+    // is a subset of the registered tools, and the difference is not cosmetic:
+    // the first live contract-bound run (A2-272) ended on turn 2 because the
+    // prompt offered `bash`, the model reached for it, and the contract layer
+    // refused — a run terminated by a restriction the model was told about
+    // only in prose, three paragraphs below a list that contradicted it. Every
+    // tool stays REGISTERED, so the schema layer can still explain a
+    // misspelled call and the cascade still owns the refusal; what changes is
+    // what the model is offered.
+    let admitted: Vec<Arc<dyn Tool>> = match request.contract.as_ref() {
+        Some(binding) => tools
+            .iter()
+            .filter(|tool| binding.admits(tool.name()))
+            .map(Arc::clone)
+            .collect(),
+        None => tools.to_vec(),
+    };
+    config.system_prompt = Some(system_prompt(&admitted, root));
     if let Some(units) = request.context_budget {
         config.context_budget_units = units;
     }

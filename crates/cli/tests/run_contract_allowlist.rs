@@ -221,3 +221,57 @@ async fn an_unbound_run_is_unchanged_by_this_layer() {
     assert!(work.path().join("proof.txt").exists());
     assert_eq!(out.tool_calls, 1);
 }
+
+#[test]
+fn the_prompt_offers_only_the_tools_the_contract_admits() {
+    // The measured defect (A2-272, first live run): the catalogue listed
+    // `bash`, the model called it on turn 2, the contract layer refused, and
+    // the run ended having executed nothing. Offering a tool that cannot be
+    // called is not a smaller problem than denying one that can.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let policy = Arc::new(WorkspacePolicy::new(work.path()).unwrap());
+    let workspace = assemble(
+        work.path(),
+        &policy,
+        Box::new(ScriptedModel::new(&[])),
+        audit.path().to_path_buf(),
+        None,
+    )
+    .expect("compose the headless run");
+
+    let bound = RunRequest {
+        cwd: work.path().to_path_buf(),
+        prompt: "do the thing".to_owned(),
+        max_turns: 1,
+        max_cost_usd: None,
+        model: None,
+        request_timeout: None,
+        context_budget: None,
+        tool_result_budget: None,
+        save_transcript: None,
+        contract: Some(binding(&["read", "grep"])),
+    };
+    let prompt = driver_config(&bound, &workspace.tools, work.path())
+        .system_prompt
+        .expect("a headless run always has a system prompt");
+    assert!(
+        prompt.contains("- `read`"),
+        "the admitted tools are offered"
+    );
+    assert!(prompt.contains("- `grep`"));
+    assert!(
+        !prompt.contains("- `bash`"),
+        "a tool the contract denies must not be in the catalogue"
+    );
+
+    // The paired negative: without a contract the catalogue is unchanged.
+    let unbound = RunRequest {
+        contract: None,
+        ..bound
+    };
+    let prompt = driver_config(&unbound, &workspace.tools, work.path())
+        .system_prompt
+        .expect("a headless run always has a system prompt");
+    assert!(prompt.contains("- `bash`"));
+}
