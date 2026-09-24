@@ -416,6 +416,16 @@ from `--max-turns` — it asks no question, and Model Connector charges nothing
 for the 409 it answers with. `turns` in the done-marker still counts every
 attempt, polls included.
 
+A poll also costs nothing **locally**. It re-sends the bytes the dispatch
+already built, so one waited turn is one prompt build, one `dispatch` record in
+`audit.log` and one block in `--save-transcript` — however many polls it takes.
+Until A2-245 each poll went through the whole of a turn instead: the prompt was
+re-serialized from the history and both records were written again, which on a
+turn of 80 000 characters measured 13 prompt builds and 1 040 782 bytes of
+transcript for a single waited answer. So a transcript is still a record of the
+questions this run asked, and counting `===== dispatch` blocks in it still
+counts dispatches — a long wait does not multiply them.
+
 Before A2-241 all of that was one shared counter of five sleeps. Pilot A2-240
 (2026-09-23) sent 144k input tokens, had the socket cut by the edge at ~100 s
 while the Connector kept computing, spent "1 of 5" on the 524 and "2 of 5"
