@@ -420,8 +420,9 @@
    ],
    "kind": "config_schema",
    "tool": "tools/graph/verify.py (built in)",
-   "verdict_rule": "verified when RC-01..03 hold for the route; failed on UNREGISTERED_CONTROLLER / PREFIX_MISMATCH / ROUTE_REMOVED_WITH_CONSUMER",
-   "what": "RC-01 the global prefix set in the bootstrap (setGlobalPrefix) equals the prefix the route node was built with; RC-02 the controller / gateway that provides the route is registered (controllers: / providers:) in a @Module reachable from the root module passed to NestFactory.create; RC-03 the served route still exists in the head graph"
+   "verdict_rule": "verified when RC-01..03 hold for the route; failed on UNREGISTERED_CONTROLLER / PREFIX_MISMATCH / ROUTE_REMOVED_WITH_CONSUMER; on a non-NestJS tree the verdict rests on RC-03 alone and says so",
+   "what": "RC-01 the global prefix set in the bootstrap (setGlobalPrefix) equals the prefix the route node was built with; RC-02 the controller / gateway that provides the route is registered (controllers: / providers:) in a @Module reachable from the root module passed to NestFactory.create; RC-03 the served route still exists in the head graph",
+   "applicability": "Per RULE, decided from the head tree (A2-279, the AUP-GRAPH-009 polyglot2 rule applied to this verifier). RC-01 and RC-02 are statements about NestJS — `setGlobalPrefix` in the file given to NestFactory.create, and `@Module({controllers})` reachable from it. On a tree in which no package.json names an `@nestjs/` package they state nothing, and the verifier records INAPPLICABLE_FRAMEWORK (a line in its output and an event in verify.events) WITHOUT a verdict from those two rules. RC-03 is a statement about the graph and always applies, so the route still gets its verdict and the reason names RC-03 as its only basis. Before this, every route of a Python repository was `not_measured: RC-02 not evaluable: no src/main.ts` — permanently, because nothing an author can do produces a NestJS bootstrap in a repository that has none (measured by A2-277). A NestJS repository whose bootstrap this tool cannot locate is NOT discharged: that is a real coverage gap and keeps its not_measured."
   },
   "schema_diff": {
    "applies_to_nodes": [
@@ -438,9 +439,10 @@
    ],
    "kind": "targeted_test",
    "selectable": true,
-   "tool": "the deployable's test runner (jest / vitest) restricted to the spec files whose `verifies` edge reaches an affected node",
-   "verdict_rule": "verified for the spec node and the units it verifies when the run exits 0; failed otherwise (a test that needs an absent environment fails honestly — the summary records the cause)",
-   "what": "existing tests covering the affected node; never the whole suite"
+   "tool": "the deployable's test runner (jest / vitest / pytest) restricted to the spec files whose `verifies` edge reaches an affected node; the runner is the repository's own (node_modules/.bin, .venv/bin) before the host's",
+   "verdict_rule": "verified for the spec node and the units it verifies when the run exits 0; failed otherwise (a test that needs an absent environment fails honestly — the summary records the cause); a file whose every test was skipped is not_measured, never verified",
+   "what": "existing tests covering the affected node; never the whole suite",
+   "applicability": "required of an entity only when a spec file reaches it AND a runner for that spec's language exists where the verifier runs; otherwise the verifier records INAPPLICABLE_RUNNER — a visible row with no entity verdict, which is never a pass and never demotes a verdict another verifier produced (A2-275, measured on Arcanada-one/argana: 41 verified / 9 not_measured without the flag against 10 / 40 with it)"
   },
   "type_check": {
    "applies_to_nodes": [

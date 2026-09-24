@@ -76,11 +76,17 @@ BUNDLE_FILES = [
     # verifies the bundle's signature before trusting anything in it, and a verifier the caller does
     # not have is a verification that silently does not happen.
     "tools/graph/sshsig.py",
+    # A2-289 — the ReadinessReceipt/v1 validator, imported by this file at the point the gate reads
+    # the pull-request body. It travels with its own contract: the rule table is the contract file,
+    # and a validator bundled without it raises at load_schema() the first time a body carries a
+    # receipt — i.e. exactly when it matters, never in the test that bundles it.
+    "tools/graph/readiness_check.py",
     "tools/graph/ci_gate.py",
     "contracts/graph-verified-change/admission-gate.v1.json",
     "contracts/graph-verified-change/relationship-graph.v1.json",
     "contracts/graph-verified-change/change-admission-receipt.v1.json",
     "contracts/graph-verified-change/verifier-matrix.v1.json",
+    "contracts/readiness-receipt-v1.schema.json",
 ]
 DEFAULT_RECEIPT_GLOBS = ["receipts/graph/**/*.json", "receipts/**/change-admission-*.json"]
 
@@ -415,6 +421,84 @@ def receipts_from_body(body: str, workdir: Path) -> list[Path]:
     return out
 
 
+def check_readiness_receipts(result: dict, body: str, repo: Path, files: list[str], head: str,
+                             tools: Path) -> None:
+    """A2-289 — classify every ReadinessReceipt/v1 this change presents, and refuse a broken one.
+
+    THE GATE COULD ALWAYS READ THEM. `--pr-body-file` has been an input since gate1 and
+    `receipts_from_body` has always parsed every fenced ```json block in it — it simply kept the
+    blocks whose `schema` started with `ChangeAdmissionReceipt` and dropped the rest. A2-278 put two
+    ReadinessReceipt/v1 documents in a pull-request body (step 5: «ReadinessReceipt — в теле PR, НЕ
+    в коммите») and the gate looked straight past them, which is why a copy with `contractDigest`
+    cut out was refused by nobody.
+
+    Two sources, the same two the ChangeAdmissionReceipt has: the pull-request body, and the
+    receipts this CHANGE adds or edits under the tree (a receipt merged by an earlier change is not
+    this change's claim and is left alone, for the same reason `receipts_from_tree` states).
+
+    WHAT IS NOT MEASURED HERE, and why. `readiness_check` can cross-check a receipt's
+    `contractDigest` against the digest the WORK ITEM carries (`--expect-contract-digest`), and this
+    job does not supply one. Nothing in the ChangeAdmissionReceipt carries the work item's contract
+    digest, and fetching it would need a Muneral credential this job does not have and should not be
+    given — the gate runs on a pull-request head, i.e. on attacker-supplied text. So the binding
+    between the receipt and the work item's OWN contract is reported `not_measured`, which is never
+    a pass (DEC-AUP-0008 I4). What IS decided here is the self-contradiction: a receipt that claims
+    it verified a contract binding and will not say which contract.
+    """
+    sys.path.insert(0, str(tools / "tools" / "graph"))
+    try:
+        import readiness_check  # noqa: PLC0415 — the bundled validator, loaded from the pinned bundle
+    except Exception as e:  # pragma: no cover — a bundle without the validator
+        result["checks"].append({"code": "READINESS_VALIDATOR_UNAVAILABLE", "verdict": "not_measured",
+                                 "detail": f"the pinned bundle carries no usable readiness_check: {e!r}. "
+                                           f"No ReadinessReceipt/v1 was judged — that is not a pass."})
+        return
+
+    docs: list[tuple[str, dict]] = [(f"<pull-request body, block {i}>", d)
+                                    for i, d in enumerate(readiness_check.receipts_from_body(body))]
+    for rel in files:
+        if not rel.endswith(".json") or not rel.startswith("receipts/"):
+            continue
+        rc_, raw = git_bytes(repo, "show", f"{head}:{rel}")
+        if rc_ != 0:
+            continue  # deleted by this change — there is nothing at head to judge
+        try:
+            doc = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue  # unreadable JSON is the repository's own json-parse check, not this one
+        if readiness_check.is_readiness_receipt(doc):
+            docs.append((rel, doc))
+
+    result["readiness_receipts"] = {"count": len(docs), "sources": [n for n, _ in docs]}
+    if not docs:
+        result["checks"].append({"code": "READINESS_RECEIPTS_NONE", "verdict": "not_measured",
+                                 "detail": "this change presents no ReadinessReceipt/v1 — neither a ```json "
+                                           "block in the pull-request body nor one added under receipts/. "
+                                           "Nothing was judged about readiness here; `not_measured` is not a pass."})
+        return
+
+    bad = 0
+    for name, doc in docs:
+        r = readiness_check.check(doc)
+        if r["verdict"] == "conformant":
+            result["checks"].append({"code": "READINESS_RECEIPT_CONFORMANT", "verdict": "verified",
+                                     "detail": f"{name}: conformant against "
+                                               f"contracts/readiness-receipt-v1.schema.json"})
+        else:
+            bad += 1
+            detail = "; ".join(f"{f['code']}: {f['detail']}" for f in r["findings"])[:600]
+            result["checks"].append({"code": "READINESS_RECEIPT_VIOLATION", "verdict": "refuse",
+                                     "detail": f"{name}: {detail}"})
+    if bad:
+        result["reason_codes"] = sorted(set(result["reason_codes"] + ["READINESS_RECEIPT_VIOLATION"]))
+    result["checks"].append({"code": "READINESS_CONTRACT_BINDING_NOT_CROSS_CHECKED", "verdict": "not_measured",
+                             "detail": f"{len(docs)} ReadinessReceipt/v1 read; none was compared against the "
+                                       f"contract digest its WORK ITEM carries. This job holds no Muneral "
+                                       f"credential and runs on pull-request-supplied text, so it checks the "
+                                       f"receipt's self-consistency only. The local gate that has the work item "
+                                       f"passes `--expect-contract-digest` to readiness_check.py."})
+
+
 def receipts_from_tree(repo: Path, globs: list[str], changed: set[str] | None = None,
                        base: str | None = None) -> list[Path]:
     """Receipts this CHANGE carries, not every receipt the repository has ever accumulated.
@@ -608,6 +692,7 @@ def cmd_run(a) -> int:
     if a.pr_body_file and Path(a.pr_body_file).exists():
         body = Path(a.pr_body_file).read_text(errors="replace")
     body_receipts = receipts_from_body(body, work)
+    check_readiness_receipts(result, body, repo, files, head, tools)
     tree_receipts = receipts_from_tree(repo, a.receipt_glob or DEFAULT_RECEIPT_GLOBS, changed=set(files), base=base)
     result["receipt_sources"]["tree"] = [str(p.relative_to(repo)) for p in tree_receipts]
     result["receipt_sources"]["pr_body"] = [p.name for p in body_receipts]

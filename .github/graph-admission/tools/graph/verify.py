@@ -22,8 +22,9 @@ Semantics (the graph SELECTS verification, it never replaces it — consilium 20
               served), schema_diff (prisma schema-lite diff + prisma validate), config_schema (keys read ⊆ keys declared),
               fitness_rules (FR-01 transport→persistence, FR-02 import cycles, FR-03 module boundary, FR-04 reuse marker
               resolves, FR-05 deployable boundary; frozen baseline + exemption registry), doc_reference (references into
-              the change set still resolve), targeted_test (jest / vitest restricted to the specs whose `verifies` edge
-              reaches an affected node), property_check (declared per node in the profile)
+              the change set still resolve), targeted_test (jest / vitest / pytest restricted to the specs whose `verifies` edge
+              reaches an affected node; required only where such a spec exists AND its runner does —
+              otherwise INAPPLICABLE_RUNNER, which demotes nothing), property_check (declared per node in the profile)
   verdicts    per entity: failed if any verifier reports failed; not_measured if a required verifier is missing, disabled
               (MANDATORY_VERIFIER_DISABLED) or could not attribute; verified only when every required verifier reports
               verified; an entity reached through an inferred/observed hop across a service/repo boundary stays
@@ -36,8 +37,9 @@ Semantics (the graph SELECTS verification, it never replaces it — consilium 20
               never written (the pilot clone stays untouched)
 Exit codes: 0 draft admitted · 1 draft paused_safe / refused · 2 refusal (impact refusal, STALE_GRAPH, …) · 3 draft
 computed with EMPTY_IMPACT_REQUIRES_EXPLANATION raised by impact0.
-stdlib only; Python ≥ 3.10. tsc / prisma / jest / vitest are the repository's own binaries (node_modules/.bin), found
-through --tsc/--prisma, the profile, or discovery; an absent tool yields not_measured, never verified.
+stdlib only; Python ≥ 3.10. tsc / prisma / jest / vitest are the repository's own binaries (node_modules/.bin), pytest
+is the deployable's or the repository's virtualenv (.venv/bin) before the host's; all found through --tsc/--prisma, the
+profile, or discovery; an absent tool yields not_measured, never verified.
 """
 from __future__ import annotations
 
@@ -52,6 +54,7 @@ import shutil
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,6 +71,38 @@ import contract_diff  # noqa: E402
 VERSION = "1.0.1"
 TOOL = "tools/graph/verify.py"
 MATRIX_PATH = ROOT / "contracts" / "graph-verified-change" / "verifier-matrix.v1.json"
+GATE_POLICY_PATH = ROOT / "contracts" / "graph-verified-change" / "admission-gate.v1.json"
+# The codes only the GATE may issue (admission-gate.v1.json → structural_exemptions.issued_by:
+# "tools/graph/admit_change.py exempt — the gate, never the change author by hand"). Read from the
+# policy when it is there, so the two files cannot drift; the literal is the fallback for a vendored
+# bundle that ships the tools without the contracts.
+STRUCTURAL_EXEMPTION_CODES = ("NO_IMPACT_BY_CONSTRUCTION", "GATE_SELF_UPDATE", "GATE_DECLARATION_AMEND",
+                             "SPENT_RECEIPT_ARCHIVE")
+
+
+def admission_verdict(verdicts: list[dict], exemptions: list[dict]) -> str:
+    """DEC-AUP-0008, matrix P1/P4 — one place, so the rule cannot be stated twice and drift.
+
+    Every verdict must be `verified`, or carry an exemption. A `failed` entity without one REFUSES the
+    change; a `not_measured` entity without one PAUSES it (not_measured is not a pass); an empty verdict
+    list pauses it, because a change that measured nothing has not been verified. An exemption resolves
+    exactly the entity it names and nothing else, and its presence is visible in the verdict itself —
+    `admitted_with_exemptions` is a different word from `admitted` on purpose.
+    """
+    exempted = {x.get("entity") for x in exemptions}
+    unresolved = {v["verdict"] for v in verdicts if v["entity"] not in exempted}
+    if "failed" in unresolved:
+        return "refused"
+    if "not_measured" in unresolved or not verdicts:
+        return "paused_safe"
+    return "admitted_with_exemptions" if exemptions else "admitted"
+
+
+def structural_exemption_codes() -> set[str]:
+    try:
+        return set(json.loads(GATE_POLICY_PATH.read_text())["structural_exemptions"]["codes"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return set(STRUCTURAL_EXEMPTION_CODES)
 FIXTURE_DIR = ROOT / "contracts" / "graph-verified-change" / "fixtures"
 TS_MINI = FIXTURE_DIR / "ts-mini"
 VFIX = FIXTURE_DIR / "verify"
@@ -75,6 +110,14 @@ BASELINE_DIR = ROOT / "contracts" / "graph-verified-change" / "fitness-baseline"
 FRAMEWORK_ENV_RE = re.compile(r"^(NODE_ENV|CI|PORT|HOME|PATH|TZ|DEBUG|NO_PROXY|HTTPS?_PROXY|NEXT_.*|__NEXT.*|VERCEL.*|NEXTAUTH_.*|AUTH_.*|WS_NO_.*)$")
 ENV_DECL_FILES = [".env.example", ".env.schema", ".env.template", "env.schema.json", ".env.sample"]
 TRANSPORT_RE = re.compile(r"\.(controller|gateway|resolver)\.[cm]?[jt]sx?$")
+# targeted_test: what a spec file looks like, per language, and how each runner reports a result.
+# The python rule is pytest's OWN default collection rule (`test_*.py` / `*_test.py`), so the files
+# this tool hands the runner are exactly the files the runner would have collected itself.
+SPEC_JS_RE = re.compile(r"\.(spec|test)\.[cm]?[jt]sx?$")
+SPEC_PY_RE = re.compile(r"(^|/)(test_\w+|\w+_test)\.py$")
+PYTEST_VERBOSE_RE = re.compile(r"^(\S+?\.py)::\S+\s+(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)")
+PYTEST_SUMMARY_RE = re.compile(r"^(FAILED|ERROR)\s+(\S+?\.py)(?:::|\s|$)")
+VERDICT_RANK = {"verified": 0, "not_measured": 1, "failed": 2}
 PERSISTENCE_RE = re.compile(r"(^|/)prisma\.service\.[cm]?[jt]s$|\.repository\.[cm]?[jt]s$")
 PERSISTENCE_PKGS = {"@prisma/client", "typeorm"}
 BOUNDARY_TARGET_RE = re.compile(r"\.(controller|gateway|processor)\.[cm]?[jt]sx?$")
@@ -392,6 +435,29 @@ def nest_registered_files(scan: TreeScan, root_file: str) -> tuple[set[str], lis
 
 
 # ----------------------------------------------------------------------------------------------- fitness rules
+def spec_lang(path: str) -> str | None:
+    """`js` | `py` | None — the language whose runner could execute this spec file."""
+    if SPEC_JS_RE.search(path):
+        return "js"
+    if SPEC_PY_RE.search(path):
+        return "py"
+    return None
+
+
+def pytest_file_status(outcomes: set[str]) -> str | None:
+    """PASS / FAIL / SKIP for one file from the per-test outcomes pytest printed for it.
+
+    A file whose every test was skipped is SKIP, never PASS: a skipped test measures nothing, and
+    the caller turns that into `not_measured` (DEC-AUP-0008 I4)."""
+    if {"FAILED", "ERROR"} & outcomes:
+        return "FAIL"
+    if {"PASSED", "XPASS", "XFAIL"} & outcomes:
+        return "PASS"
+    if outcomes == {"SKIPPED"}:
+        return "SKIP"
+    return None
+
+
 def deployable_of(path: str, deployables: dict[str, dict]) -> str | None:
     best = None
     for d in deployables:
@@ -706,7 +772,7 @@ class Verify:
         else:
             files = self.repo.worktree_files()
         self.mode, self.base, self.head = mode, base, head
-        if a.graph and a.graph != "auto":
+        if not build_graph.graph_is_auto(a.graph):   # one definition of the word, shared with contract_diff
             self.graph_path = str(a.graph)
             self.idx = impact.load_graph(Path(a.graph), set(impact.RULES))
         else:
@@ -866,9 +932,24 @@ class Verify:
                 req.discard("type_check")
             if ntype == "deployable_unit" and not self.deployable_has_ts(ent["node"].get("path", "")):
                 req.discard("type_check")
+            # AUP-GRAPH-010 polyglot3. A SELECTED verifier used to be demanded of every entity of a
+            # node type it applies to, whether or not anything could ever produce a verdict for that
+            # entity — and a demanded verifier that produces no verdict is `not_measured` (:1989).
+            # So `--select targeted_test` on a repository whose tests are pytest made the receipt
+            # strictly WORSE than not asking for tests at all: measured on Arcanada-one/argana
+            # b1d785a..2c96b9d, 41 verified / 9 not_measured without the flag against 10 / 40 with it
+            # (A2-271). The flag asked a question and the answer erased thirty-one measurements that
+            # had nothing to do with tests. Applicability is therefore decided per entity, from the
+            # tree: `targeted_test` is required only where a spec reaches the entity AND a runner for
+            # that spec's language exists on this host. Everything else keeps the verdict its own
+            # verifiers gave it, and the inapplicable runner is recorded as INAPPLICABLE_RUNNER —
+            # visible, never a pass, and never a demotion.
             for s in self.selected:
-                if ntype in m["verifiers"][s]["applies_to_nodes"]:
-                    req.add(s)
+                if ntype not in m["verifiers"][s]["applies_to_nodes"]:
+                    continue
+                if s == "targeted_test" and ent["id"] not in self.targeted_test_runnable():
+                    continue
+                req.add(s)
             ent["required"] = sorted(req)
         self.disabled_hits = sorted(v for v in self.disabled if any(v in e["required"] for e in self.entities.values()))
         if self.disabled_hits and "disabled_mandatory_event" in self.rules:
@@ -900,6 +981,33 @@ class Verify:
                 return True
         return False
 
+    def repo_has_nest(self) -> bool:
+        """Does this tree carry the NestJS bootstrap RC-01 and RC-02 are rules ABOUT?
+
+        RC-01 reads `setGlobalPrefix` out of the file passed to `NestFactory.create`; RC-02 walks
+        `@Module({controllers: …})` from that same root. Both are statements about one framework. On a
+        tree that does not use it there is nothing to walk, and the verifier answered «RC-02 not
+        evaluable: no src/main.ts» on EVERY route — measured by A2-277 on a Python repository, where
+        that is not a coverage gap an author can close but a permanent not_measured, the same trap
+        AUP-GRAPH-009 polyglot2 removed from `type_check` and A2-275 removed from `targeted_test`.
+
+        The discriminator is the tree and it is deliberately GENEROUS: any `package.json` anywhere in
+        the repository that names an `@nestjs/` package counts, so a monorepo that hoists the
+        dependency to its root still gets the full check. Only a tree with no NestJS at all is
+        discharged. A Nest repository whose bootstrap this tool cannot FIND is a different fact and
+        keeps its not_measured — that is a real coverage gap.
+        """
+        if getattr(self, "_has_nest", None) is None:
+            found = False
+            for p in self.tree_head.paths:
+                if not p.endswith("package.json") or "node_modules/" in p or p.startswith(".github/graph-admission/"):
+                    continue
+                if "@nestjs/" in (self.tree_head.text(p) or ""):
+                    found = True
+                    break
+            self._has_nest = found
+        return self._has_nest
+
     def needing(self, verifier: str) -> list[str]:
         return sorted(e for e, ent in self.entities.items() if verifier in ent["required"] and verifier not in self.disabled)
 
@@ -926,8 +1034,15 @@ class Verify:
                 ext = "txt"   # not JSON at all: say so in the name rather than in a parse error
         ref = self.out_dir / f"{vid}.{ext}"
         ref.write_text(body)
+        # DEC-AUP-0008 / A2-274. `exit_code` is this verifier's verdict on the whole RUN, and a run
+        # covers many entities: contract_diff exits 1 when ANY contract in the repository carries a
+        # breaking finding, tsc exits 1 when any file has an error. The per-entity results were
+        # computed right here and then thrown away, leaving the gate to re-derive entity coverage
+        # from a process code that cannot express it. They are written down instead — the same
+        # verdicts that go into `verdicts[]`, recorded where a reader can see WHICH verifier said so.
         self.verifiers.append({"id": vid, "kind": kind, "command": command, "entities": sorted(entities), "exit_code": int(exit_code),
-                               "output_ref": rel_ref(ref), "started_at_utc": started, "duration_s": secs, "summary": summary})
+                               "output_ref": rel_ref(ref), "started_at_utc": started, "duration_s": secs, "summary": summary,
+                               **({"entity_verdicts": {e: v[0] for e, v in sorted(verdicts.items())}} if verdicts else {})})
         self.ev.setdefault(vid, {}).update(verdicts)
 
     # ---- verifiers
@@ -1206,6 +1321,19 @@ class Verify:
         prefixes: dict[str, str | None] = {}
         registered: dict[str, tuple[set[str], list[str]]] = {}
         log, verdicts = [], {}
+        # A2-277 defect 2. RC-01/RC-02 are NestJS rules; RC-03 (is the served route still there, and
+        # does anything consume it) is a statement about the graph and holds in any language. So the
+        # applicability is per RULE, not per verifier: on a non-Nest tree the route keeps the verdict
+        # RC-03 can honestly produce, and the reason says which rules ran and which never applied.
+        nest = self.repo_has_nest()
+        if not nest and ents:
+            log.append(f"INAPPLICABLE_FRAMEWORK: no package.json in this tree names an @nestjs/ package, so "
+                       f"RC-01 (setGlobalPrefix) and RC-02 (@Module registration) state nothing about these "
+                       f"{len(ents)} route(s). They are NOT measured and NOT counted against them; RC-03 still is.")
+            self.events.append({"code": "INAPPLICABLE_FRAMEWORK", "verifier": "route_config_consistency",
+                                "rules": ["rc01", "rc02"], "routes": len(ents),
+                                "reason": "the tree carries no NestJS dependency: an absent framework is a fact "
+                                          "about the repository, not a measurement of the route"})
         for eid in ents:
             n = self.entities[eid]["node"]
             path = n.get("path") or ""
@@ -1241,10 +1369,10 @@ class Verify:
                 registered[dep] = nest_registered_files(self.scan_head, root_file) if root_file else (set(), ["no src/main.ts"])
             want = (n.get("attrs") or {}).get("global_prefix")
             want = ("/" + want.strip("/")) if want else None
-            if "rc01" in self.fr_rules and want is not None and want != prefixes[dep]:   # a route built without a prefix attr is excluded from it (e.g. health)
+            if nest and "rc01" in self.fr_rules and want is not None and want != prefixes[dep]:   # a route built without a prefix attr is excluded from it (e.g. health)
                 problems.append(f"PREFIX_MISMATCH: route built with prefix {want!r}, bootstrap at head sets {prefixes[dep]!r}")
             reg, rnotes = registered[dep]
-            if "rc02" in self.fr_rules:
+            if nest and "rc02" in self.fr_rules:
                 if not reg and rnotes and rnotes[0].startswith("no"):
                     verdicts[eid] = ("not_measured", f"RC-02 not evaluable: {rnotes[0]}")
                     log.append(f"{eid}: not_measured {rnotes[0]}")
@@ -1253,6 +1381,10 @@ class Verify:
                     problems.append(f"UNREGISTERED_CONTROLLER: {path} is registered in no @Module reachable from the root module ({rnotes[-1] if rnotes else ''})")
             if problems:
                 verdicts[eid] = ("failed", "; ".join(problems)[:300])
+            elif not nest:
+                verdicts[eid] = ("verified", "RC-03 only: served at head and no consumer left dangling. RC-01/RC-02 "
+                                             "INAPPLICABLE_FRAMEWORK — this tree declares no @nestjs/ package, so "
+                                             "there is no bootstrap prefix and no @Module graph to check")
             else:
                 verdicts[eid] = ("verified", f"served at head, prefix {prefixes[dep]!r} consistent" + (" (route excluded from the prefix)" if want is None else "") + ", controller registered")
             log.append(f"{eid}: {verdicts[eid][0]} — {verdicts[eid][1]}")
@@ -1550,84 +1682,166 @@ class Verify:
                                                 ensure_ascii=False, indent=1) + "\n\n" + "\n".join(lines),
                     started, round(time.monotonic() - t0, 2), summary, verdicts, ext="json")
 
-    def v_targeted_test(self):
-        if "targeted_test" not in self.selected or "targeted_test" in self.disabled:
-            return
-        affected = set(self.entities)
+    # ---- targeted_test (selectable): plan, runner, run
+    def targeted_test_plan(self) -> list[dict]:
+        """The spec files that reach an affected entity, grouped by deployable AND language, each
+        with the runner that can execute them (`cmd` is None when this host has none).
+
+        Built here rather than inside the verifier because `required` is computed before any
+        verifier runs and applicability has to be known then (AUP-GRAPH-010, see collect_entities).
+        """
+        if getattr(self, "_tt_plan", None) is not None:
+            return self._tt_plan
         specs: dict[str, set[str]] = {}
-        for eid in affected:
+        for eid in sorted(self.entities):
             n = self.entities[eid]["node"]
-            p = n.get("path") or ""
-            if n["type"] == "code_unit" and re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", p):
-                specs.setdefault(p, set()).add(eid)
+            path = n.get("path") or ""
+            if n["type"] == "code_unit" and spec_lang(path) and self.tree_head.exists(path):
+                specs.setdefault(path, set()).add(eid)
             for e in self.head_rev.get(eid, []):
                 if e["type"] == "verifies" and e["from"].startswith("code_unit:"):
                     sp = e["from"].split(":", 1)[1]
-                    if re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", sp) and self.tree_head.exists(sp):
+                    if spec_lang(sp) and self.tree_head.exists(sp):
                         specs.setdefault(sp, set()).add(eid)
                         specs[sp].add(e["from"])
-        if not specs:
+        groups: dict[tuple[str, str], list[str]] = {}
+        for sp in specs:
+            groups.setdefault((deployable_of(sp, self.deployables) or "", spec_lang(sp)), []).append(sp)
+        plan = []
+        for (dep, lang), sps in sorted(groups.items()):
+            prefix = "" if dep in ("", ".") else dep + "/"
+            rel = [sp[len(prefix):] for sp in sorted(sps)]
+            runner, cmd = self.targeted_test_runner(dep, lang, rel)
+            ents = sorted({e for sp in sps for e in specs[sp]} | {f"code_unit:{sp}" for sp in sps if f"code_unit:{sp}" in self.entities})
+            plan.append({"dep": dep, "lang": lang, "prefix": prefix, "rel": rel, "runner": runner, "cmd": cmd,
+                         "entities": ents, "specs": {sp: sorted(specs[sp]) for sp in sorted(sps)},
+                         "id": "v-targeted-test-" + (re.sub(r"[^a-z0-9]+", "-", dep.lower()).strip("-") or "root")
+                               + ("-pytest" if lang == "py" else "")})
+        self._tt_plan = plan
+        return plan
+
+    def targeted_test_runnable(self) -> set[str]:
+        """Entities for which a targeted test could actually be executed on this host."""
+        if getattr(self, "_tt_runnable", None) is None:
+            self._tt_runnable = {e for g in self.targeted_test_plan() if g["cmd"] for e in g["entities"]}
+        return self._tt_runnable
+
+    def targeted_test_runner(self, dep: str, lang: str, rel: list[str]) -> tuple[str | None, list[str] | None]:
+        """(runner name, argv) for one group; argv None means "no runner for this language here"."""
+        prof = (self.profile.get("deployables") or {}).get(dep, {})
+        if prof.get("test"):
+            return "profile", list(prof["test"])
+        if lang == "py":
+            bin_ = self.find_pytest(dep)
+            # -p no:cacheprovider: the verifier reads a tree, it does not write .pytest_cache into it.
+            return "pytest", ([*bin_, "-v", "-p", "no:cacheprovider", *rel] if bin_ else None)
+        prefix = "" if dep in ("", ".") else dep + "/"
+        pj = {}
+        if self.tree_head.exists(prefix + "package.json"):
+            try:
+                pj = json.loads(self.tree_head.text(prefix + "package.json"))
+            except json.JSONDecodeError:
+                pj = {}
+        script = (pj.get("scripts") or {}).get("test", "")
+        runner = "jest" if "jest" in script else ("vitest" if "vitest" in script else None)
+        bin_ = find_bin(runner, None, self.exec_root, self.top, [dep]) if runner in ("jest", "vitest") else None
+        if runner == "jest" and bin_:
+            return runner, [bin_, "--runInBand", "--ci", *rel]
+        if runner == "vitest" and bin_:
+            return runner, [bin_, "run", *rel]
+        return runner, None
+
+    def find_pytest(self, dep: str) -> list[str] | None:
+        """The deployable's own pytest, then the repository's, then the host's, then `python -m pytest`.
+
+        Order matters: a repository that pins its runner in a virtualenv must be measured with THAT
+        one. `None` is not a failure — it is "these tests cannot run on this host", which the caller
+        records as INAPPLICABLE_RUNNER and never as a verdict.
+        """
+        roots = [self.exec_root / dep] if dep not in ("", ".") else []
+        roots += [self.exec_root, self.top]
+        for root in roots:
+            for rel in (".venv/bin/pytest", "venv/bin/pytest", "env/bin/pytest"):
+                cand = root / rel
+                if cand.is_file() and os.access(cand, os.X_OK):
+                    return [str(cand)]
+        found = shutil.which("pytest")
+        if found:
+            return [found]
+        if subprocess.run([sys.executable, "-c", "import pytest"], capture_output=True).returncode == 0:
+            return [sys.executable, "-m", "pytest"]
+        return None
+
+    @staticmethod
+    def parse_test_output(out: str, lang: str, runner: str | None) -> dict[str, str]:
+        """file (as the runner named it) → PASS | FAIL | SKIP."""
+        if lang == "py" or runner == "pytest":
+            per: dict[str, set[str]] = {}
+            for line in out.splitlines():
+                m = PYTEST_VERBOSE_RE.match(line)
+                if m:
+                    per.setdefault(m.group(1), set()).add(m.group(2))
+                    continue
+                m = PYTEST_SUMMARY_RE.match(line)
+                if m:
+                    per.setdefault(m.group(2), set()).add(m.group(1))
+            return {f: st for f, o in per.items() if (st := pytest_file_status(o))}
+        status: dict[str, str] = {}
+        for line in out.splitlines():
+            m = re.match(r"^\s*(PASS|FAIL)\s+(\S+)", line)
+            if m:
+                status[m.group(2)] = m.group(1)
+            m2 = re.match(r"^\s*([\u2713\u2717\u00d7])\s+(\S+)", line)
+            if m2 and runner == "vitest":
+                status[m2.group(2)] = "PASS" if m2.group(1) == "\u2713" else "FAIL"
+        return status
+
+    def v_targeted_test(self):
+        if "targeted_test" not in self.selected or "targeted_test" in self.disabled:
+            return
+        plan = self.targeted_test_plan()
+        if not plan:
             self.notes.append("targeted_test selected: no spec with a verifies edge reaches an affected entity")
             return
-        groups: dict[str, list[str]] = {}
-        for sp in specs:
-            dep = deployable_of(sp, self.deployables) or ""
-            groups.setdefault(dep, []).append(sp)
-        for dep, sps in sorted(groups.items()):
+        for g in plan:
             started = now_iso()
-            prefix = "" if dep in ("", ".") else dep + "/"
-            prof = (self.profile.get("deployables") or {}).get(dep, {})
-            runner, cmd = None, None
-            if prof.get("test"):
-                runner, cmd = "profile", list(prof["test"])
-            else:
-                pj = {}
-                if self.tree_head.exists(prefix + "package.json"):
-                    try:
-                        pj = json.loads(self.tree_head.text(prefix + "package.json"))
-                    except json.JSONDecodeError:
-                        pj = {}
-                script = (pj.get("scripts") or {}).get("test", "")
-                if "jest" in script:
-                    runner = "jest"
-                elif "vitest" in script:
-                    runner = "vitest"
-            rel = [sp[len(prefix):] for sp in sorted(sps)]
-            ents = sorted({e for sp in sps for e in specs[sp]} | {f"code_unit:{sp}" for sp in sps if f"code_unit:{sp}" in self.entities})
-            vid = "v-targeted-test-" + (re.sub(r"[^a-z0-9]+", "-", dep.lower()).strip("-") or "root")
-            bin_ = find_bin(runner, None, self.exec_root, self.top, [dep]) if runner in ("jest", "vitest") else None
-            if runner == "jest" and bin_:
-                cmd = [bin_, "--runInBand", "--ci", *rel]
-            elif runner == "vitest" and bin_:
-                cmd = [bin_, "run", *rel]
-            if not cmd:
-                self.record(vid, "targeted_test", f"(no runner for {dep or 'root'}: {runner or 'none detected'})", ents, 127, f"runner {runner} not available", started, 0.0,
-                            "not_measured: runner unavailable", {e: ("not_measured", f"targeted test runner unavailable for {dep}") for e in ents})
+            if not g["cmd"]:
+                # AUP-GRAPH-010. The row is kept — a reader must see that tests were asked for and
+                # could not run — but it carries NO entity verdict: an absent runner is a fact about
+                # this host, not a measurement of the entity, and writing not_measured here is what
+                # used to overwrite verdicts other verifiers had honestly produced.
+                reason = (f"INAPPLICABLE_RUNNER: no {g['lang']} test runner for "
+                          f"{g['dep'] or 'the repository root'} ({g['runner'] or 'none detected'}); "
+                          f"{len(g['rel'])} spec(s) not run, no verdict claimed for "
+                          f"{len(g['entities'])} entity(ies)")
+                self.record(g["id"], "targeted_test", f"(no runner for {g['dep'] or 'root'}: {g['runner'] or 'none detected'})",
+                            g["entities"], 127, reason + "\n" + "\n".join(g["rel"]), started, 0.0,
+                            "not_measured: INAPPLICABLE_RUNNER", {})
+                self.notes.append("targeted_test: " + reason)
+                self.events.append({"code": "INAPPLICABLE_RUNNER", "rule": "AUP-GRAPH-010", "verifier": g["id"], "text": reason})
                 continue
-            rc, out, secs = run_cmd(cmd, self.exec_root / dep if dep else self.exec_root, env={"CI": "1"}, timeout=900)
-            status: dict[str, str] = {}
-            for line in out.splitlines():
-                m = re.match(r"^\s*(PASS|FAIL)\s+(\S+)", line)
-                if m:
-                    status[m.group(2)] = m.group(1)
-                m2 = re.match(r"^\s*([✓✗×])\s+(\S+)", line)
-                if m2 and runner == "vitest":
-                    status[m2.group(2)] = "PASS" if m2.group(1) == "✓" else "FAIL"
-            verdicts = {}
-            for sp in sorted(sps):
-                r = sp[len(prefix):]
+            rc, out, secs = run_cmd(g["cmd"], self.exec_root / g["dep"] if g["dep"] else self.exec_root,
+                                    env={"CI": "1"}, timeout=900)
+            status = self.parse_test_output(out, g["lang"], g["runner"])
+            verdicts: dict[str, tuple[str, str]] = {}
+            for sp, ents_of_spec in g["specs"].items():
+                r = sp[len(g["prefix"]):]
                 st = status.get(r) or next((v for k, v in status.items() if k.endswith(r) or r.endswith(k)), None)
                 if st is None:
                     st = "PASS" if rc == 0 else "FAIL"
-                v = ("verified", f"{r}: {st}") if st == "PASS" else ("failed", f"{r}: {st} (exit {rc})")
-                for e in specs[sp]:
+                if st == "PASS":
+                    v = ("verified", f"{r}: PASS ({g['runner']})")
+                elif st == "SKIP":
+                    v = ("not_measured", f"{r}: every test skipped — a skipped test measures nothing")
+                else:
+                    v = ("failed", f"{r}: {st} (exit {rc})")
+                for e in list(ents_of_spec) + ([f"code_unit:{sp}"] if f"code_unit:{sp}" in self.entities else []):
                     prev = verdicts.get(e)
-                    if prev is None or (v[0] == "failed"):
+                    if prev is None or VERDICT_RANK[v[0]] > VERDICT_RANK[prev[0]]:
                         verdicts[e] = v
-                sid = f"code_unit:{sp}"
-                if sid in self.entities:
-                    verdicts[sid] = v if verdicts.get(sid, ("verified", ""))[0] != "failed" else verdicts[sid]
-            self.record(vid, "targeted_test", " ".join(cmd), ents, rc, out, started, secs, f"{len(sps)} spec(s), exit {rc}, {sum(1 for v in verdicts.values() if v[0] == 'failed')} failed", verdicts)
+            failed = sum(1 for v in verdicts.values() if v[0] == "failed")
+            self.record(g["id"], "targeted_test", " ".join(g["cmd"]), g["entities"], rc, out, started, secs,
+                        f"{len(g['specs'])} spec(s) via {g['runner']}, exit {rc}, {failed} failed", verdicts)
 
     def v_property_check(self):
         if "property_check" not in self.selected or "property_check" in self.disabled:
@@ -2012,23 +2226,23 @@ class Verify:
             verdicts.append(rec)
         if "every_entity_verdict" not in self.rules and verdicts:
             verdicts = verdicts[:-1]   # mutant: drop one verdict
-        vs = {v["verdict"] for v in verdicts}
-        if "admission_rule" in self.rules:
-            if "failed" in vs:
-                adm = "refused"
-            elif "not_measured" in vs or not verdicts:
-                adm = "paused_safe"
-            else:
-                adm = "admitted"
-        else:
-            adm = "admitted"
+        # A2-277 defect 3. The admission verdict used to be computed with `exemptions: []` no matter
+        # what, because the agent could only attach exemptions AFTER reading the receipt — and there
+        # was no way to recompute it, so the field had to be hand-edited into agreement with a rule
+        # the gate then re-checks (schema_check ADMISSION_CONTRADICTS_VERDICTS). `--exemptions` closes
+        # the loop: the file is read here, validated by the same conditions the gate applies in C10,
+        # and the verdict is computed ONCE, with them in hand. The order is in
+        # docs/how-to/attach-exemptions-to-a-receipt.md; a structural code is REFUSED here, because
+        # those are issued by `admit_change.py exempt` and re-measured by the gate.
+        exemptions, exemption_notes = self.load_exemptions(verdicts)
+        adm = (admission_verdict(verdicts, exemptions) if "admission_rule" in self.rules else "admitted")
         rec = {"schema": "ChangeAdmissionReceipt/v1", "receipt_id": f"car-verify-{self.captured_at.replace('-', '').replace(':', '')}-{(self.head or self.repo.head())[:8]}",
                "captured_at_utc": self.captured_at, "host": os.uname().nodename, "producer": {"tool": TOOL, "version": VERSION},
                "decision_ref": "DEC-AUP-0008", "repo": q["repo"],
                "graph": {k: q["graph"][k] for k in ("path", "source_commit", "graph_digest", "builder_version", "built_at_utc")},
                "tree": q["tree"], "staleness": {k: v for k, v in q["staleness"].items() if k != "checked_nodes"},
                "change_set": dict(q["change_set"]), "impact_set": {k: v for k, v in q["impact_set"].items() if k != "files"},
-               "verifiers": self.verifiers, "verdicts": verdicts, "exemptions": [],
+               "verifiers": self.verifiers, "verdicts": verdicts, "exemptions": exemptions,
                "structural_exclusions": sorted(self.excluded.values(), key=lambda x: x["entity"]),
                "admission": {"verdict": adm, "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured "
                                                      "without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, "
@@ -2037,7 +2251,7 @@ class Verify:
                              "superseded_self_rule": self.SUPERSEDED_SELF_RULE},
                "notes": [f"DRAFT produced by `arcana verify` ({TOOL} {VERSION}) from matrix {rel_ref(MATRIX_PATH)}; selection rule: {self.matrix['selection_rule'][:120]}…",
                          f"profile: {self.profile_ref}; baseline: {self.baseline_ref} ({self.baseline_status}); selected: {sorted(self.selected) or 'none'}; disabled: {sorted(self.disabled) or 'none'}",
-                         *self.notes],
+                         *exemption_notes, *self.notes],
                "verify": {"events": self.events, "required_by_entity": {e: ent["required"] for e, ent in sorted(self.entities.items())},
                           "seconds": {"prepare": self.prep_seconds, "verifiers": round(sum(v.get("duration_s", 0) for v in self.verifiers), 2)}}}
         if "head_graph" in q:
@@ -2055,6 +2269,65 @@ class Verify:
             # admit_change compares this field with where it FOUND the receipt.
             rec["receipt_path"] = self.self_receipt_rel
         return rec
+
+    def load_exemptions(self, verdicts: list[dict]) -> tuple[list[dict], list[str]]:
+        """Read `--exemptions`, keep the admissible ones, and SAY what was thrown away.
+
+        Every condition here is one the gate re-checks (admit_change C10): an owner, an expiry that is
+        still in the future at `captured_at_utc`, and an entity this receipt actually carries a verdict
+        for. An exemption that fails one of them is dropped and named in the notes rather than written
+        into the receipt, because a receipt that carries an inadmissible exemption is REFUSED at the
+        gate, and the author would learn that one CI round later.
+
+        Structural codes are refused outright: they are issued by `admit_change.py exempt`, bound to a
+        diff, and re-measured by the gate on every evaluation (C16). A verifier that could mint one
+        would be minting its own structural proof.
+        """
+        path = getattr(self.a, "exemptions", None)
+        if not path:
+            return [], []
+        try:
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return [], [f"--exemptions {path}: unreadable ({type(exc).__name__}: {exc}); NO exemption was "
+                        f"attached and the admission verdict is the unexempted one"]
+        items = doc.get("exemptions") if isinstance(doc, dict) else doc
+        if not isinstance(items, list):
+            return [], [f"--exemptions {path}: expected a list, or an object with an `exemptions` list; "
+                        f"NO exemption was attached"]
+        structural = structural_exemption_codes()
+        verdict_of = {v["entity"]: v["verdict"] for v in verdicts}
+        captured = self.captured_at
+        kept, rejected = [], []
+        for x in items:
+            if not isinstance(x, dict):
+                rejected.append("an entry that is not an object")
+                continue
+            ent, code = x.get("entity"), x.get("code")
+            exp = str(x.get("expires_at_utc") or "")
+            if code in structural:
+                rejected.append(f"{ent}: code {code!r} is STRUCTURAL — issue it with `admit_change.py exempt`, "
+                                f"which binds it to the diff and lets the gate re-measure it (C16)")
+            elif not x.get("owner"):
+                rejected.append(f"{ent}: no owner")
+            elif not exp:
+                rejected.append(f"{ent}: no expires_at_utc")
+            elif not (exp.endswith("Z") and len(exp) >= 20):
+                # Compared as text, so the text has to be the one shape that sorts like a clock:
+                # `YYYY-MM-DDTHH:MM:SSZ`. Anything else is rejected rather than guessed at.
+                rejected.append(f"{ent}: expires_at_utc {exp!r} is not an ISO-8601 UTC instant ending in Z")
+            elif exp <= captured:
+                rejected.append(f"{ent}: expired {exp} (receipt captured {captured})")
+            elif ent not in verdict_of:
+                rejected.append(f"{ent}: this receipt carries no verdict for that entity")
+            elif verdict_of[ent] == "verified":
+                rejected.append(f"{ent}: already verified — an exemption would hide a measurement, not "
+                                f"stand in for a missing one")
+            else:
+                kept.append(dict(x))
+        notes = [f"exemptions: {len(kept)} attached from {path}"
+                 + (f"; {len(rejected)} REJECTED — " + "; ".join(rejected) if rejected else "")]
+        return sorted(kept, key=lambda x: str(x.get("entity"))), notes
 
     def matrix_id_of(self, v: dict) -> str:
         vid = v["id"]
@@ -2323,6 +2596,37 @@ def selftest(a) -> int:
     check("data edge requires schema_diff, config edge requires config_schema, any code node requires fitness_rules",
           "schema_diff" in matrix["edge_types"]["maps_model"]["mandatory"] and "config_schema" in matrix["edge_types"]["reads_config"]["mandatory"]
           and "fitness_rules" in matrix["node_types"]["code_unit"]["mandatory"])
+    # A2-279. Three rules this change makes, each stated as a property of the tool rather than of one
+    # fixture, and each able to go red: the mutants that kill them are named in the PR body.
+    check("route_config_consistency declares its applicability, and RC-03 is what survives it (A2-277 defect 2)",
+          "INAPPLICABLE_FRAMEWORK" in matrix["verifiers"]["route_config_consistency"].get("applicability", "")
+          and "RC-03" in matrix["verifiers"]["route_config_consistency"].get("applicability", ""))
+    _rc_files = {"pyproject.toml": "[project]\nname='x'\n", "app/routes.py": "def orders(): ...\n"}
+    _rc = Verify.__new__(Verify)
+    _rc.tree_head = SimpleNamespace(paths=sorted(_rc_files), exists=lambda q: q in _rc_files,
+                                    text=lambda q: _rc_files[q], under=lambda d: sorted(_rc_files))
+    _rc._has_nest = None
+    check("a tree that declares no @nestjs/ package is not charged for a missing NestJS bootstrap",
+          Verify.repo_has_nest(_rc) is False)
+    _nest_files = {"package.json": '{"dependencies":{"@nestjs/core":"11.0.0"}}'}
+    _nest = Verify.__new__(Verify)
+    _nest.tree_head = SimpleNamespace(paths=sorted(_nest_files), exists=lambda q: q in _nest_files,
+                                      text=lambda q: _nest_files[q], under=lambda d: sorted(_nest_files))
+    _nest._has_nest = None
+    check("a tree that DOES declare NestJS keeps the full RC-01/RC-02 check", Verify.repo_has_nest(_nest) is True)
+    _nm = [{"entity": "e1", "verdict": "not_measured"}, {"entity": "e2", "verdict": "verified"}]
+    _ex = [{"entity": "e1", "code": "ENV_UNAVAILABLE", "owner": "selftest", "expires_at_utc": "2099-01-01T00:00:00Z"}]
+    check("an exemption attached before the verdict turns paused_safe into admitted_with_exemptions, and only "
+          "for the entity it names (A2-277 defect 3)",
+          admission_verdict(_nm, []) == "paused_safe"
+          and admission_verdict(_nm, _ex) == "admitted_with_exemptions"
+          and admission_verdict([{"entity": "e3", "verdict": "failed"}] + _nm, _ex) == "refused")
+    check("a verifier row's per-entity record, not its process exit code, decides whether it covered an entity "
+          "(A2-274 defect 2)",
+          impact_pair.row_measured_verified({"exit_code": 1, "entity_verdicts": {"a": "verified"}}, "a") is True
+          and impact_pair.row_measured_verified({"exit_code": 1, "entity_verdicts": {"a": "failed"}}, "a") is False
+          and impact_pair.row_measured_verified({"exit_code": 0}, "a") is True
+          and impact_pair.row_measured_verified({"exit_code": 1}, "a") is False)
     hints = {t: d.get("mandatory_verifier_hint", "") for t, d in gs["edge_types"].items()}
     check("matrix mandatory sets agree with the graph schema's mandatory_verifier_hint text",
           "contract" in hints["implements_contract"] and "type-check" in hints["imports"] and "schema" in hints["maps_model"] and "config" in hints["reads_config"])
@@ -2555,12 +2859,36 @@ def selftest(a) -> int:
         check(f"rule mutant {rule} disabled → an expectation goes red (killed)", killed)
         battery["rules"].append({"rule": rule, "killed": bool(killed), "scenario": fid})
 
-    # selectable verifiers: targeted_test declared but no runner in the fixture → not_measured rows, never verified; property_check with none declared → note
+    # selectable verifiers: targeted_test declared but no runner in the fixture → INAPPLICABLE_RUNNER rows that
+    # claim nothing and demote nothing; property_check with none declared → note
     fault = next(f for f in FAULTS if f["id"] == "S00-clean")
     srec, _ = run_scenario(scratch, work, fault, tsc, prisma, select="targeted_test,property_check", graph_path=base_graph)
     tt = [v for v in srec["verifiers"] if v["kind"] == "targeted_test"]
-    check("selectable targeted_test: runner absent in the fixture ⇒ recorded verifier rows with not_measured, no verified from a test that did not run",
-          bool(tt) and all(v["exit_code"] == 127 for v in tt) and all(x["verdict"] != "verified" or "targeted" not in " ".join(x.get("verifier_ids", [])) for x in srec["verdicts"]), rows=len(tt))
+    unrun = {v["id"] for v in tt if v["exit_code"] == 127}
+    check("selectable targeted_test: a runner absent in the fixture ⇒ a recorded row, and no verdict of any kind from a test that did not run",
+          bool(tt) and bool(unrun) and all("INAPPLICABLE_RUNNER" in v["summary"] for v in tt if v["id"] in unrun)
+          and all(not (unrun & set(x.get("verifier_ids") or [])) for x in srec["verdicts"]), rows=len(tt))
+    # A2-275. The defect this kills: `--select targeted_test` used to demand the verifier of every
+    # code_unit entity while only jest/vitest could answer, so asking for tests turned verdicts other
+    # verifiers had produced into not_measured. Measured on Arcanada-one/argana b1d785a..2c96b9d:
+    # 41 verified / 9 not_measured without the flag, 10 / 40 with it (A2-271). A flag may add
+    # measurements; it may never remove one.
+    nrec, _ = run_scenario(scratch, work, fault, tsc, prisma, select="", graph_path=base_graph)
+    before = {v["entity"]: v["verdict"] for v in nrec["verdicts"]}
+    after = {v["entity"]: v["verdict"] for v in srec["verdicts"]}
+    demoted = sorted(e for e, v in before.items() if v == "verified" and after.get(e) != "verified")
+    check("selecting targeted_test never demotes a verdict the flagless run produced (A2-275)", not demoted,
+          demoted=demoted[:5], verified_before=sum(1 for v in before.values() if v == "verified"),
+          verified_after=sum(1 for v in after.values() if v == "verified"))
+    # The check above states the PROPERTY, and on a host whose tsc is missing it cannot go red — the
+    # entities the defect demoted are already not_measured there, so the mutant survives it (measured
+    # on arcana-devs, 2026-09-24). This one states the MECHANISM and kills the mutant on any host:
+    # a verifier may be demanded of an entity only where it could have run.
+    ran = {e for v in tt if v["exit_code"] != 127 for e in v["entities"]}
+    demanded = [e for e, req in srec["verify"]["required_by_entity"].items()
+                if "targeted_test" in req and e not in ran]
+    check("targeted_test is demanded only of entities a targeted test actually ran for (A2-275)", not demanded,
+          demanded=demanded[:5], count=len(demanded), ran=len(ran))
     check("selectable property_check: none declared ⇒ note, no verifier row", any("property_check selected" in n for n in srec["notes"]) and not any(v["kind"] == "property_check" for v in srec["verifiers"]))
 
     # AUP-GRAPH-006:gate3b (hole H7) — config_schema must not attribute a VENDORED bundle's config keys to the caller.
@@ -2733,6 +3061,10 @@ def main(argv=None) -> int:
     ap.add_argument("--worktree", action="store_true")
     ap.add_argument("--files", nargs="*")
     ap.add_argument("--graph", default="auto", help="RelationshipGraph/v1 at base/HEAD, or 'auto' to build it from git objects")
+    ap.add_argument("--exemptions", help="a JSON list (or {\"exemptions\": [...]}) of NON-structural exemptions "
+                                         "to attach BEFORE the admission verdict is computed. Each needs entity, "
+                                         "code, owner, expires_at_utc, reason. Run once to see the verdicts, write "
+                                         "the file, re-run with this flag — never hand-edit admission.verdict")
     ap.add_argument("--max-depth", type=int, default=None)
     ap.add_argument("--select", default="", help="selectable verifiers to add: targeted_test,property_check")
     ap.add_argument("--disable", default="", help="mutation battery / diagnostics: disable mandatory verifiers (recorded as MANDATORY_VERIFIER_DISABLED)")
