@@ -726,7 +726,13 @@ fn build_dispatcher(tools: &[Arc<dyn Tool>]) -> Result<ToolDispatcher, String> {
 }
 
 /// Resolve the audit directory for `arcana run`.
-fn audit_dir() -> PathBuf {
+/// The directory `arcana run` keeps its audit log in.
+///
+/// `pub(crate)` so a contract-bound run can measure the log's length BEFORE
+/// the run starts: the learning trace's steps are the records appended after
+/// that offset, and a shared append-only log has no other way to say which
+/// records are this run's.
+pub(crate) fn audit_dir() -> PathBuf {
     xdg::BaseDirectories::with_prefix("arcana")
         .get_state_home()
         .unwrap_or_else(|| PathBuf::from(FALLBACK_STATE_DIR))

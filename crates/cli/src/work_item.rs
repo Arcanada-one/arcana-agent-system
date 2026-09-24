@@ -29,6 +29,7 @@ use arcana_connectors::contract_source::{
 use arcana_connectors::muneral::{MuneralClient, WorkItem};
 use arcana_core::contract::{verify, ContractBinding, ContractRefusal};
 
+use crate::learning_trace;
 use crate::receipt;
 use crate::run::{RunRequest, DONE_MARKER};
 
@@ -108,6 +109,13 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
     request.run.prompt = task_prompt(&item, &binding);
     request.run.contract = Some(binding.clone());
 
+    // Taken BEFORE the run, because it is the only thing that can say which
+    // records in a shared append-only log belong to it. Measured, never
+    // assumed: `None` here becomes `slice_unbounded` in the trace rather than
+    // a zero that would read as "this run wrote everything in the log".
+    let audit_path = crate::run::audit_dir().join(learning_trace::AUDIT_FILE);
+    let audit_offset = learning_trace::audit_offset(&audit_path);
+
     let summary = match crate::run::execute(&request.run).await {
         Ok(summary) => summary,
         Err(err) => return refuse("RUN_NOT_STARTED", &err),
@@ -144,6 +152,43 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         }
     };
     println!("receipt: {}", receipt_path.display());
+
+    // The trace is written AFTER the receipt and links to it by digest, so a
+    // trace can never claim a receipt that does not exist. A failure to write
+    // it is reported and does not change the run's verdict: the receipt is the
+    // acceptance, and losing the candidate loses an input to learning, not the
+    // evidence that the work happened.
+    let trace = learning_trace::build(
+        &learning_trace::Sources {
+            task_id: &item.id,
+            binding: &binding,
+            contract_source: source.label(),
+            contract_origin: source.origin(),
+            verified_live: source.label() == "argana",
+            worktree_sha: built.worktree.sha.clone(),
+            receipt_path: &receipt_path,
+            audit_path,
+            audit_offset,
+            produced_by: produced_by(),
+            recorded_at: built.measured_at.clone(),
+        },
+        &summary,
+        &root,
+    );
+    match learning_trace::write(&root, &trace) {
+        Ok(path) => println!(
+            "learning trace: {} ({}, capabilities {:?})",
+            path.display(),
+            if trace.outcome.negative {
+                "negative"
+            } else {
+                "positive"
+            },
+            trace.capability_set,
+        ),
+        Err(err) => eprintln!("arcana run: the learning trace was not written: {err}"),
+    }
+
     crate::run::report_run(&summary, &root)
 }
 
