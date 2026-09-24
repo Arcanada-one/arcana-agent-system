@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use arcana_core::agent_loop::RunOutput;
 use arcana_core::contract::{digest_of, ContractBinding};
+use arcana_core::hooks::audit::OUTCOME_SUCCESS;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -68,8 +69,8 @@ pub struct Step {
     pub decision: Option<String>,
     /// Which cascade layer decided.
     pub layer: Option<String>,
-    /// `ok`, `tool_error`, `decision_only`, … `None` when the run ended before
-    /// the result record was written.
+    /// `success`, `tool_error`, `decision_only`, … `None` when the run ended
+    /// before the result record was written.
     pub outcome: Option<String>,
     pub input_hash: Option<String>,
     pub output_hash: Option<String>,
@@ -337,11 +338,17 @@ fn steps_from(records: &[Value], binding: &ContractBinding) -> Vec<Step> {
 /// A denial is in the steps and not in the capability set on purpose: the run
 /// did not exercise that capability, it was stopped from exercising it, and a
 /// grouping key that counted refusals would group runs by what they tried.
+///
+/// [`OUTCOME_SUCCESS`] rather than a literal, and that is not style. The first
+/// live run of this code matched `"ok"`, which the audit log has never
+/// written: three successful tool calls produced an empty capability set and
+/// a trace marked negative for having exercised nothing. The unit fixtures
+/// said `"ok"` too, so every test agreed with the bug.
 fn capability_set(steps: &[Step]) -> Vec<String> {
     let mut names: Vec<String> = steps
         .iter()
         .filter(|step| step.decision.as_deref() == Some("Allowed"))
-        .filter(|step| step.outcome.as_deref() == Some("ok"))
+        .filter(|step| step.outcome.as_deref() == Some(OUTCOME_SUCCESS))
         .map(|step| step.tool.clone())
         .collect();
     names.sort();
@@ -402,6 +409,7 @@ mod tests {
     use arcana_core::agent_loop::TerminalReason;
     use arcana_core::contract::{verify, ContractDocument, ContractTools};
     use arcana_core::cost::CostSnapshot;
+    use arcana_core::hooks::audit::OUTCOME_TOOL_ERROR;
 
     fn binding(allow: &[&str]) -> ContractBinding {
         const BYTES: &str = "the contract under test";
@@ -445,11 +453,9 @@ mod tests {
     }
 
     const READ_OK: &str = r#"{"phase":"decision","invocation_id":1,"tool":"read","decision":"Allowed","layer":"cascade","input_hash":"aa"}"#;
-    const READ_RESULT: &str =
-        r#"{"phase":"result","invocation_id":1,"tool":"read","outcome":"ok","output_hash":"bb"}"#;
+    const READ_RESULT: &str = r#"{"phase":"result","invocation_id":1,"tool":"read","outcome":"success","output_hash":"bb"}"#;
     const WRITE_OK: &str = r#"{"phase":"decision","invocation_id":2,"tool":"write","decision":"Allowed","layer":"cascade","input_hash":"cc"}"#;
-    const WRITE_RESULT: &str =
-        r#"{"phase":"result","invocation_id":2,"tool":"write","outcome":"ok","output_hash":"dd"}"#;
+    const WRITE_RESULT: &str = r#"{"phase":"result","invocation_id":2,"tool":"write","outcome":"success","output_hash":"dd"}"#;
     const READ_ERROR: &str = r#"{"phase":"result","invocation_id":1,"tool":"read","outcome":"tool_error","output_hash":null}"#;
     const BASH_DENIED: &str = r#"{"phase":"decision","invocation_id":3,"tool":"bash","decision":"Denied","layer":"contract-allowlist","input_hash":"ee"}"#;
     const DISPATCH: &str = r#"{"phase":"run","kind":"dispatch","fields":{"turn":1}}"#;
@@ -494,7 +500,7 @@ mod tests {
         assert_eq!(trace.steps.len(), 2);
         assert_eq!(trace.steps[0].seq, 1);
         assert_eq!(trace.steps[0].tool, "read");
-        assert_eq!(trace.steps[0].outcome.as_deref(), Some("ok"));
+        assert_eq!(trace.steps[0].outcome.as_deref(), Some(OUTCOME_SUCCESS));
         assert_eq!(trace.steps[0].output_hash.as_deref(), Some("bb"));
         assert_eq!(trace.steps[1].seq, 2);
         assert_eq!(trace.steps[1].tool, "write");
@@ -555,7 +561,7 @@ mod tests {
         let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
 
         assert_eq!(trace.steps.len(), 1);
-        assert_eq!(trace.steps[0].outcome.as_deref(), Some("tool_error"));
+        assert_eq!(trace.steps[0].outcome.as_deref(), Some(OUTCOME_TOOL_ERROR));
         assert!(trace.capability_set.is_empty());
         assert!(trace.outcome.negative);
         assert_eq!(
@@ -630,6 +636,88 @@ mod tests {
             trace.receipt.digest,
             Some(digest_of(b"{\"schema\":\"ReadinessReceipt/v1\"}"))
         );
+    }
+
+    /// The executor writes the log; this module reads it. Half of the
+    /// `"ok"` defect, closed.
+    ///
+    /// What this proves is that the two SIDES agree: a real
+    /// `CapabilityExecutor` writes a real audit log and the capability set is
+    /// derived from that, with no fixture in between. What it cannot prove is
+    /// the token itself — both sides now read [`OUTCOME_SUCCESS`], so changing
+    /// that constant moves them together and this test stays green (measured:
+    /// under that mutation it passes and three of the literal-fixture tests
+    /// go red). The pair is the guard. Neither test alone is.
+    #[tokio::test]
+    async fn the_capability_set_is_derived_from_a_log_the_real_executor_wrote() {
+        use arcana_core::execution::CapabilityExecutor;
+        use arcana_core::hooks::{audit::AuditLog, HookChain, HookContext};
+        use arcana_core::permission::{LayerDecision, PermissionCascade, PermissionLayer};
+        use arcana_core::tool::{Tool, ToolDispatcher, ToolError, ToolInvocation, ToolOutput};
+        use serde_json::json;
+        use std::sync::Arc;
+
+        struct ReadTool;
+
+        #[async_trait::async_trait]
+        impl Tool for ReadTool {
+            fn name(&self) -> &'static str {
+                "read"
+            }
+            fn description(&self) -> &'static str {
+                "a tool that succeeds"
+            }
+            fn input_schema(&self) -> Value {
+                json!({ "type": "object" })
+            }
+            async fn execute(&self, _invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+                Ok(ToolOutput {
+                    content: "content".to_owned(),
+                    metadata: None,
+                })
+            }
+        }
+
+        struct AllowLayer;
+
+        #[async_trait::async_trait]
+        impl PermissionLayer for AllowLayer {
+            fn name(&self) -> &'static str {
+                "cascade"
+            }
+            async fn evaluate(&self, _tool: &str, _input: &Value) -> LayerDecision {
+                LayerDecision::Allow
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut dispatcher = ToolDispatcher::new();
+        dispatcher.register(Arc::new(ReadTool)).unwrap();
+        let executor = CapabilityExecutor::new(
+            dispatcher,
+            PermissionCascade::new(vec![Arc::new(AllowLayer)]),
+            HookChain::new(),
+            AuditLog::new(dir.path()).unwrap(),
+        );
+        let ctx = HookContext::new(
+            tokio_util::sync::CancellationToken::new(),
+            Arc::new(arcana_core::cost::CostTracker::new()),
+        );
+        executor
+            .execute(&ctx, "read", json!({ "path": "x" }))
+            .await
+            .unwrap();
+
+        let log = dir.path().join(AUDIT_FILE);
+        let bind = binding(&["read"]);
+        let receipt = dir.path().join("r.json");
+        std::fs::write(&receipt, b"{}").unwrap();
+        let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
+        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+
+        assert_eq!(trace.capability_set, vec!["read"]);
+        assert_eq!(trace.steps[0].outcome.as_deref(), Some(OUTCOME_SUCCESS));
+        assert!(!trace.outcome.negative);
     }
 
     #[test]
