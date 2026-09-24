@@ -703,12 +703,39 @@ fn scan_tool_call(result: &str) -> ToolCallBlock<'_> {
     let Some(rest) = result.get(open + TOOL_CALL_FENCE.len()..) else {
         return ToolCallBlock::Absent;
     };
-    match rest.find(CODE_FENCE) {
+    match closing_fence(rest) {
         Some(close) => rest.get(..close).map_or(ToolCallBlock::Absent, |body| {
             ToolCallBlock::Closed(body.trim())
         }),
         None => ToolCallBlock::Unterminated,
     }
+}
+
+/// Offset of the fence that CLOSES the block, or `None` if it never closed.
+///
+/// The closing fence is the first ```` ``` ```` that starts a line. It used to
+/// be the first one anywhere, and a payload is allowed to contain fences: the
+/// body of the block is JSON, so a real newline can never occur inside one of
+/// its string literals, which makes "at the start of a line" exactly the line
+/// between the model's markup and its data.
+///
+/// Measured before this rule existed (A2-278, live run of work item
+/// `d931525f-c134-4c6b-85e1-9cdf94e8ab8b`, 2026-09-24): asked for a how-to
+/// page, the model emitted a valid `write` call whose `content` held
+/// ```` ```json ````; the body was cut there, the slice was not JSON, and the
+/// run ended `UnsupportedToolCallFormat` with nothing written. Every
+/// documentation page with a code block in it was unwritable.
+fn closing_fence(rest: &str) -> Option<usize> {
+    let mut from = 0usize;
+    while let Some(hit) = rest.get(from..)?.find(CODE_FENCE) {
+        let at = from + hit;
+        // Line-initial: the very start of the body, or right after a newline.
+        if at == 0 || rest.as_bytes().get(at.wrapping_sub(1)) == Some(&b'\n') {
+            return Some(at);
+        }
+        from = at + CODE_FENCE.len();
+    }
+    None
 }
 
 /// Judge a complete block body.

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A tool call may carry a code fence.** The closing fence of a `tool_call`
+  block used to be the first ```` ``` ```` after the opening one — including a
+  fence inside the JSON payload. Asked on a live contract-bound run for a
+  Markdown how-to page, the model sent a well-formed `write` whose `content`
+  held ```` ```json ````; the body was cut there, the slice was not JSON, and
+  the run ended `UnsupportedToolCallFormat` having written nothing. Every
+  documentation page with a code block in it was unwritable through the runner.
+  The closing fence is now one that STARTS A LINE: the block's body is JSON, so
+  a real newline never occurs inside one of its string literals, which makes
+  that boundary exactly the line between the model's markup and its data. A
+  block with no line-initial fence is still `Unterminated`.
+
 ### Changed
 - **The model choice is configuration, and survives an isolated state
   directory.** It used to be read from `$XDG_STATE_HOME/arcana/model.json`.
