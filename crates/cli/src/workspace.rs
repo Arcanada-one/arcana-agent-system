@@ -506,6 +506,15 @@ fn command_word(segment: &[String]) -> Option<&str> {
     Some(bare.rsplit('/').next().unwrap_or(bare))
 }
 
+/// A word with its surrounding quotes removed.
+///
+/// `segments` does not interpret quoting, so `git "stash" drop` arrives with
+/// the marks attached and walked past both halves of the stash rule until
+/// A2-259.
+fn unquoted(word: &str) -> &str {
+    word.trim_matches(|c| matches!(c, '"' | '\''))
+}
+
 /// Refuse a segment on its command word or on a refused phrase.
 fn refused_segment(segment: &[String]) -> Option<String> {
     let head = command_word(segment)?;
@@ -550,6 +559,14 @@ fn refused_segment(segment: &[String]) -> Option<String> {
 ///   `git --no-pager stash drop` and `git -C sub stash drop` are written.
 ///   Both were allowed before A2-259.
 ///
+/// Neither half subsumes the other. The subcommand half sees through a global
+/// option, which adjacency cannot; adjacency sees an invocation the subcommand
+/// half walks past, because that half reads the FIRST word named `git` in the
+/// segment and `find . -name git -exec git stash pop \;` runs the second one.
+/// Both were put to a mutant: deleting either turns
+/// `a_git_stash_that_changes_the_stack_is_refused_however_it_is_spelled` red
+/// (`/home/dev/aup/arc2/runs/A2-259/receipt-mutation.txt`).
+///
 /// Not recognised, and stated rather than implied: an alias defined on the
 /// same line, `git -c alias.l='stash drop' l`, still drops (measured on git
 /// 2.43.0). Reading it would mean evaluating git's config, and the module
@@ -557,13 +574,13 @@ fn refused_segment(segment: &[String]) -> Option<String> {
 fn refused_git_stash(segment: &[String]) -> Option<String> {
     let mut invocations: Vec<Option<&str>> = Vec::new();
     for (index, window) in segment.windows(2).enumerate() {
-        if window[0] == "git" && window[1] == "stash" {
-            invocations.push(segment.get(index + 2).map(String::as_str));
+        if unquoted(&window[0]) == "git" && unquoted(&window[1]) == "stash" {
+            invocations.push(segment.get(index + 2).map(|word| unquoted(word)));
         }
     }
     if let Some(index) = git_subcommand_index(segment) {
-        if segment[index] == "stash" {
-            invocations.push(segment.get(index + 1).map(String::as_str));
+        if unquoted(&segment[index]) == "stash" {
+            invocations.push(segment.get(index + 1).map(|word| unquoted(word)));
         }
     }
     invocations
@@ -586,7 +603,7 @@ fn refused_git_stash(segment: &[String]) -> Option<String> {
 /// reading precisely because it is git's, not a guess about what a word means.
 fn git_subcommand_index(segment: &[String]) -> Option<usize> {
     let start = segment.iter().position(|word| {
-        let bare = word.trim_matches(|c| matches!(c, '"' | '\''));
+        let bare = unquoted(word);
         bare.rsplit('/').next().unwrap_or(bare) == "git"
     })?;
     let mut index = start + 1;
@@ -1104,8 +1121,14 @@ mod tests {
             "git --no-pager stash drop",
             "git -C sub stash pop",
             "git --git-dir=.git stash clear",
-            // Not the command word, still a `git stash`.
+            // Not the command word, still a `git stash`. The second is the
+            // case adjacency alone catches: the subcommand half reads the
+            // FIRST word named `git`, and that one is a `-name` argument.
             "xargs git stash pop",
+            "find . -name git -exec git stash pop \\;",
+            // `segments` does not interpret quoting.
+            "git \"stash\" drop",
+            "\"git\" stash drop",
         ] {
             let assessment = policy.assess("bash", &json!({ "command": command }));
             assert!(

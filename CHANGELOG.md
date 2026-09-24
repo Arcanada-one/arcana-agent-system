@@ -94,6 +94,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes.
 
 ### Changed
+- **The destructive floor refuses a `git stash` that CHANGES the stack, not the
+  word `git stash`.** Pilot A2-240d (arcana `5fc4684`) had finished its task —
+  commit `6302742`, published as `arcanada-support#114` — and died on turn 62
+  (`/home/dev/aup/arc2/wt/A2-240d/.arcana/denied/0006-turn62.json`) on
+
+  ```text
+  git format-patch … && git apply --stat … && git stash list && git log --oneline -1
+  ```
+
+  `git stash list` only READS the stack, and a floor refusal is terminal by
+  design (`RECOVERABLE_DENIAL_LAYERS` excludes it), so a listing ended a
+  completed run. The floor's entry named a git *command* where it meant a git
+  *effect*.
+
+  `git stash list` and `git stash show` are now permitted; every other form —
+  a bare `git stash` (which IS `push`), and `push`, `pop`, `apply`, `drop`,
+  `clear`, `branch`, `store`, `create` — stays refused. The rule is an
+  **allow-list of the two read-only subcommands**, so a spelling git itself
+  does not know is refused, not allowed by omission. Both were measured on git
+  2.43.0 rather than read off the manual: `git stash list drop` exits 1 with
+  `fatal: bad revision 'drop'` and drops nothing, `git stash list
+  --exec='touch pwned'` is rejected with `fatal: unrecognized argument`, and
+  neither form leaves the stack changed.
+
+  Two holes closed on the way, **both ALLOWED before this change** and both
+  measured (`/home/dev/aup/arc2/runs/A2-259/receipt-before-floor.txt`):
+  `git --no-pager stash drop` and `git -C sub stash drop` ran, because the
+  floor matched `git` and `stash` as adjacent words and a global option sits
+  between them. The rule now also reads `stash` as git's subcommand past its
+  global options, and strips quotes, which closes `git "stash" drop` as well.
+  One hole stays open and is pinned as a test rather than left to be
+  rediscovered: `git -c alias.l='stash drop' l` still drops (measured), because
+  reading it means evaluating git's config — the module header has always said
+  this check is a string heuristic and not a sandbox.
+
+  The prompt carries the split, generated from the same constants the floor
+  evaluates, and `crates/cli/tests/run_destructive_floor_prompt.rs` pins that
+  what the prompt SAYS about each `git stash` form is what the floor DOES to
+  it.
+
+  **Terminality is unchanged, deliberately.** A floor refusal that became
+  recoverable "when the command mutates nothing" would be decided by the
+  floor's own string heuristic — so the run would continue exactly in the case
+  where the heuristic was fooled — and would hand back precisely the refusals
+  the classifier judged harmless, which is what a probe looks like. A command
+  that mutates nothing must not reach the floor at all; that is a defect in the
+  list, and it is fixed in the list. The argument is written out on
+  `DestructiveCommandFloor`; changing terminality would need a DEC-level
+  decision and nothing measured here argues for one.
+
+- **A `..` refusal now says how to write the path instead.** The workspace
+  check resolves `..` against the workspace ROOT, not against a `cd` earlier in
+  the same command, so `cd sub && tar -x -C ../snap` is refused even though
+  `../snap` lands inside the workspace. That stays: tracking a `cd` through a
+  shell string has no single reading — subshells, `cd -`, `cd "$VAR"`, `;` vs
+  `&&` vs `||` — and a boundary that guesses is not a boundary.
+
+  What was missing is the correction, and its absence was measured: pilot
+  A2-240d spent **three of its six denied calls** on this one shape (turns 15,
+  16 and 54), the second immediately after the first and the third
+  thirty-eight turns later. A boundary refusal IS handed back to the model, so
+  it is a correction, and one that says only what is wrong leaves the model
+  nothing to change but the spelling. The refusal and the system prompt now
+  state, from one constant, that `..` is judged against the workspace root and
+  that the path should be written from the root or absolutely under it.
+  `crates/cli/tests/run_boundary_relative_path_recovery.rs` drives the pilot's
+  shape both ways: with the new wording the model recovers on the next turn and
+  the file is copied; with the pre-A2-259 wording the same model reaches for
+  `..` again and the file is never copied.
+
 - **`bash` gets a `HOME` per run instead of one fixed path in `/tmp`.**
   `BashTool` hard-coded `/tmp/arcana-runtime/bash`: the same directory for
   every run and every workspace on a host, in a world-writable parent. Two
