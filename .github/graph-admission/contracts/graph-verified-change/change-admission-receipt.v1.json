@@ -34,7 +34,9 @@
    "notes",
    "canaries",
    "head_graph",
-   "revision_selection"
+   "revision_selection",
+   "structural_exclusions",
+   "receipt_path"
   ],
   "producer": {
    "required": [
@@ -257,6 +259,32 @@
     "unmeasured_head_files"
    ],
    "rule": "Entity arrays come from separate revision traversals. Every base/head entity requires a verdict; native required_by_entity must cover them. Unmeasured head code prohibits admission. Gate independently recomputes from Git."
+  },
+  "structural_exclusions": {
+   "note": "DEC-AUP-0034. Affected entities that owe this change no verdict: the verifier matrix declares neither a mandatory nor a selectable verifier for their node type (`receipt`, `work_item` today), the change set does not contain them, and their bytes are identical at base and head. Each entry carries the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives every condition from Git before it counts the entity as covered. An entity that fails any condition keeps its ordinary tri-valued verdict — editing a receipt is an ordinary change to a file. This is NOT an exemption: an exemption carries an owner and an expiry because it is a debt, and there is nothing here to repay. DEC-AUP-0035 adds a SECOND, separately identified class, marked `rule: DEC-AUP-0035` and carrying a `superseded` block: the previous version of THIS receipt, at the path this run writes to (`receipt_path`), declaring the same `work_item`. That entity IS in the change set and its bytes DO differ — the two facts DEC-AUP-0034 relies on are inverted — so it is admitted on entirely different evidence: impact_pair re-derives the path, the work item declared by the blob at each revision, and the digests, and refuses anything else. `content_hash` may name only one revision (null at the other) because a receipt filed inside the range does not exist at base. Without it, re-issuing a receipt after a rebase pauses the change on the record of itself — hand-written expiring exemptions had to cover that on ARAS #195 and #196.",
+   "required": [
+    "entity",
+    "node_type",
+    "content_hash",
+    "reason"
+   ],
+   "optional": [
+    "path",
+    "rule",
+    "superseded"
+   ],
+   "superseded": {
+    "note": "present exactly on `rule: DEC-AUP-0035` entries",
+    "required": [
+     "work_item",
+     "receipt_path"
+    ],
+    "rule": "work_item must equal the receipt's own work_item and receipt_path must equal both the entry's path and the receipt's receipt_path; every version of that file existing at base or head must parse as a *Receipt/v1 declaring the same work item."
+   }
+  },
+  "receipt_path": {
+   "note": "DEC-AUP-0035. The path, relative to the repository, that this receipt was written to (`verify.py --out` inside the tree; absent when it is written outside). It is the anchor of a superseded-self exclusion: a claim that an entity is «the previous version of me» is checkable only against the path this document actually occupies, and admit_change.py compares this field with where it FOUND the receipt.",
+   "type": "string (repository-relative POSIX path) or absent"
   }
  },
  "rules": {
@@ -285,7 +313,8 @@
   "ADMISSION_CONTRADICTS_VERDICTS": "admission.verdict admitted with a failed/not_measured verdict; admitted_with_exemptions with a non-verified entity lacking a valid exemption; admitted while global_fallback triggered without every entity verified",
   "ADMISSION_VERDICT_INVALID": "admission.verdict outside verdict_values",
   "HEAD_GRAPH_BINDING_INVALID": "Paired receipt has missing/invalid head revision, digest or freshness.",
-  "REVISION_SELECTION_INCOMPLETE": "Paired selection malformed or selected entities omitted from verdict/required mapping, or unmeasured head code admitted."
+  "REVISION_SELECTION_INCOMPLETE": "Paired selection malformed or selected entities omitted from verdict/required mapping, or unmeasured head code admitted.",
+  "STRUCTURAL_EXCLUSION_INVALID": "a structural_exclusions entry is malformed, carries a content_hash that is not one equal sha256:<64 hex> at base and head (DEC-AUP-0034) or not a sha256/null pair naming at least one revision (DEC-AUP-0035), names an entity that also has a verdict, names an entity the change set contains (DEC-AUP-0034), or claims supersession of a path that is not this receipt's own receipt_path or of a work item that is not this receipt's own (DEC-AUP-0035)"
  },
  "verdicts": {
   "conformant": "0 violations",

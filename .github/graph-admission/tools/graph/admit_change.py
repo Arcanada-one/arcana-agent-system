@@ -1946,7 +1946,26 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
          bundle_rel: str = DEFAULT_BUNDLE_DIR,
          structural_workdir: Path | None = None) -> dict:
     checks: list[dict] = []
-    enforcement = work_item_enforcement or policy["work_item_evidence"]["enforcement"]
+    # A2-238. The policy's own words: `off` means "the attachment is not required (never used in a
+    # PROGRAM-OWNED repository)", and `.github/workflows/graph-admission.yml` therefore defaults its
+    # caller-facing input to `off` — "the evidence ledger lives in the program repository". The
+    # library default did not know that, so an agent running the gate the ordinary way against a
+    # caller repository got `paused_safe / C13 WORK_ITEM_EVIDENCE_MISSING` for a ledger that could
+    # not exist there, i.e. a pause about where the tool was run rather than about the change
+    # (measured by A2-234 on ARAS #196, and by A2-233 on its own branch). CI never saw it, because
+    # CI passes the flag; the local gate — the AUTHORITATIVE one under DEC-AUP-0007 — did.
+    #
+    # The flag still wins over the detection, in both directions, and whichever of the three
+    # decided it is recorded in the receipt: a default that cannot be read back is a default nobody
+    # can argue with.
+    if work_item_enforcement:
+        enforcement, enforcement_source = work_item_enforcement, "--enforcement"
+    elif is_program_repo(repo, repo_name):
+        enforcement, enforcement_source = policy["work_item_evidence"]["enforcement"], "policy default (program repository)"
+    else:
+        enforcement, enforcement_source = "off", ("caller repository: the evidence ledger lives in the program "
+                                                  "repository (admission-gate.v1.json → work_item_evidence."
+                                                  "enforcement_values.off). Pass --enforcement explicitly to override.")
     pol_checks = {c["id"]: c for c in policy["checks"]}
 
     def add(cid: str, detail: str, entities=None, verdict=None):
@@ -2208,7 +2227,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
             add("C06", "; ".join(parts), sorted(set(uncovered) | set(after)))
 
     # C13 — work-item evidence attachment
-    evidence = {"enforcement": enforcement, "entries": [], "status": "not_measured"}
+    evidence = {"enforcement": enforcement, "enforcement_source": enforcement_source,
+                "entries": [], "status": "not_measured"}
     if bound and enforcement != "off":
         missing = []
         for rec in bound:
@@ -2228,7 +2248,12 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                                f"{(entry.get('delivery') or {}).get('status')!r}")
         evidence["status"] = "verified" if not missing else "not_measured"
         if missing:
-            add("C13", "; ".join(missing[:6]))
+            # The detail names the lever, because the two ways out are different actions and the
+            # code alone points at neither: in the program repository the answer is to WRITE the
+            # ledger entry; anywhere else the answer is that this enforcement level does not apply.
+            add("C13", "; ".join(missing[:6]) + f" [enforcement={enforcement!r} from {enforcement_source}] — "
+                       "attach the evidence with `admit_change.py attach --receipt <path> --work-item <id>`, "
+                       "or pass `--enforcement off` if this repository does not own the ledger")
 
     verdict = "admit"
     for c in checks:
@@ -2259,6 +2284,25 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         "disabled_checks": sorted(disabled),
     }
     return doc
+
+
+# The two files that only the program repository has at its root: the policy this gate reads and the
+# tool that reads it. A caller repository carries the gate as a VENDORED bundle under
+# `.github/graph-admission/`, so neither path exists at its root — which is the whole point of the
+# distinction, because the work-item evidence LEDGER lives beside them and nowhere else.
+PROGRAM_MARKERS = ("contracts/graph-verified-change/admission-gate.v1.json", "tools/graph/admit_change.py")
+
+
+def is_program_repo(repo: Path, repo_name: str | None = None) -> bool:
+    """Is the repository being gated the one that owns the evidence ledger?
+
+    Asked of the tree, not of a remote URL: the answer decides a DEFAULT, and a default that
+    depends on network-visible configuration would differ between a clone and its mirror. The
+    remote name is consulted only as a second opinion, and only when it is already in hand."""
+    if all((repo / m).exists() for m in PROGRAM_MARKERS):
+        return True
+    name = (repo_name or "").lower()
+    return name.endswith("/arcanada-universal-program")
 
 
 def repo_remote_name(repo: Path) -> str:
@@ -2625,7 +2669,38 @@ def base_receipt(base: str, head: str, *, wi="AUP-GRAPH-006") -> dict:
     }
 
 
-def prepare_gate_fixture_outputs(repo: Path, base: str, head: str, *, compile_types: bool):
+SELFTEST_TOOLCHAIN = {
+    "tsc": "TypeScript compiler — compiles the positive admission fixture (src/a.ts, src/b.ts, src/c.ts). "
+           "Absent: that one fixture is not_measured; the rest of the battery is unaffected.",
+}
+
+
+def compile_positive_fixture(repo: Path, outputs: Path) -> dict:
+    """Compile the positive admission fixture, or say honestly that this host could not.
+
+    A hard raise here made the HOST the verdict. On a machine without `tsc` the gate's own battery
+    aborted before it ran, and `tools/ci/self_check.py`'s ratchet then read the absence of a compiler
+    as a regression of whatever change was being measured (arcana-devs, A2-229). The tool applies
+    `an absent tool yields not_measured, never verified` to every verifier it drives; it now applies
+    it to itself, and declares the dependency in SELFTEST_TOOLCHAIN instead of discovering it by
+    crashing. A compiler that RUNS and rejects the fixture is still a failure — that is the fixture's
+    own claim going false, which is what this check is for."""
+    tsc = shutil.which("tsc")
+    if not tsc:
+        (outputs / "tsc.txt").write_text("tsc not found on PATH; the positive fixture was not compiled\n")
+        return {"tool": "tsc", "verdict": "not_measured",
+                "reason": "tsc is not on PATH. " + SELFTEST_TOOLCHAIN["tsc"]}
+    result = subprocess.run([tsc, "--noEmit", "--target", "ES2022", "--module", "commonjs",
+                             "src/a.ts", "src/b.ts", "src/c.ts"], cwd=repo, capture_output=True, text=True, timeout=60)
+    (outputs / "tsc.txt").write_text(result.stdout + result.stderr)
+    if result.returncode:
+        return {"tool": "tsc", "verdict": "failed",
+                "reason": f"the positive scratch fixture fails actual TypeScript compilation (tsc exit "
+                          f"{result.returncode}): {(result.stdout + result.stderr).strip()[:300]}"}
+    return {"tool": "tsc", "verdict": "verified", "reason": "the positive scratch fixture compiles (tsc exit 0)"}
+
+
+def prepare_gate_fixture_outputs(repo: Path, base: str, head: str, *, compile_types: bool) -> dict | None:
     """Real minimum verifier evidence for the scratch fixture, never product evidence."""
     import verify
     import contract_diff
@@ -2641,15 +2716,7 @@ def prepare_gate_fixture_outputs(repo: Path, base: str, head: str, *, compile_ty
     outputs.mkdir(exist_ok=True)
     write_json(outputs / "fitness.json", {"violations": fitness})
     write_json(outputs / "contract.json", contracts)
-    if compile_types:
-        tsc = shutil.which("tsc")
-        if not tsc:
-            raise RuntimeError("actual TypeScript compiler required for admission positive fixture")
-        result = subprocess.run([tsc, "--noEmit", "--target", "ES2022", "--module", "commonjs",
-                                 "src/a.ts", "src/b.ts", "src/c.ts"], cwd=repo, capture_output=True, text=True, timeout=60)
-        (outputs / "tsc.txt").write_text(result.stdout + result.stderr)
-        if result.returncode:
-            raise RuntimeError("the positive scratch fixture fails actual TypeScript compilation")
+    return compile_positive_fixture(repo, outputs) if compile_types else None
 
 
 def make_fixtures(base: str, head: str, repo: Path | None = None) -> dict[str, dict]:
@@ -2837,7 +2904,12 @@ def make_fixtures(base: str, head: str, repo: Path | None = None) -> dict[str, d
     def no_wi(r):
         r["work_item"] = None
     add("violation-WORK_ITEM_EVIDENCE_MISSING", "paused_safe", ["WORK_ITEM_EVIDENCE_MISSING"],
-        "a receipt that is attached to no Work Item pauses the change (evidence attachment, never a status)", no_wi)
+        "a receipt that is attached to no Work Item pauses the change (evidence attachment, never a status)", no_wi,
+        # The enforcement level is stated, not inherited (A2-238). The scratch repository this battery
+        # runs against is caller-shaped, and a caller repository now defaults to `off` because the
+        # evidence ledger lives in the program repository — so without this the fixture would quietly
+        # measure the default instead of the check it exists for, and report `admit` as a pass.
+        work_item_enforcement="ledger")
 
     return F
 
@@ -2926,7 +2998,15 @@ def selftest(receipt_out: Path | None, keep: bool = False) -> int:
     passed = failed = 0
     try:
         repo, base, head = scratch_repo(root)
-        prepare_gate_fixture_outputs(repo, base, head, compile_types=True)
+        toolchain = prepare_gate_fixture_outputs(repo, base, head, compile_types=True)
+        # The declared toolchain is a battery row of its own: a host without `tsc` is not_measured, and
+        # not_measured is not a pass — but it is not a failure of the change either (A2-233).
+        results.append({"case": "positive-fixture-compiles", "ok": None if toolchain["verdict"] == "not_measured"
+                        else toolchain["verdict"] == "verified", "detail": [toolchain["reason"]]})
+        if toolchain["verdict"] == "failed":
+            failed += 1
+        elif toolchain["verdict"] == "verified":
+            passed += 1
         F = make_fixtures(base, head, repo)
         # fixtures on disk must match the generated ones (drift control)
         drift = []
@@ -3082,7 +3162,12 @@ def selftest(receipt_out: Path | None, keep: bool = False) -> int:
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
 
-    verdict = "PASS" if failed == 0 else "FAIL"
+    # A row whose `ok` is None was NOT MEASURED — a declared tool this host does not have. It is not a
+    # failure (the exit code stays 0, so a missing compiler cannot read as a regression of the change)
+    # and it is not a pass either, so it gets its own name in the verdict rather than disappearing
+    # into PASS. DEC-AUP-0008: not_measured is the third verdict.
+    not_measured = [r["case"] for r in results if r["ok"] is None]
+    verdict = "FAIL" if failed else ("PASS_WITH_NOT_MEASURED" if not_measured else "PASS")
     doc = {
         "schema": "ReadinessReceipt/v1",
         "portion_id": "AUP-GRAPH-006:gate0",
@@ -3091,30 +3176,72 @@ def selftest(receipt_out: Path | None, keep: bool = False) -> int:
         "model": MODEL,
         "provisional_until_fable_review": True,
         "decision_ref": ["DEC-AUP-0008", "DEC-AUP-0015"],
-        "checks": {"passed": passed, "failed": failed, "total": passed + failed},
+        "checks": {"passed": passed, "failed": failed, "not_measured": len(not_measured),
+                   "total": passed + failed + len(not_measured)},
+        "toolchain": SELFTEST_TOOLCHAIN,
         "results": results,
         "battery": battery,
         "verdict": verdict,
     }
     if receipt_out:
         write_json(receipt_out, doc)
-    print(json.dumps({"verdict": verdict, "passed": passed, "failed": failed}, ensure_ascii=False))
+    print(json.dumps({"verdict": verdict, "passed": passed, "failed": failed,
+                      "not_measured": len(not_measured)}, ensure_ascii=False))
     for r in results:
-        if not r["ok"]:
+        if r["ok"] is None:
+            print("  NOT_MEASURED " + canonical(r)[:300], file=sys.stderr)
+        elif not r["ok"]:
             print("  FAIL " + canonical(r)[:300], file=sys.stderr)
     return 0 if failed == 0 else 1
 
 
 # ------------------------------------------------------------------ cli
-def cmd_gate(a) -> int:
-    policy = load_policy(a.policy)
-    repo = Path(a.repo).resolve()
+class UsageError(Exception):
+    """Arguments the tool cannot work from, NAMED.
+
+    Raised rather than reported on the spot because these commands are also used as a library
+    (`ci_gate.py` calls `cmd_exempt` with a hand-built `Namespace` that has no parser on it): a
+    helper that reached for the parser would trade one AttributeError for another. `main` turns it
+    into argparse's own usage error — the subcommand's usage plus the message, exit code 2.
+    """
+
+
+def resolve_range(a) -> tuple[str, str]:
+    """`--range <base>..<head>` or `--base` + `--head`, by ONE rule for every subcommand that takes one.
+
+    A missing range is a usage error the caller must answer, never a range the tool picks for them:
+    the gate binds a receipt to an EXACT range, so an inferred merge-base would admit a change
+    against a base nobody named, and the receipt would say so in a field the caller never read.
+    `verify.py` already keeps that contract for `--repo` + one of `--diff / --worktree / --files`;
+    the two tools of DEC-AUP-0008 now answer a missing range the same way, with exit code 2.
+
+    The revisions are resolved here too, so a ref that does not exist is named rather than thrown:
+    every one of these was a traceback, and a traceback out of the admission gate is read by the
+    caller as "no receipt" — the tool looks skipped when it in fact never got a chance to run.
+    """
     if a.range:
+        if ".." not in a.range:
+            raise UsageError(f"--range must be <base>..<head>, got {a.range!r}")
         base, head = a.range.split("..", 1)
     else:
         base, head = a.base, a.head
-    base = git(repo, "rev-parse", base).strip()
-    head = git(repo, "rev-parse", head).strip()
+    missing = [flag for flag, v in (("--base", base), ("--head", head)) if not v]
+    if missing:
+        raise UsageError(f"{' and '.join(missing)} missing — pass --range <base>..<head>, or --base and --head")
+    try:
+        return git(repo_of(a), "rev-parse", base).strip(), git(repo_of(a), "rev-parse", head).strip()
+    except RuntimeError as e:
+        raise UsageError(f"the range {base}..{head} does not resolve in {a.repo}: {e}") from e
+
+
+def repo_of(a) -> Path:
+    return Path(a.repo).resolve()
+
+
+def cmd_gate(a) -> int:
+    policy = load_policy(a.policy)
+    repo = Path(a.repo).resolve()
+    base, head = resolve_range(a)
     desc = a.description or ""
     if a.description_file:
         desc += "\n" + Path(a.description_file).read_text(encoding="utf-8")
@@ -3156,9 +3283,7 @@ def cmd_exempt(a) -> int:
     exemption written by hand that the battery does not confirm is refused, not merely ignored."""
     policy = load_policy(a.policy)
     repo = Path(a.repo).resolve()
-    base, head = (a.range.split("..", 1) if a.range else (a.base, a.head))
-    base = git(repo, "rev-parse", base).strip()
-    head = git(repo, "rev-parse", head).strip()
+    base, head = resolve_range(a)
     files = range_files(repo, base, head)
     rp = Path(a.receipt)
     doc = json.loads(rp.read_text(encoding="utf-8"))
@@ -3237,8 +3362,7 @@ def cmd_b7_opine(a) -> int:
     than trusts. Never given its own second opinion here — that would recurse without bound; its own
     B7.5 SECOND_AUTHORITY arm is deliberately excluded from this command's verdict."""
     repo = Path(a.repo).resolve()
-    base, head = (a.range.split("..", 1) if a.range else (a.base, a.head))
-    base, head = git(repo, "rev-parse", base).strip(), git(repo, "rev-parse", head).strip()
+    base, head = resolve_range(a)
     files = range_files(repo, base, head)
     case, cev = structural_case(repo, base, head, files, a.bundle_dir)
     wd = Path(a.workdir) if a.workdir else Path(tempfile.mkdtemp(prefix="b7-opine-"))
@@ -3367,6 +3491,11 @@ def main(argv=None) -> int:
     pc.add_argument("--out")
     pc.set_defaults(fn=cmd_pr_coverage)
 
+    # Each subcommand carries its OWN parser, so a usage error prints that subcommand's usage and
+    # exits 2 (argparse's own contract) instead of the caller reading a traceback as "no receipt".
+    for sp in sub.choices.values():
+        sp.set_defaults(parser=sp)
+
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest(a.receipt_out, a.keep)
@@ -3375,7 +3504,10 @@ def main(argv=None) -> int:
     if not a.cmd:
         ap.print_help()
         return 2
-    return a.fn(a)
+    try:
+        return a.fn(a)
+    except UsageError as e:
+        (getattr(a, "parser", None) or ap).error(str(e))   # usage + message on stderr, exit 2
 
 
 if __name__ == "__main__":

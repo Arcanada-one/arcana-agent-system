@@ -17,6 +17,10 @@ class OutOfScope(Exception):
     Job-level `uses:`, `services`, `strategy` and a `runs-on` label array were in
     this class until they were measured for SHAPE (not interpreted); the triggers
     outside `events` still are.
+
+    `workflow_dispatch.inputs` was in NEITHER class and should have been in one:
+    it was reported `failed`, which claimed 41 workflows in 19 repos are malformed
+    when GitHub accepts every one of them. It is now measured for shape (A2-233).
     """
 
 
@@ -137,7 +141,30 @@ def validate(raw):
                     continue
                 if cfg == '':
                     continue
-                mapping(cfg, '' if event == 'workflow_dispatch' else 'branches branches-ignore tags tags-ignore paths paths-ignore types')
+                if event == 'workflow_dispatch':
+                    # `inputs:` is ordinary GitHub syntax, and the allowed-key set was empty, so every
+                    # workflow that declares one was reported `failed` — "malformed workflow" about 41
+                    # workflows in 19 repos that GitHub itself accepts (A2-227). That is exactly the
+                    # collapse `OutOfScope` above exists to prevent, in the other direction: a shape
+                    # this checker had simply never been taught. It is taught here rather than excused,
+                    # because the shape IS bounded — the same way a reusable job's `with:` block is.
+                    # What the values MEAN (expressions, defaults at dispatch time) stays NOT_MEASURED.
+                    mapping(cfg, 'inputs')
+                    if 'inputs' in cfg:
+                        mapping(cfg['inputs'])
+                        for input_id, spec in cfg['inputs'].items():
+                            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', input_id):
+                                raise ValueError('unsupported workflow_dispatch input id')
+                            mapping(spec, 'description default required type options')
+                            for key in ('description', 'default', 'required', 'type'):
+                                if key in spec:
+                                    scalar(spec[key])
+                            if spec.get('type') == 'choice':
+                                string_list(spec.get('options'))
+                            elif 'options' in spec:
+                                raise ValueError('workflow_dispatch options require type: choice')
+                    continue
+                mapping(cfg, 'branches branches-ignore tags tags-ignore paths paths-ignore types')
                 for filters in cfg.values():
                     string_list(filters)
         jobs = doc.get('jobs')

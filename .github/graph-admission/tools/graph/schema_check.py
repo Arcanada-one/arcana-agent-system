@@ -199,6 +199,64 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
             non_doc_change = True
         if f.get("node_id"):
             changed_nodes.append(f["node_id"])
+    recorded_entities = {v.get("entity") for v in (doc.get("verdicts") or []) if isinstance(v, dict)}
+    # structural exclusions (DEC-AUP-0034): affected entities that owe this change no verdict because
+    # the verifier matrix gives their node type no verifier at all and their bytes did not change. Here
+    # only the DOCUMENT is judged — shape, and the two self-consistency facts the receipt itself carries
+    # (an entity is never both excluded and given a verdict, and a changed entity is never excluded).
+    # Whether the exclusion is TRUE of the tree is re-derived from Git by impact_pair.receipt_problems,
+    # which is the gate's independent check; this validator has no repository in hand.
+    excluded = set()
+    for x in (doc.get("structural_exclusions") if isinstance(doc.get("structural_exclusions"), list) else []):
+        if not isinstance(x, dict) or not isinstance(x.get("entity"), str) or not x["entity"]:
+            c.add("STRUCTURAL_EXCLUSION_INVALID", "entry without an entity"); continue
+        ch = x.get("content_hash") if isinstance(x.get("content_hash"), dict) else {}
+        missing = [f for f in ("node_type", "reason") if not x.get(f)]
+        if missing:
+            c.add("STRUCTURAL_EXCLUSION_INVALID", f"{x['entity']}: missing {', '.join(missing)}"); continue
+        # The entity a receipt cannot verify is the PREVIOUS VERSION OF ITSELF (DEC-AUP-0035). That
+        # one IS in the change set and its bytes DO differ — the two facts DEC-AUP-0034 relies on
+        # are inverted here, so it is admitted on entirely different evidence: the excluded path is
+        # the path this document was written to, and the receipt standing there declares the same
+        # work item. Everything the document can check about that is checked here; whether it is
+        # TRUE of the tree is re-derived from Git by impact_pair.receipt_problems.
+        if x.get("rule") == "DEC-AUP-0035":
+            sup = x.get("superseded") if isinstance(x.get("superseded"), dict) else {}
+            wi = doc.get("work_item")
+            wi = wi if isinstance(wi, str) else (wi or {}).get("task_id") if isinstance(wi, dict) else None
+            path = x.get("path")
+            bad = None
+            if not (isinstance(path, str) and path and x["entity"] == "receipt:" + path):
+                bad = "entity and path must be the same receipt file"
+            elif path != doc.get("receipt_path"):
+                bad = (f"path {path!r} is not this receipt's own output path "
+                       f"{doc.get('receipt_path')!r} — only the document it replaces is superseded")
+            elif not wi or sup.get("work_item") != wi:
+                bad = (f"superseded.work_item {sup.get('work_item')!r} is not this receipt's work item "
+                       f"{wi!r}")
+            elif sup.get("receipt_path") != path:
+                bad = "superseded.receipt_path disagrees with path"
+            elif not (ch.get("head") is None or (isinstance(ch.get("head"), str)
+                                                 and re.fullmatch(r"sha256:[0-9a-f]{64}", ch["head"]))) \
+                    or not (ch.get("base") is None or (isinstance(ch.get("base"), str)
+                                                       and re.fullmatch(r"sha256:[0-9a-f]{64}", ch["base"]))):
+                bad = "content_hash values must each be sha256:<64 hex> or null (absent at that revision)"
+            elif ch.get("base") is None and ch.get("head") is None:
+                bad = "content_hash names no revision at which the superseded receipt exists"
+            elif x["entity"] in recorded_entities:
+                bad = "excluded AND given a verdict"
+            if bad:
+                c.add("STRUCTURAL_EXCLUSION_INVALID", f"{x['entity']}: {bad}"); continue
+            excluded.add(x["entity"]); continue
+        if not (isinstance(ch.get("base"), str) and ch.get("base") == ch.get("head")
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", ch["base"])):
+            c.add("STRUCTURAL_EXCLUSION_INVALID",
+                  f"{x['entity']}: content_hash must be one equal sha256:<64 hex> at base and head"); continue
+        if x["entity"] in recorded_entities:
+            c.add("STRUCTURAL_EXCLUSION_INVALID", f"{x['entity']}: excluded AND given a verdict"); continue
+        if x["entity"] in changed_nodes:
+            c.add("STRUCTURAL_EXCLUSION_INVALID", f"{x['entity']}: the change set contains it"); continue
+        excluded.add(x["entity"])
     # staleness
     sv = stale.get("verdict")
     if sv == "not_checked":
@@ -224,7 +282,10 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
             c.add("REVISION_SELECTION_INCOMPLETE", "missing typed base/head selections")
         else:
             selected = set(rs["base"]) | set(rs["head"])
-            recorded = {v.get("entity") for v in doc.get("verdicts", []) if isinstance(v, dict)}
+            # A structurally excluded entity is covered, not missing (DEC-AUP-0034). `excluded` holds
+            # only entries that already survived validation above, so a forged exclusion buys nothing
+            # here either: it was dropped from the set AND reported as STRUCTURAL_EXCLUSION_INVALID.
+            recorded = recorded_entities | excluded
             vd = doc.get("verify") if isinstance(doc.get("verify"), dict) else {}
             required = vd.get("required_by_entity")
             if selected - recorded or (required is not None and (not isinstance(required, dict) or selected - set(required))):
@@ -351,7 +412,7 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
         if val == "not_measured" and not v.get("reason"):
             c.add("NOT_MEASURED_WITHOUT_REASON", v["entity"])
     for ent in entities + changed_nodes:
-        if ent not in verdict_of:
+        if ent not in verdict_of and ent not in excluded:
             c.add("ENTITY_WITHOUT_VERDICT", ent)
     # admission
     adm = sub("admission")
@@ -409,7 +470,8 @@ ALL_RECEIPT_RULES = ("RECEIPT_SCHEMA_MISMATCH", "RECEIPT_MISSING_FIELD", "RECEIP
                      "GLOBAL_FALLBACK_WITHOUT_REASON", "INFERRED_BOUNDARY_WITHOUT_CANARY", "VERIFIER_WITHOUT_OUTPUT_REF",
                      "VERIFIER_KIND_UNKNOWN", "ENTITY_WITHOUT_VERDICT", "VERDICT_NOT_TRIVALUED", "VERIFIED_WITHOUT_VERIFIER",
                      "NOT_MEASURED_WITHOUT_REASON", "EXEMPTION_WITHOUT_OWNER", "EXEMPTION_WITHOUT_EXPIRY", "EXEMPTION_EXPIRED",
-                     "ADMISSION_CONTRADICTS_VERDICTS", "ADMISSION_VERDICT_INVALID", "HEAD_GRAPH_BINDING_INVALID", "REVISION_SELECTION_INCOMPLETE")
+                     "ADMISSION_CONTRADICTS_VERDICTS", "ADMISSION_VERDICT_INVALID", "HEAD_GRAPH_BINDING_INVALID", "REVISION_SELECTION_INCOMPLETE",
+                     "STRUCTURAL_EXCLUSION_INVALID")
 
 
 # -------------------------------------------------------------------------------- selftest

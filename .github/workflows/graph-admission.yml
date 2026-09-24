@@ -198,6 +198,44 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/graph-admission"
           printf '%s' "${PR_BODY:-}" > "${RUNNER_TEMP}/graph-admission/pr-body.txt"
 
+      # A2-108. THE PROGRAM REPOSITORY GATES ITSELF, and it is the one caller that cannot use a
+      # vendored bundle: the tools it would vendor are the tools it ships, so a committed copy would
+      # be a second, drifting truth, and the gate would judge a change to `tools/graph/` against an
+      # older version of itself. Here the bundle is built from THIS pull request's own head tree into
+      # the runner's temp directory — never committed, never stale by construction.
+      #
+      # The guard is `github.repository`, which in a reusable workflow is the CALLING repository and
+      # is not a workflow input: a caller cannot set it, so no caller can reach this path to escape
+      # bundle verification. In every other repository the step is skipped and nothing changes.
+      #
+      # The signature is made with a key generated in this job and thrown away with it. What that
+      # proves is exactly what the gate then reports as `BUNDLE_SIGNATURE_UNPINNED` — self-consistency,
+      # not provenance — and `not_measured` is never a pass (DEC-AUP-0008 I4). There is no provenance
+      # claim a repository can make about its own tools by signing them; what stands behind these
+      # tools is this repository's git history and its review, which is the honest answer rather than
+      # a ceremony that looks cryptographic.
+      - name: Build the gate bundle from this repository's own tree (program repository only)
+        id: selftools
+        if: github.repository == 'Arcanada-one/arcanada-universal-program'
+        env:
+          PROGRAM_REF: ${{ inputs.program_ref }}
+        run: |
+          set -euo pipefail
+          key="${RUNNER_TEMP}/self-bundle-signing-key"
+          ssh-keygen -t ed25519 -N '' -q -f "$key" \
+            -C 'ephemeral GraphAdmissionBundle/v1 key — generated and discarded inside one CI job'
+          # `ci_gate.py bundle --sign-key` also copies the signing public key over the repository's
+          # own contracts/graph-verified-change/bundle-signing-key.pub (ci_gate.py:174) — it assumes
+          # it is being run BY the signing host TO publish a new key. Here it is a side effect on the
+          # tree under test, so the committed bytes are put back before anything reads them.
+          committed='contracts/graph-verified-change/bundle-signing-key.pub'
+          cp "$committed" "${RUNNER_TEMP}/committed-signing-key.pub"
+          python3 tools/graph/ci_gate.py bundle \
+            --out "${RUNNER_TEMP}/self-bundle" --program-ref "$PROGRAM_REF" --sign-key "$key"
+          cp "${RUNNER_TEMP}/committed-signing-key.pub" "$committed"
+          git diff --quiet -- "$committed"
+          echo "path=${RUNNER_TEMP}/self-bundle" >> "$GITHUB_OUTPUT"
+
       - name: Run the admission gate from the pinned program SHA
         id: gate
         # EVERY value this step needs arrives through `env:`, never through a `${{ }}` expansion
@@ -209,7 +247,7 @@ jobs:
         env:
           RECEIPT_GLOBS: ${{ inputs.receipt_globs }}
           BUILD_GRAPH: ${{ inputs.build_graph }}
-          TOOLS_PATH: ${{ inputs.tools_path }}
+          TOOLS_PATH: ${{ steps.selftools.outputs.path || inputs.tools_path }}
           PROGRAM_REF: ${{ inputs.program_ref }}
           ENFORCEMENT: ${{ inputs.enforcement }}
           REPO_NAME: ${{ github.repository }}

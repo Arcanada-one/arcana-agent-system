@@ -52,6 +52,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -79,6 +80,11 @@ PERSISTENCE_PKGS = {"@prisma/client", "typeorm"}
 BOUNDARY_TARGET_RE = re.compile(r"\.(controller|gateway|processor)\.[cm]?[jt]sx?$")
 CODE_EXTS = {".ts", ".tsx", ".mts", ".cts"}
 TS_ERR_RE = re.compile(r"^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$")
+# Diagnostics that say the compiler could not FIND something, not that the code is wrong: TS2307
+# "Cannot find module", TS2688 "Cannot find type definition file", TS7016 "implicitly has an 'any'
+# type because a declaration file could not be found". In a tree whose dependencies were never
+# installed these are the whole output and none of them belong to the change (verify.dependency_install_missing).
+UNRESOLVED_MODULE_CODES = {"TS2307", "TS2688", "TS7016"}
 SHARED_KINDS = {"library", "shared_package"}
 MANDATORY_IDS = ["type_check", "contract_diff", "route_config_consistency", "schema_diff", "config_schema", "fitness_rules", "doc_reference",
                  "canary"]
@@ -95,6 +101,10 @@ def now_iso() -> str:
 
 def sha_text(s: str) -> str:
     return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def sha_bytes(b: bytes) -> str:
+    return "sha256:" + hashlib.sha256(b).hexdigest()
 
 
 def dump(obj) -> bytes:
@@ -654,7 +664,12 @@ class Verify:
         self.top = self.repo.top
         self.workdir = Path(a.workdir) if a.workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "arcana-verify"
         self.workdir.mkdir(parents=True, exist_ok=True)
-        self.out_dir = Path(a.verifier_out) if a.verifier_out else (Path(a.out).with_suffix("") .parent / (Path(a.out).stem + ".d") if a.out else self.workdir / "verifier-out")
+        # Captured verifier output and the two graph dumps go to the WORKDIR, never beside the receipt.
+        # The old default was `<out>.d/` — so `--out receipts/graph/car.json` dropped `car.d/` into the
+        # repository's own receipts directory: two files of ~155k lines each, which then get committed
+        # by mistake (A2-229 had to route them out of the tree by hand). A receipt is a document; its
+        # working scratch is not, and the tool must not make the author remember the difference.
+        self.out_dir = Path(a.verifier_out) if a.verifier_out else self.workdir / "verifier-out"
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.profile, self.profile_ref = load_profile(a, self.top)
         self.events: list[dict] = []
@@ -664,6 +679,17 @@ class Verify:
         self.canary_paths = list(getattr(a, "canary", None) or [])   # CanaryResult/v1 documents (AUP-GRAPH-008)
         self.canary_verified: set[str] = set()
         self.prep_seconds = 0.0
+        # DEC-AUP-0035. WHERE this run's receipt is going, expressed relative to the repository, and
+        # for which work item. Both are needed to recognise the one entity a receipt can never
+        # verify: the previous version of itself. `--out` outside the tree yields None, and that
+        # case records a note rather than quietly behaving like a match.
+        self.work_item = getattr(a, "work_item", None) or None
+        self.self_receipt_rel: str | None = None
+        if getattr(a, "out", None):
+            try:
+                self.self_receipt_rel = Path(a.out).resolve().relative_to(self.top).as_posix()
+            except ValueError:
+                self.self_receipt_rel = None
 
     # ---- change set + impact
     def impact_query(self) -> dict:
@@ -928,16 +954,35 @@ class Verify:
                 continue
             rc, out, secs = run_cmd([tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "false", "--listFiles"], self.exec_root / dep)
             listed, errors_by_file, n_err, global_errors = set(), {}, 0, []
+            unresolved = 0
             for line in out.splitlines():
                 m = TS_ERR_RE.match(line.strip())
                 if m:
                     n_err += 1
+                    unresolved += m.group(4) in UNRESOLVED_MODULE_CODES
                     errors_by_file.setdefault(self.norm_tsc_path(m.group(1), dep), []).append(f"{m.group(4)} L{m.group(2)}: {m.group(5)[:160]}")
                 elif re.match(r"^error TS\d+:", line.strip()):
                     n_err += 1
                     global_errors.append(line.strip()[:240])
                 elif line.startswith("/") and not line.strip().endswith(":"):
                     listed.add(self.norm_tsc_path(line.strip(), dep))
+            # The compiler RAN and exited normally, so the run looks complete — which is exactly why
+            # this has to be caught here. With no dependency install, every import answers TS2307 and
+            # the flood is attributed to the changed files: 1320 errors on auth-arcana, not one of
+            # them the author's. Both halves are required and each is separately falsifiable: the
+            # manifest declares dependencies with no node_modules anywhere above the deployable, AND
+            # the compiler actually emitted unresolved-module diagnostics. The second half is what the
+            # first alone got wrong — the ts-mini fixture declares dependencies it never installs and
+            # resolves them through generated `paths`, so it compiles clean and is measured as before.
+            uninstalled = self.dependency_install_missing(dep) if unresolved else None
+            if uninstalled:
+                why = (f"{unresolved} of {n_err} diagnostic(s) are unresolved modules and {uninstalled}; "
+                       f"a type check over an unresolved module graph measures the absent install, not this change")
+                self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out,
+                            started, secs, f"{cfg}: exit {rc}, {n_err} error(s), {unresolved} unresolved-module — "
+                                           f"not_measured: dependencies not installed",
+                            {e: ("not_measured", why) for e in eids})
+                continue
             verdicts = {}
             for eid in eids:
                 n = self.entities[eid]["node"]
@@ -966,6 +1011,56 @@ class Verify:
                     verdicts[eid] = ("not_measured", f"{cfg}: {n_err} error(s) in other files ({', '.join(sorted(errors_by_file)[:3])}); not attributable to {path}")
             summary = f"{cfg}: exit {rc}, {n_err} error(s), {len(listed)} files listed"
             self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out, started, secs, summary, verdicts)
+
+    def dependency_install_missing(self, dep: str) -> str | None:
+        """Why module resolution cannot work in this tree — or None, meaning the compiler is believed.
+
+        `tsc` in a tree whose dependencies were never installed answers TS2307 for every import, and
+        the compiler EXITS NORMALLY, so the run looks complete and the flood is attributed to the
+        changed files: 1320 errors on auth-arcana, not one of them the author's. That is a `failed`
+        verdict bought with a measurement that could not have happened, which is precisely what the
+        third verdict exists for.
+
+        This half answers only "was there an install?": the deployable's own manifest declares
+        dependencies AND no `node_modules` exists at the deployable or any ancestor up to the exec
+        root. It is deliberately NOT sufficient on its own — the caller requires unresolved-module
+        diagnostics to have actually appeared, because a tree can resolve its imports through tsconfig
+        `paths` with no install at all (the ts-mini fixture does exactly that, and an earlier version
+        of this rule silenced it). A manifest declaring no dependencies needs no install; an installed
+        tree keeps every diagnostic it earns, including a TS2307 for a module the change deleted.
+
+        Installing the dependencies here instead was the other option on the table (A2-233). It is
+        refused for the gate's default path: `npm ci` inside a verifier makes the verdict depend on a
+        registry reachable at that moment and on post-install scripts of the tree being judged, i.e.
+        it makes the measurement less reproducible than saying it was not made. A repository that
+        wants the type check measured installs its dependencies before the gate runs — which is what
+        every CI job already does, and why this branch is quiet in CI and loud on a bare clone."""
+        prefix = "" if dep in ("", ".") else dep.rstrip("/") + "/"
+        pkg = prefix + "package.json"
+        declared: dict = {}
+        if self.tree_head.exists(pkg):
+            try:
+                doc = json.loads(self.tree_head.text(pkg))
+            except json.JSONDecodeError:
+                doc = {}
+            if isinstance(doc, dict):
+                for field in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                    section = doc.get(field)
+                    if isinstance(section, dict):
+                        declared.update(section)
+        if not declared:
+            return None
+        # node_modules is never in the Git tree: probe the filesystem the compiler will actually read.
+        root = self.exec_root.resolve()
+        probe = (root / dep).resolve() if dep not in ("", ".") else root
+        while True:
+            if (probe / "node_modules").is_dir():
+                return None
+            if probe == root or probe.parent == probe:
+                return (f"{len(declared)} dependency(ies) declared in {pkg} and no node_modules under "
+                        f"{dep or '.'}: tsc cannot resolve modules, so its diagnostics would measure the "
+                        f"absent install, not this change")
+            probe = probe.parent
 
     def norm_tsc_path(self, p: str, dep: str) -> str:
         p = p.strip()
@@ -1574,10 +1669,201 @@ class Verify:
         return frozen, new
 
     # ---- aggregation
+    STRUCTURAL_EXCLUSION_RULE = (
+        "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix "
+        "declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it "
+        "could ever carry states a property of the MATRIX, not of this change), the change set does not "
+        "contain it, and its bytes are identical at base and head. Each one is listed in "
+        "structural_exclusions with the content hash at both revisions that proves the byte-identity, and "
+        "impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.")
+
+    def structural_exclusions(self) -> dict[str, dict]:
+        """Entities this change owes no verdict — with the per-entity proof that it owes none.
+
+        A historical receipt is a dated record of a measurement that happened. It does not become
+        false when later code changes, and the matrix gives `receipt` no verifier, so the only verdict
+        it can carry is `not_measured` for the matrix's own stated reason — I14, "asserted, never
+        re-verified". Charging that to the author converts a property of the gate into a `paused_safe`
+        on their change. Measured before this rule existed: AUP #111 carried 233 such receipts, which
+        means NO change to `tools/graph/` could ever be admitted — the one part of the repository
+        permanently unmaintainable was the gate itself; ARAS #195 carried 9 and was unblocked by
+        hand-written expiring exemptions for a condition that never expires.
+
+        The three conditions are all necessary and each is separately falsifiable:
+
+          1. The matrix declares NO verifier of any kind for the node type. Not "no verifier ran" and
+             not "the verifier was unavailable" — those are real coverage gaps and keep pausing. Today
+             this is exactly `receipt` and `work_item`. If the matrix ever gains a verifier for one of
+             them, that type stops being excluded with no further edit, which is the reverse_if.
+          2. The entity is not in the change set. Editing a receipt is an ordinary change to a file.
+          3. Its bytes are identical at base and head. This is what distinguishes "the change did not
+             touch it" from "the graph says it is downstream": a file the change did not alter cannot
+             have been broken by the change in any way this entity could have recorded.
+
+        The alternative on the table (A2-233) was to let the gate grant itself a named expiring
+        exemption for the class. Refused: an exemption carries an owner and an expiry because it is a
+        DEBT someone promises to repay, and there is nothing here to repay — the entity was never
+        verifiable. `admit_change.structural_covered_entities` already had to special-case the same
+        loop twice (`gate_self_update`, `spent_receipt_archive`); this removes the loop at its source
+        instead of adding a third case."""
+        m = self.matrix
+        out: dict[str, dict] = {}
+        for eid, ent in self.entities.items():
+            if ent.get("changed") or ent.get("required"):
+                continue
+            node = ent["node"]
+            ntype = node.get("type") or eid.split(":", 1)[0]
+            spec = m["node_types"].get(ntype)
+            if not isinstance(spec, dict) or (spec.get("mandatory") or []) or (spec.get("selectable") or []):
+                continue
+            path = node.get("path")
+            # A node with no file (a `work_item` is an identifier found in a comment) cannot be proved
+            # byte-identical, so it is not excluded: the proof is the point, not the node type.
+            if not path or not (self.tree_base.exists(path) and self.tree_head.exists(path)):
+                continue
+            hb, hh = sha_bytes(self.tree_base.files[path]), sha_bytes(self.tree_head.files[path])
+            if hb != hh:
+                continue
+            out[eid] = {"entity": eid, "node_type": ntype, "path": path,
+                        "content_hash": {"base": hb, "head": hh},
+                        "reason": spec.get("not_measured_reason")
+                        or f"the verifier matrix declares no verifier for node type {ntype}",
+                        "rule": "DEC-AUP-0034"}
+        return out
+
+    SUPERSEDED_SELF_RULE = (
+        "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When "
+        "a receipt is re-issued at the same path for the same work item — the ordinary case after a "
+        "rebase or a second commit on a card — the copy of it standing in the tree is superseded by "
+        "construction: this run is the measurement that replaces it, so the only verdict it could "
+        "carry is I14 `not_measured` about a document that no longer exists at that path once the "
+        "run finishes. It is excluded with the work item and the output path that identify it, both "
+        "re-derived from Git by impact_pair.receipt_problems, never asserted.")
+
+    @staticmethod
+    def _work_item_id(value) -> str | None:
+        if isinstance(value, str):
+            return value or None
+        if isinstance(value, dict):
+            for k in ("task_id", "id", "work_item", "key"):
+                if value.get(k):
+                    return str(value[k])
+        return None
+
+    def _declared_work_item(self, tree, path: str) -> str | None | bool:
+        """The work item of the receipt stored at `path` in `tree`.
+
+        False means "there is a file there and it is not a receipt of a readable work item" — a
+        distinct answer from None ("no file there"), because only the first one may block the rule."""
+        if not tree.exists(path):
+            return None
+        try:
+            doc = json.loads(tree.text(path))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False
+        if not (isinstance(doc, dict) and str(doc.get("schema", "")).endswith("Receipt/v1")):
+            return False
+        return self._work_item_id(doc.get("work_item")) or False
+
+    def superseded_self_exclusions(self) -> dict[str, dict]:
+        """The one entity this run supersedes by construction (DEC-AUP-0035).
+
+        DEC-AUP-0034 excludes an UNCHANGED historical receipt. It cannot reach this case and was not
+        meant to: a re-issued receipt changes its own file, so the change set contains it and its
+        bytes differ at base and head — conditions (b) and (c) both fail, correctly, because editing
+        a receipt IS an ordinary change to a file. What makes this one different is not that the
+        file changed; it is WHOSE record it is. The document at that path is the previous draft of
+        the very receipt being written now, for the same work item, and control had to hand-write an
+        expiring exemption for it on ARAS #195 and #196 — an expiry on a condition that never
+        expires, which is exactly what DEC-AUP-0034 refused to institutionalise.
+
+        Three conditions, each separately falsifiable:
+
+          1. The matrix declares NO verifier of any kind for the node type — the same condition as
+             DEC-AUP-0034 (1), and the reason the excluded verdict carries no information.
+          2. The entity's path is the path this run writes its receipt to (`--out`, relative to the
+             repository). A receipt cannot supersede a document it is not replacing.
+          3. Every version of that file which exists at base or head declares the SAME work item as
+             this run (`--work-item`). A different work item's receipt at that path is a different
+             record and keeps its verdict; so does a file that is not a readable receipt at all.
+        """
+        if not (self.self_receipt_rel and self.work_item):
+            return {}
+        eid = f"receipt:{self.self_receipt_rel}"
+        ent = self.entities.get(eid)
+        if ent is None:
+            return {}
+        node = ent["node"]
+        ntype = node.get("type") or "receipt"
+        spec = self.matrix["node_types"].get(ntype)
+        if not isinstance(spec, dict) or (spec.get("mandatory") or []) or (spec.get("selectable") or []):
+            return {}
+        path = self.self_receipt_rel
+        declared = {rev: self._declared_work_item(tree, path)
+                    for rev, tree in (("base", self.tree_base), ("head", self.tree_head))}
+        present = [v for v in declared.values() if v is not None]
+        if not present or any(v is False or v != self.work_item for v in present):
+            return {}
+        def digest(tree):
+            return sha_bytes(tree.files[path]) if tree.exists(path) else None
+        return {eid: {"entity": eid, "node_type": ntype, "path": path,
+                      "content_hash": {"base": digest(self.tree_base), "head": digest(self.tree_head)},
+                      "reason": (spec.get("not_measured_reason")
+                                 or f"the verifier matrix declares no verifier for node type {ntype}")
+                                + f"; superseded by construction — this run re-issues the receipt at {path} "
+                                  f"for work item {self.work_item}",
+                      "rule": "DEC-AUP-0035",
+                      "superseded": {"work_item": self.work_item, "receipt_path": path}}}
+
+    def superseded_self_note(self) -> str | None:
+        """Why the rule did NOT apply, when a caller was one step away from it.
+
+        Writing the receipt outside the repository is the documented workaround for older defects,
+        and under it the rule is unreachable: nothing in the tree is the path this run writes to. A
+        reader seeing I14 on a receipt of their own work item has to be told that, or the absence of
+        the exclusion looks like a judgement about the document."""
+        if self.self_receipt_rel or not self.work_item:
+            return None
+        out = getattr(self.a, "out", None)
+        for eid, ent in self.entities.items():
+            if not eid.startswith("receipt:"):
+                continue
+            path = ent["node"].get("path")
+            if path and self._declared_work_item(self.tree_head, path) == self.work_item:
+                return (f"DEC-AUP-0035 not applied to {eid}: it declares this run's work item "
+                        f"{self.work_item}, but the receipt is being written to "
+                        f"{out if out else '(no --out)'}, which is outside this repository, so no "
+                        f"path in the tree is the one this run supersedes.")
+        return None
+
     def aggregate(self, q: dict) -> dict:
         m = self.matrix
         verdicts = []
+        self.excluded = self.structural_exclusions()
+        superseded = self.superseded_self_exclusions()
+        if superseded:
+            self.excluded.update(superseded)
+            for x in superseded.values():
+                self.events.append({"code": "SUPERSEDED_SELF_EXCLUSION", "rule": "DEC-AUP-0035",
+                                    "entity": x["entity"],
+                                    "text": f"the receipt at {x['path']} is the previous version of the one this "
+                                            f"run is writing, for the same work item {x['superseded']['work_item']} "
+                                            f"— superseded by construction, so it owes this change no verdict"})
+        note = self.superseded_self_note()
+        if note:
+            self.notes.append(note)
+            self.events.append({"code": "SUPERSEDED_SELF_NOT_APPLICABLE", "rule": "DEC-AUP-0035", "text": note})
+        if self.excluded:
+            by_type: dict[str, int] = {}
+            for x in self.excluded.values():
+                by_type[x["node_type"]] = by_type.get(x["node_type"], 0) + 1
+            self.events.append({"code": "STRUCTURAL_EXCLUSION", "rule": "DEC-AUP-0034",
+                                "text": f"{len(self.excluded)} affected entity(ies) owe no verdict "
+                                        f"({', '.join(f'{k}: {v}' for k, v in sorted(by_type.items()))}): "
+                                        f"unchanged at both revisions and given no verifier by the matrix"})
         for eid in sorted(self.entities):
+            if eid in self.excluded:
+                continue
             ent = self.entities[eid]
             n = ent["node"]
             required = ent["required"]
@@ -1647,9 +1933,12 @@ class Verify:
                "tree": q["tree"], "staleness": {k: v for k, v in q["staleness"].items() if k != "checked_nodes"},
                "change_set": dict(q["change_set"]), "impact_set": {k: v for k, v in q["impact_set"].items() if k != "files"},
                "verifiers": self.verifiers, "verdicts": verdicts, "exemptions": [],
+               "structural_exclusions": sorted(self.excluded.values(), key=lambda x: x["entity"]),
                "admission": {"verdict": adm, "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured "
                                                      "without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, "
-                                                     "never by the verifier (DEC-AUP-0008, matrix P1/P4)"},
+                                                     "never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+                             "structural_exclusion_rule": self.STRUCTURAL_EXCLUSION_RULE,
+                             "superseded_self_rule": self.SUPERSEDED_SELF_RULE},
                "notes": [f"DRAFT produced by `arcana verify` ({TOOL} {VERSION}) from matrix {rel_ref(MATRIX_PATH)}; selection rule: {self.matrix['selection_rule'][:120]}…",
                          f"profile: {self.profile_ref}; baseline: {self.baseline_ref} ({self.baseline_status}); selected: {sorted(self.selected) or 'none'}; disabled: {sorted(self.disabled) or 'none'}",
                          *self.notes],
@@ -1664,6 +1953,11 @@ class Verify:
             rec["empty_impact_explanation"] = q["empty_impact_explanation"]
         if self.a.work_item:
             rec["work_item"] = self.a.work_item
+        if self.self_receipt_rel:
+            # The anchor of DEC-AUP-0035: an exclusion claiming "this is the previous version of me"
+            # is checkable only against the path this document was actually written to, and
+            # admit_change compares this field with where it FOUND the receipt.
+            rec["receipt_path"] = self.self_receipt_rel
         return rec
 
     def matrix_id_of(self, v: dict) -> str:
@@ -1676,8 +1970,37 @@ class Verify:
             return "targeted_test"
         if vid.startswith("v-property"):
             return "property_check"
+        if vid.startswith("v-crash-"):
+            return vid[len("v-crash-"):]
         return {"v-contract-diff": "contract_diff", "v-schema-diff": "schema_diff", "v-config-schema": "config_schema",
                 "v-fitness": "fitness_rules", "v-doc-reference": "doc_reference"}.get(vid, v["kind"])
+
+    def run_verifier(self, mid: str, fn) -> None:
+        """One verifier's crash costs that verifier's verdicts — never the whole receipt.
+
+        A verifier that raises used to kill the run: no receipt was written at all, and the caller
+        read that as «the author skipped the tool» rather than «the tool broke». That is how one
+        wrong field name (`contract_diff.Refusal.detail` read as `.reason`, 300e04a → ccd3f57) made
+        the gate look unusable on every ordinary Python repository. Containing it does NOT hide the
+        crash: the traceback is captured verbatim as the verifier's output, every entity the
+        verifier owed a verdict gets `not_measured` naming the exception, and `VERIFIER_CRASHED`
+        goes into the receipt's events — so the admission can never be `admitted` on a crash, only
+        `paused_safe`. not_measured is not a pass (DEC-AUP-0008).
+        """
+        started, t0 = now_iso(), time.monotonic()
+        try:
+            fn()
+        except Exception as e:                              # noqa: BLE001 — a verifier bug is a verdict, not an exit
+            tb = traceback.format_exc()
+            try:
+                ents = self.needing(mid)
+            except Exception:                               # the entity table itself is unusable
+                ents = []
+            self.events.append({"code": "VERIFIER_CRASHED", "verifier": mid,
+                                "text": f"{type(e).__name__}: {e}"[:400]})
+            self.record(f"v-crash-{mid}", mid, f"verify.py {mid} (crashed)", ents, 2, tb, started,
+                        round(time.monotonic() - t0, 2), f"crashed: {type(e).__name__}",
+                        {eid: ("not_measured", f"{mid} crashed: {type(e).__name__}: {e}"[:300]) for eid in ents})
 
     # ---- run
     def run(self) -> tuple[dict, int]:
@@ -1692,9 +2015,12 @@ class Verify:
         self.prepare_head()
         self.load_baseline()
         self.collect_entities(q)
-        for fn in (self.v_type_check, self.v_contract_diff, self.v_route_config, self.v_schema_diff, self.v_config_schema,
-                   self.v_fitness, self.v_doc_reference, self.v_canary, self.v_targeted_test, self.v_property_check):
-            fn()
+        for mid, fn in (("type_check", self.v_type_check), ("contract_diff", self.v_contract_diff),
+                        ("route_config_consistency", self.v_route_config), ("schema_diff", self.v_schema_diff),
+                        ("config_schema", self.v_config_schema), ("fitness_rules", self.v_fitness),
+                        ("doc_reference", self.v_doc_reference), ("canary", self.v_canary),
+                        ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
+            self.run_verifier(mid, fn)
         rec = self.aggregate(q)
         rec["verify"]["seconds"]["total"] = round(time.monotonic() - t_all, 2)
         rec["verify"]["events"] = self.events + [{"code": e} for e in q.get("events", [])]
@@ -1721,7 +2047,7 @@ def human(rec: dict) -> str:
         if v["verdict"] != "verified":
             lines.append(f"  {v['verdict']:12} {v['entity']}: {v.get('reason', '')[:140]}")
     for e in rec["verify"]["events"]:
-        lines.append(f"  event {e.get('code')}: {e.get('reason', '')[:120]}")
+        lines.append(f"  event {e.get('code')}: {(e.get('reason') or e.get('text') or '')[:160]}")
     return "\n".join(lines)
 
 
@@ -1944,8 +2270,17 @@ def selftest(a) -> int:
         if not imp.get("global_fallback", {}).get("triggered"):
             want = {e["entity"] for e in imp["deterministic_core"] + imp["inferred_tail"]} | set(seeds)
         have = {v["entity"] for v in rec["verdicts"]}
-        check(f"{fid}: every affected entity and changed node has exactly one tri-valued verdict ({len(want)})", want == have and len(have) == len(rec["verdicts"])
-              and all(v["verdict"] in ("verified", "failed", "not_measured") for v in rec["verdicts"]), missing=sorted(want - have), extra=sorted(have - want))
+        # A structurally excluded entity is ACCOUNTED FOR, not missing (DEC-AUP-0034): it owes no
+        # verdict because the matrix gives its node type no verifier and its bytes did not change.
+        # The two sets must still be disjoint and must still cover `want` exactly — an entity that
+        # slipped into both, or into neither, is the failure this check exists to catch.
+        excluded = {x["entity"] for x in rec.get("structural_exclusions", [])}
+        check(f"{fid}: every affected entity and changed node has exactly one tri-valued verdict or a recorded "
+              f"structural exclusion ({len(want)})",
+              want == have | excluded and not (have & excluded) and len(have) == len(rec["verdicts"])
+              and all(v["verdict"] in ("verified", "failed", "not_measured") for v in rec["verdicts"]),
+              missing=sorted(want - have - excluded), extra=sorted((have | excluded) - want),
+              both=sorted(have & excluded))
         by = {v["entity"]: v for v in rec["verdicts"]}
         failed = {v["entity"]: v for v in rec["verdicts"] if v["verdict"] == "failed"}
         if fault["verifier"] is None:
@@ -2304,7 +2639,7 @@ def main(argv=None) -> int:
     ap.add_argument("--prisma")
     ap.add_argument("--workdir", help="scratch directory for exports / generated tsconfigs")
     ap.add_argument("--out", type=Path, help="write the ChangeAdmissionReceipt/v1 draft here")
-    ap.add_argument("--verifier-out", help="directory for captured verifier outputs (default <out>.d)")
+    ap.add_argument("--verifier-out", help="directory for captured verifier outputs (default <workdir>/verifier-out; never beside --out)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--work-item")
     ap.add_argument("--canary", action="append",
