@@ -18,6 +18,7 @@ use arcana_connectors::contract_source::ContractSource;
 use arcana_core::contract::ContractBinding;
 
 use crate::effect::Effect;
+use crate::ground_truth::GroundTruth;
 use crate::run::RunSummary;
 
 use crate::models::ResolvedModel;
@@ -95,6 +96,19 @@ pub struct ContractSection {
     pub allowlist_source: String,
 }
 
+/// One file quoted into the brief as ground truth, and the bytes it was.
+///
+/// Without this section a receipt cannot answer the question a wrong page
+/// raises: was the model told, and told what exactly. The digest is over the
+/// bytes that reached the prompt, so a page written against `--help` output can
+/// be re-checked against the same `--help` output.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundTruthSection {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: usize,
+}
+
 /// The tree the work happened in.
 #[derive(Debug, Clone, Serialize)]
 pub struct Worktree {
@@ -141,6 +155,9 @@ pub struct ReadinessReceipt {
     /// model's closing sentence asserted and the disk denies.
     pub effect: Effect,
     pub denials: Vec<Denial>,
+    /// Empty when the run was dispatched with no grounding — which is a fact
+    /// about the dispatch, not a gap in the receipt.
+    pub ground_truth: Vec<GroundTruthSection>,
     pub run: RunSection,
 }
 
@@ -160,6 +177,7 @@ pub fn build(
     model: &ResolvedModel,
     produced_by: String,
     measured_at: String,
+    grounding: &[GroundTruth],
 ) -> ReadinessReceipt {
     let out = &summary.out;
     let (completed, reason) = crate::run::verdict_of(summary);
@@ -199,6 +217,14 @@ pub fn build(
         },
         effect: summary.effect.clone(),
         denials: denials(root),
+        ground_truth: grounding
+            .iter()
+            .map(|item| GroundTruthSection {
+                path: item.path.clone(),
+                sha256: item.sha256.clone(),
+                bytes: item.bytes,
+            })
+            .collect(),
         run: RunSection {
             completed,
             reason,

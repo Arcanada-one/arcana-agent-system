@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`arcana run --work-item … --ground-truth <PATH>`** quotes a file from the
+  repository into the work item's brief as the authority on names, flags and
+  environment variables, and records each path with the sha256 of the bytes that
+  reached the prompt in the receipt's new `ground_truth` section. A2-285's run
+  produced the page it was asked for and got every command in it wrong: the brief
+  described the deliverable and never showed the command it was about. Grounding
+  is a DECLARATION by whoever dispatches the run, in the same shape as
+  `--read-only` — a repository file such as `arcana run --help` piped out, not
+  prose written for the model to copy, which would make the run a measurement of
+  the operator. A named file that cannot be read or is empty refuses the run
+  (`GROUND_TRUTH_UNREADABLE`, `GROUND_TRUTH_EMPTY`) before the first model call,
+  because a run that silently lost its grounding is indistinguishable in the
+  receipt from a grounded one that went wrong (A2-292).
 - **A command line printed in our documentation is now parsed by the CLI's real
   clap definition.** `crates/cli/tests/docs_truth.rs` extracts every command in
   every fenced block under `docs/` and in `README.md`, and runs it through

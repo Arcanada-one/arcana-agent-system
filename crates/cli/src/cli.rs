@@ -155,6 +155,23 @@ pub enum Cmd {
         /// same verdict as a binding checked against the live endpoint.
         #[arg(long, value_name = "PATH", requires = "work_item")]
         contract_file: Option<PathBuf>,
+        /// Quote this file into the work item's brief as ground truth about
+        /// this repository. Repeatable; the order is the order given.
+        ///
+        /// For a task whose answer names commands, flags or environment
+        /// variables. The A2-285 live run wrote the page it was asked for and
+        /// got every command in it wrong, because the brief described the
+        /// deliverable and never showed the command it was about. Pass
+        /// `arcana run --help`, or the section of a how-to that already states
+        /// the behaviour — a file from the repository, not an answer written
+        /// for the model to copy: quoting our own prose back would measure the
+        /// operator instead of the run.
+        ///
+        /// A file that cannot be read, or that is empty, refuses the run
+        /// before the first model call. The receipt records each path with the
+        /// sha256 of the bytes that reached the prompt.
+        #[arg(long, value_name = "PATH", requires = "work_item")]
+        ground_truth: Vec<PathBuf>,
         /// Read the task from stdin. Preferred for anything with quotes,
         /// newlines, or shell metacharacters in it.
         #[arg(long)]

@@ -254,6 +254,14 @@ async fn an_incidental_write_does_not_buy_a_run_out_of_its_own_claim() {
     // points. The page does not exist. The tree HAD changed — so the digest on
     // its own said `Completed`, and an incidental write would have been enough
     // to buy any run out of `NoEffect`.
+    //
+    // The probe's content is non-empty here, where the live run's was empty:
+    // since A2-292 the `write` tool refuses empty content outright, so the live
+    // sequence can no longer create any file at all (that case is
+    // `an_empty_probe_write_is_refused_before_it_can_change_the_tree` below).
+    // The property under test is the incidental write, not its size — a model
+    // that writes `probe` instead of nothing reaches exactly the state this
+    // test describes.
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     seed(work.path());
@@ -264,7 +272,7 @@ async fn an_incidental_write_does_not_buy_a_run_out_of_its_own_claim() {
         &[
             &tool_call(
                 "write",
-                serde_json::json!({ "path": "test-write-check.md", "content": "" }),
+                serde_json::json!({ "path": "test-write-check.md", "content": "probe\n" }),
             ),
             RUN_FOUR_CLAIM,
         ],
@@ -283,6 +291,56 @@ async fn an_incidental_write_does_not_buy_a_run_out_of_its_own_claim() {
         summary.effect.claimed_but_absent,
         vec!["docs/how-to/run-work-item.md".to_owned()]
     );
+}
+
+/// The live run's own calls, unchanged — and now they change nothing.
+///
+/// A2-285's live run 1 called `write` twice with `content: ""`, was told
+/// `success` both times, and left a 0-byte file that moved the tree digest.
+/// Since A2-292 the tool refuses empty content, so this exact sequence executes
+/// no write at all: the tree is untouched and the run ends on a refusal instead
+/// of on a digest that moved for nothing.
+#[tokio::test]
+async fn an_empty_probe_write_is_refused_before_it_can_change_the_tree() {
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    seed(work.path());
+
+    let summary = drive(
+        work.path(),
+        audit.path(),
+        &[
+            &tool_call(
+                "write",
+                serde_json::json!({ "path": "test-write-check.md", "content": "" }),
+            ),
+            &tool_call(
+                "write",
+                serde_json::json!({ "path": "test-write-check.md", "content": "" }),
+            ),
+            RUN_FOUR_CLAIM,
+        ],
+        EffectExpectation::Artefact,
+    )
+    .await;
+
+    assert!(
+        !work.path().join("test-write-check.md").exists(),
+        "a refused write leaves no file"
+    );
+    assert_eq!(summary.effect.tree_changed, Some(false));
+    assert!(
+        summary.effect.writes.is_empty(),
+        "a refused call is not a write: {:?}",
+        summary.effect.writes
+    );
+
+    let (completed, reason) = verdict_of(&summary);
+    assert!(!completed, "nothing was produced");
+    // `NoAction`, not `NoEffect`: both calls were refused, so the run executed
+    // no tool at all and the older refusal is the more precise one. Either way
+    // the run fails, which is the point — before A2-292 this sequence exited 0.
+    assert_eq!(reason, "NoAction");
 }
 
 #[tokio::test]
