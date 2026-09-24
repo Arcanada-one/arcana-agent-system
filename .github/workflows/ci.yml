@@ -3,8 +3,12 @@ name: ci
 on:
   push:
     branches: [main]
+  # NO branch filter, deliberately (A2-238). `branches: [main]` here meant a pull request based on
+  # another branch — our ordinary stacked-card shape, e.g. #196 on the unmerged branch of #195 —
+  # showed an EMPTY check list: not a red check somebody argues with, the absence of one. A filter
+  # can only name the bases we thought of in advance, and a stacked PR is by definition based on a
+  # branch nobody named. `dev-tools/check-workflow-triggers.sh` keeps it that way.
   pull_request:
-    branches: [main]
   schedule:
     # Daily, for `release-pending` below. That check must not ride on PR
     # traffic: a quiet repo is exactly where "bumped but never tagged" hides.
@@ -45,6 +49,10 @@ jobs:
         run: cargo publish --workspace --dry-run
       - name: internal dependency versions and the publish cycle
         run: dev-tools/check-internal-versions.sh
+      - name: every pull request can be checked, whatever it is based on
+        # A2-238. The defect this guards is an EMPTY check list, so it cannot be guarded by a check
+        # that only runs when the list is populated — it is asserted here, on every event.
+        run: dev-tools/check-workflow-triggers.sh
       - name: SEC-0030 governance and platform control contracts
         run: |
           sudo apt-get update
@@ -114,7 +122,17 @@ jobs:
     # internal-only edits. Deliberate and visible in the PR, not silent.
     name: changelog
     runs-on: ubuntu-24.04
-    if: github.event_name == 'pull_request'
+    # NOT `== 'pull_request'` (A2-238). That equality SKIPS the job for every other event this
+    # workflow declares, and a skipped job is reported as a success — which is exactly what happened
+    # in the `gh workflow run ci.yml --ref <branch>` workaround A2-234 had to use while stacked pull
+    # requests got no checks at all: the run went green with the changelog gate never evaluated.
+    # The trigger fix above removes the need for that workaround; this removes the trap in it.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      # Read-only, and only so that a manually dispatched run can find the pull request its ref
+      # belongs to and honour the same `no-changelog` label a `pull_request` run would.
+      pull-requests: read
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -122,11 +140,36 @@ jobs:
           fetch-depth: 0
       - name: a user-facing source change needs a CHANGELOG line
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            BASE_SHA="$PR_BASE_SHA"; HEAD_SHA="$PR_HEAD_SHA"; LABELS="$PR_LABELS"
+          else
+            # Dispatched by hand. Resolve the pull request this ref belongs to, so the rule and the
+            # escape hatch are the SAME ones a `pull_request` run would apply; with no pull request
+            # the question is still well posed — would this branch need an entry against the default
+            # branch — and it is answered rather than skipped.
+            HEAD_SHA="$(git rev-parse HEAD)"
+            pr="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                    --jq 'map(select(.state == "open")) | first // empty' 2>/dev/null || true)"
+            if [ -n "$pr" ]; then
+              BASE_SHA="$(printf '%s' "$pr" | python3 -c 'import json,sys; print(json.load(sys.stdin)["base"]["sha"])')"
+              LABELS="$(printf '%s' "$pr" | python3 -c 'import json,sys; print(",".join(l["name"] for l in json.load(sys.stdin)["labels"]))')"
+              echo "resolved pull request base ${BASE_SHA} (labels: ${LABELS:-none})"
+            else
+              base_ref="origin/${DEFAULT_BRANCH:-main}"
+              git fetch -q origin "${DEFAULT_BRANCH:-main}"
+              BASE_SHA="$(git rev-parse "$base_ref")"; LABELS=""
+              echo "no open pull request for ${HEAD_SHA}; measuring against ${base_ref} (${BASE_SHA})"
+            fi
+          fi
           case ",$LABELS," in
             *,no-changelog,*)
               echo "labelled no-changelog — skipping"; exit 0 ;;

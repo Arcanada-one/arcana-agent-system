@@ -26,8 +26,11 @@
 name: graph-admission
 
 on:
+  # NO branch filter (A2-238). With `branches: [main]` this job never ran for a pull request based
+  # on another branch, and «нет receipt — нет мержа» was enforced on exactly the pull requests that
+  # happened to target main. A stacked card's PR carried no graph-admission verdict at all and said
+  # nothing about it.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
