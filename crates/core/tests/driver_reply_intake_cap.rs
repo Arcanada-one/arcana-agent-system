@@ -118,26 +118,56 @@ async fn a_reply_the_size_of_the_pilots_is_cut_at_intake_and_says_so() {
     assert!(assistant.contains(TAIL), "the tail is kept");
 }
 
+/// The pilot's other number: what the transcript already held on turn 36.
+const A2_240B_TRANSCRIPT_BEFORE: usize = 63_485;
+
+/// A call whose echoed result fills a whole tool-result budget, so a handful
+/// of them build a transcript the size the pilot's was.
+fn filling_call(marker: &str) -> String {
+    echo(&format!("{marker}{}", "y".repeat(12_000)))
+}
+
 #[tokio::test]
 async fn the_history_of_earlier_turns_survives_a_reply_that_size() {
+    // The pilot's shape, reproduced: a transcript already at ~70 % of the
+    // budget, then one reply of 48 228 units. Uncapped that is 111 713 units
+    // against a 90 000 budget and the guard's only move is to fold the early
+    // turns away — which is what happened, 28 of them. Capped, the same run
+    // never reaches the budget at all.
+    let budget = DEFAULT_CONTEXT_BUDGET_UTF16_UNITS;
     let big = format!("{}\n{}", huge_reply(A2_240B_REPLY_UNITS), echo("after"));
-    let (out, prompts) = drive(vec![
-        echo("first-call-marker"),
+    let replies = vec![
+        filling_call("first-call-marker"),
+        filling_call("fill-2"),
         big,
         echo("last"),
         "done".to_owned(),
-    ])
-    .await;
-    assert_eq!(out.reason, TerminalReason::Completed);
+    ];
+    let (out, prompts) = drive(replies).await;
+    assert_eq!(out.reason, TerminalReason::Completed, "{out:?}");
+
+    // The request the huge reply answers is the pilot's turn 36.
+    let before = utf16_units(&prompts[2]);
+    assert!(
+        (A2_240B_TRANSCRIPT_BEFORE * 3 / 4..budget).contains(&before),
+        "the harness must load the transcript to about the size the pilot's \
+         had reached ({A2_240B_TRANSCRIPT_BEFORE}); it held {before} units"
+    );
+    assert!(
+        before + A2_240B_REPLY_UNITS > budget,
+        "and adding the reply whole must overflow the budget, or this test \
+         proves nothing: {before} + {A2_240B_REPLY_UNITS} vs {budget}"
+    );
+
     assert_eq!(
         out.compactions, 0,
-        "63 485 + a capped reply is inside the 90 000-unit budget, so nothing \
-         had to be folded — this is the whole point of capping at intake"
+        "with the reply capped at intake the budget is never reached, so no \
+         earlier turn is folded away"
     );
     let last = prompts.last().expect("a last request");
     assert!(
         last.contains("first-call-marker"),
-        "the turn before the huge reply must still be in the transcript"
+        "the first turn of the run must still be in the transcript"
     );
     assert!(
         last.contains("[task] do a long task"),
