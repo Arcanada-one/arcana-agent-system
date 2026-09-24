@@ -14,11 +14,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
+pub mod contract;
 pub mod hook_bridge;
 pub mod interactive;
 pub mod rule;
 pub mod schema;
 
+pub use contract::ContractAllowlistLayer;
 pub use hook_bridge::HookBridgeLayer;
 pub use interactive::{AutoFromEnv, InteractiveDirective, InteractiveLayer};
 pub use rule::{RuleLayer, RuleLoadError};

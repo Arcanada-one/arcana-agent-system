@@ -37,6 +37,7 @@ use std::time::Duration;
 
 use arcana_core::agent_loop::{DriverConfig, RunOutput, TerminalReason};
 use arcana_core::connector::ModelConnector;
+use arcana_core::contract::ContractBinding;
 use arcana_core::cost::CostTracker;
 use arcana_core::dispatch::ModelPolicy;
 use arcana_core::execution::CapabilityExecutor;
@@ -44,7 +45,8 @@ use arcana_core::hooks::audit::AuditLog;
 use arcana_core::hooks::HookChain;
 use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::permission::{
-    AutoFromEnv, InteractiveDirective, PermissionCascade, PermissionLayer, RuleLayer, SchemaLayer,
+    AutoFromEnv, ContractAllowlistLayer, InteractiveDirective, PermissionCascade, PermissionLayer,
+    RuleLayer, SchemaLayer,
 };
 use arcana_core::prompt_budget::{
     DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, MC_FIELD_MAX_UTF16_UNITS, MIN_ELISION_BUDGET,
@@ -141,6 +143,14 @@ pub struct RunRequest {
     /// Append every dispatch's exact request to this file. `None` — the
     /// default — writes no transcript at all.
     pub save_transcript: Option<PathBuf>,
+    /// The KC2 contract this run is bound to, when it was started from a work
+    /// item. `Some` inserts [`ContractAllowlistLayer`] into the cascade, so a
+    /// tool the contract never admitted is refused with the contract named.
+    ///
+    /// `None` is the ordinary `--prompt` run: no work item, no contract, and
+    /// nothing for the layer to enforce. It is NOT a permissive mode — the
+    /// whole cascade below it is unchanged either way.
+    pub contract: Option<ContractBinding>,
 }
 
 /// Reject a `--context-budget` that cannot be honoured, before anything is
@@ -246,43 +256,54 @@ pub fn run(request: &RunRequest) -> i32 {
 }
 
 async fn run_async(request: &RunRequest) -> i32 {
+    // Canonicalize for the marker only. `execute` canonicalizes again and
+    // owns the error message; falling back to the raw path here keeps the
+    // done-marker printable for a `--cwd` that does not resolve at all.
+    let root = request
+        .cwd
+        .canonicalize()
+        .unwrap_or_else(|_| request.cwd.clone());
+    match execute(request).await {
+        Ok(out) => report_run(&out, &root),
+        Err(err) => exit_failed(&err, &root),
+    }
+}
+
+/// Run one headless task and hand back what the driver measured.
+///
+/// Separate from [`run_async`] because a contract-bound run needs the
+/// [`RunOutput`] itself — the receipt is built from it — and must not have to
+/// reconstruct it from an exit code and the marker line.
+///
+/// # Errors
+/// An operator-facing message for every way the run could not START. A run
+/// that started and failed returns `Ok` with the terminal reason inside.
+pub async fn execute(request: &RunRequest) -> Result<RunOutput, String> {
     let root = match request.cwd.canonicalize() {
         Ok(root) if root.is_dir() => root,
         Ok(root) => {
-            return exit_failed(
-                &format!("--cwd `{}` is not a directory", root.display()),
-                &request.cwd,
-            );
+            return Err(format!("--cwd `{}` is not a directory", root.display()));
         }
         Err(err) => {
-            return exit_failed(
-                &format!(
-                    "--cwd `{}` cannot be resolved: {err}",
-                    request.cwd.display()
-                ),
-                &request.cwd,
-            );
+            return Err(format!(
+                "--cwd `{}` cannot be resolved: {err}",
+                request.cwd.display()
+            ));
         }
     };
     if request.prompt.trim().is_empty() {
-        return exit_failed("the task is empty", &root);
+        return Err("the task is empty".to_owned());
     }
-    if let Err(err) = check_context_budget(request.context_budget) {
-        return exit_failed(&err, &root);
-    }
+    check_context_budget(request.context_budget)?;
     let context = request
         .context_budget
         .unwrap_or(DEFAULT_CONTEXT_BUDGET_UTF16_UNITS);
-    if let Err(err) = check_tool_result_budget(request.tool_result_budget, context) {
-        return exit_failed(&err, &root);
-    }
-    if let Err(err) = check_transcript_path(request.save_transcript.as_deref()) {
-        return exit_failed(&err, &root);
-    }
+    check_tool_result_budget(request.tool_result_budget, context)?;
+    check_transcript_path(request.save_transcript.as_deref())?;
 
     let policy = match WorkspacePolicy::new(&root) {
         Ok(policy) => Arc::new(policy),
-        Err(err) => return exit_failed(&format!("workspace policy: {err}"), &root),
+        Err(err) => return Err(format!("workspace policy: {err}")),
     };
 
     // `try_from_env` is the production constructor: it pins the Model
@@ -303,13 +324,19 @@ async fn run_async(request: &RunRequest) -> i32 {
                 Box::new(client)
             }
             Err(err) => {
-                return exit_failed(&format!("the Model Connector is unavailable: {err}"), &root);
+                return Err(format!("the Model Connector is unavailable: {err}"));
             }
         };
 
-    let workspace = match assemble(&root, &policy, connector, audit_dir()) {
+    let workspace = match assemble(
+        &root,
+        &policy,
+        connector,
+        audit_dir(),
+        request.contract.clone(),
+    ) {
         Ok(workspace) => workspace,
-        Err(err) => return exit_failed(&err, &root),
+        Err(err) => return Err(err),
     };
     let WorkspaceSession {
         session,
@@ -351,7 +378,7 @@ async fn run_async(request: &RunRequest) -> i32 {
     drop(turn_guard);
     release_sandbox_home(&sandbox_home);
 
-    report(&out, &root)
+    Ok(out)
 }
 
 /// Give the per-run sandbox `HOME` back, if the run left it empty.
@@ -379,7 +406,24 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
         config.policy = ModelPolicy::single_model(&model);
         config.model = Some(model);
     }
-    config.system_prompt = Some(system_prompt(tools, root));
+    // The catalogue lists what may ACTUALLY be called. Under a contract that
+    // is a subset of the registered tools, and the difference is not cosmetic:
+    // the first live contract-bound run (A2-272) ended on turn 2 because the
+    // prompt offered `bash`, the model reached for it, and the contract layer
+    // refused — a run terminated by a restriction the model was told about
+    // only in prose, three paragraphs below a list that contradicted it. Every
+    // tool stays REGISTERED, so the schema layer can still explain a
+    // misspelled call and the cascade still owns the refusal; what changes is
+    // what the model is offered.
+    let admitted: Vec<Arc<dyn Tool>> = match request.contract.as_ref() {
+        Some(binding) => tools
+            .iter()
+            .filter(|tool| binding.admits(tool.name()))
+            .map(Arc::clone)
+            .collect(),
+        None => tools.to_vec(),
+    };
+    config.system_prompt = Some(system_prompt(&admitted, root));
     if let Some(units) = request.context_budget {
         config.context_budget_units = units;
     }
@@ -458,10 +502,11 @@ pub fn assemble(
     policy: &Arc<WorkspacePolicy>,
     connector: Box<dyn ModelConnector>,
     audit_dir: PathBuf,
+    contract: Option<ContractBinding>,
 ) -> Result<WorkspaceSession, String> {
     let sandbox_home = sandbox_home(&audit_dir)?;
     let tools = workspace_tools(root, &sandbox_home);
-    let executor = assemble_executor(&tools, policy, root, &audit_dir)?;
+    let executor = assemble_executor(&tools, policy, root, &audit_dir, contract)?;
     Ok(WorkspaceSession {
         session: Session::from_parts(connector, executor, Arc::new(CostTracker::new()), audit_dir),
         tools,
@@ -520,6 +565,7 @@ fn assemble_executor(
     policy: &Arc<WorkspacePolicy>,
     root: &Path,
     audit_dir: &Path,
+    contract: Option<ContractBinding>,
 ) -> Result<CapabilityExecutor, String> {
     let dispatch = build_dispatcher(tools)?;
     // The schema layer needs its own dispatcher because the executor takes
@@ -540,14 +586,24 @@ fn assemble_executor(
         }
     };
 
-    let mut layers: Vec<Arc<dyn PermissionLayer>> = vec![
-        Arc::new(SchemaLayer::new(schema_dispatcher)),
+    let mut layers: Vec<Arc<dyn PermissionLayer>> =
+        vec![Arc::new(SchemaLayer::new(schema_dispatcher))];
+    // After the schema layer and before everything else. After, because a
+    // malformed call is a correction the model can act on and not a contract
+    // violation — reporting it as one would send the model looking for a tool
+    // it already has. Before, because a tool the contract never admitted must
+    // be refused for THAT reason rather than for whichever of the floor or the
+    // boundary it happened to trip on the way past.
+    if let Some(binding) = contract {
+        layers.push(Arc::new(ContractAllowlistLayer::new(binding)));
+    }
+    layers.extend::<Vec<Arc<dyn PermissionLayer>>>(vec![
         // The floor precedes the boundary: both are deny-or-defer, so the
         // order cannot widen the gate-set, and a call that trips both is then
         // reported under the refusal the agent loop treats as terminal.
         Arc::new(DestructiveCommandFloor::new(Arc::clone(policy))),
         Arc::new(WorkspaceBoundary::new(Arc::clone(policy))),
-    ];
+    ]);
     // An explicit `ARCANA_PERMISSION_AUTO=deny` means the operator wants
     // nothing to run. Honour it ahead of the auto-allow half, or the flag
     // would be inert on exactly the command that acts without supervision.
@@ -682,7 +738,8 @@ block.",
 /// beside `"tool_calls":0` is a receipt for work with no evidence that anything
 /// did it, and the marker must be unable to print that pair whatever the layer
 /// above decided.
-fn verdict(out: &RunOutput) -> (bool, String) {
+#[must_use]
+pub fn verdict_of(out: &RunOutput) -> (bool, String) {
     if out.reason.is_success() && out.tool_calls == 0 {
         return (false, format!("{:?}", TerminalReason::NoAction));
     }
@@ -690,7 +747,12 @@ fn verdict(out: &RunOutput) -> (bool, String) {
 }
 
 /// Print the outcome, the done-marker, and return the exit code.
-fn report(out: &RunOutput, root: &Path) -> i32 {
+///
+/// Public because a contract-bound run reports through the same line: the
+/// done-marker a runner reads must be the same shape whether the task came
+/// from `--prompt` or from a work item.
+#[must_use]
+pub fn report_run(out: &RunOutput, root: &Path) -> i32 {
     match out.final_text.as_deref() {
         Some(text) => println!("{text}"),
         None => println!("(no final text — {})", out.reason),
@@ -700,7 +762,7 @@ fn report(out: &RunOutput, root: &Path) -> i32 {
         "{}",
         crate::usage::turn_line(&spend, out.cost.total_cost_usd_micros)
     );
-    let (completed, reason) = verdict(out);
+    let (completed, reason) = verdict_of(out);
     // Whatever the driver could say about the cause, said here and carried in
     // the marker. Pilot A2-204c4 ended `PermissionDenied` with `"error": null`
     // and the single stderr line `the permission cascade refused the tool
@@ -1014,7 +1076,7 @@ mod tests {
         // The live failure verbatim: one turn, zero tool calls, a confident
         // sentence. Even if the layer below said `Completed`, the marker does
         // not.
-        let (completed, reason) = verdict(&outcome(TerminalReason::Completed, 0));
+        let (completed, reason) = verdict_of(&outcome(TerminalReason::Completed, 0));
         assert!(!completed);
         assert_eq!(reason, "NoAction");
     }
@@ -1023,14 +1085,14 @@ mod tests {
     fn a_completed_run_with_an_executed_tool_call_is_reported_as_completed() {
         // The green half: the same check must be able to say yes, or it is
         // just a constant.
-        let (completed, reason) = verdict(&outcome(TerminalReason::Completed, 1));
+        let (completed, reason) = verdict_of(&outcome(TerminalReason::Completed, 1));
         assert!(completed);
         assert_eq!(reason, "Completed");
     }
 
     #[test]
     fn a_failure_keeps_its_own_reason_rather_than_becoming_no_action() {
-        let (completed, reason) = verdict(&outcome(TerminalReason::PermissionDenied, 0));
+        let (completed, reason) = verdict_of(&outcome(TerminalReason::PermissionDenied, 0));
         assert!(!completed);
         assert_eq!(reason, "PermissionDenied");
     }

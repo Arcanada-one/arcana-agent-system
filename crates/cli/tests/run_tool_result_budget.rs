@@ -32,6 +32,7 @@ fn request(tool_result_budget: Option<usize>, save_transcript: Option<PathBuf>) 
         context_budget: None,
         tool_result_budget,
         save_transcript,
+        contract: None,
     }
 }
 

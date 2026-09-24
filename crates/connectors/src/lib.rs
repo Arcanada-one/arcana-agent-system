@@ -12,12 +12,16 @@
 //! composition root is a separate follow-up.
 
 pub mod auth_arcana;
+pub mod contract_source;
 pub mod coworker;
 pub mod model_connector;
+pub mod muneral;
 pub mod ops_bot;
 pub mod scrutator;
 
+pub use contract_source::{ArganaContractClient, ContractSource, FileContractSource};
 pub use coworker::CoworkerClient;
 pub use model_connector::{ApiKey, ModelConnectorClient};
+pub use muneral::{MuneralClient, WorkItem};
 pub use ops_bot::OpsBotClient;
 pub use scrutator::{skill_store_from_env, ScrutatorClient, SkillStoreInitError};

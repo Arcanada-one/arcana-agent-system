@@ -10,10 +10,16 @@ description = "Core library: agent loop, tool dispatcher, context management"
 
 [dependencies]
 async-trait = "0.1"
+# Argana hands the contract's digest preimage over as `canonical.bytes_b64`;
+# one decode and one sha256 is the whole of the client's check.
+base64 = "0.22"
 blake3 = "1"
 jsonschema = { version = "0.53", default-features = false }
 regex = "1.10"
 serde = { version = "1", features = ["derive"] }
+# The contract digest is re-hashed byte for byte before a work item binds to it
+# (`crate::contract`); sha256 is the ecosystem-wide digest algorithm.
+sha2 = "0.11"
 serde_json = "1"
 thiserror = "2"
 # Real model-aware token counting for the KB size-guard (ARAS-0053). Vocabs are

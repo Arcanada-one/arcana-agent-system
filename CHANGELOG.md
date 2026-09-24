@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`arcana run --work-item <id>` — one Muneral work item, executed under the
+  KC2 contract it is bound to, and a `ReadinessReceipt/v1` that says so.** The
+  command is four steps and the first three are refusals. Read the work item
+  (`GET /tasks/{id}`, agent key from the file named by
+  `ARCANA_MUNERAL_KEY_FILE`, read-only — the status transition belongs to the
+  control plane and an executor that closed its own work item would be the only
+  witness to its own success). No `contractDigest` → `CONTRACT_MISSING`, before
+  the Model Connector client is constructed and therefore before a token is
+  paid for. Fetch the contract under that digest from Argana
+  (`GET /v1/contract/{digest}`, `ARCANA_ARGANA_URL`) or from `--contract-file`,
+  and RE-HASH it → `CONTRACT_DIGEST_MISMATCH`, also before the first model
+  call. Only then run, with the contract's tool allowlist in the permission
+  cascade, and write `receipts/ReadinessReceipt-<id>.json`.
+
+  **The digest is re-hashed, never re-derived.** Argana stamps a contract with
+  `H(canonical(body) ‖ canonical(closure_manifest))` computed by the KC2 pin's
+  own canonicaliser; a second implementation of that rule in Rust would
+  disagree with the first eventually. So `arcana_core::contract` hashes the
+  bytes the SOURCE declares as the preimage — `canonical.bytes_b64` from
+  Argana's answer — and compares them to the digest the WORK ITEM carries,
+  never to the digest the answer carries. A projection that is an OBJECT is
+  never hashed: re-serialising it would be this client inventing a
+  canonicalisation rule and arriving at a digest that is nobody's.
+
+  **What a contract that names no tools grants.** `read`, `grep`, `write`,
+  `edit` — and no shell. A shell is the one capability whose blast radius is
+  not bounded by its own arguments, so it has to be granted in words. The
+  default is recorded on the binding and in the receipt as
+  `default-no-shell`, so it is never indistinguishable from a contract that
+  asked for those four.
+
+  **The catalogue is the allowlist.** Under a contract, the system prompt
+  offers only the admitted tools. This is not cosmetic: the first live run on
+  work item `b1227e82` ended on turn 2 with `tool_calls: 0` because the prompt
+  listed `bash` under AVAILABLE TOOLS while a paragraph below said the contract
+  did not admit it, and the model read the list. Registration is unchanged —
+  every tool stays in the dispatcher and the cascade still owns every refusal.
+
+  Measured end to end on arcana-devs 2026-09-24 against live Muneral, live
+  Argana on arcana-prd and live Model Connector: receipt
+  `contractDigest == sha256:769cc084…` equal to Muneral's, `tool_calls: 3`,
+  6 dispatches, $0.0319; and the run before the catalogue fix as the negative
+  control, `bash` denied by the `contract-allowlist` layer with the refusal in
+  `.arcana/denied/0001-turn2.json`. Both receipts are in the pull request that landed this,
+  and on arcana-devs under `arc2/runs/A2-272/live/`.
 - **The `input` key applied twice is read as the call it is.** Pilot A2-240c
   (arcana `17cffe0`, 68 turns, 63 attempted calls, 13 denied) spent **7 of its
   13 denials** on one shape: a `bash` call whose command was already correct,

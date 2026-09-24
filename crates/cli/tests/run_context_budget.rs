@@ -26,6 +26,7 @@ fn request(context_budget: Option<usize>) -> RunRequest {
         context_budget,
         tool_result_budget: None,
         save_transcript: None,
+        contract: None,
     }
 }
 

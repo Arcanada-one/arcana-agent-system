@@ -242,6 +242,7 @@ fn prompt_for(root: &Path) -> String {
         &policy,
         Box::new(RelativePathModel::new(None)),
         audit.path().to_path_buf(),
+        None,
     )
     .expect("compose the headless run");
     system_prompt(&workspace.tools, root)
@@ -249,7 +250,7 @@ fn prompt_for(root: &Path) -> String {
 
 async fn drive(root: &Path, audit: &Path, model: RelativePathModel) -> RunOutput {
     let policy = Arc::new(WorkspacePolicy::new(root).unwrap());
-    let workspace = assemble(root, &policy, Box::new(model), audit.to_path_buf())
+    let workspace = assemble(root, &policy, Box::new(model), audit.to_path_buf(), None)
         .expect("compose the headless run");
     let request = RunRequest {
         cwd: root.to_path_buf(),
@@ -261,6 +262,7 @@ async fn drive(root: &Path, audit: &Path, model: RelativePathModel) -> RunOutput
         context_budget: None,
         tool_result_budget: None,
         save_transcript: None,
+        contract: None,
     };
     let config = driver_config(&request, &workspace.tools, root);
     workspace
