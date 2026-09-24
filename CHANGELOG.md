@@ -56,6 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block with no line-initial fence is still `Unterminated`.
 
 ### Changed
+- **A contract-bound run is told how it will be judged.** The brief a
+  `--work-item` run is given now states, in the prompt, that the working
+  directory is digested before the first turn and after the last, that equal
+  digests are `NoEffect`, that a path named in the closing message and absent
+  from disk is `ClaimedButAbsent`, and that a probe file does not help — then
+  asks for the deliverable in a single `write` before anything is said about
+  it. An enforced-but-undisclosed rule is the same defect as no rule at all
+  (A2-231), and this one decides whether the run counts.
+
+  Measured on the same work item and model as the failures above: four live
+  runs under the old brief produced nothing while reporting success, the fifth
+  wrote an empty probe file and described a page it had not written, and the
+  first run under this brief wrote the whole page in one `write` call for
+  $0.009045 (`claimed_but_absent: []`, `changed_paths` naming exactly the page).
 - **The model choice is configuration, and survives an isolated state
   directory.** It used to be read from `$XDG_STATE_HOME/arcana/model.json`.
   Every isolated runner overrides that directory so one run's audit log cannot
