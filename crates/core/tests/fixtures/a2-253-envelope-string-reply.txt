@@ -1,0 +1,5 @@
+I need to see what is there.
+
+```tool_call
+{"name": "bash", "input": {"input": "{\"command\": \"cd runs/A2-240c && { echo '=== existing clones in worktree ==='; cd ../..; find . -maxdepth 4 -iname '*arcanada-support*' -not -path '*/node_modules/*' 2>&1 | head -20; echo '=== global git config ==='; git config --global --list 2>&1 | head -40; echo '=== system ==='; git config --system --list 2>&1 | head -20; } > runs/A2-240c/diag2.log 2>&1; wc -l runs/A2-240c/diag2.log\", \"timeout_seconds\": 120}}"}}
+```
