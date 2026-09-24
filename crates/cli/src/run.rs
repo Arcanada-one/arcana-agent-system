@@ -90,6 +90,14 @@ pub const TOOL_OUTPUT_DIR: &str = ".arcana/tool-output";
 /// output, so it must not turn up in a patch the task hands back.
 pub const REJECTED_DIR: &str = ".arcana/rejected";
 
+/// Where a tool call the permission cascade refused is kept, with the reason,
+/// relative to the workspace root. Beside the rejected replies and untracked
+/// for the same reason. It exists because a denial used to leave only
+/// `decision`/`layer`/`input_hash` in the audit log: pilot A2-240b spent 21
+/// of its 100 paid turns on refused calls — the run's largest single sink —
+/// and not one of them could be read afterwards (A2-249).
+pub const DENIED_DIR: &str = ".arcana/denied";
+
 /// Everything a headless run needs.
 #[derive(Debug, Clone)]
 pub struct RunRequest {
@@ -364,6 +372,11 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
     // runner threw away is evidence about this run, and the operator reading
     // the log line that names the file should find it where the run happened.
     config.rejected_reply_dir = Some(root.join(REJECTED_DIR));
+    // And beside that: the call the cascade refused, with the sentence it was
+    // refused with. The audit log keeps the hash of that sentence and not the
+    // sentence, because a refusal quotes the argument or the path that caused
+    // it — so this is the only place the reason is written down.
+    config.denied_call_dir = Some(root.join(DENIED_DIR));
     // Nobody reads the prose of a headless run, so prose alone cannot end it.
     config.require_action = true;
     config
@@ -614,6 +627,8 @@ fn report(out: &RunOutput, root: &Path) -> i32 {
             reason: &reason,
             turns: out.turns,
             tool_calls: out.tool_calls,
+            tool_calls_attempted: out.tool_calls_attempted,
+            tool_calls_denied: out.tool_calls_denied,
             cost_usd_micros: out.cost.total_cost_usd_micros,
             compactions: out.compactions,
             root,
@@ -643,6 +658,8 @@ fn exit_failed(error: &str, root: &Path) -> i32 {
             reason: "NotStarted",
             turns: 0,
             tool_calls: 0,
+            tool_calls_attempted: 0,
+            tool_calls_denied: 0,
             cost_usd_micros: 0,
             compactions: 0,
             root,
@@ -672,6 +689,8 @@ struct DoneMarker<'a> {
     reason: &'a str,
     turns: u32,
     tool_calls: u32,
+    tool_calls_attempted: u32,
+    tool_calls_denied: u32,
     cost_usd_micros: u64,
     compactions: u32,
     root: &'a Path,
@@ -684,6 +703,8 @@ fn done_marker_body(marker: &DoneMarker<'_>) -> String {
         reason,
         turns,
         tool_calls,
+        tool_calls_attempted,
+        tool_calls_denied,
         cost_usd_micros,
         compactions,
         root,
@@ -694,6 +715,13 @@ fn done_marker_body(marker: &DoneMarker<'_>) -> String {
         "reason": reason,
         "turns": turns,
         "tool_calls": tool_calls,
+        // `tool_calls` counts executions and always has. On its own it cannot
+        // tell a model that hardly used its tools from one that used them
+        // constantly and got the arguments wrong — pilot A2-240b reported 72
+        // for 98 attempts, 21 of them refused, and an automatic post-mortem
+        // read the 72 as the whole story (A2-249).
+        "tool_calls_attempted": tool_calls_attempted,
+        "tool_calls_denied": tool_calls_denied,
         "cost_usd_micros": cost_usd_micros,
         // Non-zero means the model answered from a summary of part of its own
         // history. A reader comparing two runs of the same card needs that
@@ -742,6 +770,8 @@ mod tests {
             reason: "PermissionDenied",
             turns: 31,
             tool_calls: 20,
+            tool_calls_attempted: 23,
+            tool_calls_denied: 3,
             cost_usd_micros: 73_150,
             compactions: 2,
             root: Path::new("/tmp"),
@@ -762,6 +792,8 @@ mod tests {
             reason: "Completed",
             turns: 2,
             tool_calls: 1,
+            tool_calls_attempted: 4,
+            tool_calls_denied: 2,
             cost_usd_micros: 59,
             compactions: 3,
             root: Path::new("/tmp"),
@@ -772,6 +804,11 @@ mod tests {
         assert_eq!(parsed["reason"], "Completed");
         assert_eq!(parsed["turns"], 2);
         assert_eq!(parsed["tool_calls"], 1);
+        // A2-249: what the model TRIED, beside what worked. A marker carrying
+        // `tool_calls` alone cannot tell a model that hardly called tools from
+        // one that called them four times and landed one.
+        assert_eq!(parsed["tool_calls_attempted"], 4);
+        assert_eq!(parsed["tool_calls_denied"], 2);
         assert_eq!(parsed["cost_usd_micros"], 59);
         assert_eq!(parsed["compactions"], 3);
     }
@@ -783,6 +820,8 @@ mod tests {
             reason: "NotStarted",
             turns: 0,
             tool_calls: 0,
+            tool_calls_attempted: 0,
+            tool_calls_denied: 0,
             cost_usd_micros: 0,
             compactions: 0,
             root: Path::new("/tmp"),
@@ -800,6 +839,8 @@ mod tests {
             final_text: Some("The file has been created successfully.".to_owned()),
             turns: 1,
             tool_calls,
+            tool_calls_attempted: tool_calls,
+            tool_calls_denied: 0,
             cost: arcana_core::cost::CostTracker::new().snapshot(),
             selected_models: Vec::new(),
             first_dispatch_observation: None,
