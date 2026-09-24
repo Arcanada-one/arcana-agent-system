@@ -8,6 +8,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The `input` key applied twice is read as the call it is.** Pilot A2-240c
+  (arcana `17cffe0`, 68 turns, 63 attempted calls, 13 denied) spent **7 of its
+  13 denials** on one shape: a `bash` call whose command was already correct,
+  wrapped in a second `input` key — `{"name": "bash", "input": {"input":
+  {"command": …}}}` — refused at the `schema` layer with `Additional properties
+  are not allowed ('input' was unexpected)`
+  (`/home/dev/aup/arc2/wt/A2-240c/.arcana/denied/`, turns 11, 25, 30, 42, 43,
+  54, 65). Four of the seven wrapped the arguments as a JSON *string*, each
+  with one surplus `}` inside it, so the existing `OpenAI`-style decode read
+  them as "not JSON" and left the envelope standing.
+
+  An arguments object whose ONLY key is `input`, `arguments`, `parameters` or
+  `args` is now unwrapped, one level, and the inner value is decoded under the
+  same surplus-closing-punctuation licence A2-248 wrote for the fence body
+  (that helper moved to `tool_dialect`, where both readers can share one copy).
+  The licence is a property of the shipped tool set, not a guess: no tool
+  declares a property with one of those names and every tool schema sets
+  `additionalProperties: false`, so such an object is invalid for *every* tool
+  in the registry and cannot be a call to anything —
+  `crates/cli/tests/run_envelope_premise.rs` pins that against the registry
+  `assemble` actually builds, so a future tool with an `input` argument turns
+  the licence red instead of widening it silently. Two keys, a non-object
+  inner value, and a second level of wrapping all stay corrections
+  (`driver_input_envelope.rs`).
+
+  **Why this one is unwrapped and the quoted integer is not.** The runner
+  already corrected this shape, naming the unexpected key and the missing one,
+  seven times in one run, and the model wrote it again each time. The same
+  pilot is the control: `"timeout_seconds": "400"` (turn 52) was refused once
+  and the very next call carried an unquoted `300` (turn 53), and nothing
+  quoted a number again in the remaining 16 turns. A quoted scalar is
+  therefore still **refused, never coerced** — the schema is where the type
+  contract lives — and what changed is only that the refusal now carries the
+  corrected spelling (`— send it unquoted, as \`400\``) when the quoted text
+  is unambiguously one scalar. `"soon"` gets no invented spelling.
+
+- **`/dev/null` is the one path outside the workspace a command may name.**
+  Turn 6 of the same pilot was refused on `2>/dev/null`
+  (`.arcana/denied/0003-turn6.json`) — the only one of its five boundary
+  refusals where the model had not tried to leave the workspace at all. A sink
+  with no storage can neither carry workspace contents out nor bring anything
+  in, which is the whole of the argument and also why the exception is one
+  path and not a directory: `/dev/zero`, `/dev/urandom`, `/dev/stdout` and
+  `/dev/sda` stay refused, `/dev/` is never matched as a prefix, the
+  comparison is on the canonicalized path, and the path tools (`read`,
+  `write`, `edit`, `grep`) are not covered at all. The system prompt names the
+  exception from the constant, so prompt and policy cannot drift.
+
 - **A call the permission cascade refused is now readable afterwards.** The
   `reason` built in `CapabilityExecutor::deny` reached the model and stopped
   there: `audit_decision` was handed the layer and nothing else, so the log
@@ -44,6 +92,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `tool_calls_denied` are now reported beside it. `tool_calls` keeps its
   meaning exactly — evidence of work done — so nothing that reads it today
   changes.
+
+### Changed
+- **`bash` gets a `HOME` per run instead of one fixed path in `/tmp`.**
+  `BashTool` hard-coded `/tmp/arcana-runtime/bash`: the same directory for
+  every run and every workspace on a host, in a world-writable parent. Two
+  measured consequences — concurrent runs shared one `HOME`, and the directory
+  on arcana-devs was `drwx------ dev dev` dated 2026-08-01, created by
+  something outside any run (`/tmp` is `drwxrwxrwt`, and the sticky bit stops
+  a local user deleting another's entry but not pre-creating a path that does
+  not exist yet). `arcana run` now creates one owner-only directory per run
+  under its own state directory, fail-closed, and gives it back at the end
+  **non-recursively**, so a run that wrote to `~` keeps what it wrote.
+
+  Stated because the card that asked for this assumed otherwise: an existing
+  `HOME` is NOT what fixes `git config --global`. Measured side by side, git
+  reports `unable to read config file '$HOME/.gitconfig': No such file or
+  directory` identically whether the directory exists or not — that message is
+  about the config file, which a credential-free lane has by design. What an
+  existing `HOME` fixes is everything needing the directory itself: a bare
+  `cd`, and any tool that writes under `~`.
+
+- **The system prompt says this lane has no credentials.** `bash` runs under a
+  constructed, credential-free environment and refuses caller-declared
+  variables, so a private repository cannot be cloned, fetched or read. The
+  pilot did not know that and spent many turns proving it; the prompt now
+  states it, with the exact error a private clone will produce, so the absence
+  is a fact rather than a fault to diagnose.
 
 ### Fixed
 - **One reply can no longer erase the history of a run.** A tool result has

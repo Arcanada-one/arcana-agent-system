@@ -1078,3 +1078,63 @@ async fn the_exact_live_failure_is_reproduced_and_the_run_survives_it() {
         "a call carrying its arguments must not be denied: {log}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A2-253: the per-run sandbox HOME reaches the shell that runs
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_shell_a_run_composes_gets_that_run_s_own_home() {
+    // `BashTool::with_home` and `run::sandbox_home` are each covered where
+    // they live. Neither proves the wiring between them, and the wiring is
+    // the whole point: with the `.with_home(…)` call deleted from
+    // `workspace_tools`, every test but this one stayed green (A2-253,
+    // mutation M6). Judged by the file on disk, like every test in this file.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let policy = Arc::new(WorkspacePolicy::new(work.path()).unwrap());
+    let replies = [
+        tool_call(
+            "bash",
+            serde_json::json!({ "command": "printf '%s' \"$HOME\" > home.txt" }),
+        ),
+        "wrote home.txt".to_owned(),
+    ];
+    let scripted: Vec<&str> = replies.iter().map(String::as_str).collect();
+    let workspace = assemble(
+        work.path(),
+        &policy,
+        Box::new(ScriptedModel::new(&scripted)),
+        audit.path().to_path_buf(),
+    )
+    .expect("compose the headless run");
+    let sandbox_home = workspace.sandbox_home.clone();
+    let request = RunRequest {
+        cwd: work.path().to_path_buf(),
+        prompt: "do the thing".to_owned(),
+        max_turns: 6,
+        max_cost_usd: None,
+        model: Some("scripted-model".to_owned()),
+        request_timeout: None,
+        context_budget: None,
+        tool_result_budget: None,
+        save_transcript: None,
+    };
+    let config = driver_config(&request, &workspace.tools, work.path());
+    let out = workspace
+        .session
+        .run_task(&request.prompt, config, CancellationToken::new())
+        .await;
+
+    let reported = std::fs::read_to_string(work.path().join("home.txt"))
+        .unwrap_or_else(|err| panic!("home.txt missing ({:?}): {err}", out.reason));
+    assert_eq!(
+        Path::new(reported.trim()),
+        sandbox_home,
+        "the shell must run under this run's own HOME, not the shared /tmp one"
+    );
+    assert!(
+        !reported.trim().starts_with("/tmp/arcana-runtime"),
+        "the shared fallback must not survive composition: {reported}"
+    );
+}

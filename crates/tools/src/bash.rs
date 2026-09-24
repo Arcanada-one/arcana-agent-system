@@ -39,10 +39,18 @@ struct BashInput {
     env_vars: BTreeMap<String, String>,
 }
 
+/// The sandbox `HOME` a `BashTool` uses when the caller names none.
+///
+/// A fixed path under the world-writable `/tmp`, shared by every run on the
+/// host. [`BashTool::with_home`] is how a caller stops sharing it; see that
+/// method for why a headless run must.
+const FALLBACK_SANDBOX_HOME: &str = "/tmp/arcana-runtime/bash";
+
 #[derive(Default)]
 pub struct BashTool {
     rules: Option<Arc<RuleLayer>>,
     cwd: Option<PathBuf>,
+    home: Option<PathBuf>,
 }
 
 impl BashTool {
@@ -54,6 +62,7 @@ impl BashTool {
         Self {
             rules: None,
             cwd: None,
+            home: None,
         }
     }
 
@@ -66,6 +75,7 @@ impl BashTool {
         Self {
             rules: Some(rules),
             cwd: None,
+            home: None,
         }
     }
 
@@ -79,6 +89,42 @@ impl BashTool {
     #[must_use]
     pub fn in_directory(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
+        self
+    }
+
+    /// Hand the shell `home` as `HOME` instead of [`FALLBACK_SANDBOX_HOME`].
+    ///
+    /// # Why the default is not good enough for a headless run (A2-253)
+    ///
+    /// `/tmp/arcana-runtime/bash` is a **fixed, predictable path inside a
+    /// world-writable directory**, and it is the same path for every run and
+    /// every workspace on the host. Two consequences, both measured on
+    /// arcana-devs on 2026-09-24 rather than assumed:
+    ///
+    /// * It is shared state. Two concurrent runs — the normal way this fleet
+    ///   works — get one `HOME`, so anything one of them writes to `~` is
+    ///   visible to, and clobberable by, the other.
+    /// * Its creation is a race nobody owns. On this host the directory
+    ///   already existed, `drwx------ dev dev`, dated 2026-08-01, created by
+    ///   something outside this run; `/tmp` itself is `drwxrwxrwt`, and the
+    ///   sticky bit stops a local user deleting another's entry but does
+    ///   nothing to stop one pre-creating a path that does not exist yet. A
+    ///   `HOME` the agent did not create is a `HOME` whose contents it cannot
+    ///   reason about.
+    ///
+    /// The caller is responsible for the directory existing before the first
+    /// command runs; `arcana run` creates one per run under its own state
+    /// directory. That the directory exists is worth stating separately from
+    /// the above, because it is NOT what fixes `git config --global`: measured
+    /// side by side, git reports `unable to read config file
+    /// '$HOME/.gitconfig': No such file or directory` identically whether
+    /// `HOME` exists or not — that message is about the config file, which a
+    /// credential-free lane has by design. What an existing `HOME` does fix is
+    /// everything that needs the directory itself: a bare `cd`, and any tool
+    /// that writes under `~`.
+    #[must_use]
+    pub fn with_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.home = Some(home.into());
         self
     }
 }
@@ -120,12 +166,13 @@ impl Tool for BashTool {
         let parsed: BashInput = serde_json::from_value(input)
             .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
         let timeout_secs = parsed.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS);
-        let env = CleanEnv::build(
-            std::path::Path::new("/tmp/arcana-runtime/bash"),
-            SAFE_SYSTEM_PATH,
-        )
-        .and_then(|env| env.with_declared_vars(&parsed.env_vars))
-        .map_err(|err| ToolError::ExecutionFailed(format!("clean environment: {err}")))?;
+        let home = self
+            .home
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new(FALLBACK_SANDBOX_HOME));
+        let env = CleanEnv::build(home, SAFE_SYSTEM_PATH)
+            .and_then(|env| env.with_declared_vars(&parsed.env_vars))
+            .map_err(|err| ToolError::ExecutionFailed(format!("clean environment: {err}")))?;
         let cwd = crate::path_guard::working_directory(self.cwd.as_deref())?;
         let output = ProcessSpec::new(std::path::Path::new("/bin/sh"), env)
             .args(["-c", parsed.command.as_str()])

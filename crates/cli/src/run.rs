@@ -72,6 +72,10 @@ const FALLBACK_STATE_DIR: &str = ".arcana-state";
 /// Project-local rule file, resolved inside the working directory.
 const PROJECT_RULES_RELATIVE: &str = ".arcana/permissions.toml";
 
+/// Parent of the per-run sandbox `HOME`, under the same state directory the
+/// audit log lives in. See [`sandbox_home`].
+const SANDBOX_HOME_DIR: &str = "home";
+
 /// Machine-readable last line of every run, success or failure.
 ///
 /// A runner should not have to tell "the run completed" apart from a model
@@ -307,7 +311,11 @@ async fn run_async(request: &RunRequest) -> i32 {
         Ok(workspace) => workspace,
         Err(err) => return exit_failed(&err, &root),
     };
-    let WorkspaceSession { session, tools } = workspace;
+    let WorkspaceSession {
+        session,
+        tools,
+        sandbox_home,
+    } = workspace;
     println!("arcana run: workspace {}", root.display());
     println!("audit log: {}", session.audit_log_path().display());
 
@@ -341,8 +349,24 @@ async fn run_async(request: &RunRequest) -> i32 {
     let (cancel, turn_guard) = crate::interrupt::arm(interrupt.as_ref());
     let out = session.run_task(&request.prompt, config, cancel).await;
     drop(turn_guard);
+    release_sandbox_home(&sandbox_home);
 
     report(&out, &root)
+}
+
+/// Give the per-run sandbox `HOME` back, if the run left it empty.
+///
+/// Non-recursive on purpose, and that is the whole of the design: an empty
+/// directory is the ordinary case and disappears, while a run that DID write
+/// to `~` keeps every byte of it. A recursive delete here would tidy away the
+/// only evidence of the one behaviour worth looking at afterwards, and an
+/// agent runner that deletes its own evidence is the failure mode this
+/// codebase is built against.
+///
+/// Failure is ignored deliberately: this runs after the task is finished, and
+/// a leftover directory is untidy, never wrong.
+fn release_sandbox_home(home: &Path) {
+    drop(std::fs::remove_dir(home));
 }
 
 /// Build the driver config for one headless run.
@@ -387,7 +411,7 @@ pub fn driver_config(request: &RunRequest, tools: &[Arc<dyn Tool>], root: &Path)
 /// `webfetch`, `arcana_search` and `model_call` are deliberately absent: each
 /// reaches outside the working directory by definition, and nothing in this
 /// policy could confine them.
-fn workspace_tools(root: &Path) -> Vec<Arc<dyn Tool>> {
+fn workspace_tools(root: &Path, sandbox_home: &Path) -> Vec<Arc<dyn Tool>> {
     // The path rule set stays permissive: confinement is the workspace
     // layer's job, and duplicating it here as regexes over path strings would
     // put a SECOND, weaker copy of the boundary in the codebase — weaker
@@ -399,7 +423,7 @@ fn workspace_tools(root: &Path) -> Vec<Arc<dyn Tool>> {
         Arc::new(WriteTool::with_root(Arc::clone(&rules), root)),
         Arc::new(EditTool::with_root(Arc::clone(&rules), root)),
         Arc::new(GrepTool::with_root(root)),
-        Arc::new(BashTool::new().in_directory(root)),
+        Arc::new(BashTool::new().in_directory(root).with_home(sandbox_home)),
     ]
 }
 
@@ -413,6 +437,10 @@ pub struct WorkspaceSession {
     pub session: Session,
     /// The registered tools, in registration order.
     pub tools: Vec<Arc<dyn Tool>>,
+    /// The per-run sandbox `HOME` handed to `bash`. Owned by the caller after
+    /// this point: it exists, it is empty, and [`run`] removes it when the run
+    /// ends IF the run left it empty.
+    pub sandbox_home: PathBuf,
 }
 
 /// Compose a headless run over `connector`, confined to `policy`'s root.
@@ -431,11 +459,58 @@ pub fn assemble(
     connector: Box<dyn ModelConnector>,
     audit_dir: PathBuf,
 ) -> Result<WorkspaceSession, String> {
-    let tools = workspace_tools(root);
+    let sandbox_home = sandbox_home(&audit_dir)?;
+    let tools = workspace_tools(root, &sandbox_home);
     let executor = assemble_executor(&tools, policy, root, &audit_dir)?;
     Ok(WorkspaceSession {
         session: Session::from_parts(connector, executor, Arc::new(CostTracker::new()), audit_dir),
         tools,
+        sandbox_home,
+    })
+}
+
+/// Create the sandbox `HOME` this run's `bash` tool will use, and return its
+/// absolute path.
+///
+/// One directory per run, under the run's own state directory beside the audit
+/// log. `BashTool`'s own default is `/tmp/arcana-runtime/bash` — one fixed
+/// path, in a world-writable directory, shared by every run on the host; see
+/// [`arcana_tools::bash::BashTool::with_home`] for what was measured about it.
+///
+/// Fail-closed, like every other piece of run setup here: a run whose `HOME`
+/// could not be created must not silently fall back to the shared one, because
+/// the fallback is exactly the state this exists to stop sharing.
+///
+/// Canonicalized before it is handed on, because `audit_dir` may be relative
+/// (`FALLBACK_STATE_DIR`) and `CleanEnv` refuses a `HOME` that is not
+/// absolute — a relative one would surface as a tool execution failure on the
+/// first command instead of as a setup error here.
+fn sandbox_home(audit_dir: &Path) -> Result<PathBuf, String> {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let home = audit_dir
+        .join(SANDBOX_HOME_DIR)
+        .join(format!("{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&home).map_err(|err| {
+        format!(
+            "sandbox HOME could not be created at {}: {err}",
+            home.display()
+        )
+    })?;
+    // Owner-only: the state directory is the operator's, and a `HOME` other
+    // local users can read is the /tmp problem again under a longer path.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
+            .map_err(|err| format!("sandbox HOME permissions could not be set: {err}"))?;
+    }
+    home.canonicalize().map_err(|err| {
+        format!(
+            "sandbox HOME {} could not be resolved: {err}",
+            home.display()
+        )
     })
 }
 
@@ -566,7 +641,17 @@ You will receive the tool's output as a `[tool_result]` line and may then call a
 tool or answer.\n\
 \n\
 WORKSPACE BOUNDARY. Every path you touch must be inside `{root}`; prefer relative paths. \
-Shell commands run in `{root}`.\n\
+Shell commands run in `{root}`. The single exception is `{null_sink}`, which is permitted as a \
+redirect target or argument because it discards what is written to it and yields nothing when \
+read; every other path outside `{root}` is refused, `/dev/` included.\n\
+\n\
+NO CREDENTIALS ON THIS LANE. `bash` runs with a constructed, credential-free environment: \
+`HOME` is an empty directory created for this run — no git config, no credential helper, no \
+SSH key, no token — and your own `env_vars` are refused. A PRIVATE repository therefore cannot \
+be cloned, fetched or read, and will fail with `could not read Username for \
+https://github.com`. That is by design, not a fault to diagnose: do not spend turns \
+looking for credentials, and do not treat their absence as evidence that a repository does not \
+exist.\n\
 \n\
 {floor}\n\
 \n\
@@ -579,6 +664,7 @@ the run.\n\
 When the task is done, reply with a plain-text summary of what you changed and no fenced \
 block.",
         root = root.display(),
+        null_sink = crate::workspace::NULL_SINK,
         floor = crate::workspace::destructive_floor_disclosure(),
     )
 }
@@ -741,7 +827,7 @@ mod tests {
     #[test]
     fn the_system_prompt_states_the_wire_format_and_every_registered_tool() {
         let root = Path::new("/tmp");
-        let tools = workspace_tools(root);
+        let tools = workspace_tools(root, Path::new("/tmp/arcana-test-home"));
         let prompt = system_prompt(&tools, root);
         assert!(prompt.contains("```tool_call"), "{prompt}");
         for name in ["read", "write", "edit", "grep", "bash"] {
@@ -749,6 +835,75 @@ mod tests {
         }
         // The exact failure the defect produced, named in the prompt.
         assert!(prompt.contains("```bash block"), "{prompt}");
+    }
+
+    #[test]
+    fn the_system_prompt_states_the_sink_exception_and_the_credential_free_lane() {
+        // A2-253. Both lines exist because the pilot spent turns on what they
+        // say: `2>/dev/null` was refused as a boundary escape, and the model
+        // then spent many turns hunting for git credentials that this lane
+        // does not have and cannot have.
+        let root = Path::new("/tmp");
+        let tools = workspace_tools(root, Path::new("/tmp/arcana-test-home"));
+        let prompt = system_prompt(&tools, root);
+        assert!(
+            prompt.contains(crate::workspace::NULL_SINK),
+            "the one permitted path outside the workspace is named: {prompt}"
+        );
+        assert!(
+            prompt.contains("every other path outside"),
+            "and it is stated as the single exception: {prompt}"
+        );
+        assert!(prompt.contains("NO CREDENTIALS ON THIS LANE"), "{prompt}");
+        assert!(
+            prompt.contains("could not read Username"),
+            "the model is told the exact error it will get, so it stops \
+             diagnosing it: {prompt}"
+        );
+    }
+
+    #[test]
+    fn the_sandbox_home_is_per_run_absolute_and_empty() {
+        let state = tempfile::TempDir::new().unwrap();
+        let first = sandbox_home(state.path()).expect("a sandbox home");
+        let second = sandbox_home(state.path()).expect("a second sandbox home");
+        assert!(first.is_absolute(), "{first:?}");
+        assert!(
+            first.is_dir(),
+            "the directory exists before any command runs"
+        );
+        assert_eq!(
+            std::fs::read_dir(&first).unwrap().count(),
+            0,
+            "and it starts empty"
+        );
+        assert_ne!(first, second, "two runs on one host must not share a HOME");
+        assert!(
+            first.starts_with(state.path().canonicalize().unwrap()),
+            "it lives in the run's own state directory, not in /tmp: {first:?}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&first).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "owner-only: {mode:o}");
+        }
+    }
+
+    #[test]
+    fn an_empty_sandbox_home_is_released_and_a_used_one_is_kept() {
+        let state = tempfile::TempDir::new().unwrap();
+        let empty = sandbox_home(state.path()).expect("a sandbox home");
+        release_sandbox_home(&empty);
+        assert!(!empty.exists(), "an empty HOME is given back: {empty:?}");
+
+        let used = sandbox_home(state.path()).expect("a sandbox home");
+        std::fs::write(used.join(".gitconfig"), "[user]\n").unwrap();
+        release_sandbox_home(&used);
+        assert!(
+            used.join(".gitconfig").exists(),
+            "what the run wrote to `~` survives the cleanup: {used:?}"
+        );
     }
 
     #[test]

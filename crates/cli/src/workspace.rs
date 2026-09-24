@@ -134,6 +134,36 @@ const REFUSED_PHRASES: [(&[&str], &str); 8] = [
     (&["history", "-c"], "erases the audit trail of this session"),
 ];
 
+/// The only path outside the workspace a `bash` command may name.
+///
+/// ## Why an exception exists at all (A2-253)
+///
+/// Turn 6 of pilot A2-240c was refused on `2>/dev/null`
+/// (`/home/dev/aup/arc2/wt/A2-240c/.arcana/denied/0003-turn6.json`) — one of
+/// that run's five boundary refusals, and the only one where the model had
+/// not tried to leave the workspace at all. `cmd 2>/dev/null` is how a shell
+/// says "discard this", and refusing it teaches nothing: the correction the
+/// model can act on is to write the same command without the idiom, which is
+/// not a boundary anybody wanted to defend.
+///
+/// ## Why it is safe, stated as a property rather than a habit
+///
+/// `/dev/null` is a character device with no storage: a write is discarded, a
+/// read returns EOF immediately. It can therefore neither carry workspace
+/// contents out (nothing written to it can be read back, by this run or by
+/// anyone) nor bring anything in (it has nothing to give). That is the whole
+/// of the argument, and it is what makes this exception one path and not a
+/// directory: `/dev/zero` and `/dev/urandom` are sources, `/dev/stdout` and
+/// `/dev/fd/*` are aliases for descriptors this policy does not own, and
+/// `/dev/sda` is a disk. None of them are allowed, and `/dev/` is never
+/// matched as a prefix.
+///
+/// The comparison is on the **canonicalized** path, so a symlink named
+/// `null` inside the workspace is judged by where it points, and a spelling
+/// like `/dev/null/../../etc/passwd` resolves elsewhere and is refused
+/// normally.
+pub const NULL_SINK: &str = "/dev/null";
+
 /// Upper bound on the command length this policy will reason about.
 ///
 /// A refusal must be a decision, not a timeout: past this size the policy
@@ -311,6 +341,9 @@ impl WorkspacePolicy {
         }
         match path_guard::resolve(bare, &self.root) {
             Ok(resolved) if resolved.starts_with(&self.root) => None,
+            // The one path outside the workspace that carries nothing out of
+            // it and nothing into it. See [`NULL_SINK`].
+            Ok(resolved) if resolved == Path::new(NULL_SINK) => None,
             Ok(resolved) => Some(format!(
                 "refused: `{bare}` resolves to `{}`, outside the workspace `{}`",
                 resolved.display(),
@@ -689,6 +722,69 @@ mod tests {
                 "{command}"
             );
         }
+    }
+
+    #[test]
+    fn the_null_sink_is_permitted_wherever_a_command_names_it() {
+        // Turn 6 of pilot A2-240c died on `2>/dev/null`
+        // (`.arcana/denied/0003-turn6.json`). A sink carries nothing out of
+        // the workspace and has nothing to bring in, so it is the one path
+        // outside the root a command may name.
+        let root = TempDir::new().unwrap();
+        let policy = policy(&root);
+        for command in [
+            "ls -la sup 2>/dev/null",
+            "echo noise > /dev/null",
+            "cat /dev/null",
+            "curl -sS -o /dev/null -w '%{http_code}' https://example.com",
+            "cd runs 2>/dev/null && ls",
+        ] {
+            assert_eq!(
+                policy.assess("bash", &json!({ "command": command })),
+                Assessment::InsideWorkspace,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_exception_is_one_path_and_not_the_device_directory() {
+        // The paired negative. `/dev/` is not a prefix rule: a source, an
+        // alias for somebody else's descriptor and a raw disk are all still
+        // outside the workspace, and so is anything that merely starts with
+        // the sink's name.
+        let root = TempDir::new().unwrap();
+        let policy = policy(&root);
+        for command in [
+            "cat /dev/zero > noise.bin",
+            "head -c 16 /dev/urandom",
+            "cat /dev/sda",
+            "echo x > /dev/stdout",
+            "cat /dev/nullify",
+            "cat /dev/null/../../etc/passwd",
+            "cat /etc/hosts",
+            "ls -la /home/dev/arcanada/Projects",
+        ] {
+            let assessment = policy.assess("bash", &json!({ "command": command }));
+            assert!(
+                assessment.is_refused(),
+                "{command} must stay refused: {assessment:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sink_exception_does_not_reach_the_path_tools() {
+        // `write`/`read`/`edit`/`grep` have no use for a sink, and every
+        // allowance is a hole somebody has to justify later. The exception is
+        // the shell-command half only.
+        let root = TempDir::new().unwrap();
+        let policy = policy(&root);
+        let assessment = policy.assess("write", &json!({ "path": "/dev/null", "content": "" }));
+        assert!(
+            refusal(&assessment).contains("outside the workspace"),
+            "{assessment:?}"
+        );
     }
 
     #[test]
