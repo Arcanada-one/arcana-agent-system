@@ -237,3 +237,46 @@ fn prose_about_tool_calling_stays_a_final_answer() {
     let english = response_with("I will invoke the linter next, once the build is green.");
     assert_eq!(tag(&interpret(&english)), "final");
 }
+
+/// A2-278. The closing fence is a fence that STARTS A LINE, not the first
+/// three backticks after the opening one.
+///
+/// Measured on a live contract-bound run (work item
+/// `d931525f-c134-4c6b-85e1-9cdf94e8ab8b`, 2026-09-24): asked for a Markdown
+/// how-to page, the model emitted a well-formed `write` call whose `content`
+/// string contained ```` ```json ````. `scan_tool_call` cut the body at that
+/// inner fence, the truncated slice was not JSON, and two such turns ended the
+/// run on `UnsupportedToolCallFormat` having written nothing. Any documentation
+/// page with a code block in it was unwritable through this runner — and a
+/// page of commands is nothing but code blocks.
+///
+/// Inside the block the payload is JSON, so a real newline cannot occur inside
+/// a string literal: a fence at the start of a line is never part of the
+/// payload, and a fence inside the payload is never at the start of a line.
+#[test]
+fn a_tool_call_payload_may_contain_a_code_fence() {
+    let payload = r##"{"name":"write","input":{"path":"docs/how-to/x.md","content":"# Title\n\n```shell\narcana run --cwd .\n```\n"}}"##;
+    let resp = response_with(&format!("Writing it.\n```tool_call\n{payload}\n```\n"));
+    match interpret(&resp) {
+        AssistantAction::ToolCall { name, input } => {
+            assert_eq!(name, "write");
+            assert_eq!(input["path"], "docs/how-to/x.md");
+            assert!(
+                input["content"].as_str().unwrap().contains("```shell"),
+                "the fence inside the payload must survive: {input}"
+            );
+        }
+        other => panic!("expected ToolCall, got {}", tag(&other)),
+    }
+}
+
+/// The same rule must not turn a genuinely unterminated block into a call: a
+/// fence that never starts a line is still no closing fence.
+#[test]
+fn an_unclosed_block_whose_payload_holds_a_fence_is_still_truncated() {
+    let resp = response_with("```tool_call\n{\"name\":\"write\",\"input\":{\"content\":\"a ``` b");
+    match interpret(&resp) {
+        AssistantAction::Truncated { .. } => {}
+        other => panic!("expected Truncated, got {}", tag(&other)),
+    }
+}
