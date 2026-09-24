@@ -29,6 +29,7 @@ use arcana_connectors::contract_source::{
 use arcana_connectors::muneral::{MuneralClient, WorkItem};
 use arcana_core::contract::{verify, ContractBinding, ContractRefusal};
 
+use crate::ground_truth::{self, GroundTruth};
 use crate::learning_trace;
 use crate::receipt;
 use crate::run::{RunRequest, DONE_MARKER};
@@ -40,6 +41,9 @@ pub struct WorkItemRequest {
     /// Read the contract from this file instead of from Argana. The receipt
     /// records which was used, and only Argana counts as verified live.
     pub contract_file: Option<PathBuf>,
+    /// Files quoted into the brief as ground truth about this repository, in
+    /// the order the dispatcher named them. See [`crate::ground_truth`].
+    pub ground_truth: Vec<PathBuf>,
     /// The run itself. `prompt` is overwritten from the work item and the
     /// contract; `contract` is filled in once the binding is verified.
     pub run: RunRequest,
@@ -105,8 +109,21 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         binding.allowlist_source().as_str(),
     );
 
+    // Before step 4, and therefore before the first billable call: grounding
+    // that cannot be read must not become a run that silently had none.
+    let grounding = match ground_truth::load(&request.ground_truth) {
+        Ok(grounding) => grounding,
+        Err(refusal) => return refuse(refusal.code(), &refusal.to_string()),
+    };
+    for item in &grounding {
+        println!(
+            "ground truth: {} ({}, {} bytes)",
+            item.path, item.sha256, item.bytes
+        );
+    }
+
     // Step 4.
-    request.run.prompt = task_prompt(&item, &binding);
+    request.run.prompt = task_prompt(&item, &binding, &grounding);
     request.run.contract = Some(binding.clone());
 
     // Taken BEFORE the run, because it is the only thing that can say which
@@ -140,6 +157,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         &crate::models::resolve(request.run.model.as_deref()),
         produced_by(),
         measured_at(),
+        &grounding,
     );
     let receipt_path = match receipt::write(&root, &built) {
         Ok(path) => path,
@@ -200,7 +218,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
 /// cascade — pilot A2-231 spent 78 turns on a restriction nobody had told the
 /// model about, and an enforced-but-undisclosed allowlist is that failure with
 /// a different noun.
-fn task_prompt(item: &WorkItem, binding: &ContractBinding) -> String {
+fn task_prompt(item: &WorkItem, binding: &ContractBinding, grounding: &[GroundTruth]) -> String {
     let admitted = binding
         .allowlist()
         .iter()
@@ -216,7 +234,7 @@ THE CONTRACT (authoritative — it defines the work and its limits):\n\
 THE WORK ITEM:\n\
 {title}\n\
 {description}\n\
-\n\
+{grounding}\n\
 CONTRACT TOOL ALLOWLIST. This contract admits exactly these tools: {admitted}. A call to any \
 other tool is refused by the permission cascade and recorded; it is not a call to re-send in \
 another shape, and it cannot be argued into the contract.\n\
@@ -236,6 +254,7 @@ of a file is not a file. Then, and only then, say in plain text which path you w
         projection = binding.projection(),
         title = item.title,
         description = item.description.as_deref().unwrap_or(""),
+        grounding = ground_truth::render(grounding),
     )
 }
 

@@ -261,6 +261,7 @@ async fn the_receipt_records_both_the_model_and_who_chose_it() {
         },
         "test".to_owned(),
         "2026-09-24T00:00:00Z".to_owned(),
+        &[],
     );
 
     let json = serde_json::to_value(&receipt).unwrap();
@@ -294,6 +295,7 @@ async fn a_receipt_for_an_unconfigured_run_says_tier_policy_rather_than_a_model(
         },
         "test".to_owned(),
         "2026-09-24T00:00:00Z".to_owned(),
+        &[],
     );
 
     let json = serde_json::to_value(&receipt).unwrap();
