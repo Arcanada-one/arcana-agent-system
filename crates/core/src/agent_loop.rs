@@ -707,8 +707,21 @@ fn parse_tool_call(body: &str) -> AssistantAction {
         dialect: CANONICAL_DIALECT,
         detail,
     };
-    let Ok(value) = serde_json::from_str::<Value>(body) else {
-        return malformed("the body of your `tool_call` block is not valid JSON".to_owned());
+    let value = match serde_json::from_str::<Value>(body) {
+        Ok(value) => value,
+        // A body that does not parse whole gets exactly one more reading, and
+        // it is a truncation, never an edit: the JSON value at the front, kept
+        // only when everything after it is surplus closing punctuation. See
+        // [`value_before_surplus_closers`] for why that is the whole of the
+        // licence.
+        Err(err) => {
+            let Some(value) = value_before_surplus_closers(body) else {
+                return malformed(format!(
+                    "the body of your `tool_call` block is not valid JSON ({err})"
+                ));
+            };
+            value
+        }
     };
     let Some(name) = value.get("name").and_then(Value::as_str) else {
         return malformed(
@@ -747,6 +760,49 @@ fn parse_tool_call(body: &str) -> AssistantAction {
         name: name.to_owned(),
         input,
     }
+}
+
+/// The JSON value at the front of `body`, when the only thing behind it is
+/// surplus closing punctuation.
+///
+/// # Why a repair is admissible here at all (A2-248)
+///
+/// Turn 62 of pilot A2-240b opened this runner's own fence and wrote a
+/// complete `write` call — right tool, right path, whole file content — and
+/// then one more `}` (`crates/core/tests/fixtures/
+/// a2-248-surplus-brace-reply.txt`, the reply as the model sent it).
+/// `serde_json::from_str` refuses trailing data, so the call became "not valid
+/// JSON", nothing ran, and one of that run's hundred turns went on a
+/// correction for a character that carried no information.
+///
+/// The licence is deliberately the narrowest one that covers it, and it is a
+/// property of the text rather than a guess about the model: **`}`, `]` and
+/// whitespace cannot name a tool, introduce an argument, or change a value.**
+/// A remainder made only of those has exactly one reading once it is dropped,
+/// so taking the prefix cannot dispatch anything other than what was written.
+///
+/// Everything else keeps costing a correction, because everything else could
+/// change what runs:
+///
+/// * A second JSON object is a second call. Executing the first and discarding
+///   the rest silently is a different run, not a repaired one.
+/// * A trailing comma (`{"name":"bash",}`) never reaches here: it fails
+///   *inside* the braces, so there is no complete prefix to take. That is the
+///   line — a parser that truncates a suffix is reading; a parser that edits
+///   between the braces is guessing at intent.
+/// * A prefix that parses but names no tool falls through to the ordinary
+///   `name` check below, and is refused for the reason it actually has.
+///
+/// Returns `None` whenever the licence does not apply, so the caller's
+/// fail-closed path is unchanged.
+fn value_before_surplus_closers(body: &str) -> Option<Value> {
+    let mut stream = serde_json::Deserializer::from_str(body).into_iter::<Value>();
+    let value = stream.next()?.ok()?;
+    let remainder = body.get(stream.byte_offset()..)?;
+    remainder
+        .chars()
+        .all(|ch| ch == '}' || ch == ']' || ch.is_whitespace())
+        .then_some(value)
 }
 
 // ---------------------------------------------------------------------------
