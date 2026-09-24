@@ -1,5 +1,5 @@
 {
- "bundle_digest": "sha256:b889d8f5233f5fe09e8b7ccbf266fb1850a7556857e05c68568c9df15a845fe4",
+ "bundle_digest": "sha256:001639caec869b1ffbf21e5aff7d244f79eb4526365c7a9c81ae93fa349b5af6",
  "files": [
   {
    "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
@@ -10,14 +10,14 @@
    "verified_by_the_job": false
   },
   {
-   "blob_oid": "b4a7d4f51b863f20f735cea8678098f1e2171acc",
+   "blob_oid": "2bb2ac9bddd2164d01b6280e8e7c6e3d4f092daf",
    "path": "tools/graph/admit_change.py",
-   "sha256": "sha256:88458a7f49c5419140b7b7f093f4864e86526d0a019b050f0531a06e20f56056"
+   "sha256": "sha256:a8a7a8a4c7dff627b80e423d0622a22a3bfda8bf051c0f39bc21751912df4142"
   },
   {
-   "blob_oid": "9b341c189a30f7d114442640c366fb7e10b4eabf",
+   "blob_oid": "ed7cd607645e7c5e5d7d80742cdeac4d0b5db380",
    "path": "tools/graph/schema_check.py",
-   "sha256": "sha256:567e0490b0899caacf654e29c8fcc0a52c2dd8363dedf78fa340732cb70efe05"
+   "sha256": "sha256:1c7495e9e11b77639bfa82f2f4bcc22b3ef95eb64eee49958b6593471388059a"
   },
   {
    "blob_oid": "0866d87a99b778507bad7d26804e01200e7cb0c1",
@@ -40,9 +40,9 @@
    "sha256": "sha256:8a3a49a1625a4f66793d4658c926dd7a234ddb1614dfeea2fc5ba416d41fef68"
   },
   {
-   "blob_oid": "c07aee9555a1e019125b23c3be8e525ff25676c0",
+   "blob_oid": "f4b34c29c897977dc6be29082671aa0225d5217c",
    "path": "tools/graph/verify.py",
-   "sha256": "sha256:2ba106d9a1af7f8c9549a1944bcc562fda2c8ef05db66e99495d77d585066489"
+   "sha256": "sha256:98aa95bdfb59eb59224071cfbcd5634556e0062e3e01466657b5c3e621a948b9"
   },
   {
    "blob_oid": "e8385eb6ca1180e2094d6937a5fdefcd2828e66d",
@@ -50,14 +50,14 @@
    "sha256": "sha256:57af3f18aaa3005f66d05e49134f9c5c431b88ff3de07bcf6b2adc72f019ce62"
   },
   {
-   "blob_oid": "1059a151dab9b4468e37222b3932af1bf4d67dce",
+   "blob_oid": "ce4c28ce626fbc52d4d624e5f95ed582b67b656d",
    "path": "tools/graph/canary_evidence.py",
-   "sha256": "sha256:ffa59d834844777910c4d6323a49f62284a82ca094587330cd09fee6509c6b97"
+   "sha256": "sha256:12a9e13ee94f7b4fbb3d04115ed28742a618cf4740b32958ea3398dcd07ad79e"
   },
   {
-   "blob_oid": "7064c797cf6198df5f594f30daddea76c8df2c29",
+   "blob_oid": "90a6e07052d103cc9b517c861532b73ed8a13050",
    "path": "tools/graph/process_observation.py",
-   "sha256": "sha256:13194cc0a226bad876f864d45d72c710f6ef47266173d25ad514f4f9b2a35f67"
+   "sha256": "sha256:7543a203be033d59011d90da3272778d0304a9183fd146c13adc3f03da5a7bc9"
   },
   {
    "blob_oid": "e9defbc9f662f6dd0f75e2bf1f0567b31f37119d",
@@ -70,9 +70,9 @@
    "sha256": "sha256:8da64b9e7e99a6e4015b5b0a1528a9e57c31a779b584d8c301f5f8ff997082a4"
   },
   {
-   "blob_oid": "36b996f9d763ab0121e295ff22669ea57f8f7b1c",
+   "blob_oid": "fab27b398b3517985aba1f53269ca3d56f3f459c",
    "path": "contracts/graph-verified-change/admission-gate.v1.json",
-   "sha256": "sha256:7a4baf2a8806113337c335fe41469198fcaa043d17a13cad63f6e3d329aba09b"
+   "sha256": "sha256:cc5db2bec05b5307f9397eb45ebed5c6466accdf5cbe86963b13144eddca89bc"
   },
   {
    "blob_oid": "bdcf1b1c7f8a37da5155558cced9405803bb80fe",
@@ -80,9 +80,9 @@
    "sha256": "sha256:ca363f881bc97489a94aad3ede0a1d37baf16473bbb12acbd34d2bea04ac0321"
   },
   {
-   "blob_oid": "c1caa4abb92c1fb6822bdba8a46f61388e49f92a",
+   "blob_oid": "0c088ca934c7cbba6c06045a554d47ebe8617463",
    "path": "contracts/graph-verified-change/change-admission-receipt.v1.json",
-   "sha256": "sha256:53f7fe0c7e78a39687af4798889ba4b87c597b32c7e06e2cb84252bcc4cea7db"
+   "sha256": "sha256:25459da481cc3666ca3e03113af3773b76e2515ded5b4b595c24ef91d681a12f"
   },
   {
    "blob_oid": "014c1ddd4e7f2b65d23f0c2a65232c51493b3644",
@@ -96,7 +96,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "9350c47449d7a0ef185ea195c27cb87bddd6b475",
+ "program_ref": "5fde907e7be8799bbf50044177fbed3f60ac9661",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",

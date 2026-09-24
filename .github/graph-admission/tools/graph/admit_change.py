@@ -55,7 +55,11 @@ LEDGER_DIR = PROGRAM_ROOT / "receipts/graph/work-item-evidence"
 CHECK_IDS = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10", "C11", "C12", "C13",
              # AUP-GRAPH-006:gate4b — C16 REFUSES a structural exemption whose evidence the gate
              # re-measures and does not confirm, so it blocks and belongs in the disable battery.
-             "C16", "C18"]
+             "C16", "C18",
+             # DEC-AUP-0039 — C19 REFUSES a `verified` claim its own probe evidence contradicts, and it
+             # is what LOWERS that entity's verdict to what was observed, so disabling it must (and does)
+             # let a blocked fixture through: it belongs in the disable battery.
+             "C19"]
 # AUP-GRAPH-006:gate2a. C14/C15 are INFORMATIONAL: they name why the gate did or did not author a
 # receipt on the automated-author path, and they never raise the verdict (their policy verdict is
 # `admit`, rank 0). Disabling one therefore cannot let anything through, so the disabled-check battery
@@ -645,6 +649,128 @@ def split_self_update_receipt(repo: Path, base: str, head: str, outside: list[st
     ev["admitted"] = path
     ev["work_item"] = work_item_id((json.loads(git(repo, "show", f"{head}:{path}")) or {}).get("work_item"))
     return [path], [p for p in outside if p != path], ev
+
+
+# ============================================================================================
+# A2-261 / DEC-AUP-0041 — the record commit of a caller whose evidence binds its WHOLE tree.
+#
+# DEC-AUP-0038 R6 admits one alternative binding, `base..H` (H = the receipt's own head), and only
+# when the single path between H and this head is the receipt. That condition is unsatisfiable in the
+# one caller the decision was written for. muneral declares `apps/api/test/assembly/mutation-results.json`,
+# whose content pins `trackedTreeWithoutEvidence` — a hash of the whole tracked tree, the receipt file
+# included — so the commit that FILES the receipt necessarily regenerates the artefact, two paths move,
+# and the tolerance does not apply. All four commit orderings were tried on the real repository and none
+# is a fixed point (A2-256 §4.1, 2026-09-24, branch arc2/a2-256-receipt-file-attempt @143c84b):
+#
+#   STRUCTURAL_EXEMPTION_UNSOUND — GATE_SELF_UPDATE: change_binding sha256:7d966430… /
+#   5954cff8a922..992e8527423f does not bind this diff (sha256:2c4212bb… / 5954cff8a922..143c84beff6a)
+#
+# The remedy is a DEDUPLICATION, not a new licence. GATEORDER-0 (`trailing-record-commits.v1.md`, check
+# C06) already decided — in writing, before the code — which paths a commit AFTER a receipt's head may
+# carry: (a) the bound receipt itself, and (b) a derived artefact declared at BASE whose own verifier is
+# run at head and run again with one byte corrupted, which it must refuse. R6 asks the identical question
+# about the binding digest and answers it with (a) alone, because the refresh it was written against
+# (scrutator) moved no artefact. One gate held two definitions of "record path", and muneral is the
+# witness: the identical commit satisfies C06 and fails C16.
+#
+# So the predicate below is shared by both call sites. What it is NOT is a pass: a path it admits is
+# still measured by B6.4/B6.5 at head, and `recheck_structural` refuses the change unless those runs
+# prove that path by themselves. Three guards come from the consilium of 2026-09-24 and are new to BOTH
+# rules (governance/consilium/2026-09-24-record-commit-derived-artefact/):
+#   - a path that is NOT a regular file at head is refused. `_verify_declared_artefacts` and B6.5 write
+#     the corrupted bytes to `worktree/path` and restore them afterwards; if that path is a symlink the
+#     runner writes THROUGH it, outside the worktree. Nothing in this file looked at a blob's mode.
+#   - a path named by a declared `argv`/`cwd` is refused: an artefact that IS its own verifier would
+#     vouch for its own replacement.
+#   - the artefact must already exist at base for the R6 window (`require_at_base`), because a file
+#     added after the receipt's head is a new fact, not a refreshed one — the same thing B6.2 says.
+INTERPRETERS = ("node", "python", "python3", "sh", "bash", "zsh", "ruby", "perl", "deno", "bun", "pnpm",
+                "npm", "npx", "yarn", "uv", "pwsh")
+
+
+def declared_command_paths(entries: dict) -> set[str]:
+    """The repository paths a declaration's setup/verify commands EXECUTE — never the ones they read.
+
+    The distinction is the whole point and it is positional: argv[0] is the program, and argv[1] is too
+    when argv[0] is an interpreter. Everything after that is data. Measured on the real subject before
+    this narrowing existed: muneral's verify argv is
+    `node apps/api/test/assembly/mutation-harness.js --verify-structure apps/api/test/assembly/mutation-results.json`,
+    so a rule that treated every argv token as executed code refused muneral's OWN artefact for appearing
+    as its own verifier's argument — a guard that fires on the case it was written to permit."""
+    out: set[str] = set()
+    for e in (entries or {}).values():
+        for stage in ("verify", "setup"):
+            s = (e or {}).get(stage) if isinstance(e, dict) else None
+            if not isinstance(s, dict):
+                continue
+            cwd = str(s.get("cwd") or ".").strip("/")
+            argv = [str(t).strip() for t in (s.get("argv") or [])]
+            heads = argv[:1]
+            if argv and Path(argv[0]).name in INTERPRETERS:
+                heads += [t for t in argv[1:2] if not t.startswith("-")]
+            for t in heads:
+                t = t.lstrip("/")
+                t = t[2:] if t.startswith("./") else t
+                if not t:
+                    continue
+                out.add(t)
+                if cwd and cwd != ".":
+                    out.add(f"{cwd}/{t}")
+    return out
+
+
+def blob_mode(repo: Path, ref: str, path: str) -> str | None:
+    """The git file mode of one path at one ref, or None when the path is not there."""
+    out = git(repo, "ls-tree", ref, "--", path, check=False).strip()
+    return out.split(" ", 1)[0] if out else None
+
+
+REGULAR_MODES = ("100644", "100755")
+
+
+def record_path_refusal(repo: Path, base: str, head: str, path: str, entries: dict,
+                        *, require_at_base: bool = False) -> str | None:
+    """→ the reason `path` may NOT be a record path of a commit after a receipt's head, or None.
+
+    ONE definition, two callers: C06's clause (b) and the DEC-AUP-0038 R6 binding window. Everything is
+    read from git at base and head; the declaration is the one at BASE, never at head, and the B6.1
+    BOOTSTRAP is deliberately not honoured — a change may not license its own record commit."""
+    if not isinstance(entries.get(path), dict):
+        return (f"{path} is not an exact entry of {DEFAULT_DECLARATION_REL} read at base {base[:12]} — the "
+                f"declaration in force is base's, and a glob is not an exact path")
+    mode_h = blob_mode(repo, head, path)
+    if mode_h is None:
+        return f"{path} does not exist at head {head[:12]}: there are no bytes for its verifier to judge"
+    if mode_h not in REGULAR_MODES:
+        return (f"{path} is mode {mode_h} at head {head[:12]}, not a regular file — the mutation test writes "
+                f"to it and a symlink or a gitlink is written THROUGH, off the worktree")
+    if require_at_base:
+        mode_b = blob_mode(repo, base, path)
+        if mode_b is None:
+            return (f"{path} is ADDED after the receipt's head, not refreshed — a new file is a new fact, and "
+                    f"the exemption was issued before it existed")
+        if mode_b not in REGULAR_MODES:
+            return f"{path} is mode {mode_b} at base {base[:12]}, not a regular file"
+    if path in declared_command_paths(entries):
+        return (f"{path} is itself named by a declared setup/verify argv — an artefact that IS the verifier "
+                f"would vouch for its own replacement")
+    return None
+
+
+def admissible_ranges_invariant(admissible: set, head: str, record_head: str | None) -> str | None:
+    """DEC-AUP-0038 reverse_if R-4, as a predicate rather than as prose → the refusal, or None.
+
+    A2-261b extracted it from `recheck_structural`. Inline it was a TRIPWIRE over a condition no input
+    can reach — `admissible` is built there as one literal plus at most one `add`, so `> 2` is dead by
+    construction and no mutation of the call site can be made red. A tripwire is still worth keeping
+    (it is what notices the day someone adds a third `add`), but "cannot go red" is not "verified", so
+    the predicate is tested DIRECTLY on a synthetic three-member set instead of being left unmeasured.
+    """
+    if len(admissible) > 2 or {h for _d, _b, h in admissible} - {head, record_head or head}:
+        return (f"the gate built {len(admissible)} admissible binding range(s) for this change — DEC-AUP-0038 R6 "
+                f"and DEC-AUP-0041 allow exactly `base..head` and `base..<the bound receipt's own head>`, and a "
+                f"third range is the observation that withdraws the whole tolerance (DEC-AUP-0038 reverse_if R-4)")
+    return None
 
 
 def split_outside(repo: Path, base: str, head: str, outside: list[str],
@@ -2026,15 +2152,43 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
     digest = diff_digest(repo, base, head)
     admissible = {(digest, base, head)}
     filed = (cev.get("self_update_receipt") or {}).get("admitted") if case == "gate_self_update" else None
-    record_note, record_head = "", None
+    record_note, record_head, record_extra = "", None, []
+    # A2-261b. The refusal REASON is evidence, not just prose inside one problem string. It used to live
+    # only in `record_note`, which is appended to the binding problem — and only when a `bad` exemption is
+    # returned at all, so a test could assert "some binding problem exists" and pass with the guard deleted.
+    # `record_commit` is now written on the refusal path too, path by path, with the reason each path was
+    # not a record path (mode, absence at base, being its own verifier), and it survives the early return.
+    record_refusal: dict | None = None
     if filed and receipt_head and receipt_head != head and receipt_head in set(range_commits(repo, base, head)):
         moved = _names(repo, "diff", "--name-only", "--no-renames", receipt_head, head)
-        if moved == {filed}:
+        entries, _bad_entries = declared_artefacts(read_declaration(repo, base)[0])
+        extra = sorted(moved - {filed})
+        not_record = {p: r for p in extra
+                      for r in [record_path_refusal(repo, base, head, p, entries, require_at_base=True)] if r}
+        refusals = list(not_record.values())
+        why = ("" if filed in moved else
+               f"{filed} is not among the paths {receipt_head[:12]}..{head[:12]} moves") or "; ".join(refusals[:3])
+        if why:
+            record_note = (f" (the range up to the receipt's own head {receipt_head[:12]} was NOT admitted: {why} "
+                           f"— DEC-AUP-0041 R1)")
+            record_refusal = {"rule": "DEC-AUP-0041", "receipt": filed, "receipt_head": receipt_head,
+                              "verdict": "refused", "carried": extra, "not_record_paths": not_record,
+                              "why": why}
+            ev["record_commit"] = record_refusal
+        else:
             admissible.add((diff_digest(repo, base, receipt_head), base, receipt_head))
-            record_head = receipt_head
+            record_head, record_extra = receipt_head, extra
             record_note = (f" (the range up to the receipt's own head {receipt_head[:12]} is admissible too, "
-                           f"and ONLY it: the single path between that head and {head[:12]} is {filed}, this "
-                           f"refresh's own receipt under DEC-AUP-0038)")
+                           f"and ONLY it: the paths between that head and {head[:12]} are {filed}, this "
+                           f"refresh's own receipt under DEC-AUP-0038"
+                           + (f", and {len(extra)} derived artefact(s) declared at base ({', '.join(extra[:3])}), "
+                              f"each of which B6.4/B6.5 must still prove at head — DEC-AUP-0041" if extra else "")
+                           + ")")
+    # DEC-AUP-0041 carries DEC-AUP-0038's reverse_if R-4 forward verbatim, so the invariant it watches is
+    # asserted here rather than argued in prose: this tolerance widens the CONDITION on the second range and
+    # never the SET of ranges. Two members, and their heads are this head and the bound receipt's own.
+    if (broken := admissible_ranges_invariant(admissible, head, record_head)):
+        return [broken], ev
     bad = [x for x in exemptions
            if ((x.get("change_binding") or {}).get("digest"),
                (x.get("change_binding") or {}).get("base"),
@@ -2046,7 +2200,8 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                 f"({digest[:23]}… / {base[:12]}..{head[:12]}) — a structural exemption expires WITH the change, "
                 f"never on a calendar" + record_note], ev
     ev["binding"] = {"admissible": sorted(f"{b[:12]}..{h[:12]}" for _d, b, h in admissible),
-                     "self_update_receipt": filed}
+                     "self_update_receipt": filed, "record_commit_derived": record_extra}
+    binding_ev = ev["binding"]
     want = CODE_OF_CASE.get(case or "")
     code = sorted(codes)[0]
     if want != code:
@@ -2078,11 +2233,62 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                              verifier_conclusion=verifier_conclusion,
                              candidate_range=b7meta.get("candidate_range"), authority_id=b7meta.get("authority_id"),
                              second_opinion=b7meta.get("second_opinion"))
+    # The binding evidence was computed above and then overwritten by the battery's own dictionary, so no
+    # receipt ever carried it. It is the one place a reader can see WHICH range the exemption bound.
+    ev["binding"] = binding_ev
+    if record_refusal:
+        ev["record_commit"] = record_refusal
+    # DEC-AUP-0041 R2. Admitting the second range on the cheap, git-only test above is not the proof: the
+    # proof is that the very battery this call just ran accepted each carried artefact at head and REFUSED
+    # it with one byte corrupted. The verifier is not run a second time here — it was already run, on those
+    # paths, at that head, and `derived_runs` is what it wrote down. A path the battery did not reach is
+    # not_measured, and not_measured is not a pass.
+    if record_head:
+        unproved = [f"{p} — {why}" for p, (ok, why) in ((p, _derived_run_verdict(ev, p)) for p in record_extra)
+                    if not ok]
+        ev["record_commit"] = {
+            "rule": "DEC-AUP-0041", "receipt": filed, "receipt_head": record_head, "derived": record_extra,
+            "bound_by_the_exemption": any((x.get("change_binding") or {}).get("head") == record_head
+                                          for x in exemptions),
+            "verdict": "failed" if unproved else "verified",
+            "why": "; ".join(unproved) if unproved else
+                   (f"{len(record_extra)} artefact(s) carried by the record commit, each accepted by its own "
+                    f"declared verifier at head and REFUSED by it with one byte corrupted" if record_extra else
+                    "the record commit moved the receipt and nothing else — DEC-AUP-0038 R6 unchanged")}
+        if unproved and ev["record_commit"]["bound_by_the_exemption"]:
+            problems.append(f"{code}: a path the record commit carried {RECORD_UNPROVED} — "
+                            + "; ".join(unproved[:3])
+                            + ". The second binding range is admitted on the promise that every path between "
+                              "the receipt's head and this one is a record path; that promise is measured by "
+                              "B6.4/B6.5, not granted by the declaration")
     if not ev.get("eligible"):
         failed = [c for c in ev["checks"] if c["verdict"] != "verified"]
         problems.append(f"{code}: the gate re-measured the evidence battery and it does not pass — "
                         + "; ".join(f"{c['id']} {c['code']} {c['verdict']}: {c['detail'][:140]}" for c in failed[:3]))
     return problems, ev
+
+
+RECORD_UNPROVED = "is not proved by its own declared verifier at head"
+
+
+def _derived_run_verdict(ev: dict, path: str) -> tuple[bool, str]:
+    """Did THIS evaluation's B6.4/B6.5 prove `path` at head? → (ok, why). Read from what the battery
+    wrote down (`derived_runs`), never from the declaration that asked for it."""
+    if path not in set(ev.get("declared_derived_artefacts") or []):
+        return False, "B6 did not measure it as a declared derived artefact of this change"
+    runs = [r for r in (ev.get("derived_runs") or []) if r.get("path") == path]
+    clean = [r for r in runs if r.get("stage") == "clean"]
+    corrupted = [r for r in runs if r.get("stage") == "corrupted"]
+    if not clean:
+        return False, "its declared verifier was never run on the honest head tree (not_measured is not a pass)"
+    if any(r.get("rc") != 0 for r in clean):
+        return False, f"its declared verifier exits {clean[0].get('rc')} on the honest head tree"
+    if not corrupted:
+        return False, "the one-byte mutation test was not run (not_measured is not a pass)"
+    if any(r.get("rc") in (0, None) for r in corrupted):
+        return False, ("its declared verifier ACCEPTS the artefact with one byte corrupted, so it does not "
+                       "bind these bytes and the declaration is not evidence")
+    return True, "accepted at head and refused with one byte corrupted"
 
 
 def _receipt_head(doc: dict) -> str | None:
@@ -2144,12 +2350,16 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
         if blob.returncode == 0 and r.get("digest") == sha256_bytes(blob.stdout):
             receipt_paths.add(rel)
 
-    # (b) a derived artefact declared AT BASE (no bootstrap), measured by its own verifier at head
+    # (b) a derived artefact declared AT BASE (no bootstrap), measured by its own verifier at head.
+    # The membership test is `record_path_refusal`, the SAME predicate the DEC-AUP-0038 R6 binding window
+    # uses (DEC-AUP-0041): a deleted artefact has no bytes to verify, a non-regular blob is written THROUGH
+    # by the mutation test, and a path that is itself a declared verifier would vouch for its replacement.
     decl, why_decl = read_declaration(repo, base)
     declared, _bad = declared_artefacts(decl)
-    # a declared artefact DELETED after the receipt head is not a record path: there are no bytes to verify
-    derived = [p for p in trailing_paths if p in declared and p not in receipt_paths
-               and git_ok(repo, "cat-file", "-e", f"{head}:{p}")]
+    refused = {p: r for p in trailing_paths if p not in receipt_paths
+               for r in [record_path_refusal(repo, base, head, p, declared)] if r}
+    derived = [p for p in trailing_paths if p not in receipt_paths and p not in refused]
+    out["not_record_paths"] = refused
     derived_ok: set[str] = set()
     if derived:
         workdir.mkdir(parents=True, exist_ok=True)
@@ -2194,7 +2404,8 @@ def cashed_canary_ids(doc: dict, boundary_inferred: set[str]) -> set[str]:
     return out
 
 
-def canary_coverage(repo: Path, rows: list[dict], cashed: set[str] | None = None) -> tuple[set[str], list[str]]:
+def canary_coverage(repo: Path, rows: list[dict], cashed: set[str] | None = None, *,
+                    head: str | None = None) -> tuple[set[str], list[str]]:
     """Which entities a receipt's canary rows ACTUALLY cover (DEC-AUP-0037 R1/R2).
 
     The coverage is read out of the evidence document, never out of the row that cites it. A row is
@@ -2212,6 +2423,21 @@ def canary_coverage(repo: Path, rows: list[dict], cashed: set[str] | None = None
     still be the reason a boundary entity is covered; but a problem is only REPORTED for a row whose
     claim is being spent. With `cashed=None` every problem is reported, which is what a caller that
     holds no verdicts (a test, a direct call) should get.
+
+    `head` — the commit being admitted. A2-263 §5.3: this function used to open `output_ref` out of
+    the WORKING TREE. `.gitignore:15` ignores `receipts/graph/verifier-out/**/graph-*.json` and
+    `impact.Repo.dirty()` is `git status --porcelain`, which does not list ignored files, so a
+    CanaryResult present in NO COMMIT credited a boundary entity with full coverage and zero
+    problems while the worktree reported clean — and the LOCAL gate, authoritative under
+    DEC-AUP-0007, is the one that cashed it. Every read now goes through git objects at `head`.
+    Without a head nothing is opened at all: a caller that cannot say which commit it is admitting
+    cannot be told what a canary covers.
+
+    A2-263 §5.4: the binding is RE-DERIVED here (`canary_evidence.consume`), not taken from the
+    row. The graph-architect's prediction in A2-257 §5.4 — that this turns the first cashed canary
+    row into a C12 refusal — is measured in `test_canary_evidence_from_git_objects.py`, not
+    assumed: coverage is the document's `entity_verdicts` only while the document's subject binds
+    to `head` under DEC-AUP-0040, and is empty, by name, when it does not.
     """
     covered: set[str] = set()
     problems: list[str] = []
@@ -2233,23 +2459,83 @@ def canary_coverage(repo: Path, rows: list[dict], cashed: set[str] | None = None
         if not str(path).startswith(str(root) + os.sep):
             report(vid, f"output_ref {ref!r} resolves outside the repository")
             continue
+        if not head:
+            report(vid, f"canary evidence {ref} was not opened: no admitted head was given, and "
+                        f"{canary_evidence.EVIDENCE_AT_HEAD_REQUIRED}")
+            continue
         try:
-            doc = json.loads(canary_evidence.read_regular(path))
-        except (OSError, ValueError) as exc:
-            report(vid, f"canary evidence {ref} cannot be read ({type(exc).__name__})")
+            doc = json.loads(canary_evidence.read_at_commit(root, head, ref))
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            report(vid, f"canary evidence {ref} cannot be read from {str(head)[:12]} "
+                        f"({type(exc).__name__}) — {canary_evidence.EVIDENCE_AT_HEAD_REQUIRED}")
             continue
         if not isinstance(doc, dict) or not str(doc.get("schema", "")).startswith("CanaryResult/"):
             report(vid, f"{ref} is not a CanaryResult document (schema="
                         f"{doc.get('schema') if isinstance(doc, dict) else type(doc).__name__!r})")
             continue
-        listed = {r.get("entity") for r in (doc.get("entity_verdicts") or [])
-                  if isinstance(r, dict) and isinstance(r.get("entity"), str)}
+        rows_ok, binding, _doc = canary_evidence.consume(path, root, head, at_head=ref)
+        if binding:
+            report(vid, f"{ref} does not bind {str(head)[:12]}: " + "; ".join(binding[:3]))
+            continue
+        listed = set(rows_ok)
         surplus = sorted(set(v.get("entities") or []) - listed)
         if surplus:
             report(vid, f"the row names {len(surplus)} entity(ies) the document does not "
                         f"list, which are therefore not covered: " + ", ".join(surplus[:6]))
         covered |= listed
     return covered, problems
+
+
+def probe_effective_verdicts(doc: dict, verdict_of: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """What an entity's verdict is worth once the PROBES it rests on are counted (DEC-AUP-0039).
+
+    An endpoint probe observes a running contour. Its evidence cannot be re-derived from the tree at
+    head the way a type-check's can, so the receipt carries the measurement itself in `observed`, one
+    row per probe, each naming the `endpoint_probe` verifier row it belongs to. A2-251 measured what
+    that section was worth before this function existed: a receipt all of whose fifteen observations
+    were `failed` came back `conformant` from the validator and `admit` from the gate, because nothing
+    read the key. Tolerated is not read.
+
+    This is the gate's half, and it is deliberately the SAME arithmetic every other verifier gets: an
+    entity claimed `verified` on a probe that was observed to fail is counted `failed`, on a probe that
+    could not be measured `not_measured` — and from there C08/C09 and the ordinary exemption rules
+    apply, unchanged. The receipt's own claim is not believed over the receipt's own evidence.
+
+    Returns (downgrades, problems). `problems` names only rows something RESTS on — DEC-AUP-0037's
+    cashed condition: a probe row nobody cites claims nothing, and an honest `not_measured` verdict
+    must stay clean or the rule would punish the receipt that refused to overstate itself.
+    """
+    rows = doc.get("observed") if isinstance(doc.get("observed"), list) else []
+    probes = {v.get("id") for v in (doc.get("verifiers") or [])
+              if isinstance(v, dict) and v.get("kind") == "endpoint_probe"}
+    seen: dict[str, list[str]] = {vid: [] for vid in probes if isinstance(vid, str)}
+    for o in rows:
+        if isinstance(o, dict) and o.get("verifier_id") in seen and isinstance(o.get("verdict"), str):
+            seen[o["verifier_id"]].append(o["verdict"])
+    RANK = {"verified": 0, "not_measured": 1, "failed": 2}
+    downgrades: dict[str, str] = {}
+    problems: list[str] = []
+    for rec in (doc.get("verdicts") or []):
+        if not isinstance(rec, dict) or rec.get("verdict") != "verified":
+            continue
+        ent = rec.get("entity")
+        for vid in (rec.get("verifier_ids") or []):
+            if vid not in seen:
+                continue
+            if not seen[vid]:
+                problems.append(f"{ent} is verified on endpoint probe {vid}, which records no observation "
+                                f"at all — a claim of measurement is not a measurement")
+                worst = "not_measured"
+            else:
+                worst = max(seen[vid], key=lambda v: RANK.get(v, 2))
+                if worst == "verified":
+                    continue
+                bad = sorted({v for v in seen[vid] if v != "verified"})
+                problems.append(f"{ent} is verified on endpoint probe {vid}, whose {len(seen[vid])} "
+                                f"observation(s) include {', '.join(bad)}")
+            if RANK.get(worst, 2) > RANK.get(downgrades.get(ent, "verified"), 0):
+                downgrades[ent] = worst
+    return {e: v for e, v in downgrades.items() if verdict_of.get(e) == "verified"}, problems
 
 
 def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: dict, *,
@@ -2484,6 +2770,20 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                            f"{sev.get('language_coverage')} — the exemption is admitted on a WEAKER measurement "
                            f"here than where the builder covers the files")
 
+        # C19 — the probes an entity rests on are counted before the verdicts are. A `verified` claim
+        # resting on an endpoint probe that was observed to fail becomes `failed` here, and C08/C09
+        # then treat it exactly as they treat a failed tsc: this is what «probe verdicts count like
+        # any other verifier's» means. The claim/evidence contradiction is ALSO reported in its own
+        # right, because a receipt that overstates its own measurement is a different defect from an
+        # entity that honestly failed.
+        if "C19" not in disabled:
+            probe_downgrades, probe_problems = probe_effective_verdicts(doc, verdict_of)
+            for probe_problem in probe_problems:
+                add("C19", f"{Path(rec['path']).name}: {probe_problem}")
+            verdict_of.update(probe_downgrades)
+            if probe_downgrades:
+                rec["probe_downgrades"] = dict(sorted(probe_downgrades.items()))
+
         failed = sorted(e for e, v in verdict_of.items() if v == "failed" and e not in valid_exempt)
         notm = sorted(e for e, v in verdict_of.items() if v == "not_measured" and e not in valid_exempt)
         rec["entity_counts"] = {
@@ -2526,7 +2826,7 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                     boundary_inferred.append(e["entity"])
         canary_entities, canary_problems = canary_coverage(
             repo, doc.get("verifiers") or [],
-            cashed=cashed_canary_ids(doc, set(boundary_inferred)))
+            cashed=cashed_canary_ids(doc, set(boundary_inferred)), head=head)
         for problem in canary_problems:
             add("C12", f"{Path(rec['path']).name}: {problem}")
         boundary = [e for e in boundary_inferred
@@ -3231,6 +3531,29 @@ def make_fixtures(base: str, head: str, repo: Path | None = None) -> dict[str, d
         r["verdicts"] = [v for v in r["verdicts"] if v["entity"] != "code_unit:src/b.ts"]
     add("violation-EMPTY_IMPACT_WITHOUT_EXPLANATION", "refuse", ["RECEIPT_MALFORMED", "HEAD_IMPACT_NOT_COVERED"],
         "an empty impact set on a code change is a prediction that must be explained", empty_impact)
+
+    def probe_contradicted(r):
+        r["verifiers"].append({"id": "v-probe", "kind": "endpoint_probe",
+                               "command": "scripts/probe-endpoints.sh --base-url http://127.0.0.1:3521",
+                               "entities": ["code_unit:src/c.ts"], "exit_code": 0,
+                               "output_ref": "verifier-out/probe.json"})
+        r["observed"] = [
+            {"probe": "health.serves", "verifier_id": "v-probe", "expected": "GET /health -> 200",
+             "observed": "200 {\"status\":\"ok\"}", "verdict": "verified", "source": "probe run on the fixture contour"},
+            {"probe": "tasks.create", "verifier_id": "v-probe",
+             "expected": "POST /tasks with an agent key -> 201 with an id",
+             "observed": "500 internal server error", "verdict": "failed",
+             "detail": "the route answered 500 where 201 with an id was expected",
+             "source": "probe run on the fixture contour"},
+        ]
+        for verdict in r["verdicts"]:
+            if verdict["entity"] == "code_unit:src/c.ts":
+                verdict["verifier_ids"].append("v-probe")
+    add("violation-PROBE_CLAIM_CONTRADICTS_OBSERVATION", "refuse",
+        ["PROBE_CLAIM_CONTRADICTS_OBSERVATION", "RECEIPT_MALFORMED", "VERDICT_FAILED"],
+        "an entity claimed verified on an endpoint probe that was observed to fail: the gate counts the "
+        "probe like any other verifier, so the entity is failed and the overstated claim is named",
+        probe_contradicted)
 
     def no_wi(r):
         r["work_item"] = None

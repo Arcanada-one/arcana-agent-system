@@ -25,6 +25,119 @@ SOURCE_FIELDS = {
 MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 10
 
+# DEC-AUP-0040 (KB-040). A canary result must be COMMITTED to be cashed (DEC-AUP-0037 R1) and a git
+# commit cannot contain its own object id, so a subject pinned to the candidate head has no fixed
+# point: every card measuring a canary-mandatory entity was condemned to paused_safe or to a
+# hand-written exemption. The measured subject may therefore be an ANCESTOR of the candidate, on one
+# condition that is provable from git objects alone: the whole delta between them is record
+# documents. Then the code at the candidate is byte-for-byte the code the canary measured, which is
+# the invariant — evidence about one tree must never vouch for a different tree's code.
+#
+# Deny-by-default. Widening this tuple widens what a measurement may skip over, and is a decision,
+# not a patch: `receipts/` is where evidence and receipts live, `governance/design/` is the note a
+# record commit writes beside them. Nothing executable and nothing policy-bearing is in here --
+# `governance/decisions/`, `contracts/`, `tools/`, `.github/` are all outside it on purpose.
+RECORD_NAMESPACES = ("receipts/", "governance/design/")
+# A prefix is not inertness, measured on this tree: `receipts/prompt-cache/.../run_mutants.py` is
+# indexed as a code_unit by build_graph (any .py under any directory), `receipts/graph/work-item-
+# evidence/` is admit_change.LEDGER_DIR and is READ by check C13, and a dotfile
+# (`.gitignore`, `.gitattributes`) changes how git and the gate see the rest of the tree. So the
+# namespace is narrowed three more ways, all deny-by-default: a denied sub-namespace, no dotfiles,
+# and an extension allowlist that covers 3591 of the 3620 files currently under these prefixes
+# (`git ls-files receipts governance/design`) and excludes the one .py, the one .patch and the 27
+# .zip that live there.
+RECORD_DENIED_PREFIXES = ("receipts/graph/work-item-evidence/",)
+RECORD_SUFFIXES = (".json", ".jsonl", ".md", ".txt", ".log")
+RECORD_FILE_MODE = "100644"
+MAX_REPORTED_DELTA_PATHS = 8
+
+
+# A2-263 (KB-041). Two measured defects with one root: the gate resolved evidence through the
+# FILESYSTEM and through the PRODUCER's absolute paths.
+#
+#  * `admit_change.canary_coverage` opened `output_ref` from the working tree. `.gitignore:15`
+#    ignores `receipts/graph/verifier-out/**/graph-*.json`, and `impact.Repo.dirty()` is
+#    `git status --porcelain`, which does not list ignored files. Measured on a clean checkout of
+#    b8e298b9: a CanaryResult in NO commit credited `code_unit:apps/web/lib/api/tasks.ts` with full
+#    coverage and zero problems while the worktree reported clean. CI's fresh checkout would not
+#    have had the file; the LOCAL gate — the authoritative one under DEC-AUP-0007 — cashed it.
+#  * A committed `CanaryResult/v2` resolved its plan and its source evidence relative to
+#    `plan.path`, an absolute path on the machine that produced it. #119's canary therefore
+#    verifies on this host only because `/home/dev/aup/arc2/runs/A2-247b/` still exists; with that
+#    one directory hidden (private mount namespace, everything else identical) the same bytes at
+#    the same commit yield 0 rows.
+#
+# The rule both halves now obey: an evidence document is read from GIT OBJECTS at the admitted
+# head, and the documents it references are its SIBLINGS in the repository, named by basename. The
+# reference's directory part is advisory and ignored; the bytes are pinned by digest either way
+# (`plan.digest`, `subject.evidence.sha256`), so the basename decides only where to look, and the
+# digest decides whether the right thing was found.
+EVIDENCE_AT_HEAD_REQUIRED = "evidence must be read from a commit, not from the working tree"
+
+
+def read_at_commit(repo, commit, rel):
+    """Bytes of a repo-relative path AS COMMITTED at `commit`. Never touches the working tree."""
+    out = subprocess.run(["git", "-C", str(repo), "cat-file", "blob", f"{commit}:{rel}"],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                         timeout=GIT_TIMEOUT_SECONDS)
+    if out.returncode != 0:
+        raise OSError(f"{rel} is in no commit at {str(commit)[:12]}")
+    if len(out.stdout) > MAX_EVIDENCE_BYTES:
+        raise ValueError("evidence exceeded size limit during read")
+    return out.stdout
+
+
+def reference_name(reference):
+    """The bare file name a reference points at, refusing anything that is not one."""
+    text = str(reference).replace("\\", "/")
+    name = text.rsplit("/", 1)[-1]
+    if not name or name in (".", "..") or text.endswith("/"):
+        raise ValueError(f"{reference!r} does not name a document beside the result")
+    return name
+
+
+def sibling_ref(rel, reference):
+    """The repo-relative path of a document referenced BESIDE `rel`.
+
+    A reference is a file name next to the result document. `plan.path` in every result written so
+    far is the producer's absolute scratch path, which is exactly the portability defect, so the
+    directory part is dropped rather than trusted. `..`, an empty name and a bare `.` are refused
+    instead of being normalised into something.
+    """
+    name = reference_name(reference)
+    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    return f"{parent}/{name}" if parent else name
+
+
+def worktree_reader(result_path):
+    """Producer-side reader: the documents a result references, beside it ON DISK.
+
+    The sibling is tried FIRST, so a committed result whose `plan.path` still spells the producer's
+    absolute scratch path resolves to the copy committed next to it. The literal reference remains
+    as a fallback, because a canary is produced before anything is committed and the producer's own
+    layout is the only one that exists then.
+    """
+    base = Path(result_path).parent
+
+    def read(reference):
+        try:
+            return read_regular(base / reference_name(reference))
+        except (OSError, ValueError):
+            ref = Path(reference)
+            return read_regular(ref if ref.is_absolute() else base / ref)
+    return read
+
+
+def commit_reader(repo, commit, result_rel):
+    """Gate-side reader: siblings of the result document, AS COMMITTED at the admitted head.
+
+    Nothing here can reach the working tree, so an ignored or uncommitted file cannot be cashed
+    (A2-263 §5.3) and no absolute producer path can be followed (A2-263 §5.2).
+    """
+    def read(reference):
+        return read_at_commit(repo, commit, sibling_ref(result_rel, reference))
+    return read
+
 
 def read_regular(path):
     """Bounded descriptor read; reject FIFO/device/symlink before reading bytes."""
@@ -126,7 +239,106 @@ def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT_SECONDS).strip()
 
 
-def source_errors(doc, path, repo, commit, *, dirty=False):
+def executed_paths(doc):
+    """Absolute paths of every file the result's process probes actually executed.
+
+    The probes run against a scratch copy, so these are not repository paths; they are matched by
+    suffix. A probe may legitimately execute BYTES THAT DIFFER from the head's (the A2-247 canary
+    perturbs `ci_gate.py` on purpose, to observe the producer refuse a tree that differs from its
+    ref), so this is not a digest pin on covered entities -- it is a guard that the record delta
+    never moves a file the measurement ran.
+    """
+    out = set()
+    if not isinstance(doc, dict):
+        return out
+    for probe in doc.get("probes") or []:
+        if not isinstance(probe, dict):
+            continue
+        for item in probe.get("execution_files") or []:
+            if isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"]:
+                out.add(item["path"])
+    return out
+
+
+def tree_entries(repo, commit):
+    """path -> (mode, object id) for every blob and gitlink of a commit's tree.
+
+    `git ls-tree` reads the tree objects and nothing else. `git diff` does not: a
+    `submodule.<name>.ignore = all` in `.gitmodules` or in `.git/config` makes diff, --name-status
+    and diff-tree alike report an EMPTY delta between two demonstrably different trees (measured by
+    the consilium's reproducible-builds engineer, reproduced in this repository's own test suite).
+    Rename detection, `core.quotepath`, `--diff-filter` and pathspecs are three further knobs on the
+    same primitive. The completeness claim of DEC-AUP-0040 R1 -- "nothing but record documents
+    differs" -- is therefore computed here, from enumerations, not from a diff.
+    """
+    raw = subprocess.check_output(["git", "-C", str(repo), "ls-tree", "-r", "-z", "--full-tree", commit],
+                                  stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT_SECONDS).decode("utf-8", "surrogateescape")
+    entries = {}
+    for record in raw.split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        parts = meta.split(" ")
+        if not path or len(parts) != 3:
+            raise ValueError("unreadable tree entry")
+        entries[path] = (parts[0], parts[2])
+    return entries
+
+
+def record_delta_errors(repo, measured_commit, candidate_commit, executed=()):
+    """DEC-AUP-0040 R1: every refusal is named, and a path is named with it.
+
+    Returns [] only when `measured_commit` is an ancestor of `candidate_commit` AND every path whose
+    (mode, object id) differs between the two trees is a record document: inside RECORD_NAMESPACES,
+    outside RECORD_DENIED_PREFIXES, not a dotfile, one of RECORD_SUFFIXES, landing as a regular
+    non-executable file of unchanged type, and not a path the canary's own probes executed.
+    """
+    try:
+        ancestry = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                                   measured_commit, candidate_commit],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  timeout=GIT_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return ["ancestry of the measured subject cannot be decided in this repository"]
+    if ancestry.returncode != 0:
+        return [f"measured subject {measured_commit[:12]} is not an ancestor of candidate "
+                f"{candidate_commit[:12]}: evidence may only be cashed by a descendant that records it"]
+    try:
+        measured, candidate = tree_entries(repo, measured_commit), tree_entries(repo, candidate_commit)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ["the trees of the measured subject and the candidate cannot be enumerated"]
+    errors = []
+    for path in sorted(set(measured) | set(candidate)):
+        before, after = measured.get(path), candidate.get(path)
+        if before == after:
+            continue
+        if not any(path.startswith(ns) for ns in RECORD_NAMESPACES):
+            errors.append(f"{path} is not a record document: the delta between the measured subject and "
+                          f"the candidate may only touch {', '.join(RECORD_NAMESPACES)}")
+            continue
+        if any(path.startswith(ns) for ns in RECORD_DENIED_PREFIXES):
+            errors.append(f"{path} is evidence the gate itself reads (admit_change.LEDGER_DIR), not a "
+                          f"record document a measurement may skip over")
+            continue
+        if path.rsplit("/", 1)[-1].startswith(".") or not path.endswith(RECORD_SUFFIXES):
+            errors.append(f"{path} is not a record document: a record document is a "
+                          f"{'/'.join(RECORD_SUFFIXES)} file that nothing executes and nothing reads as policy")
+            continue
+        if after is not None and after[0] != RECORD_FILE_MODE:
+            errors.append(f"{path}: a record document must land as a regular non-executable file "
+                          f"(mode {after[0]})")
+            continue
+        if before is not None and after is not None and before[0] != after[0]:
+            errors.append(f"{path}: the object type or mode changed ({before[0]} -> {after[0]}); a record "
+                          f"document is added, rewritten or withdrawn, never retyped")
+            continue
+        if any(x == path or x.endswith("/" + path) for x in executed):
+            errors.append(f"{path} is a path this canary's probes executed: the record commit may not "
+                          f"move what the measurement ran")
+    return errors[:MAX_REPORTED_DELTA_PATHS]
+
+
+def source_errors(doc, read, repo, commit, *, dirty=False):
     if dirty:
         return ["dirty worktree has no supported immutable measured subject"]
     subject = doc.get("subject")
@@ -135,48 +347,80 @@ def source_errors(doc, path, repo, commit, *, dirty=False):
     try:
         actual_commit = git(repo, "rev-parse", "--verify", commit + "^{commit}")
         actual_tree = git(repo, "rev-parse", "--verify", actual_commit + "^{tree}")
-        if subject.get("commit") != actual_commit or subject.get("tree") != actual_tree:
-            return ["measured subject differs from candidate commit/tree"]
+        measured_commit, measured_tree = subject.get("commit"), subject.get("tree")
+        if measured_commit != actual_commit or measured_tree != actual_tree:
+            # DEC-AUP-0040 R1. The subject is not the candidate; it may still bind, as the commit the
+            # candidate's record commits were stacked on. Self-consistency first (a forged tree is
+            # refused before any ancestry is computed), then the delta.
+            if not isinstance(measured_commit, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", measured_commit):
+                return ["measured subject differs from candidate commit/tree"]
+            try:
+                resolved_commit = git(repo, "rev-parse", "--verify", measured_commit + "^{commit}")
+                resolved_tree = git(repo, "rev-parse", "--verify", resolved_commit + "^{tree}")
+            except subprocess.SubprocessError:
+                return ["measured subject commit does not resolve in this repository"]
+            if resolved_commit != measured_commit or measured_tree != resolved_tree:
+                return ["measured subject tree is not the tree of the measured subject commit"]
+            delta = record_delta_errors(repo, measured_commit, actual_commit, executed_paths(doc))
+            if delta:
+                return delta
+        else:
+            measured_commit, measured_tree = actual_commit, actual_tree
         ref = subject.get("evidence")
         if not isinstance(ref, dict) or not isinstance(ref.get("path"), str) or not re.fullmatch(r"[0-9a-f]{64}", str(ref.get("sha256", ""))):
             return ["missing measured source evidence reference"]
-        evidence_path = Path(ref["path"])
-        if not evidence_path.is_absolute():
-            evidence_path = Path(path).parent / evidence_path
-        raw = read_regular(evidence_path)
+        raw = read(ref["path"])
         if hashlib.sha256(raw).hexdigest() != ref["sha256"]:
             return ["measured source evidence digest mismatch"]
         evidence = json.loads(raw)
         if not isinstance(evidence, dict) or evidence.get("schema") not in SOURCE_FIELDS:
             return ["unsupported measured source evidence schema"]
         field = SOURCE_FIELDS[evidence["schema"]]
-        if ref.get("source_field") != field or evidence.get(field) != actual_commit:
-            return ["original measured source claim differs from candidate"]
-        if evidence.get("schema") == "MeasuredGitSource/v1" and (evidence.get("tree") != actual_tree or evidence.get("dirty") is not False or not evidence.get("producer") or not evidence.get("captured_at_utc")):
+        if ref.get("source_field") != field or evidence.get(field) != measured_commit:
+            return ["original measured source claim differs from the measured subject"]
+        if evidence.get("schema") == "MeasuredGitSource/v1" and (evidence.get("tree") != measured_tree or evidence.get("dirty") is not False or not evidence.get("producer") or not evidence.get("captured_at_utc")):
             return ["incomplete measured Git source claim"]
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return ["measured source evidence cannot be verified"]
     return []
 
 
-def consume(path, repo, commit, *, dirty=False):
-    """Return normalized rows and errors; invalid evidence never yields PASS."""
+def consume(path, repo, commit, *, dirty=False, at_head=None):
+    """Return normalized rows and errors; invalid evidence never yields PASS.
+
+    `at_head` — the repo-relative path of the result document. When given, EVERY read (the document
+    itself and every document it references) goes through git objects at `commit`; a path that is
+    in no commit there is refused and nothing on disk is consulted. That is what a consumer who is
+    deciding admission must pass (A2-263). Omitted, the producer's on-disk layout is read, which is
+    the only layout that exists while a canary is being produced.
+    """
+    if at_head is not None:
+        try:
+            raw = read_at_commit(repo, commit, at_head)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return {}, [f"canary evidence {at_head} is in no commit at {str(commit)[:12]}: "
+                        f"{EVIDENCE_AT_HEAD_REQUIRED}"], {}
+        read = commit_reader(repo, commit, at_head)
+    else:
+        try:
+            raw = read_regular(path)
+        except (OSError, ValueError):
+            return {}, ["canary document cannot be read"], {}
+        read = worktree_reader(path)
     try:
-        doc = json.loads(read_regular(path))
-    except (OSError, ValueError):
+        doc = json.loads(raw)
+    except ValueError:
         return {}, ["canary document cannot be read"], {}
     errors = structure_errors(doc)
     if not errors:
-        source_path = doc.get("plan", {}).get("path", path) if doc.get("schema") == "CanaryResult/v2" else path
-        if not isinstance(source_path, (str, os.PathLike)):
+        reference = doc.get("plan", {}).get("path") if doc.get("schema") == "CanaryResult/v2" else None
+        if doc.get("schema") == "CanaryResult/v2" and not isinstance(reference, (str, os.PathLike)):
             errors = ["invalid original plan reference"]
         else:
-            if doc.get("schema") == "CanaryResult/v2":
-                source_path = Path(path).parent / source_path
-            errors = source_errors(doc, source_path, repo, commit, dirty=dirty)
+            errors = source_errors(doc, read, repo, commit, dirty=dirty)
     if not errors and doc.get("schema") == "CanaryResult/v2":
         import process_observation
-        errors = process_observation.bound_errors(doc, path, read_regular)
+        errors = process_observation.bound_errors(doc, read)
     if errors:
         return {}, errors, doc if isinstance(doc, dict) else {}
     return {r["entity"]: dict(r) for r in doc["entity_verdicts"]}, [], doc

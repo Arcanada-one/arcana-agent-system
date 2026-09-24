@@ -377,6 +377,7 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
     ver_ids = set()
     canary_entities = set()
     canary_rows = []
+    probe_ids = set()
     for v in vers:
         if not isinstance(v, dict):
             c.add("VERIFIER_WITHOUT_OUTPUT_REF", "verifier is not an object"); continue
@@ -392,6 +393,49 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
         if v.get("kind") == "canary":
             canary_entities.update(v.get("entities") or [])
             canary_rows.append(v)
+        if v.get("kind") == "endpoint_probe":
+            probe_ids.add(v.get("id"))
+    # observed probes (DEC-AUP-0039) — the section is the MEASUREMENT, the verifier row is the CLAIM.
+    #
+    # An endpoint probe observes a running contour, so its evidence cannot be re-derived from the tree at
+    # head. A2-251 measured what that costs while the section was unnamed: fifteen probe results written
+    # into an `observed` key, a receipt all of whose observations were `failed` still `conformant`, and
+    # `kind: endpoint_probe` itself a VERIFIER_KIND_UNKNOWN violation. Tolerated is not read.
+    #
+    # `probe_supports` maps an endpoint_probe verifier id to the worst thing observed under it. The
+    # binding is one-directional on purpose: a row names its verifier, so a probe cannot quietly attach
+    # itself to a claim, and a verifier row with no rows under it supports nothing.
+    observed_rows = doc.get("observed")
+    probe_observations: dict[str, list[str]] = {vid: [] for vid in probe_ids if isinstance(vid, str)}
+    if observed_rows is not None:
+        ospec = F.get("observed") or {}
+        if not isinstance(observed_rows, list):
+            c.add("OBSERVED_ENTRY_INVALID", f"observed is {type(observed_rows).__name__}, not a list")
+            observed_rows = []
+        seen_probes = set()
+        for o in observed_rows:
+            if not isinstance(o, dict):
+                c.add("OBSERVED_ENTRY_INVALID", "row is not an object"); continue
+            label = str(o.get("probe"))[:60]
+            missing = [f for f in ospec.get("required", []) if not o.get(f)]
+            if missing:
+                c.add("OBSERVED_ENTRY_INVALID", f"{label}: missing {', '.join(missing)}"); continue
+            if o["verdict"] not in ospec.get("verdict_values", []):
+                c.add("OBSERVED_ENTRY_INVALID", f"{label}: verdict={o['verdict']!r} is not tri-valued"); continue
+            if o["probe"] in seen_probes:
+                c.add("OBSERVED_ENTRY_INVALID", f"{label}: duplicate probe id"); continue
+            seen_probes.add(o["probe"])
+            if o["verdict"] != "verified" and not o.get("detail"):
+                c.add("OBSERVED_ENTRY_INVALID",
+                      f"{label}: verdict {o['verdict']} without a detail saying what was seen instead")
+                continue
+            if o["verifier_id"] not in probe_observations:
+                c.add("OBSERVED_ENTRY_INVALID",
+                      f"{label}: verifier_id {o['verifier_id']!r} is not a verifier of kind endpoint_probe "
+                      f"in this receipt")
+                continue
+            probe_observations[o["verifier_id"]].append(o["verdict"])
+
     # exemptions
     exs = doc.get("exemptions") if isinstance(doc.get("exemptions"), list) else []
     captured = parse_iso(doc.get("captured_at_utc"))
@@ -428,6 +472,26 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
                 c.add("VERIFIED_WITHOUT_VERIFIER", v["entity"])
         if val == "not_measured" and not v.get("reason"):
             c.add("NOT_MEASURED_WITHOUT_REASON", v["entity"])
+    # A probe claim is CASHED the same way a canary claim is (DEC-AUP-0037): a `verified` verdict cites
+    # the row. Only then does the receipt owe an observation — a probe row nobody rests on claims nothing,
+    # and an honest `not_measured` verdict must stay conformant or the rule would punish the receipt that
+    # refused to overstate itself. There is no boundary half here: unlike a canary, an endpoint probe is
+    # never what silently discharges some other rule.
+    for v in vds:
+        if not isinstance(v, dict) or v.get("verdict") != "verified":
+            continue
+        for vid in (v.get("verifier_ids") or []):
+            if vid not in probe_observations:
+                continue
+            seen = probe_observations[vid]
+            if not seen:
+                c.add("ENDPOINT_PROBE_WITHOUT_OBSERVATION",
+                      f"{v.get('entity')} rests on {vid}, which records no observation")
+            elif any(x != "verified" for x in seen):
+                bad = sorted({x for x in seen if x != "verified"})
+                c.add("PROBE_CLAIM_CONTRADICTS_OBSERVATION",
+                      f"{v.get('entity')} is verified on {vid}, whose observations include "
+                      f"{', '.join(bad)} ({len(seen)} probe(s) recorded)")
     for ent in entities + changed_nodes:
         if ent not in verdict_of and ent not in excluded:
             c.add("ENTITY_WITHOUT_VERDICT", ent)
@@ -514,7 +578,8 @@ ALL_RECEIPT_RULES = ("RECEIPT_SCHEMA_MISMATCH", "RECEIPT_MISSING_FIELD", "RECEIP
                      "VERIFIER_KIND_UNKNOWN", "ENTITY_WITHOUT_VERDICT", "VERDICT_NOT_TRIVALUED", "VERIFIED_WITHOUT_VERIFIER",
                      "NOT_MEASURED_WITHOUT_REASON", "EXEMPTION_WITHOUT_OWNER", "EXEMPTION_WITHOUT_EXPIRY", "EXEMPTION_EXPIRED",
                      "ADMISSION_CONTRADICTS_VERDICTS", "ADMISSION_VERDICT_INVALID", "HEAD_GRAPH_BINDING_INVALID", "REVISION_SELECTION_INCOMPLETE",
-                     "STRUCTURAL_EXCLUSION_INVALID", "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE")
+                     "STRUCTURAL_EXCLUSION_INVALID", "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE",
+                     "OBSERVED_ENTRY_INVALID", "ENDPOINT_PROBE_WITHOUT_OBSERVATION", "PROBE_CLAIM_CONTRADICTS_OBSERVATION")
 
 
 # -------------------------------------------------------------------------------- selftest
