@@ -44,6 +44,7 @@ fn shipped_tools(root: &TempDir, audit: &TempDir) -> Vec<Arc<dyn Tool>> {
         &policy,
         Box::new(NeverCalled),
         audit.path().to_path_buf(),
+        None,
     )
     .expect("compose the headless run");
     tools

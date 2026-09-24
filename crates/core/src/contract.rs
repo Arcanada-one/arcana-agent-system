@@ -25,15 +25,22 @@
 //! the digest's preimage** and compares. One rule, implemented once, checked
 //! byte for byte.
 //!
-//! The preimage is [`ContractDocument::canonical_bytes`] when the source sends
-//! it, and [`ContractDocument::projection`] otherwise; which one was used is
-//! recorded on the binding and in the receipt, because "the digest checked out"
-//! means something different for each.
+//! Argana's answer carries `canonical.bytes_b64` — base64 of
+//! `canonical(body) ‖ canonical(closure_manifest)`, the exact preimage — so the
+//! client's whole check is one decode and one hash. That is the preferred
+//! route. Two fallbacks exist for a source that is not Argana (a file fixture,
+//! a future service): a plain-text `canonical_bytes`, and a `projection` that
+//! is itself a string. Which route was taken is recorded on the binding and in
+//! the receipt, because "the digest checked out" means something different for
+//! each.
 
 use std::collections::BTreeSet;
 use std::fmt;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// The algorithm prefix every digest in this ecosystem carries.
@@ -61,7 +68,10 @@ pub fn is_wellformed_digest(value: &str) -> bool {
     let Some(hex) = value.strip_prefix(DIGEST_ALGO_PREFIX) else {
         return false;
     };
-    hex.len() == DIGEST_HEX_LEN && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    hex.len() == DIGEST_HEX_LEN
+        && hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// `sha256:<hex>` of `bytes`.
@@ -90,34 +100,106 @@ pub struct ContractTools {
     pub allow: Vec<String>,
 }
 
+/// The digested bytes, as Argana sends them.
+///
+/// `bytes_b64` is `canonical(body) ‖ canonical(closure_manifest)` verbatim —
+/// the producer handing over its own preimage rather than leaving the client to
+/// reconstruct it. `rule` and `length` are carried for the receipt and the
+/// error message; neither is trusted, because the hash is computed over the
+/// decoded bytes and nothing else.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CanonicalBlock {
+    #[serde(default)]
+    pub rule: Option<String>,
+    #[serde(default)]
+    pub bytes_b64: Option<String>,
+    #[serde(default)]
+    pub length: Option<u64>,
+}
+
+/// What the source says about the KC2 pin the contract was admitted at.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Kc2Block {
+    #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub snapshot: Option<String>,
+    /// `current`, `moved`, `not_measured` — carried through to the receipt so a
+    /// reader can see that a contract admitted at an older pin was executed
+    /// knowingly rather than by accident.
+    #[serde(default)]
+    pub pin_status: Option<String>,
+}
+
 /// One contract, as a contract source returns it.
 ///
-/// Mirrors the shape agreed for Argana `GET /v1/contract/{digest}`: `digest`
-/// plus the projection text. Everything else is optional and additive, so a
-/// source that grows a field does not break this client and a source that has
-/// not grown one yet still parses.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+/// Mirrors Argana's `ContractResponse` (`GET /v1/contract/{digest}`): `digest`,
+/// `projection` as `{body, closure_manifest}`, `canonical` as the bytes, `kc2`
+/// as the pin. Everything but `digest` is optional and additive, so a source
+/// that grows a field does not break this client and one that has not grown a
+/// field yet still parses.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ContractDocument {
-    /// The digest the source says this document has.
+    /// The digest the source says this document has. NOT the authority — see
+    /// [`verify`].
     pub digest: String,
-    /// The rendered KC2 projection — the contract in words, and the default
-    /// digest preimage.
+    /// The digested object, `{body, closure_manifest}`. A source that renders
+    /// its projection as text instead may send a string, and then the string is
+    /// also a candidate preimage.
     #[serde(default)]
-    pub projection: String,
-    /// The exact bytes the digest was computed over, when the source sends
-    /// them. Preferred over [`Self::projection`]: it is the producer naming its
-    /// own preimage rather than this client assuming one.
+    pub projection: Value,
+    /// The digested bytes.
+    #[serde(default)]
+    pub canonical: Option<CanonicalBlock>,
+    /// A plain-text preimage, for a source that sends one instead of base64.
     #[serde(default)]
     pub canonical_bytes: Option<String>,
-    /// The KC2 revision(s) this contract pinned, as the source reports them.
+    /// The KC2 pin, Argana's spelling.
+    #[serde(default)]
+    pub kc2: Option<Kc2Block>,
+    /// The KC2 revision, flat spelling — for a fixture written by hand.
     #[serde(default)]
     pub kc2_revision: Option<String>,
-    /// The KC2 store snapshot the contract was resolved against.
+    /// The KC2 snapshot, flat spelling.
     #[serde(default)]
     pub kc2_snapshot: Option<String>,
     /// Tools the contract admits.
     #[serde(default)]
     pub tools: Option<ContractTools>,
+}
+
+impl ContractDocument {
+    /// The contract in words, for the model's prompt.
+    ///
+    /// Text, whatever the projection's JSON type: an object is pretty-printed.
+    /// This is what the model READS; it is never what is hashed, and the two
+    /// must not be confused — see [`DigestPreimage`].
+    #[must_use]
+    pub fn projection_text(&self) -> String {
+        match &self.projection {
+            Value::Null => String::new(),
+            Value::String(text) => text.clone(),
+            other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+        }
+    }
+
+    /// The KC2 revision, from either spelling.
+    #[must_use]
+    pub fn revision(&self) -> Option<String> {
+        self.kc2
+            .as_ref()
+            .and_then(|kc2| kc2.revision.clone())
+            .or_else(|| self.kc2_revision.clone())
+    }
+
+    /// The KC2 snapshot, from either spelling.
+    #[must_use]
+    pub fn snapshot(&self) -> Option<String> {
+        self.kc2
+            .as_ref()
+            .and_then(|kc2| kc2.snapshot.clone())
+            .or_else(|| self.kc2_snapshot.clone())
+    }
 }
 
 /// Where the binding's allowlist came from.
@@ -144,9 +226,12 @@ impl AllowlistSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DigestPreimage {
-    /// The source's own `canonical_bytes` field.
+    /// `canonical.bytes_b64`, base64-decoded — Argana's route, and the only one
+    /// that needs nothing from this client but a decode and a hash.
+    CanonicalBytesB64,
+    /// A plain-text `canonical_bytes` field.
     CanonicalBytes,
-    /// The rendered projection text.
+    /// A projection that was itself a string.
     Projection,
 }
 
@@ -154,6 +239,7 @@ impl DigestPreimage {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::CanonicalBytesB64 => "canonical.bytes_b64",
             Self::CanonicalBytes => "canonical_bytes",
             Self::Projection => "projection",
         }
@@ -226,8 +312,9 @@ pub enum ContractRefusal {
         computed: String,
         preimage: DigestPreimage,
     },
-    /// The source returned a document with nothing to hash.
-    Unverifiable { digest: String },
+    /// The source returned a document with nothing to hash, or bytes that do
+    /// not decode.
+    Unverifiable { digest: String, detail: String },
     /// The source could not be reached or answered unusably.
     Unavailable { detail: String },
 }
@@ -274,10 +361,10 @@ impl fmt::Display for ContractRefusal {
                  {} — the contract is not the one the work item names",
                 preimage.as_str()
             ),
-            Self::Unverifiable { digest } => write!(
+            Self::Unverifiable { digest, detail } => write!(
                 f,
-                "{code}: the document returned for {digest} carries neither canonical_bytes nor \
-                 a projection, so the digest cannot be re-hashed and the binding cannot be trusted"
+                "{code}: the document returned for {digest} cannot be re-hashed ({detail}), so the \
+                 binding cannot be trusted"
             ),
             Self::Unavailable { detail } => {
                 write!(f, "{code}: the contract source is unavailable: {detail}")
@@ -305,19 +392,9 @@ pub fn verify(
         });
     }
 
-    let (preimage, bytes) = match document.canonical_bytes.as_deref() {
-        Some(raw) if !raw.is_empty() => (DigestPreimage::CanonicalBytes, raw),
-        _ if !document.projection.is_empty() => {
-            (DigestPreimage::Projection, document.projection.as_str())
-        }
-        _ => {
-            return Err(ContractRefusal::Unverifiable {
-                digest: expected.to_owned(),
-            })
-        }
-    };
+    let (preimage, bytes) = preimage_of(expected, document)?;
 
-    let computed = digest_of(bytes.as_bytes());
+    let computed = digest_of(&bytes);
     if computed != expected {
         return Err(ContractRefusal::DigestMismatch {
             expected: expected.to_owned(),
@@ -342,11 +419,56 @@ pub fn verify(
 
     Ok(ContractBinding {
         digest: expected.to_owned(),
-        kc2_revision: document.kc2_revision.clone(),
-        kc2_snapshot: document.kc2_snapshot.clone(),
+        kc2_revision: document.revision(),
+        kc2_snapshot: document.snapshot(),
         allowlist,
         allowlist_source,
         preimage,
-        projection: document.projection.clone(),
+        projection: document.projection_text(),
+    })
+}
+
+/// The bytes the digest is checked against, and which route produced them.
+///
+/// Ordered by how little the client has to assume: the producer's own base64
+/// preimage first, a plain-text one second, and a projection that happens to be
+/// a string last. A projection that is an OBJECT is never a candidate — hashing
+/// a re-serialisation of it would be this client guessing at a canonicalisation
+/// rule, which is the one thing this module refuses to do.
+fn preimage_of(
+    expected: &str,
+    document: &ContractDocument,
+) -> Result<(DigestPreimage, Vec<u8>), ContractRefusal> {
+    if let Some(b64) = document
+        .canonical
+        .as_ref()
+        .and_then(|block| block.bytes_b64.as_deref())
+        .filter(|raw| !raw.is_empty())
+    {
+        let bytes = BASE64
+            .decode(b64)
+            .map_err(|err| ContractRefusal::Unverifiable {
+                digest: expected.to_owned(),
+                detail: format!("canonical.bytes_b64 is not base64: {err}"),
+            })?;
+        return Ok((DigestPreimage::CanonicalBytesB64, bytes));
+    }
+    if let Some(raw) = document
+        .canonical_bytes
+        .as_deref()
+        .filter(|raw| !raw.is_empty())
+    {
+        return Ok((DigestPreimage::CanonicalBytes, raw.as_bytes().to_vec()));
+    }
+    if let Value::String(text) = &document.projection {
+        if !text.is_empty() {
+            return Ok((DigestPreimage::Projection, text.as_bytes().to_vec()));
+        }
+    }
+    Err(ContractRefusal::Unverifiable {
+        digest: expected.to_owned(),
+        detail: "the document carries no canonical.bytes_b64, no canonical_bytes, and no \
+                 string projection"
+            .to_owned(),
     })
 }

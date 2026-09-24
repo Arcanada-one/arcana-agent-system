@@ -160,9 +160,9 @@ impl MuneralClient {
     fn endpoint(&self, segments: &[&str]) -> Result<Url, MuneralError> {
         let mut url = self.base_url.clone();
         {
-            let mut path = url
-                .path_segments_mut()
-                .map_err(|()| MuneralError::BaseUrl("the API root cannot carry a path".to_owned()))?;
+            let mut path = url.path_segments_mut().map_err(|()| {
+                MuneralError::BaseUrl("the API root cannot carry a path".to_owned())
+            })?;
             // A trailing slash on the root would otherwise produce an empty
             // segment and a `//tasks/<id>` path that no router matches.
             path.pop_if_empty();

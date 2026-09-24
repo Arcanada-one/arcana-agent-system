@@ -444,6 +444,7 @@ fn prompt_for(root: &Path) -> String {
         &policy,
         Box::new(FloorReadingModel::new()),
         audit.path().to_path_buf(),
+        None,
     )
     .expect("compose the headless run");
     system_prompt(&workspace.tools, root)
@@ -468,7 +469,7 @@ async fn drive_with_prompt(
     prompt_override: Option<String>,
 ) -> RunOutput {
     let policy = Arc::new(WorkspacePolicy::new(root).unwrap());
-    let workspace = assemble(root, &policy, Box::new(model), audit.to_path_buf())
+    let workspace = assemble(root, &policy, Box::new(model), audit.to_path_buf(), None)
         .expect("compose the headless run");
     let request = RunRequest {
         cwd: root.to_path_buf(),
@@ -480,6 +481,7 @@ async fn drive_with_prompt(
         context_budget: None,
         tool_result_budget: None,
         save_transcript: None,
+        contract: None,
     };
     let mut config = driver_config(&request, &workspace.tools, root);
     if let Some(prompt) = prompt_override {

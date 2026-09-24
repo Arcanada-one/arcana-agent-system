@@ -125,8 +125,32 @@ enum Cmd {
         #[arg(long)]
         cwd: PathBuf,
         /// The task, given literally.
-        #[arg(long, conflicts_with = "prompt_stdin")]
+        #[arg(long, conflicts_with_all = ["prompt_stdin", "work_item"])]
         prompt: Option<String>,
+        /// Execute the Muneral work item with this id, under the KC2 contract
+        /// its `contractDigest` names.
+        ///
+        /// The task text comes from the work item and the contract, not from
+        /// `--prompt`. A work item with no `contractDigest` is refused with
+        /// `CONTRACT_MISSING` before the first model call, and a contract
+        /// whose bytes do not hash to that digest with
+        /// `CONTRACT_DIGEST_MISMATCH`. The run writes
+        /// `receipts/ReadinessReceipt-<id>.json` and never changes the work
+        /// item's status.
+        ///
+        /// Reads the agent key from the file named by
+        /// `ARCANA_MUNERAL_KEY_FILE`.
+        #[arg(long, value_name = "ID", conflicts_with = "prompt_stdin")]
+        work_item: Option<String>,
+        /// Read the contract document from this file instead of from Argana.
+        ///
+        /// For the window in which Argana's `GET /v1/contract/{digest}` is not
+        /// deployed. The file is re-hashed exactly like the service's answer,
+        /// so it cannot be used to run under a digest it does not hash to —
+        /// and the receipt records `contract.source: "file"`, which is NOT the
+        /// same verdict as a binding checked against the live endpoint.
+        #[arg(long, value_name = "PATH", requires = "work_item")]
+        contract_file: Option<PathBuf>,
         /// Read the task from stdin. Preferred for anything with quotes,
         /// newlines, or shell metacharacters in it.
         #[arg(long)]
@@ -215,20 +239,26 @@ enum McpCmd {
     },
 }
 
+/// The version line, and the warning that voids it.
+///
+/// Its own function only because `main`'s match has a line budget; the text is
+/// unchanged.
+fn print_version() {
+    println!("arcana {VERSION} ({GIT_SHA}) — {LICENSE}");
+    if GIT_DIRTY {
+        println!(
+            "WARNING: built from a working tree with uncommitted changes. \
+             This binary does not correspond to {GIT_SHA} or to any commit, \
+             and its provenance cannot be verified."
+        );
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Cmd::Version) => {
-            println!("arcana {VERSION} ({GIT_SHA}) — {LICENSE}");
-            if GIT_DIRTY {
-                println!(
-                    "WARNING: built from a working tree with uncommitted changes. \
-                     This binary does not correspond to {GIT_SHA} or to any commit, \
-                     and its provenance cannot be verified."
-                );
-            }
-        }
+        Some(Cmd::Version) => print_version(),
         Some(Cmd::Login) => {
             std::process::exit(arcana_cli::login::run_login());
         }
@@ -283,6 +313,8 @@ fn main() {
         Some(Cmd::Run {
             cwd,
             prompt,
+            work_item,
+            contract_file,
             prompt_stdin,
             max_turns,
             max_cost_usd,
@@ -295,6 +327,8 @@ fn main() {
             std::process::exit(run_headless(
                 cwd,
                 prompt,
+                work_item,
+                contract_file,
                 prompt_stdin,
                 max_turns,
                 max_cost_usd,
@@ -321,6 +355,8 @@ fn main() {
 fn run_headless(
     cwd: PathBuf,
     prompt: Option<String>,
+    work_item: Option<String>,
+    contract_file: Option<PathBuf>,
     prompt_stdin: bool,
     max_turns: u32,
     max_cost_usd: Option<f64>,
@@ -330,6 +366,29 @@ fn run_headless(
     tool_result_budget: Option<usize>,
     save_transcript: Option<PathBuf>,
 ) -> i32 {
+    // A contract-bound run takes its task from the work item and the contract,
+    // so the prompt is resolved LAST and from neither flag. Building the
+    // request first would mean a `--work-item` invocation had to carry a
+    // placeholder prompt, and a placeholder is one refactor away from being
+    // sent to a model.
+    if let Some(id) = work_item {
+        return arcana_cli::work_item::run(arcana_cli::work_item::WorkItemRequest {
+            id,
+            contract_file,
+            run: arcana_cli::run::RunRequest {
+                cwd,
+                prompt: String::new(),
+                max_turns,
+                max_cost_usd,
+                model,
+                request_timeout: request_timeout.map(std::time::Duration::from_secs),
+                context_budget,
+                tool_result_budget,
+                save_transcript,
+                contract: None,
+            },
+        });
+    }
     let prompt = match (prompt, prompt_stdin) {
         (Some(prompt), false) => prompt,
         (None, true) => match read_prompt_stdin() {
@@ -340,7 +399,9 @@ fn run_headless(
             }
         },
         _ => {
-            eprintln!("arcana run: pass exactly one of --prompt or --prompt-stdin");
+            eprintln!(
+                "arcana run: pass exactly one of --prompt, --prompt-stdin or --work-item <id>"
+            );
             return 1;
         }
     };
@@ -354,6 +415,7 @@ fn run_headless(
         context_budget,
         tool_result_budget,
         save_transcript,
+        contract: None,
     })
 }
 

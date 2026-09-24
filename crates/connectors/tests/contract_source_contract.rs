@@ -3,7 +3,9 @@
 //! `404 {"code": "CONTRACT_NOT_FOUND"}`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use arcana_connectors::contract_source::{ArganaContractClient, ContractSource, FileContractSource};
+use arcana_connectors::contract_source::{
+    ArganaContractClient, ContractSource, FileContractSource,
+};
 use arcana_core::contract::{digest_of, verify, ContractRefusal};
 use serde_json::json;
 use url::Url;
@@ -109,4 +111,37 @@ async fn a_file_holding_another_contract_is_a_not_found() {
         Err(ContractRefusal::NotFound { .. }) => {}
         other => panic!("the wrong file is a NotFound, got {other:?}"),
     }
+}
+
+/// Argana's real answer, verbatim in shape (`ContractResponse`, A2-271): the
+/// preimage under `canonical.bytes_b64`, the projection as the parsed object,
+/// the pin under `kc2`. The client verifies with one decode and one hash.
+#[tokio::test]
+async fn the_live_argana_response_shape_round_trips_through_fetch_and_verify() {
+    let digest = digest_of(b"{\"role\":\"reviewer\"}{\"revisions\":[]}");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/v1/contract/{digest}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "digest": digest,
+            "projection": {"body": {"role": "reviewer"}, "closure_manifest": {"revisions": []}},
+            "canonical": {
+                "rule": "sha256(canonical(body) || canonical(closure_manifest))",
+                "bytes_b64": "eyJyb2xlIjoicmV2aWV3ZXIifXsicmV2aXNpb25zIjpbXX0=",
+                "length": 35,
+            },
+            "kc2": {"revision": "kc2@r41", "snapshot": "sha256:00", "pin_status": "current"},
+            "closure_at_current_pin": {"verdict": "intact"},
+            "stored_at_utc": "2026-09-24T00:00:00Z",
+        })))
+        .mount(&server)
+        .await;
+
+    let client = ArganaContractClient::new(Url::parse(&server.uri()).unwrap()).unwrap();
+    let doc = client.fetch(&digest).await.expect("200");
+    let binding = verify(&digest, &doc).expect("the live shape verifies");
+
+    assert_eq!(binding.digest(), digest);
+    assert_eq!(binding.preimage().as_str(), "canonical.bytes_b64");
+    assert_eq!(binding.kc2_revision(), Some("kc2@r41"));
 }

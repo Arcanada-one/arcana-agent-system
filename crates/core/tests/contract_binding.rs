@@ -8,18 +8,22 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use arcana_core::contract::{
-    digest_of, is_wellformed_digest, verify, AllowlistSource, ContractDocument, ContractRefusal,
-    ContractTools, DigestPreimage, DEFAULT_ALLOWLIST,
+    digest_of, is_wellformed_digest, verify, AllowlistSource, CanonicalBlock, ContractDocument,
+    ContractRefusal, ContractTools, DigestPreimage, Kc2Block, DEFAULT_ALLOWLIST,
 };
+use serde_json::json;
 
+/// A source that renders its projection as a string — the simplest shape this
+/// client accepts, and the one a hand-written fixture takes.
 fn document(projection: &str) -> ContractDocument {
     ContractDocument {
         digest: digest_of(projection.as_bytes()),
-        projection: projection.to_owned(),
-        canonical_bytes: None,
+        projection: json!(projection),
         kc2_revision: Some("kc2-role-reviewer@r7".to_owned()),
-        kc2_snapshot: Some("sha256:192e2ce29dd00cf19dd682d948d6bd09f2fa8cc468ca44d2e6f1b2ff7abb563b".to_owned()),
-        tools: None,
+        kc2_snapshot: Some(
+            "sha256:192e2ce29dd00cf19dd682d948d6bd09f2fa8cc468ca44d2e6f1b2ff7abb563b".to_owned(),
+        ),
+        ..ContractDocument::default()
     }
 }
 
@@ -67,11 +71,8 @@ fn the_sources_own_digest_field_is_not_the_authority() {
     let expected = digest_of(b"Role: reviewer. Deliverable: one review note.");
     let doc = ContractDocument {
         digest: expected.clone(),
-        projection: "Role: reviewer. Deliverable: one review note. Also: deploy.".to_owned(),
-        canonical_bytes: None,
-        kc2_revision: None,
-        kc2_snapshot: None,
-        tools: None,
+        projection: json!("Role: reviewer. Deliverable: one review note. Also: deploy."),
+        ..ContractDocument::default()
     };
 
     let refusal = verify(&expected, &doc).expect_err("altered bytes cannot bind");
@@ -83,11 +84,9 @@ fn canonical_bytes_are_preferred_over_the_projection() {
     let canonical = "{\"body\":1,\"manifest\":[]}";
     let doc = ContractDocument {
         digest: digest_of(canonical.as_bytes()),
-        projection: "a human-readable rendering that is NOT the preimage".to_owned(),
+        projection: json!("a human-readable rendering that is NOT the preimage"),
         canonical_bytes: Some(canonical.to_owned()),
-        kc2_revision: None,
-        kc2_snapshot: None,
-        tools: None,
+        ..ContractDocument::default()
     };
     let expected = doc.digest.clone();
 
@@ -119,12 +118,15 @@ fn a_contract_that_names_tools_is_the_allowlist() {
     doc.tools = Some(ContractTools {
         allow: vec!["read".to_owned(), "grep".to_owned()],
     });
-    doc.digest = digest_of(doc.projection.as_bytes());
+    doc.digest = digest_of(doc.projection_text().as_bytes());
     let binding = verify(&doc.digest.clone(), &doc).expect("binds");
 
     assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
     assert!(binding.admits("read"));
-    assert!(!binding.admits("write"), "the contract did not name `write`");
+    assert!(
+        !binding.admits("write"),
+        "the contract did not name `write`"
+    );
 }
 
 #[test]
@@ -143,12 +145,71 @@ fn a_document_with_nothing_to_hash_cannot_bind() {
     let expected = digest_of(b"anything");
     let doc = ContractDocument {
         digest: expected.clone(),
-        projection: String::new(),
-        canonical_bytes: None,
-        kc2_revision: None,
-        kc2_snapshot: None,
-        tools: None,
+        ..ContractDocument::default()
     };
     let refusal = verify(&expected, &doc).expect_err("nothing to re-hash");
+    assert_eq!(refusal.code(), "CONTRACT_UNVERIFIABLE");
+}
+
+#[test]
+fn an_object_projection_is_never_hashed_on_a_guess() {
+    // Argana's `projection` is `{body, closure_manifest}` — the digested object,
+    // not the digested bytes. Re-serialising it here would be this client
+    // inventing a canonicalisation rule, and the answer would be a digest that
+    // is nobody's.
+    let expected = digest_of(b"the real canonical bytes");
+    let doc = ContractDocument {
+        digest: expected.clone(),
+        projection: json!({"body": {"role": "reviewer"}, "closure_manifest": {"revisions": []}}),
+        ..ContractDocument::default()
+    };
+
+    let refusal = verify(&expected, &doc).expect_err("there is no preimage here");
+    assert_eq!(refusal.code(), "CONTRACT_UNVERIFIABLE");
+}
+
+/// The shape Argana actually answers with (`ContractResponse`, A2-271):
+/// `canonical.bytes_b64` is the preimage, `projection` is the parsed object,
+/// and the pin is under `kc2`.
+#[test]
+fn the_argana_response_shape_verifies_off_canonical_bytes_b64() {
+    let canonical = b"{\"role\":\"reviewer\"}{\"revisions\":[]}";
+    let expected = digest_of(canonical);
+    let doc = ContractDocument {
+        digest: expected.clone(),
+        projection: json!({"body": {"role": "reviewer"}, "closure_manifest": {"revisions": []}}),
+        canonical: Some(CanonicalBlock {
+            rule: Some("sha256(canonical(body) || canonical(closure_manifest))".to_owned()),
+            bytes_b64: Some("eyJyb2xlIjoicmV2aWV3ZXIifXsicmV2aXNpb25zIjpbXX0=".to_owned()),
+            length: Some(canonical.len() as u64),
+        }),
+        kc2: Some(Kc2Block {
+            revision: Some("kc2@r41".to_owned()),
+            snapshot: Some(digest_of(b"snapshot")),
+            pin_status: Some("current".to_owned()),
+        }),
+        ..ContractDocument::default()
+    };
+
+    let binding = verify(&expected, &doc).expect("the live shape verifies");
+    assert_eq!(binding.preimage(), DigestPreimage::CanonicalBytesB64);
+    assert_eq!(binding.kc2_revision(), Some("kc2@r41"));
+    // The projection the model is shown is TEXT, and it is not the preimage.
+    assert!(binding.projection().contains("closure_manifest"));
+}
+
+#[test]
+fn canonical_bytes_b64_that_is_not_base64_is_unverifiable_not_a_mismatch() {
+    let expected = digest_of(b"x");
+    let doc = ContractDocument {
+        digest: expected.clone(),
+        canonical: Some(CanonicalBlock {
+            rule: None,
+            bytes_b64: Some("!!! not base64 !!!".to_owned()),
+            length: None,
+        }),
+        ..ContractDocument::default()
+    };
+    let refusal = verify(&expected, &doc).expect_err("undecodable");
     assert_eq!(refusal.code(), "CONTRACT_UNVERIFIABLE");
 }

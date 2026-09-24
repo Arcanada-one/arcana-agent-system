@@ -9,13 +9,11 @@ fn binding_admitting(tools: &[&str]) -> arcana_core::contract::ContractBinding {
     let projection = "Role: reviewer.";
     let doc = ContractDocument {
         digest: digest_of(projection.as_bytes()),
-        projection: projection.to_owned(),
-        canonical_bytes: None,
-        kc2_revision: None,
-        kc2_snapshot: None,
+        projection: json!(projection),
         tools: Some(ContractTools {
             allow: tools.iter().map(|t| (*t).to_owned()).collect(),
         }),
+        ..ContractDocument::default()
     };
     verify(&doc.digest.clone(), &doc).expect("binds")
 }
@@ -30,7 +28,10 @@ async fn a_tool_outside_the_allowlist_is_denied_with_the_digest_named() {
         LayerDecision::Deny(reason) => {
             assert!(reason.contains("`bash`"), "names the tool: {reason}");
             assert!(reason.contains("sha256:"), "names the contract: {reason}");
-            assert!(reason.contains("grep, read"), "names what IS admitted (sorted): {reason}");
+            assert!(
+                reason.contains("grep, read"),
+                "names what IS admitted (sorted): {reason}"
+            );
         }
         other => panic!("an out-of-contract tool must be denied, got {other:?}"),
     }
