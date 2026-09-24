@@ -32,7 +32,7 @@ pub struct Harness {
     name: String,
     schema: Value,
     executor: CapabilityExecutor,
-    _audit_dir: TempDir,
+    audit_dir: TempDir,
 }
 
 impl Harness {
@@ -53,7 +53,7 @@ impl Harness {
             name,
             schema,
             executor,
-            _audit_dir: audit_dir,
+            audit_dir,
         }
     }
 
@@ -68,6 +68,29 @@ impl Harness {
             }) => Err(ToolError::InvalidInput(reason)),
             Err(err) => Err(ToolError::ExecutionFailed(err.to_string())),
         }
+    }
+
+    /// The schema the model is shown for this tool.
+    ///
+    /// A rule the schema does not state is a rule the model cannot obey
+    /// (A2-231), so a test asserting a refusal has to be able to assert the
+    /// declaration too.
+    pub fn schema(&self) -> &Value {
+        &self.schema
+    }
+
+    /// The audit records this harness's executor has written.
+    ///
+    /// The log is the evidence an incident is reconstructed from, so a test that
+    /// asserts a tool's behaviour can also assert what the log will say about
+    /// it — the A2-285 failure was visible in neither the tool's return value
+    /// nor the log.
+    pub fn audit_records(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.audit_dir.path().join("audit.log"))
+            .expect("read audit log")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("a json record"))
+            .collect()
     }
 
     pub fn validate_input(&self, input: &Value) -> Result<(), ToolError> {
