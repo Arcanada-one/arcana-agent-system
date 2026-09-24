@@ -213,6 +213,7 @@ impl CapabilityExecutor {
             &prepared.input,
             "Allowed",
             "cascade",
+            None,
         )?;
         // Capture the cascade-authorized input before it is moved into the
         // sealed invocation; this is the value the tool actually executes on.
@@ -243,6 +244,16 @@ impl CapabilityExecutor {
         })
     }
 
+    /// Refuse one attempt: audit the decision, audit the result, and hand the
+    /// caller the layer and the reason.
+    ///
+    /// The reason used to reach the model and stop there — `audit_decision`
+    /// was given the layer alone, so the log recorded that a call had been
+    /// refused and never why. Pilot A2-240b lost 21 of its 100 paid turns
+    /// this way and the post-mortem could count them but not read them
+    /// (A2-249). It is now hashed into the decision record; the text itself
+    /// belongs to the caller, which is the layer that knows which turn this
+    /// is and where the workspace keeps its evidence.
     fn deny<T>(
         &self,
         invocation_id: u64,
@@ -251,7 +262,7 @@ impl CapabilityExecutor {
         layer: &'static str,
         reason: &str,
     ) -> Result<T, CapabilityError> {
-        self.audit_decision(invocation_id, tool, input, "Denied", layer)?;
+        self.audit_decision(invocation_id, tool, input, "Denied", layer, Some(reason))?;
         self.audit_result(invocation_id, tool, "denied", None)?;
         Err(CapabilityError::Denied {
             layer,
@@ -264,9 +275,9 @@ impl CapabilityExecutor {
         invocation_id: u64,
         tool: &str,
         input: &Value,
-        _reason: &str,
+        reason: &str,
     ) -> Result<T, CapabilityError> {
-        self.audit_decision(invocation_id, tool, input, "Denied", "hook")?;
+        self.audit_decision(invocation_id, tool, input, "Denied", "hook", Some(reason))?;
         self.audit_result(invocation_id, tool, "hook_aborted", None)?;
         Err(CapabilityError::HookAborted)
     }
@@ -278,9 +289,10 @@ impl CapabilityExecutor {
         input: &Value,
         decision: &str,
         layer: &str,
+        reason: Option<&str>,
     ) -> Result<(), CapabilityError> {
         self.audit
-            .record_decision(invocation_id, tool, input, decision, layer)
+            .record_decision(invocation_id, tool, input, decision, layer, reason)
             .map_err(|source| {
                 self.audit_latched.store(true, Ordering::Release);
                 CapabilityError::AuditFailure {

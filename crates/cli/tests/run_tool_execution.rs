@@ -23,7 +23,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use arcana_cli::run::{assemble, driver_config, RunRequest};
+use arcana_cli::run::{assemble, driver_config, RunRequest, DENIED_DIR};
 use arcana_cli::workspace::WorkspacePolicy;
 use arcana_core::agent_loop::{RunOutput, TerminalReason};
 use arcana_core::connector::{
@@ -522,6 +522,75 @@ async fn a_refused_tool_call_does_not_count_as_an_executed_one() {
     // call is not evidence of work.
     assert_eq!(out.reason, TerminalReason::NoAction, "{:?}", out.reason);
     assert_eq!(out.tool_calls, 0, "a refused call executed nothing");
+    // A2-249: and it is no longer invisible. `tool_calls: 0` on its own reads
+    // the same as a model that never called a tool at all.
+    assert_eq!(out.tool_calls_attempted, 1, "the model did call a tool");
+    assert_eq!(out.tool_calls_denied, 1);
+}
+
+#[tokio::test]
+async fn a_boundary_refusal_is_written_into_the_workspace_with_its_reason() {
+    // A2-249, end of the wiring rather than the middle: `driver_config` is the
+    // production one, so this is the file a real `arcana run` leaves behind.
+    // `workspace_boundary` was the pilot's second-largest refusal layer (7 of
+    // its 21 denials) and is the one the core tests cannot reach — the policy
+    // that produces it lives in this crate.
+    let work = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let escape = outside.path().join("escaped.txt");
+    let audit = TempDir::new().unwrap();
+    let out = drive_out(
+        work.path(),
+        audit.path(),
+        &[&tool_call(
+            "write",
+            serde_json::json!({
+                "path": escape.to_string_lossy(),
+                "content": "ESCAPED",
+            }),
+        )],
+    )
+    .await;
+    assert_eq!(out.tool_calls_denied, 1, "{:?}", out.reason);
+
+    let dir = work.path().join(DENIED_DIR);
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("the denied directory exists after a refusal")
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["0001-turn1.json".to_owned()]);
+
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(&names[0])).unwrap()).unwrap();
+    assert_eq!(record["layer"], "workspace_boundary", "{record}");
+    assert_eq!(record["tool"], "write");
+    assert_eq!(record["input"]["content"], "ESCAPED");
+    let reason = record["reason"].as_str().expect("a reason");
+    assert!(
+        reason.contains(&*escape.to_string_lossy()),
+        "the reason names the path that was refused: {reason}"
+    );
+
+    // And the audit log, which is not inside the workspace, still holds none
+    // of it: the reason quotes a path the model chose, so only its hash is
+    // written there.
+    let log = std::fs::read_to_string(audit.path().join("audit.log")).unwrap();
+    assert!(
+        !log.contains("ESCAPED"),
+        "the audit log carries no input text"
+    );
+    assert!(
+        !log.contains(&*escape.to_string_lossy()),
+        "nor the refused path"
+    );
+    let denial = log
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .find(|r| r["decision"] == "Denied")
+        .expect("a denial record");
+    assert_eq!(denial["layer"], "workspace_boundary");
+    assert!(denial["reason_hash"].is_string(), "{denial}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,5 +1076,65 @@ async fn the_exact_live_failure_is_reproduced_and_the_run_survives_it() {
     assert!(
         !log.contains(r#""decision":"Denied""#),
         "a call carrying its arguments must not be denied: {log}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A2-253: the per-run sandbox HOME reaches the shell that runs
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_shell_a_run_composes_gets_that_run_s_own_home() {
+    // `BashTool::with_home` and `run::sandbox_home` are each covered where
+    // they live. Neither proves the wiring between them, and the wiring is
+    // the whole point: with the `.with_home(…)` call deleted from
+    // `workspace_tools`, every test but this one stayed green (A2-253,
+    // mutation M6). Judged by the file on disk, like every test in this file.
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let policy = Arc::new(WorkspacePolicy::new(work.path()).unwrap());
+    let replies = [
+        tool_call(
+            "bash",
+            serde_json::json!({ "command": "printf '%s' \"$HOME\" > home.txt" }),
+        ),
+        "wrote home.txt".to_owned(),
+    ];
+    let scripted: Vec<&str> = replies.iter().map(String::as_str).collect();
+    let workspace = assemble(
+        work.path(),
+        &policy,
+        Box::new(ScriptedModel::new(&scripted)),
+        audit.path().to_path_buf(),
+    )
+    .expect("compose the headless run");
+    let sandbox_home = workspace.sandbox_home.clone();
+    let request = RunRequest {
+        cwd: work.path().to_path_buf(),
+        prompt: "do the thing".to_owned(),
+        max_turns: 6,
+        max_cost_usd: None,
+        model: Some("scripted-model".to_owned()),
+        request_timeout: None,
+        context_budget: None,
+        tool_result_budget: None,
+        save_transcript: None,
+    };
+    let config = driver_config(&request, &workspace.tools, work.path());
+    let out = workspace
+        .session
+        .run_task(&request.prompt, config, CancellationToken::new())
+        .await;
+
+    let reported = std::fs::read_to_string(work.path().join("home.txt"))
+        .unwrap_or_else(|err| panic!("home.txt missing ({:?}): {err}", out.reason));
+    assert_eq!(
+        Path::new(reported.trim()),
+        sandbox_home,
+        "the shell must run under this run's own HOME, not the shared /tmp one"
+    );
+    assert!(
+        !reported.trim().starts_with("/tmp/arcana-runtime"),
+        "the shared fallback must not survive composition: {reported}"
     );
 }

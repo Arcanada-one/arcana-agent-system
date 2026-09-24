@@ -332,7 +332,9 @@ Two numbers govern a turn now, and both come from `--request-timeout`
 A turn that still fails in a way that says nothing about the request is
 re-dispatched before the run ends. Each re-dispatch is an ordinary attempt: it
 consumes a turn from `--max-turns` and is charged against `--max-cost-usd`, so
-a connector that is down cannot quietly spend the run's whole budget. Errors
+a connector that is down cannot quietly spend the run's whole budget. (The one
+exception is a poll for an answer already in flight — see the in-flight wait
+below; it asks nothing and is charged nothing, so it spends neither.) Errors
 that will fail identically forever — a missing key, an unknown connector id, a
 policy refusal — are not retried.
 
@@ -383,18 +385,56 @@ outlast an edge.
 > re-dispatch "may be a paid duplicate" — which, with five gateway
 > re-dispatches allowed, was up to five charges for one turn.
 
-A third class joins the two in the table above. When the first attempt of a
-turn is **still running upstream**, Model Connector refuses the re-dispatch
-with `idempotency_conflict` rather than starting a second paid request. The
-loop waits it out on the same key and the patient schedule, because the answer
-is being produced and is already paid for — and because reissuing under a new
-key is precisely what would be dispatched and charged twice:
+A third class joins the two in the table above, and it is bounded by a clock
+rather than by a count. When the first attempt of a turn is **still running
+upstream**, Model Connector refuses the re-dispatch with
+`idempotency_conflict` rather than starting a second paid request. The loop
+waits it out on the same key, because the answer is being produced and is
+already paid for — and because reissuing under a new key is precisely what
+would be dispatched and charged twice:
 
 ```
 arcana: the first attempt of this turn is still running upstream — waiting for
 the answer it is already producing rather than dispatching a second paid one,
-retrying this turn in 8.0s (3 of 5)
+retrying this turn in 13s (poll 9, 62s of the 320s this request may take)
 ```
+
+How long it waits is **not** a number of re-dispatches. It is how long that
+request may legitimately take upstream — the per-attempt `timeout` the client
+sends, widened by Model Connector's own two attempts and its queue, which is
+the same figure `arcana run` prints at startup as `waiting up to 290s for a
+reply` — plus a 30 s margin for the Connector to store the answer. The clock
+starts when the request FIRST left this client, not when the first refusal
+came back, and re-dispatching under the same key does not restart it. Inside
+it the loop polls on a capped 2/4/8/15 s backoff.
+
+This wait has **its own** budget in every sense. It does not spend the five
+gateway re-dispatches (the 524 that started it is one of those, and the wait
+for the answer that 524 interrupted must not be shortened by it), it does not
+spend the 120 s inter-retry sleep budget, and a poll does not consume a turn
+from `--max-turns` — it asks no question, and Model Connector charges nothing
+for the 409 it answers with. `turns` in the done-marker still counts every
+attempt, polls included.
+
+A poll also costs nothing **locally**. It re-sends the bytes the dispatch
+already built, so one waited turn is one prompt build, one `dispatch` record in
+`audit.log` and one block in `--save-transcript` — however many polls it takes.
+Until A2-245 each poll went through the whole of a turn instead: the prompt was
+re-serialized from the history and both records were written again, which on a
+turn of 80 000 characters measured 13 prompt builds and 1 040 782 bytes of
+transcript for a single waited answer. So a transcript is still a record of the
+questions this run asked, and counting `===== dispatch` blocks in it still
+counts dispatches — a long wait does not multiply them.
+
+Before A2-241 all of that was one shared counter of five sleeps. Pilot A2-240
+(2026-09-23) sent 144k input tokens, had the socket cut by the edge at ~100 s
+while the Connector kept computing, spent "1 of 5" on the 524 and "2 of 5"
+through "5 of 5" on the conflicts, and ended `ConnectorFatal … after 6
+attempt(s) over 41s` — abandoning an answer it had bought, for want of about a
+minute. Waiting is the cheap side and that is measured, not assumed: an intent
+stays replayable rather than re-charged for 30 minutes
+(`BILLING_HOLD_TTL_MS`), so no wait this schedule can produce risks a second
+charge.
 
 Two other answers are terminal. `idempotency_replay_unavailable` means the
 request completed and was charged exactly once but its answer was too large to
@@ -404,7 +444,7 @@ different request; nothing of ours was dispatched or charged under it, so the
 turn is re-dispatched under a fresh key, and the line that reports it says
 outright that it is a defect in `arcana` rather than in the connector.
 
-When the re-dispatches are spent, the run ends `ConnectorFatal` — and the
+When the budget that applies is spent, the run ends `ConnectorFatal` — and the
 verdict names the status, the attempts and how long they took, in the marker's
 `error` field and on stderr:
 
@@ -418,6 +458,19 @@ returned a non-contract error body (16 bytes): error code: 502
 Without those three numbers "the upstream is down" and "the retry policy was
 four seconds long" read identically, which is exactly what the pilot's
 `"error": null` left behind.
+
+A wait for an in-flight answer ends with the other verdict, which names **both**
+budgets — the one that ran out and the one that did not — so it cannot be read
+as an invitation to raise a limit that had nothing to do with it:
+
+```
+arcana run: the Model Connector could not complete the request (ConnectorFatal):
+HTTP 409 idempotency_conflict after 26 attempt(s) over 318s — the answer was
+still being produced upstream after 320s of the 320s this turn's request may
+legitimately take, across 24 poll(s) under its Idempotency-Key — the separate
+budget of 5 re-dispatch(es) for a FAILED request is untouched at 1, so raising
+it would change nothing here; it is the clock that ran out
+```
 
 Raising the budget above 120 s only helps where the Model Connector is reached
 directly. The public origin sits behind an edge proxy that cuts any single

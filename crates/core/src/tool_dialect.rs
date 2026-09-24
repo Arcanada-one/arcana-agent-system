@@ -115,7 +115,7 @@ use serde_json::{Map, Value};
 /// Schema word for the same thing leaks into, and `args` is the short form
 /// smaller models fall back on. They are alternatives for one slot, so the
 /// first one actually present wins rather than being merged.
-const INPUT_KEYS: [&str; 4] = ["input", "arguments", "parameters", "args"];
+pub const INPUT_KEYS: [&str; 4] = ["input", "arguments", "parameters", "args"];
 
 /// Label for the `DSML` / `invoke` markup dialect, used in operator output and
 /// in the correction handed back to the model.
@@ -188,7 +188,7 @@ pub fn arguments_of(value: &Value) -> Option<Value> {
             // An explicit `null` is not an answer; keep looking for a key that
             // carries something, and fall through to `None` if none does.
             None | Some(Value::Null) => {}
-            Some(found) => return Some(decode_arguments(found)),
+            Some(found) => return Some(unwrap_repeated_envelope(decode_arguments(found))),
         }
     }
     None
@@ -202,13 +202,94 @@ pub fn arguments_of(value: &Value) -> Option<Value> {
 /// more likely to be the argument itself than an encoded payload.
 fn decode_arguments(value: &Value) -> Value {
     if let Value::String(text) = value {
-        if let Ok(decoded) = serde_json::from_str::<Value>(text) {
-            if decoded.is_object() {
-                return decoded;
-            }
+        if let Some(decoded) = object_from_json_text(text) {
+            return decoded;
         }
     }
     value.clone()
+}
+
+/// The JSON **object** `text` encodes, or `None`.
+///
+/// Surplus closing punctuation at the end is tolerated by the same licence
+/// [`value_before_surplus_closers`] states, and for the same measured reason:
+/// every one of the four string-valued envelopes pilot A2-240c sent carried a
+/// complete arguments object followed by one extra `}`
+/// (`/home/dev/aup/arc2/wt/A2-240c/.arcana/denied/{0004,0006,0007,0008}-turn*.json`
+/// — each inner string parses after dropping exactly one trailing character).
+/// A strict `from_str` reads those as "not JSON at all" and leaves the whole
+/// envelope in place, so the surplus brace decided four of the seven repeats.
+fn object_from_json_text(text: &str) -> Option<Value> {
+    let decoded = serde_json::from_str::<Value>(text)
+        .ok()
+        .or_else(|| value_before_surplus_closers(text))?;
+    decoded.is_object().then_some(decoded)
+}
+
+/// Strip one repetition of the runner's own wrapper key from an arguments
+/// object: `{"input": {"command": "ls"}}` is the call `{"command": "ls"}`.
+///
+/// # Why this is a reading and not a guess (A2-253)
+///
+/// Pilot A2-240c (arcana `17cffe0`, 68 turns, 63 attempted calls, 13 denied)
+/// spent **7** of its 13 denials on this one shape — every one of them a
+/// `bash` call whose command was already correct, refused at the `schema`
+/// layer with `Additional properties are not allowed ('input' was
+/// unexpected); "command" is a required property`
+/// (`/home/dev/aup/arc2/wt/A2-240c/.arcana/denied/`, turns 11, 25, 30, 42, 43,
+/// 54, 65). The system prompt tells the model the call is `{"name": …,
+/// "input": {…}}`; the model applied the `input` key twice, to the object it
+/// had already put under it.
+///
+/// A correction is what the runner already did, and the measurement is that it
+/// does not work for this class: the model was told, in those exact words,
+/// seven times across the run, and wrote the envelope again each time. The
+/// contrast inside the same pilot is the argument — a quoted integer
+/// (`"timeout_seconds": "400"`, turn 52) was refused once and the very next
+/// call carried an unquoted `300`. One class the model can act on; this one it
+/// cannot.
+///
+/// The licence is the narrowest that covers it, and it is a property of the
+/// shipped tool set rather than a guess about intent: **no tool declares a
+/// property named `input`, `arguments`, `parameters` or `args`, and every tool
+/// schema sets `additionalProperties: false`**, so an arguments object whose
+/// ONLY key is one of those spellings cannot be a call to anything — it is
+/// invalid for every tool in the registry, and unwrapping it therefore cannot
+/// change which call runs. `crates/cli/tests/run_tool_execution.rs` pins that
+/// premise against the registry the CLI actually assembles, so a future tool
+/// with an `input` argument turns this licence red instead of silent.
+///
+/// Everything wider stays a correction:
+///
+/// * More than one key (`{"input": {…}, "command": "ls"}`) is not an envelope;
+///   it is a call with an extra argument, and dropping either half would be
+///   choosing for the model.
+/// * An inner value that is not an object — `{"input": 5}`, `{"input": null}`
+///   — carries no call to unwrap.
+/// * One level only. A second envelope is not a spelling of the format the
+///   prompt states, it is a model that has lost the shape, and nothing in this
+///   pilot measured it.
+fn unwrap_repeated_envelope(value: Value) -> Value {
+    let unwrapped = {
+        let Some(object) = value.as_object() else {
+            return value;
+        };
+        if object.len() != 1 {
+            return value;
+        }
+        let Some((key, inner)) = object.iter().next() else {
+            return value;
+        };
+        if !INPUT_KEYS.contains(&key.as_str()) {
+            return value;
+        }
+        match inner {
+            Value::Object(_) => Some(inner.clone()),
+            Value::String(text) => object_from_json_text(text),
+            _ => None,
+        }
+    };
+    unwrapped.unwrap_or(value)
 }
 
 /// Read arguments a model wrote as siblings of `name` rather than inside a
@@ -252,6 +333,56 @@ pub fn flat_arguments(value: &Value) -> Option<Value> {
 #[must_use]
 pub fn declared_call_arguments(value: &Value) -> Option<Value> {
     arguments_of(value).or_else(|| flat_arguments(value))
+}
+
+/// The JSON value at the front of `body`, when the only thing behind it is
+/// surplus closing punctuation.
+///
+/// # Why a repair is admissible here at all (A2-248)
+///
+/// It lives in this module rather than in `agent_loop` because it is one
+/// reading rule with two callers: the canonical fence body (A2-248) and the
+/// JSON-encoded arguments string (A2-253). Two copies would be free to drift,
+/// and this one decides what runs on the operator's machine.
+///
+/// Turn 62 of pilot A2-240b opened this runner's own fence and wrote a
+/// complete `write` call — right tool, right path, whole file content — and
+/// then one more `}` (`crates/core/tests/fixtures/
+/// a2-248-surplus-brace-reply.txt`, the reply as the model sent it).
+/// `serde_json::from_str` refuses trailing data, so the call became "not valid
+/// JSON", nothing ran, and one of that run's hundred turns went on a
+/// correction for a character that carried no information.
+///
+/// The licence is deliberately the narrowest one that covers it, and it is a
+/// property of the text rather than a guess about the model: **`}`, `]` and
+/// whitespace cannot name a tool, introduce an argument, or change a value.**
+/// A remainder made only of those has exactly one reading once it is dropped,
+/// so taking the prefix cannot dispatch anything other than what was written.
+///
+/// Everything else keeps costing a correction, because everything else could
+/// change what runs:
+///
+/// * A second JSON object is a second call. Executing the first and discarding
+///   the rest silently is a different run, not a repaired one.
+/// * A trailing comma (`{"name":"bash",}`) never reaches here: it fails
+///   *inside* the braces, so there is no complete prefix to take. That is the
+///   line — a parser that truncates a suffix is reading; a parser that edits
+///   between the braces is guessing at intent.
+/// * A prefix that parses but names no tool falls through to the ordinary
+///   `name` check in [`crate::agent_loop`], and is refused for the reason it
+///   actually has.
+///
+/// Returns `None` whenever the licence does not apply, so the caller's
+/// fail-closed path is unchanged.
+#[must_use]
+pub fn value_before_surplus_closers(body: &str) -> Option<Value> {
+    let mut stream = serde_json::Deserializer::from_str(body).into_iter::<Value>();
+    let value = stream.next()?.ok()?;
+    let remainder = body.get(stream.byte_offset()..)?;
+    remainder
+        .chars()
+        .all(|ch| ch == '}' || ch == ']' || ch.is_whitespace())
+        .then_some(value)
 }
 
 // ---------------------------------------------------------------------------

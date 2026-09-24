@@ -7,7 +7,274 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The `input` key applied twice is read as the call it is.** Pilot A2-240c
+  (arcana `17cffe0`, 68 turns, 63 attempted calls, 13 denied) spent **7 of its
+  13 denials** on one shape: a `bash` call whose command was already correct,
+  wrapped in a second `input` key — `{"name": "bash", "input": {"input":
+  {"command": …}}}` — refused at the `schema` layer with `Additional properties
+  are not allowed ('input' was unexpected)`
+  (`/home/dev/aup/arc2/wt/A2-240c/.arcana/denied/`, turns 11, 25, 30, 42, 43,
+  54, 65). Four of the seven wrapped the arguments as a JSON *string*, each
+  with one surplus `}` inside it, so the existing `OpenAI`-style decode read
+  them as "not JSON" and left the envelope standing.
+
+  An arguments object whose ONLY key is `input`, `arguments`, `parameters` or
+  `args` is now unwrapped, one level, and the inner value is decoded under the
+  same surplus-closing-punctuation licence A2-248 wrote for the fence body
+  (that helper moved to `tool_dialect`, where both readers can share one copy).
+  The licence is a property of the shipped tool set, not a guess: no tool
+  declares a property with one of those names and every tool schema sets
+  `additionalProperties: false`, so such an object is invalid for *every* tool
+  in the registry and cannot be a call to anything —
+  `crates/cli/tests/run_envelope_premise.rs` pins that against the registry
+  `assemble` actually builds, so a future tool with an `input` argument turns
+  the licence red instead of widening it silently. Two keys, a non-object
+  inner value, and a second level of wrapping all stay corrections
+  (`driver_input_envelope.rs`).
+
+  **Why this one is unwrapped and the quoted integer is not.** The runner
+  already corrected this shape, naming the unexpected key and the missing one,
+  seven times in one run, and the model wrote it again each time. The same
+  pilot is the control: `"timeout_seconds": "400"` (turn 52) was refused once
+  and the very next call carried an unquoted `300` (turn 53), and nothing
+  quoted a number again in the remaining 16 turns. A quoted scalar is
+  therefore still **refused, never coerced** — the schema is where the type
+  contract lives — and what changed is only that the refusal now carries the
+  corrected spelling (`— send it unquoted, as \`400\``) when the quoted text
+  is unambiguously one scalar. `"soon"` gets no invented spelling.
+
+- **`/dev/null` is the one path outside the workspace a command may name.**
+  Turn 6 of the same pilot was refused on `2>/dev/null`
+  (`.arcana/denied/0003-turn6.json`) — the only one of its five boundary
+  refusals where the model had not tried to leave the workspace at all. A sink
+  with no storage can neither carry workspace contents out nor bring anything
+  in, which is the whole of the argument and also why the exception is one
+  path and not a directory: `/dev/zero`, `/dev/urandom`, `/dev/stdout` and
+  `/dev/sda` stay refused, `/dev/` is never matched as a prefix, the
+  comparison is on the canonicalized path, and the path tools (`read`,
+  `write`, `edit`, `grep`) are not covered at all. The system prompt names the
+  exception from the constant, so prompt and policy cannot drift.
+
+- **A call the permission cascade refused is now readable afterwards.** The
+  `reason` built in `CapabilityExecutor::deny` reached the model and stopped
+  there: `audit_decision` was handed the layer and nothing else, so the log
+  said a call had been refused and never why, or with what arguments. Pilot
+  A2-240b spent **21 of its 100 paid turns** on refused calls — 14 at the
+  `schema` layer, 7 at `workspace_boundary`, the run's largest single sink of
+  turns — and the post-mortem could count them but not read one
+  (`/home/dev/aup/arc2/runs/A2-248/report.md` § 1 and D1).
+
+  Two records now exist where there was one. The `decision` entry carries a
+  `reason_hash`, so denials refused with the same sentence group in the log;
+  and the call itself, with the sentence in full, is written to
+  `.arcana/denied/NNNN-turnN.json` under the same counter discipline as
+  `.arcana/rejected/`. The operator also gets a line per denial naming that
+  file, where before a refused turn was simply a gap in the log.
+
+  The reason is **hashed** in `audit.log` and kept whole only in the workspace
+  file, and that split is the audit's own rule rather than a new one: the
+  module refuses to persist raw inputs and error strings, and a refusal
+  sentence is both — `schema` quotes the offending argument (`"…" is not of
+  type "integer"`), `workspace_boundary` quotes the path. `audit.log` lives
+  under `$XDG_STATE_HOME` and is never rotated; `.arcana/denied/` lives inside
+  the workspace beside a `.arcana/rejected/` file that would have held the same
+  text inside the whole reply anyway. `driver_denied_calls.rs` pins both halves,
+  including the stated limit of the log-only view: a sentence that quotes the
+  model's own text does not group, which is why the file has to exist.
+
+- **`ARCANA_RUN_DONE` says what the model tried, not only what worked.**
+  `tool_calls` counts executions and always has, so a refused call and a call
+  never made are the same number: pilot A2-240b reported `"tool_calls":72` for
+  a run that made **98** attempts, 21 of them refused. Read as intent, 72 says
+  "the model barely used its tools"; the truth was "it used them constantly and
+  often wrongly", and the two point at opposite fixes. `tool_calls_attempted`
+  and `tool_calls_denied` are now reported beside it. `tool_calls` keeps its
+  meaning exactly — evidence of work done — so nothing that reads it today
+  changes.
+
+### Changed
+- **The destructive floor refuses a `git stash` that CHANGES the stack, not the
+  word `git stash`.** Pilot A2-240d (arcana `5fc4684`) had finished its task —
+  commit `6302742`, published as `arcanada-support#114` — and died on turn 62
+  (`/home/dev/aup/arc2/wt/A2-240d/.arcana/denied/0006-turn62.json`) on
+
+  ```text
+  git format-patch … && git apply --stat … && git stash list && git log --oneline -1
+  ```
+
+  `git stash list` only READS the stack, and a floor refusal is terminal by
+  design (`RECOVERABLE_DENIAL_LAYERS` excludes it), so a listing ended a
+  completed run. The floor's entry named a git *command* where it meant a git
+  *effect*.
+
+  `git stash list` and `git stash show` are now permitted; every other form —
+  a bare `git stash` (which IS `push`), and `push`, `pop`, `apply`, `drop`,
+  `clear`, `branch`, `store`, `create` — stays refused. The rule is an
+  **allow-list of the two read-only subcommands**, so a spelling git itself
+  does not know is refused, not allowed by omission. Both were measured on git
+  2.43.0 rather than read off the manual: `git stash list drop` exits 1 with
+  `fatal: bad revision 'drop'` and drops nothing, `git stash list
+  --exec='touch pwned'` is rejected with `fatal: unrecognized argument`, and
+  neither form leaves the stack changed.
+
+  Two holes closed on the way, **both ALLOWED before this change** and both
+  measured (`/home/dev/aup/arc2/runs/A2-259/receipt-before-floor.txt`):
+  `git --no-pager stash drop` and `git -C sub stash drop` ran, because the
+  floor matched `git` and `stash` as adjacent words and a global option sits
+  between them. The rule now also reads `stash` as git's subcommand past its
+  global options, and strips quotes, which closes `git "stash" drop` as well.
+  One hole stays open and is pinned as a test rather than left to be
+  rediscovered: `git -c alias.l='stash drop' l` still drops (measured), because
+  reading it means evaluating git's config — the module header has always said
+  this check is a string heuristic and not a sandbox.
+
+  The prompt carries the split, generated from the same constants the floor
+  evaluates, and `crates/cli/tests/run_destructive_floor_prompt.rs` pins that
+  what the prompt SAYS about each `git stash` form is what the floor DOES to
+  it.
+
+  **Terminality is unchanged, deliberately.** A floor refusal that became
+  recoverable "when the command mutates nothing" would be decided by the
+  floor's own string heuristic — so the run would continue exactly in the case
+  where the heuristic was fooled — and would hand back precisely the refusals
+  the classifier judged harmless, which is what a probe looks like. A command
+  that mutates nothing must not reach the floor at all; that is a defect in the
+  list, and it is fixed in the list. The argument is written out on
+  `DestructiveCommandFloor`; changing terminality would need a DEC-level
+  decision and nothing measured here argues for one.
+
+- **A `..` refusal now says how to write the path instead.** The workspace
+  check resolves `..` against the workspace ROOT, not against a `cd` earlier in
+  the same command, so `cd sub && tar -x -C ../snap` is refused even though
+  `../snap` lands inside the workspace. That stays: tracking a `cd` through a
+  shell string has no single reading — subshells, `cd -`, `cd "$VAR"`, `;` vs
+  `&&` vs `||` — and a boundary that guesses is not a boundary.
+
+  What was missing is the correction, and its absence was measured: pilot
+  A2-240d spent **three of its six denied calls** on this one shape (turns 15,
+  16 and 54), the second immediately after the first and the third
+  thirty-eight turns later. A boundary refusal IS handed back to the model, so
+  it is a correction, and one that says only what is wrong leaves the model
+  nothing to change but the spelling. The refusal and the system prompt now
+  state, from one constant, that `..` is judged against the workspace root and
+  that the path should be written from the root or absolutely under it.
+  `crates/cli/tests/run_boundary_relative_path_recovery.rs` drives the pilot's
+  shape both ways: with the new wording the model recovers on the next turn and
+  the file is copied; with the pre-A2-259 wording the same model reaches for
+  `..` again and the file is never copied.
+
+- **`bash` gets a `HOME` per run instead of one fixed path in `/tmp`.**
+  `BashTool` hard-coded `/tmp/arcana-runtime/bash`: the same directory for
+  every run and every workspace on a host, in a world-writable parent. Two
+  measured consequences — concurrent runs shared one `HOME`, and the directory
+  on arcana-devs was `drwx------ dev dev` dated 2026-08-01, created by
+  something outside any run (`/tmp` is `drwxrwxrwt`, and the sticky bit stops
+  a local user deleting another's entry but not pre-creating a path that does
+  not exist yet). `arcana run` now creates one owner-only directory per run
+  under its own state directory, fail-closed, and gives it back at the end
+  **non-recursively**, so a run that wrote to `~` keeps what it wrote.
+
+  Stated because the card that asked for this assumed otherwise: an existing
+  `HOME` is NOT what fixes `git config --global`. Measured side by side, git
+  reports `unable to read config file '$HOME/.gitconfig': No such file or
+  directory` identically whether the directory exists or not — that message is
+  about the config file, which a credential-free lane has by design. What an
+  existing `HOME` fixes is everything needing the directory itself: a bare
+  `cd`, and any tool that writes under `~`.
+
+- **The system prompt says this lane has no credentials.** `bash` runs under a
+  constructed, credential-free environment and refuses caller-declared
+  variables, so a private repository cannot be cloned, fetched or read. The
+  pilot did not know that and spent many turns proving it; the prompt now
+  states it, with the exact error a private clone will produce, so the absence
+  is a fact rather than a fault to diagnose.
+
+### Fixed
+- **One reply can no longer erase the history of a run.** A tool result has
+  been bounded when it enters the transcript since this loop was written
+  (`carry_tool_result`, 8 000 units); a model **reply** was not.
+  `prompt_budget::entry_ceiling` reached an oversized reply only from inside
+  compaction — after the budget had already been blown, when the guard's
+  remaining move was to fold earlier turns away. Measured on pilot A2-240b:
+  between turn 36 and turn 37 the transcript grew 63 485 → 111 713 UTF-16 units
+  (**+48 228 from a single reply, 54 % of the whole budget**) and compaction #1
+  folded **28 earlier entries** into a summary. Thirty-six turns of history
+  were spent on one turn of output — the mechanism a reader would have
+  attributed to "the context window is too small".
+
+  A reply is now cut at intake to `entry_ceiling` of the run's budget — the
+  same number compaction would have imposed, applied before the damage instead
+  of after it — head and tail kept, with an explicit marker in the middle
+  stating how much went and why. Nothing else changes: the whole reply is read
+  first, so the tool call the loop executes and the final answer the operator
+  is handed are both taken from the complete text.
+  (`crates/core/tests/driver_reply_intake_cap.rs`.)
+
+- **Waiting for an answer already bought no longer costs a prompt build per
+  poll.** A2-241 made the loop wait out a turn Model Connector is still
+  computing, and left every poll re-entering the whole of `step()`: the prompt
+  was re-serialized from the history, a block was appended to
+  `--save-transcript` and a `dispatch` record to `audit.log` — for a request
+  that is not being re-asked but collected. Measured on the A2-240 fixture with
+  a turn of 80 000 characters: **13 prompt builds and 1 040 782 bytes of
+  transcript for one waited turn**, and the live pilot's turn was larger still.
+
+  The wait now owns its re-dispatches. It keeps the exact bytes the dispatch
+  built and re-sends them under the same `Idempotency-Key`, so one waited turn
+  is one prompt build, one transcript block and one `dispatch` record whatever
+  the poll count. Everything an operator can observe is unchanged — the same
+  deadline, the same key, the same poll schedule, the same two verdict lines,
+  and `RunOutput::turns` still counts every poll. Re-sending what was sent is
+  also the stricter reading of the key: a replay only holds while the payload is
+  identical, and a rebuilt prompt is only *probably* identical.
+
+  `crates/core/tests/driver_idempotent_turn.rs` counts the builds where they
+  land — `===== dispatch` blocks in the transcript and `dispatch` events in the
+  audit log — and re-introducing the per-poll build turns it red with exactly
+  the numbers above (A2-245).
+
+- **A complete tool call followed by one surplus `}` is that call, not
+  garbage.** Turn 62 of pilot A2-240b opened this runner's own
+  ```` ```tool_call ```` fence and wrote a whole `write` call — right tool,
+  right path, the entire file content, in the A2-219 flat form the parser
+  already accepts — and then one more `}`. `serde_json::from_str` refuses
+  trailing data, so the reply was classified "not valid JSON", nothing ran, and
+  one of that run's hundred turns went on a correction for a character that
+  carried no information (the reply as the model sent it is now
+  `crates/core/tests/fixtures/a2-248-surplus-brace-reply.txt`, sha256
+  `252d444b5fe0dd…`; run log `/home/dev/aup/arc2/runs/A2-240b/log`).
+
+  A body that does not parse whole now gets exactly one more reading, and it is
+  a **truncation, never an edit**: the JSON value at the front of the block is
+  used only when everything after it is `}`, `]` or whitespace. That licence is
+  a property of the text rather than a guess about the model — surplus closing
+  punctuation cannot name a tool, add an argument or change a value, so
+  dropping it leaves exactly one reading and the dispatch is still only what
+  was written. Everything that *could* change what runs stays a correction, and
+  `crates/core/tests/driver_surplus_closer.rs` is what keeps it that way: a
+  second JSON object after the first is a second call and is refused rather
+  than silently dropped, and a trailing comma (`{"name":"bash",}`) never
+  reaches the rule at all because it fails *inside* the braces — a parser that
+  truncates a suffix is reading, a parser that edits between the braces is
+  guessing at intent.
+
+  The correction handed back for a body that still does not parse now carries
+  serde's own message, so it names the line and column of the fault instead of
+  only "not valid JSON".
+
 ### Tests
+- **Every waiting test now runs under a ceiling, so an unbounded wait fails in
+  seconds instead of running until the CI job is killed.** A mutation of the
+  A2-241 fix that restarts the in-flight clock on every same-key re-dispatch —
+  an unbounded wait, the precise defect the deadline exists to prevent — turned
+  no test red: `driver_idempotent_turn` ran for over thirty minutes and had to
+  be killed, because on a paused clock an unbounded wait is an infinitely fast
+  infinite loop. Every run in that file now goes through a
+  `tokio::time::timeout` at twenty-five times the deadline the connector's own
+  stated dispatch budget implies, and the failure message names that deadline.
+  The same mutant is now two red tests in 0.05 s (A2-245).
+
 - **Exactly which permission denials may be retried is now pinned, name by
   name.** `recoverable_denial_layers_are_exactly_pinned`
   (`crates/core/src/agent_loop.rs`) writes down every layer the cascade or the
@@ -21,6 +288,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `arcana` DeepSeek-lane pilot (A2-204c5); CHANGELOG entry drafted by A2-231.
 
 ### Fixed
+- **A turn the Model Connector is still computing is waited out, not
+  abandoned.** Pilot A2-240 sent 144k input tokens on turn 24; Cloudflare cut
+  the socket at its ~100 s origin timeout with HTTP 524 while the Connector
+  went on producing the answer. `arcana` did the expensive part right — it
+  re-dispatched under the same `Idempotency-Key`, so nothing was charged twice
+  — and then threw the answer away: `ConnectorFatal … after 6 attempt(s) over
+  41s`, on a turn that needed more than a hundred.
+
+  Two bounds were wrong, and both are fixed. The patient in-flight wait **shared
+  its counter with the edge-retry schedule**, so the single 524 spent "1 of 5"
+  and the wait for the answer that 524 interrupted started at "2 of 5"; it now
+  has its own counter, and the edge budget is untouched by it. And the wait was
+  **a count of sleeps** (five, ≤60 s nominal, shortened to 41 s by jitter) with
+  no relation to how long the request may legitimately run; it is now a
+  deadline — the connector's own per-dispatch budget
+  (`ModelConnector::upstream_dispatch_budget`, for the real client the
+  `ExecuteRequest.timeout` we send widened by Model Connector's own attempts and
+  queue) plus a 30 s settle margin, measured from the moment the request FIRST
+  left this client. Inside it the loop polls on a capped 2/4/8/15 s backoff.
+
+  Waiting is also the cheap side, and that is read off the server rather than
+  assumed: an intent stays `held` — and therefore replayable rather than
+  re-charged — for 30 minutes (`BILLING_HOLD_TTL_MS`, `src/billing/intent.ts:36`
+  on model-connector `3911773`), swept hourly, so every wait this schedule can
+  produce is far inside the window in which a retry is free.
+
+  A poll no longer spends one of the run's `max_turns` either: it asks no
+  question, Model Connector charges nothing for the 409, and counting them would
+  have had a wait span the whole default budget of 24 attempts — trading
+  `ConnectorFatal` for `MaxTurns` on the same abandoned, already-paid-for
+  answer. `RunOutput::turns` still reports every attempt, polls included. And
+  the terminal verdict now names both budgets, so an operator cannot read it as
+  "raise the retry limit" when it is the clock that ran out.
+  `crates/core/tests/driver_idempotent_turn.rs` reproduces A2-240 on a virtual
+  clock: 100 s of upstream work, one provider call, the stored answer replayed.
+
 - **A re-dispatched turn is no longer paid for twice.** A2-230 gave a turn cut
   off by the network edge up to five re-dispatches and, in the same breath,
   measured what each of them cost: Model Connector settles the charge in the

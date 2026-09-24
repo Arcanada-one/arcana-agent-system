@@ -72,18 +72,64 @@ pub trait Tool: Send + Sync {
             .iter_errors(input)
             .map(|err| {
                 let path = err.instance_path().to_string();
+                let shape = quoted_scalar_hint(&err);
                 // The root instance has an empty path; `at ` before nothing
                 // reads as a truncated sentence, so say which object it is.
                 if path.is_empty() {
-                    format!("at the top level of `input`: {err}")
+                    format!("at the top level of `input`: {err}{shape}")
                 } else {
-                    format!("at `{path}`: {err}")
+                    format!("at `{path}`: {err}{shape}")
                 }
             })
             .collect::<Vec<_>>()
             .join("; ");
         Err(ToolError::InvalidInput(detail))
     }
+}
+
+/// The exact corrected spelling for a scalar the model sent in quotes.
+///
+/// # The rule this states (A2-253)
+///
+/// A JSON string where the schema wants an integer is **refused, never
+/// coerced.** Turn 52 of pilot A2-240c sent `"timeout_seconds": "400"`
+/// (`/home/dev/aup/arc2/wt/A2-240c/.arcana/denied/0010-turn52.json`) and the
+/// validator said `at /timeout_seconds: "400" is not of type "integer"`. That
+/// correction worked: the very next call the model wrote carried an unquoted
+/// `300` (`0011-turn53.json`), and nothing in the remaining 16 turns of the
+/// run quoted a number again. One turn is what this class costs, and a runner
+/// that silently retyped the value would have bought that turn back by
+/// deciding, on the model's behalf, that `"400"` means `400` — a decision the
+/// schema exists to make, and one that has to be made again for every future
+/// field where the string/number distinction carries meaning.
+///
+/// What is added instead is the one thing the validator's own sentence does
+/// not carry: the corrected text. `"400" is not of type "integer"` names the
+/// fault; it does not say whether the fix is to drop the quotes or to send
+/// something else entirely. This appends the literal spelling to send, and
+/// only when there is exactly one — the quoted text parses as a JSON scalar of
+/// its own, so `"400"` yields `400`, while `"soon"`, `"4 hours"` and `"0x10"`
+/// yield nothing and the message is unchanged.
+fn quoted_scalar_hint(err: &jsonschema::ValidationError<'_>) -> String {
+    if !matches!(
+        err.kind(),
+        jsonschema::error::ValidationErrorKind::Type { .. }
+    ) {
+        return String::new();
+    }
+    let Value::String(text) = err.instance().as_ref() else {
+        return String::new();
+    };
+    let Ok(decoded) = serde_json::from_str::<Value>(text.trim()) else {
+        return String::new();
+    };
+    // An object or an array inside a string is the `OpenAI` encoded-arguments
+    // convention, handled where arguments are read (`crate::tool_dialect`),
+    // not a value the model merely put in quotes.
+    if decoded.is_object() || decoded.is_array() || decoded.is_string() {
+        return String::new();
+    }
+    format!(" — send it unquoted, as `{decoded}`")
 }
 
 /// Move-only input minted by the canonical capability executor.

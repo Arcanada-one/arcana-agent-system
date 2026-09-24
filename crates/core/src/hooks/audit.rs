@@ -4,6 +4,14 @@
 //! credentials, and error strings are never persisted. The capability
 //! executor owns this sink directly, so audit cannot be accidentally omitted
 //! or double-bridged through a hook chain.
+//!
+//! A refusal's `reason` is an error string and follows the same rule: the
+//! decision record carries its `reason_hash`, never its text. The hash is
+//! what makes two denials with the same cause countable from the log alone —
+//! the question pilot A2-240b could not answer, where 21 of 100 paid turns
+//! were cascade refusals recorded as a layer name and nothing else (A2-249).
+//! The reason itself is kept where the call is kept: `.arcana/denied/`, in
+//! the workspace, beside `.arcana/rejected/`.
 
 use std::fs::File;
 use std::io::Write;
@@ -105,7 +113,7 @@ impl AuditLog {
         decision: &str,
         layer: &str,
     ) -> Result<(), AuditHookError> {
-        self.record_decision(invocation_id, tool, input, decision, layer)?;
+        self.record_decision(invocation_id, tool, input, decision, layer, None)?;
         self.record_result(invocation_id, tool, "decision_only", None)
     }
 
@@ -167,6 +175,17 @@ impl AuditLog {
         }))
     }
 
+    /// Append one `decision` record.
+    ///
+    /// `reason` is the refusing layer's sentence, and it is hashed rather than
+    /// written: it interpolates model-supplied text. A `schema` refusal quotes
+    /// the offending argument (`crates/core/src/tool.rs`, the `jsonschema`
+    /// message), and a `workspace_boundary` refusal quotes the path
+    /// (`arcana-cli`'s `WorkspacePolicy::assess_path`) — so a credential the
+    /// model put in a call would reach this log verbatim, and this log lives
+    /// under `$XDG_STATE_HOME` and is never rotated. `None` for a decision
+    /// that allowed: an absent reason is `null`, not an empty string, because
+    /// "there was no reason" and "the reason was blank" are different facts.
     pub(crate) fn record_decision(
         &self,
         invocation_id: u64,
@@ -174,6 +193,7 @@ impl AuditLog {
         input: &Value,
         decision: &str,
         layer: &str,
+        reason: Option<&str>,
     ) -> Result<(), AuditHookError> {
         self.append(&serde_json::json!({
             "version": AUDIT_VERSION,
@@ -184,6 +204,7 @@ impl AuditLog {
             "input_hash": hash_value(input),
             "decision": decision,
             "layer": layer,
+            "reason_hash": reason.map(hash_text),
         }))
     }
 
@@ -357,7 +378,17 @@ fn open_secure_audit_file(dir: &Path) -> Result<File, AuditHookError> {
 /// Backward-compatible type name for callers constructing the audit sink.
 pub type AuditHook = AuditLog;
 
-fn hash_value(value: &Value) -> String {
+/// The audit's hash of a string, in the same 16-hex-digit form as
+/// [`hash_value`] — and deliberately NOT `hash_value(&json!(text))`, which
+/// would hash the JSON quoting rather than the text.
+fn hash_text(text: &str) -> String {
+    blake3::hash(text.as_bytes()).to_hex().as_str()[..HASH_HEX_PREFIX].to_owned()
+}
+
+/// The audit's hash of a JSON value — `input_hash` / `output_hash` / the
+/// supervisor's `fields_hash`, and the same value the denied-call record
+/// carries so a file in `.arcana/denied/` can be joined to its log record.
+pub(crate) fn hash_value(value: &Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_else(|_| b"{}".to_vec());
     blake3::hash(&bytes).to_hex().as_str()[..HASH_HEX_PREFIX].to_owned()
 }
