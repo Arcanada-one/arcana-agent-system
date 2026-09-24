@@ -86,41 +86,17 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         );
     };
 
-    let source: Box<dyn ContractSource> = match resolve_source(request.contract_file.as_deref()) {
-        Ok(source) => source,
-        Err(refusal) => return refuse(refusal.code(), &refusal.to_string()),
-    };
-    println!(
-        "contract {digest} from {} ({})",
-        source.origin(),
-        source.label()
-    );
-
     // Step 3.
-    let binding = match fetch_and_verify(source.as_ref(), &digest).await {
-        Ok(binding) => binding,
-        Err(refusal) => return refuse(refusal.code(), &refusal.to_string()),
+    let (source, binding) = match bind_contract(request.contract_file.as_deref(), &digest).await {
+        Ok(bound) => bound,
+        Err(code) => return code,
     };
-    println!(
-        "contract verified: {} re-hashed over its {}; tools {:?} (from {})",
-        binding.digest(),
-        binding.preimage().as_str(),
-        binding.allowlist(),
-        binding.allowlist_source().as_str(),
-    );
 
-    // Before step 4, and therefore before the first billable call: grounding
-    // that cannot be read must not become a run that silently had none.
-    let grounding = match ground_truth::load(&request.ground_truth) {
+    // Before step 4, and therefore before the first billable call.
+    let grounding = match grounding_or_refuse(&request.ground_truth) {
         Ok(grounding) => grounding,
-        Err(refusal) => return refuse(refusal.code(), &refusal.to_string()),
+        Err(code) => return code,
     };
-    for item in &grounding {
-        println!(
-            "ground truth: {} ({}, {} bytes)",
-            item.path, item.sha256, item.bytes
-        );
-    }
 
     // Step 4.
     request.run.prompt = task_prompt(&item, &binding, &grounding);
@@ -208,6 +184,52 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
     }
 
     crate::run::report_run(&summary, &root)
+}
+
+/// Steps 2b and 3: pick the contract source, fetch the document under `digest`,
+/// and re-hash it.
+///
+/// Returns the process exit code of the refusal, because every failure here is a
+/// refusal before the first model call and they all print the same way.
+async fn bind_contract(
+    contract_file: Option<&Path>,
+    digest: &str,
+) -> Result<(Box<dyn ContractSource>, ContractBinding), i32> {
+    let source: Box<dyn ContractSource> = resolve_source(contract_file)
+        .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
+    println!(
+        "contract {digest} from {} ({})",
+        source.origin(),
+        source.label()
+    );
+    let binding = fetch_and_verify(source.as_ref(), digest)
+        .await
+        .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
+    println!(
+        "contract verified: {} re-hashed over its {}; tools {:?} (from {})",
+        binding.digest(),
+        binding.preimage().as_str(),
+        binding.allowlist(),
+        binding.allowlist_source().as_str(),
+    );
+    Ok((source, binding))
+}
+
+/// Read the declared grounding, and say on stdout what was quoted.
+///
+/// Grounding that cannot be read must not become a run that silently had none,
+/// so the refusal is returned as the process exit code — before the contract is
+/// used and before the first billable call.
+fn grounding_or_refuse(paths: &[PathBuf]) -> Result<Vec<GroundTruth>, i32> {
+    let grounding = ground_truth::load(paths)
+        .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
+    for item in &grounding {
+        println!(
+            "ground truth: {} ({}, {} bytes)",
+            item.path, item.sha256, item.bytes
+        );
+    }
+    Ok(grounding)
 }
 
 /// The prompt a contract-bound run is given.
