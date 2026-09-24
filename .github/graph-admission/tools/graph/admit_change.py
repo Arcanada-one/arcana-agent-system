@@ -2390,7 +2390,17 @@ def cashed_canary_ids(doc: dict, boundary_inferred: set[str]) -> set[str]:
     A2-242b. Without this, the gate refused this decision's OWN receipt — two `not_measured`
     verdicts, nothing resting on the row — for citing a `verify.py` canary output that is not a
     CanaryResult, while the validator called the same bytes conformant. A rule that punishes the
-    receipt which refused to overstate itself teaches authors to cite nothing instead."""
+    receipt which refused to overstate itself teaches authors to cite nothing instead.
+
+    A2-270. `boundary_inferred` is the set of boundary entities that still OWE a canary — the
+    caller subtracts the validly exempted ones, because an exemption, not the row, is what keeps
+    C12 quiet for those. The second half is «what the listing suppresses», never «what the listing
+    says»: `verify.py`'s `v-canary` row names every boundary entity it ran over even when it
+    consumed zero canary documents, and reading that list as a claim refused every caller receipt
+    of a code change under the 5fde907 bundle (measured on muneral#163). DEC-AUP-0037 R2 already
+    decides this side: coverage is what the DOCUMENT lists, and `covered` below is read from the
+    document either way — narrowing `cashed` changes which problems are REPORTED, never which
+    entities are covered."""
     vds = doc.get("verdicts") if isinstance(doc.get("verdicts"), list) else []
     cited = {vid for rec in vds if isinstance(rec, dict) and rec.get("verdict") == "verified"
              for vid in (rec.get("verifier_ids") or []) if isinstance(vid, str)}
@@ -2824,9 +2834,13 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                 hops = e.get("path") if isinstance(e.get("path"), list) else []
                 if any(isinstance(h, dict) and h.get("provenance") in ("inferred", "observed") for h in hops):
                     boundary_inferred.append(e["entity"])
+        # A2-270: a validly exempted boundary entity is kept quiet by its EXEMPTION (the
+        # `e not in valid_exempt` term below), so a canary row that merely lists it is spending
+        # nothing. Passing the full set made `verify.py`'s scope list a claim and turned every
+        # caller receipt into a C12 refusal.
         canary_entities, canary_problems = canary_coverage(
             repo, doc.get("verifiers") or [],
-            cashed=cashed_canary_ids(doc, set(boundary_inferred)), head=head)
+            cashed=cashed_canary_ids(doc, set(boundary_inferred) - set(valid_exempt)), head=head)
         for problem in canary_problems:
             add("C12", f"{Path(rec['path']).name}: {problem}")
         boundary = [e for e in boundary_inferred

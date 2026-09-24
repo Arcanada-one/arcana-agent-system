@@ -1,5 +1,5 @@
 {
- "bundle_digest": "sha256:001639caec869b1ffbf21e5aff7d244f79eb4526365c7a9c81ae93fa349b5af6",
+ "bundle_digest": "sha256:70d2937b7c4f32c3d385920cb702ba8a82aa11c913d79fc0f7565845e3364842",
  "files": [
   {
    "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
@@ -10,14 +10,14 @@
    "verified_by_the_job": false
   },
   {
-   "blob_oid": "2bb2ac9bddd2164d01b6280e8e7c6e3d4f092daf",
+   "blob_oid": "ba8456860fdcbe6632f47f351d7c94af67853894",
    "path": "tools/graph/admit_change.py",
-   "sha256": "sha256:a8a7a8a4c7dff627b80e423d0622a22a3bfda8bf051c0f39bc21751912df4142"
+   "sha256": "sha256:308d3fed90a5afa430cebea0759c3e4a9ad8281bc08113d5a2d27f8fb8f7951a"
   },
   {
-   "blob_oid": "ed7cd607645e7c5e5d7d80742cdeac4d0b5db380",
+   "blob_oid": "e0b0b71bec42fb4494eea5a27918808c309cc78c",
    "path": "tools/graph/schema_check.py",
-   "sha256": "sha256:1c7495e9e11b77639bfa82f2f4bcc22b3ef95eb64eee49958b6593471388059a"
+   "sha256": "sha256:f62e2bdd52ef1a1a754127a1a995e864f38c2a0289b7bdc6c9e76944d7d4dd76"
   },
   {
    "blob_oid": "0866d87a99b778507bad7d26804e01200e7cb0c1",
@@ -96,7 +96,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "5fde907e7be8799bbf50044177fbed3f60ac9661",
+ "program_ref": "a81a6d515b6865e0e2c75da28b6bd45d35fcbf04",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",
