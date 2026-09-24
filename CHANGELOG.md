@@ -51,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `contractDigest == sha256:769cc084…` equal to Muneral's, `tool_calls: 3`,
   6 dispatches, $0.0319; and the run before the catalogue fix as the negative
   control, `bash` denied by the `contract-allowlist` layer with the refusal in
-  `.arcana/denied/0001-turn2.json`. Both receipts are in `receipts/a2-272/`.
+  `.arcana/denied/0001-turn2.json`. Both receipts are in the pull request that landed this,
+  and on arcana-devs under `arc2/runs/A2-272/live/`.
 - **The `input` key applied twice is read as the call it is.** Pilot A2-240c
   (arcana `17cffe0`, 68 turns, 63 attempted calls, 13 denied) spent **7 of its
   13 denials** on one shape: a `bash` call whose command was already correct,
