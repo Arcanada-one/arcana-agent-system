@@ -3,9 +3,9 @@
   "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
   "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
-  "verdict": "paused_safe"
+  "verdict": "admitted"
  },
- "captured_at_utc": "2026-09-24T16:01:20Z",
+ "captured_at_utc": "2026-09-24T16:01:45Z",
  "change_set": {
   "base": "cf075e79efcb7de70efae8bf2b8a0e80b84d9a7d",
   "files": [
@@ -253,24 +253,6 @@
    },
    {
     "kind": "receipt",
-    "node_id": "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run1-denied.json",
-    "node_ids": [
-     "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run1-denied.json"
-    ],
-    "path": "receipts/a2-272/ReadinessReceipt-b1227e82-run1-denied.json",
-    "status": "A"
-   },
-   {
-    "kind": "receipt",
-    "node_id": "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run2-completed.json",
-    "node_ids": [
-     "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run2-completed.json"
-    ],
-    "path": "receipts/a2-272/ReadinessReceipt-b1227e82-run2-completed.json",
-    "status": "A"
-   },
-   {
-    "kind": "receipt",
     "node_id": "receipt:receipts/graph/change-admission-a2-272.json",
     "node_ids": [
      "receipt:receipts/graph/change-admission-a2-272.json"
@@ -279,7 +261,7 @@
     "status": "A"
    }
   ],
-  "head": "297f8c0da09a17481aff2e0edff469233f806218",
+  "head": "d4fc4df5fd36a2f5684e7b90a4654c6aa1281abe",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -294,12 +276,12 @@
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:13e768ae9d500cc3d19ec5a3f54ceccad572e73d46c7e83a8abaee547b5b2c3e",
-  "path": "/tmp/arcana-verify/verifier-out/graph-head-297f8c0da09a.json",
-  "source_commit": "297f8c0da09a17481aff2e0edff469233f806218",
+  "graph_digest": "sha256:5d54fd0aa30e50c7e1b436efaa5a0f72ead7000b1f5c85490fe212c7dea94605",
+  "path": "/tmp/arcana-verify/verifier-out/graph-head-d4fc4df5fd36.json",
+  "source_commit": "d4fc4df5fd36a2f5684e7b90a4654c6aa1281abe",
   "staleness": {
-   "checked_at_utc": "2026-09-24T16:01:23Z",
-   "checked_nodes": 341,
+   "checked_at_utc": "2026-09-24T16:01:48Z",
+   "checked_nodes": 339,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -18420,7 +18402,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.0.1"
  },
- "receipt_id": "car-verify-20260924T160120Z-297f8c0d",
+ "receipt_id": "car-verify-20260924T160145Z-d4fc4df5",
  "receipt_path": "receipts/graph/change-admission-a2-272.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -18468,8 +18450,6 @@
    "code_unit:crates/core/tests/contract_allowlist_layer.rs",
    "code_unit:crates/core/tests/contract_binding.rs",
    "document:CHANGELOG.md",
-   "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run1-denied.json",
-   "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run2-completed.json",
    "receipt:receipts/graph/change-admission-a2-272.json"
   ],
   "schema": "RevisionImpactSelection/v1",
@@ -18477,7 +18457,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-24T16:01:23Z",
+  "checked_at_utc": "2026-09-24T16:01:48Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -18486,7 +18466,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:c5413d51013feef2331e114306bbfb0d342beab0fefb4c40e97da1e7f17f1386"
+    "head": "sha256:192006894a0b1bea798f454ff19e44febbff62a75b86db4f5e914003e1316f4d"
    },
    "entity": "receipt:receipts/graph/change-admission-a2-272.json",
    "node_type": "receipt",
@@ -18500,7 +18480,7 @@
   }
  ],
  "tree": {
-  "commit": "297f8c0da09a17481aff2e0edff469233f806218",
+  "commit": "d4fc4df5fd36a2f5684e7b90a4654c6aa1281abe",
   "dirty": false
  },
  "verdicts": [
@@ -18703,16 +18683,6 @@
    "verifier_ids": [
     "v-doc-reference"
    ]
-  },
-  {
-   "entity": "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run1-denied.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "verdict": "not_measured"
-  },
-  {
-   "entity": "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run2-completed.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
-   "verdict": "not_measured"
   }
  ],
  "verifiers": [
@@ -18749,7 +18719,7 @@
    "id": "v-fitness",
    "kind": "fitness_rules",
    "output_ref": "/tmp/arcana-verify/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-09-24T16:01:24Z",
+   "started_at_utc": "2026-09-24T16:01:49Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -18762,7 +18732,7 @@
    "id": "v-doc-reference",
    "kind": "doc_reference",
    "output_ref": "/tmp/arcana-verify/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-09-24T16:01:24Z",
+   "started_at_utc": "2026-09-24T16:01:49Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
@@ -18856,13 +18826,11 @@
    "document:CHANGELOG.md": [
     "doc_reference"
    ],
-   "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run1-denied.json": [],
-   "receipt:receipts/a2-272/ReadinessReceipt-b1227e82-run2-completed.json": [],
    "receipt:receipts/graph/change-admission-a2-272.json": []
   },
   "seconds": {
-   "prepare": 1.27,
-   "total": 3.84,
+   "prepare": 1.22,
+   "total": 3.78,
    "verifiers": 0.01
   }
  },
