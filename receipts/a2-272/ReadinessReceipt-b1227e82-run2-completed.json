@@ -1,0 +1,53 @@
+{
+  "schema": "ReadinessReceipt/v1",
+  "measured_at": "2026-09-24T15:58:24.786301747Z",
+  "produced_by": "arcana 0.2.0 (97b2e02)",
+  "task_id": "b1227e82-da2b-4fee-aff6-b4ba8c6b01e3",
+  "contractDigest": "sha256:769cc084de15d0a02c002ad3178df0b752a720bdd28504b756e9b4dc46d4c1b6",
+  "contract": {
+    "source": "argana",
+    "origin": "http://127.0.0.1:18380/",
+    "digest_preimage": "canonical.bytes_b64",
+    "verified_against_live_endpoint": true,
+    "kc2_revision": "b3bf0da9a5f411a7379c43ffc35ff37227332270",
+    "kc2_snapshot": "sha256:192e2ce29dd00cf19dd682d948d6bd09f2fa8cc468ca44d2e6f1b2ff7abb563b",
+    "allowlist": [
+      "edit",
+      "grep",
+      "read",
+      "write"
+    ],
+    "allowlist_source": "default-no-shell"
+  },
+  "worktree": {
+    "path": "/home/dev/aup/arc2/runs/A2-272/work",
+    "sha": "cd1d69ed90c074ec4b3edb35f5dcaa60192ae4cc"
+  },
+  "mc_usage": {
+    "calls": 6,
+    "tokens_in": 62875,
+    "tokens_out": 1497,
+    "cost_usd_micros": 31916,
+    "selected_models": [
+      "grok-3-latest",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash"
+    ]
+  },
+  "tool_calls": {
+    "executed": 3,
+    "attempted": 3,
+    "denied": 0
+  },
+  "denials": [],
+  "run": {
+    "completed": true,
+    "reason": "Completed",
+    "turns": 6,
+    "compactions": 0,
+    "detail": null
+  }
+}
