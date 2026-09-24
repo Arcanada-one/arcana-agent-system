@@ -4,6 +4,7 @@
 
 pub mod agent_loop;
 pub mod connector;
+pub mod contract;
 pub mod cost;
 pub mod dispatch;
 pub mod execution;
