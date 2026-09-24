@@ -5,10 +5,19 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-09-24T21:54:09Z",
+ "captured_at_utc": "2026-09-24T22:06:03Z",
  "change_set": {
   "base": "e75a97bd788540ff539754a561340c371d469d6d",
   "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
    {
     "kind": "other",
     "node_id": "code_unit:crates/cli/src/learning_trace.rs",
@@ -73,7 +82,7 @@
     "status": "A"
    }
   ],
-  "head": "1e7d898f8930e119ea96bbe86c634fa07eee9a59",
+  "head": "d3c7ea96e0ab87adaf8d1c2bd96c6a1e290f4232",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -88,11 +97,11 @@
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:9a6aab42b9b872772564d626c19e85f729423eb496ebaee2284d8aed4ee7649d",
-  "path": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/graph-head-1e7d898f8930.json",
-  "source_commit": "1e7d898f8930e119ea96bbe86c634fa07eee9a59",
+  "graph_digest": "sha256:0b6d802ecdaea9a38735a7ed3df4aac4b4450a48d9c31b09b10bb57a3e06bdbc",
+  "path": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/graph-head-d3c7ea96e0ab.json",
+  "source_commit": "d3c7ea96e0ab87adaf8d1c2bd96c6a1e290f4232",
   "staleness": {
-   "checked_at_utc": "2026-09-24T21:54:12Z",
+   "checked_at_utc": "2026-09-24T22:06:06Z",
    "checked_nodes": 349,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -7998,7 +8007,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.0.1"
  },
- "receipt_id": "car-verify-20260924T215409Z-1e7d898f",
+ "receipt_id": "car-verify-20260924T220603Z-d3c7ea96",
  "receipt_path": "receipts/graph/change-admission-a2-287.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -8117,7 +8126,8 @@
    "deployable_unit:crates/mcp",
    "deployable_unit:crates/skills",
    "deployable_unit:crates/supervisor",
-   "deployable_unit:crates/tools"
+   "deployable_unit:crates/tools",
+   "document:CHANGELOG.md"
   ],
   "head": [
    "code_unit:crates/cli/src/bootstrap.rs",
@@ -8233,6 +8243,7 @@
    "deployable_unit:crates/skills",
    "deployable_unit:crates/supervisor",
    "deployable_unit:crates/tools",
+   "document:CHANGELOG.md",
    "receipt:receipts/graph/change-admission-a2-287.json"
   ],
   "schema": "RevisionImpactSelection/v1",
@@ -8240,7 +8251,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-24T21:54:12Z",
+  "checked_at_utc": "2026-09-24T22:06:06Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -8249,7 +8260,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:80beb4b777740c606d9625a712a157bb81281e1769e25c0463df23355c631cd9"
+    "head": "sha256:2377727297473b4412c782822f69fa876c3b43288b23bd125c20d518e7eeb39b"
    },
    "entity": "receipt:receipts/graph/change-admission-a2-287.json",
    "node_type": "receipt",
@@ -8263,7 +8274,7 @@
   }
  ],
  "tree": {
-  "commit": "1e7d898f8930e119ea96bbe86c634fa07eee9a59",
+  "commit": "d3c7ea96e0ab87adaf8d1c2bd96c6a1e290f4232",
   "dirty": false
  },
  "verdicts": [
@@ -9170,6 +9181,14 @@
    "verifier_ids": [
     "v-fitness"
    ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 3 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
   }
  ],
  "verifiers": [
@@ -9410,8 +9429,24 @@
    "id": "v-fitness",
    "kind": "fitness_rules",
    "output_ref": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/v-fitness.json",
-   "started_at_utc": "2026-09-24T21:54:13Z",
+   "started_at_utc": "2026-09-24T22:06:08Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md"
+   ],
+   "entity_verdicts": {
+    "document:CHANGELOG.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-287/verifier-aras/v-fitness-rebased.json/v-doc-reference.txt",
+   "started_at_utc": "2026-09-24T22:06:08Z",
+   "summary": "1 document(s), 0 failed"
   }
  ],
  "verify": {
@@ -9768,12 +9803,15 @@
    "deployable_unit:crates/tools": [
     "fitness_rules"
    ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
    "receipt:receipts/graph/change-admission-a2-287.json": []
   },
   "seconds": {
-   "prepare": 1.38,
-   "total": 4.37,
-   "verifiers": 0.0
+   "prepare": 1.37,
+   "total": 4.17,
+   "verifiers": 0.01
   }
  },
  "work_item": "A2-287"
