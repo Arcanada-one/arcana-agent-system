@@ -36,6 +36,8 @@ use arcana_core::agent_loop::RunOutput;
 use arcana_core::contract::{digest_of, ContractBinding};
 use arcana_core::hooks::audit::OUTCOME_SUCCESS;
 
+use crate::run::RunSummary;
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -152,6 +154,31 @@ pub struct AuditRef {
     pub slice_unbounded: bool,
 }
 
+/// The driver's own account of which tools ran, kept beside the log-derived
+/// one so the two can be compared.
+///
+/// [`Trace::capability_set`] is read out of the durable audit log; this is the
+/// in-process counter the agent loop increments at the one line where a tool
+/// executor returned. The two are independent derivations of the same set, and
+/// that is the entire point: this module's first live run reported
+/// `"capability_set": []` for a run that executed three tools, because the
+/// derivation matched a literal the log has never written. Every unit test
+/// agreed with the bug, since the fixtures carried the same literal. A second
+/// witness cannot be talked into the same mistake by the same author.
+///
+/// The two may legitimately differ in one direction: when the pre-run offset
+/// could not be measured the log slice is unbounded and may carry records from
+/// an earlier run, so the log-derived set can be the larger one. That is why a
+/// disagreement marks the trace negative rather than being silently repaired —
+/// which of the two is wrong is not knowable here.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityWitness {
+    /// Distinct tools the driver counted as executed, sorted.
+    pub driver_set: Vec<String>,
+    /// Whether it equals the log-derived [`Trace::capability_set`].
+    pub agrees: bool,
+}
+
 /// `LearningTraceCandidate/v1`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Trace {
@@ -166,6 +193,8 @@ pub struct Trace {
     pub contract: ContractRest,
     /// Distinct tools actually executed, sorted. The grouping key.
     pub capability_set: Vec<String>,
+    /// The independent second derivation of that set, and whether it agrees.
+    pub capability_witness: CapabilityWitness,
     pub steps: Vec<Step>,
     pub outcome: Outcome,
     pub cost: Cost,
@@ -193,17 +222,35 @@ pub struct Sources<'a> {
 
 /// Build the trace for a finished contract-bound run.
 #[must_use]
-pub fn build(sources: &Sources, out: &RunOutput, root: &Path) -> Trace {
-    let (completed, reason) = crate::run::verdict_of(out);
+pub fn build(sources: &Sources, summary: &RunSummary, root: &Path) -> Trace {
+    // The effect-aware verdict, not `reason.is_success()`. A run the model
+    // declared finished while leaving the working tree byte-for-byte unchanged
+    // is `NoEffect` (A2-285), and a trace that recorded it as a completed run
+    // would feed the promotion bar the precise class of evidence that card
+    // exists to reject.
+    let (completed, reason) = crate::run::verdict_of(summary);
+    let out = &summary.out;
     let slice_unbounded = sources.audit_offset.is_none();
     let records = read_audit_slice(&sources.audit_path, sources.audit_offset.unwrap_or(0));
     let steps = steps_from(&records, sources.binding);
     let capability_set = capability_set(&steps);
+    let capability_witness = witness_of(out, &capability_set);
     let negative_reason = if !completed {
         Some("run_did_not_complete".to_owned())
-    } else if capability_set.is_empty() {
-        Some("no_capability_executed".to_owned())
+    } else if !capability_witness.agrees {
+        Some("capability_witness_disagreed".to_owned())
     } else {
+        // There is deliberately no `capability_set.is_empty()` arm left here.
+        // It was written before this branch rebased onto A2-285, and that card
+        // made it unreachable: `verdict_of` already refuses a success-reason
+        // run with zero executed calls as `NoAction`, so `completed` implies
+        // `tool_calls > 0`; `tool_calls` and `executed_tools` are incremented
+        // on the one same line of the agent loop, so the driver's set is then
+        // non-empty; and a non-empty driver set against an empty derived one
+        // is a disagreement, caught one arm above. An arm no input can reach
+        // is a verdict that can never be wrong, which is not the same as being
+        // right. (Ingesters still handle the reason: a trace may come from an
+        // older writer, and `kc2_execution_learning.py` derives its own.)
         None
     };
     Trace {
@@ -224,6 +271,7 @@ pub fn build(sources: &Sources, out: &RunOutput, root: &Path) -> Trace {
             allowlist_source: sources.binding.allowlist_source().as_str().to_owned(),
         },
         capability_set,
+        capability_witness,
         outcome: Outcome {
             completed,
             reason,
@@ -356,6 +404,17 @@ fn capability_set(steps: &[Step]) -> Vec<String> {
     names
 }
 
+/// Derive the driver's witness and compare it with the log-derived set.
+fn witness_of(out: &RunOutput, capability_set: &[String]) -> CapabilityWitness {
+    let mut driver_set = out.executed_tools.clone();
+    driver_set.sort();
+    driver_set.dedup();
+    CapabilityWitness {
+        agrees: driver_set == capability_set,
+        driver_set,
+    }
+}
+
 /// Write `trace` to `<root>/receipts/LearningTrace-<trace_id>.json`.
 ///
 /// The timestamp is in the name because a work item may be run more than once
@@ -411,6 +470,10 @@ mod tests {
     use arcana_core::cost::CostSnapshot;
     use arcana_core::hooks::audit::OUTCOME_TOOL_ERROR;
 
+    use std::collections::BTreeMap;
+
+    use crate::effect::{Effect, EffectExpectation};
+
     fn binding(allow: &[&str]) -> ContractBinding {
         const BYTES: &str = "the contract under test";
         let digest = digest_of(BYTES.as_bytes());
@@ -425,24 +488,60 @@ mod tests {
         verify(&digest, &document).expect("the fixture contract verifies")
     }
 
-    fn out(reason: TerminalReason, executed: u32) -> RunOutput {
-        RunOutput {
-            reason,
-            final_text: None,
-            turns: 3,
-            tool_calls: executed,
-            tool_calls_attempted: executed,
-            tool_calls_denied: 0,
-            cost: CostSnapshot {
-                total_tokens_in: 10,
-                total_tokens_out: 2,
-                total_cost_usd_micros: 9045,
-                total_calls: 3,
+    /// A finished run, as the driver reports it.
+    ///
+    /// `executed` names the tools rather than counting them, because the
+    /// witness compares names: a fixture that could only say "one tool ran"
+    /// could not disagree with the log, and a check that cannot disagree is
+    /// not a check.
+    fn out(reason: TerminalReason, executed: &[&str]) -> RunSummary {
+        summary(reason, executed, tree_changed())
+    }
+
+    /// The effect of a run that did change the working tree. The neutral
+    /// fixture: these tests are about what the trace derives, not about
+    /// A2-285's effect judgement, which has its own test below.
+    fn tree_changed() -> Effect {
+        Effect {
+            expectation: EffectExpectation::Artefact.as_str(),
+            tree_digest_before: Some("a".repeat(64)),
+            tree_digest_after: Some("b".repeat(64)),
+            tree_changed: Some(true),
+            changed_paths: vec!["out.md".to_owned()],
+            changed_count: 1,
+            writes: vec!["write".to_owned()],
+            executed_tools: BTreeMap::new(),
+            claimed_paths: Vec::new(),
+            claimed_but_absent: Vec::new(),
+            claimed_but_unchanged: Vec::new(),
+        }
+    }
+
+    fn summary(reason: TerminalReason, executed: &[&str], effect: Effect) -> RunSummary {
+        let executed_tools: Vec<String> = executed.iter().map(|name| (*name).to_owned()).collect();
+        let calls = u32::try_from(executed_tools.len()).unwrap();
+        RunSummary {
+            out: RunOutput {
+                reason,
+                final_text: None,
+                turns: 3,
+                tool_calls: calls,
+                tool_calls_attempted: calls,
+                tool_calls_denied: 0,
+                executed_tools,
+                cost: CostSnapshot {
+                    total_tokens_in: 10,
+                    total_tokens_out: 2,
+                    total_cost_usd_micros: 9045,
+                    total_calls: 3,
+                },
+                selected_models: vec!["m".to_owned()],
+                first_dispatch_observation: None,
+                compactions: 0,
+                terminal_detail: None,
             },
-            selected_models: vec!["m".to_owned()],
-            first_dispatch_observation: None,
-            compactions: 0,
-            terminal_detail: None,
+            effect,
+            expectation: EffectExpectation::Artefact,
         }
     }
 
@@ -495,7 +594,11 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 2), dir.path());
+        let trace = build(
+            &src,
+            &out(TerminalReason::Completed, &["read", "write"]),
+            dir.path(),
+        );
 
         assert_eq!(trace.steps.len(), 2);
         assert_eq!(trace.steps[0].seq, 1);
@@ -516,7 +619,7 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        let trace = build(&src, &out(TerminalReason::Completed, &["read"]), dir.path());
 
         assert_eq!(trace.steps.len(), 2);
         assert_eq!(trace.steps[1].tool, "bash");
@@ -533,7 +636,7 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::MaxCostUsd, 0), dir.path());
+        let trace = build(&src, &out(TerminalReason::MaxCostUsd, &[]), dir.path());
 
         assert!(trace.outcome.negative);
         assert_eq!(
@@ -558,16 +661,26 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        // Empty, and not as a convenience: `OUTCOME_TOOL_ERROR` is written on
+        // the arm that returns `CapabilityError::Tool`, which leaves the agent
+        // loop before the line that pushes to `executed_tools`. Both witnesses
+        // say "nothing ran" for their own reasons.
+        let trace = build(&src, &out(TerminalReason::Completed, &[]), dir.path());
 
         assert_eq!(trace.steps.len(), 1);
         assert_eq!(trace.steps[0].outcome.as_deref(), Some(OUTCOME_TOOL_ERROR));
+        // The point of the test: the step is in the trace, and it is not a
+        // capability. A set derived from attempts would hold `read` here.
+        assert_eq!(trace.steps[0].tool, "read");
         assert!(trace.capability_set.is_empty());
+        assert!(trace.capability_witness.agrees);
         assert!(trace.outcome.negative);
         assert_eq!(
             trace.outcome.negative_reason.as_deref(),
-            Some("no_capability_executed")
+            Some("run_did_not_complete")
         );
+        // Because nothing executed, A2-285's rule reaches it first.
+        assert_eq!(trace.outcome.reason, "NoAction");
     }
 
     #[test]
@@ -584,7 +697,11 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, path, Some(offset), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        let trace = build(
+            &src,
+            &out(TerminalReason::Completed, &["write"]),
+            dir.path(),
+        );
 
         assert_eq!(trace.capability_set, vec!["write"]);
         assert_eq!(trace.audit.from_byte, offset);
@@ -599,7 +716,7 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, None, "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        let trace = build(&src, &out(TerminalReason::Completed, &["read"]), dir.path());
 
         assert!(trace.audit.slice_unbounded);
         assert_eq!(trace.audit.from_byte, 0);
@@ -613,7 +730,7 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        let trace = build(&src, &out(TerminalReason::Completed, &["read"]), dir.path());
 
         assert_eq!(trace.verification.state, NOT_MEASURED);
         assert!(trace.verification.verdicts.is_empty());
@@ -629,7 +746,7 @@ mod tests {
         let receipt = receipts.join("ReadinessReceipt-task-1.json");
         std::fs::write(&receipt, b"{\"schema\":\"ReadinessReceipt/v1\"}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        let trace = build(&src, &out(TerminalReason::Completed, &["read"]), dir.path());
 
         assert_eq!(trace.receipt.path, "receipts/ReadinessReceipt-task-1.json");
         assert_eq!(
@@ -713,10 +830,108 @@ mod tests {
         let receipt = dir.path().join("r.json");
         std::fs::write(&receipt, b"{}").unwrap();
         let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
-        let trace = build(&src, &out(TerminalReason::Completed, 1), dir.path());
+        let trace = build(&src, &out(TerminalReason::Completed, &["read"]), dir.path());
 
         assert_eq!(trace.capability_set, vec!["read"]);
         assert_eq!(trace.steps[0].outcome.as_deref(), Some(OUTCOME_SUCCESS));
+        assert!(!trace.outcome.negative);
+    }
+
+    /// A2-285's verdict, not the driver's. The model ended the run happily,
+    /// `read` executed, and the working tree is byte-for-byte what it was.
+    /// Judging this trace by `reason.is_success()` would file a `NoEffect` run
+    /// as a completed one and offer it to the promotion bar as evidence — the
+    /// one class of run that card exists to refuse.
+    #[test]
+    fn a_run_that_changed_nothing_is_negative_however_it_ended() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(dir.path(), &[DISPATCH, READ_OK, READ_RESULT]);
+        let bind = binding(&["read"]);
+        let receipt = dir.path().join("r.json");
+        std::fs::write(&receipt, b"{}").unwrap();
+        let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
+
+        let mut effect = tree_changed();
+        effect.tree_digest_after = effect.tree_digest_before.clone();
+        effect.tree_changed = Some(false);
+        effect.changed_paths = Vec::new();
+        effect.changed_count = 0;
+        let run = summary(TerminalReason::Completed, &["read"], effect);
+
+        let trace = build(&src, &run, dir.path());
+
+        // The capability genuinely executed, so the set is not the thing that
+        // makes this negative — the verdict is.
+        assert_eq!(trace.capability_set, vec!["read"]);
+        assert!(trace.outcome.negative);
+        assert_eq!(trace.outcome.reason, "NoEffect");
+        assert_eq!(
+            trace.outcome.negative_reason.as_deref(),
+            Some("run_did_not_complete")
+        );
+    }
+
+    /// The defect this module shipped with, made detectable.
+    ///
+    /// The first live run executed three tools and the trace said
+    /// `"capability_set": []`, because the derivation compared against a token
+    /// the audit log has never written. Every unit test passed: the fixtures
+    /// carried the same wrong token. What was missing was not a better test of
+    /// the derivation but a SECOND derivation — here the driver's own counter,
+    /// which reached its value without parsing anything.
+    ///
+    /// Note what the trace does NOT do: pick a winner. It cannot know which
+    /// witness is wrong, so it records both and refuses to be promotable.
+    #[test]
+    fn two_witnesses_that_disagree_make_the_trace_negative() {
+        let dir = tempfile::tempdir().unwrap();
+        // A log the derivation reads as empty — the shape it took when the
+        // outcome literal did not match.
+        let log = audit(dir.path(), &[DISPATCH]);
+        let bind = binding(&["read", "grep"]);
+        let receipt = dir.path().join("r.json");
+        std::fs::write(&receipt, b"{}").unwrap();
+        let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
+
+        let trace = build(
+            &src,
+            &out(TerminalReason::Completed, &["read", "grep", "read"]),
+            dir.path(),
+        );
+
+        assert!(trace.capability_set.is_empty());
+        assert_eq!(trace.capability_witness.driver_set, vec!["grep", "read"]);
+        assert!(!trace.capability_witness.agrees);
+        assert!(trace.outcome.negative);
+        // Named for what it is. `no_capability_executed` would be the reading
+        // the bug gave, and it is a plausible sentence about a broken run.
+        assert_eq!(
+            trace.outcome.negative_reason.as_deref(),
+            Some("capability_witness_disagreed")
+        );
+    }
+
+    /// The agreeing case, so the check above is not trivially always-red.
+    #[test]
+    fn the_two_witnesses_agree_on_a_healthy_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(
+            dir.path(),
+            &[DISPATCH, READ_OK, READ_RESULT, WRITE_OK, WRITE_RESULT],
+        );
+        let bind = binding(&["read", "write"]);
+        let receipt = dir.path().join("r.json");
+        std::fs::write(&receipt, b"{}").unwrap();
+        let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
+
+        let trace = build(
+            &src,
+            &out(TerminalReason::Completed, &["write", "read"]),
+            dir.path(),
+        );
+
+        assert!(trace.capability_witness.agrees);
+        assert_eq!(trace.capability_witness.driver_set, vec!["read", "write"]);
         assert!(!trace.outcome.negative);
     }
 
@@ -734,12 +949,16 @@ mod tests {
 
         let a = write(
             dir.path(),
-            &build(&first, &out(TerminalReason::Completed, 1), dir.path()),
+            &build(
+                &first,
+                &out(TerminalReason::Completed, &["read"]),
+                dir.path(),
+            ),
         )
         .unwrap();
         let b = write(
             dir.path(),
-            &build(&second, &out(TerminalReason::MaxCostUsd, 0), dir.path()),
+            &build(&second, &out(TerminalReason::MaxCostUsd, &[]), dir.path()),
         )
         .unwrap();
 
