@@ -21,6 +21,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `arcana` DeepSeek-lane pilot (A2-204c5); CHANGELOG entry drafted by A2-231.
 
 ### Fixed
+- **A turn the Model Connector is still computing is waited out, not
+  abandoned.** Pilot A2-240 sent 144k input tokens on turn 24; Cloudflare cut
+  the socket at its ~100 s origin timeout with HTTP 524 while the Connector
+  went on producing the answer. `arcana` did the expensive part right — it
+  re-dispatched under the same `Idempotency-Key`, so nothing was charged twice
+  — and then threw the answer away: `ConnectorFatal … after 6 attempt(s) over
+  41s`, on a turn that needed more than a hundred.
+
+  Two bounds were wrong, and both are fixed. The patient in-flight wait **shared
+  its counter with the edge-retry schedule**, so the single 524 spent "1 of 5"
+  and the wait for the answer that 524 interrupted started at "2 of 5"; it now
+  has its own counter, and the edge budget is untouched by it. And the wait was
+  **a count of sleeps** (five, ≤60 s nominal, shortened to 41 s by jitter) with
+  no relation to how long the request may legitimately run; it is now a
+  deadline — the connector's own per-dispatch budget
+  (`ModelConnector::upstream_dispatch_budget`, for the real client the
+  `ExecuteRequest.timeout` we send widened by Model Connector's own attempts and
+  queue) plus a 30 s settle margin, measured from the moment the request FIRST
+  left this client. Inside it the loop polls on a capped 2/4/8/15 s backoff.
+
+  Waiting is also the cheap side, and that is read off the server rather than
+  assumed: an intent stays `held` — and therefore replayable rather than
+  re-charged — for 30 minutes (`BILLING_HOLD_TTL_MS`, `src/billing/intent.ts:36`
+  on model-connector `3911773`), swept hourly, so every wait this schedule can
+  produce is far inside the window in which a retry is free.
+
+  A poll no longer spends one of the run's `max_turns` either: it asks no
+  question, Model Connector charges nothing for the 409, and counting them would
+  have had a wait span the whole default budget of 24 attempts — trading
+  `ConnectorFatal` for `MaxTurns` on the same abandoned, already-paid-for
+  answer. `RunOutput::turns` still reports every attempt, polls included. And
+  the terminal verdict now names both budgets, so an operator cannot read it as
+  "raise the retry limit" when it is the clock that ran out.
+  `crates/core/tests/driver_idempotent_turn.rs` reproduces A2-240 on a virtual
+  clock: 100 s of upstream work, one provider call, the stored answer replayed.
+
 - **A re-dispatched turn is no longer paid for twice.** A2-230 gave a turn cut
   off by the network edge up to five re-dispatches and, in the same breath,
   measured what each of them cost: Model Connector settles the charge in the
