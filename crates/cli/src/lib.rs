@@ -10,6 +10,7 @@ pub mod effect;
 pub mod http_error;
 pub mod interrupt;
 pub mod kb_read;
+pub mod learning_trace;
 pub mod login;
 pub mod models;
 pub mod out;

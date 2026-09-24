@@ -129,6 +129,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receipt is a claim about the change that carries it.
 
 ### Added
+- **Every executed work item now leaves a blueprint candidate.** A
+  `--work-item` run writes a `LearningTraceCandidate/v1` next to its receipt:
+  the contract digest it ran under, the ordered steps the audit log records it
+  actually took with the decision and outcome of each, the distinct tools that
+  executed, cost, the receipt linked by digest, and the verification state.
+  KC2's upward half — `LearningTrace` → `PromotionProposal` → `Blueprint` — had
+  no producer at all: all five upward records in the knowledge store were
+  hand-authored, none came out of an executed task.
+
+  Derived, never narrated. Every field comes from the audit log, the contract
+  binding and the driver's counters; there is no model call and the model's own
+  final text is not read. A trace assembled by asking the model what it had
+  done would be the model's account of itself, which is the one kind of
+  evidence a promotion may not rest on. A run that was refused, ran out of
+  budget or changed nothing writes a trace too, marked `negative` — a
+  capability set that succeeds twice and fails nine times is not a blueprint,
+  and that is only visible if the nine were kept. Verification is reported as
+  `not_measured` by name rather than as an empty list of verdicts, so a reader
+  cannot take "nothing ran" for "nothing was wrong".
+
+  The grouping key is the capability set: the distinct tools the run ACTUALLY
+  executed, not the contract's allowlist. It is derived twice, independently —
+  once by reading the durable audit log, once from the driver's own
+  `executed_tools` — and a disagreement marks the trace negative rather than
+  picking a winner. The first live run of this code reported an empty
+  capability set for a run that had executed three tools, because the
+  derivation matched an outcome literal the log has never written, and every
+  unit test agreed with it: the fixtures carried the same wrong literal. The
+  second witness is what that defect bought.
 - **`arcana run --work-item <id>` — one Muneral work item, executed under the
   KC2 contract it is bound to, and a `ReadinessReceipt/v1` that says so.** The
   command is four steps and the first three are refusals. Read the work item

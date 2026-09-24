@@ -225,7 +225,12 @@ impl CapabilityExecutor {
         {
             Ok(output) => output,
             Err(err) => {
-                self.audit_result(prepared.id, tool_name, "tool_error", None)?;
+                self.audit_result(
+                    prepared.id,
+                    tool_name,
+                    crate::hooks::audit::OUTCOME_TOOL_ERROR,
+                    None,
+                )?;
                 return Err(CapabilityError::Tool(err));
             }
         };
@@ -236,7 +241,12 @@ impl CapabilityExecutor {
                 return Err(CapabilityError::HookAborted);
             }
         };
-        self.audit_result(prepared.id, tool_name, "success", Some(&output))?;
+        self.audit_result(
+            prepared.id,
+            tool_name,
+            crate::hooks::audit::OUTCOME_SUCCESS,
+            Some(&output),
+        )?;
         Ok(CapabilityOutput {
             output,
             injected,

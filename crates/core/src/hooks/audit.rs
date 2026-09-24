@@ -26,6 +26,20 @@ use time::OffsetDateTime;
 use crate::tool::ToolOutput;
 
 const AUDIT_VERSION: u8 = 2;
+
+/// The `outcome` a result record carries when the tool ran and returned.
+///
+/// Public and used by the one writer ([`crate::execution::CapabilityExecutor`])
+/// so no reader has to guess the token. A2-287's first live run derived its
+/// capability set by matching the literal `"ok"` — a string this log has never
+/// contained — and reported a run that executed three tools as having
+/// exercised no capability at all. The fixtures agreed with the code and
+/// neither agreed with the runtime, which is what a shared constant makes
+/// impossible.
+pub const OUTCOME_SUCCESS: &str = "success";
+
+/// The `outcome` when the tool was dispatched and failed inside itself.
+pub const OUTCOME_TOOL_ERROR: &str = "tool_error";
 const HASH_HEX_PREFIX: usize = 16;
 
 /// Construction and durable-write failures for [`AuditLog`].
