@@ -2437,6 +2437,34 @@ No other markup is executed, whatever your training says. \
                     None,
                 ));
             }
+            // Not a transient failure, whatever the envelope's `retryable`
+            // flag says (A2-290). The upstream was aborted for spending the
+            // WHOLE per-attempt budget this client itself stated, and a
+            // re-dispatch of this turn sends byte-identical bytes under that
+            // identical budget — the same experiment, not a second chance.
+            //
+            // Stopping here rather than after the class's re-dispatches is the
+            // money decision. Model Connector reports an aborted attempt as
+            // `usage: 0` while the provider has already been fed the whole
+            // prompt, so `max_cost_usd` cannot see this class at all: measured
+            // on A2-278 run 5 (deepseek-v4-pro, a ~37 000-token turn), the run
+            // ended `ConnectorFatal` after 15 attempts having spent two more
+            // full 120 s budgets of provider compute that the cost tracker
+            // recorded as $0. The verdict names the budget and the model
+            // because those are the two things an operator changes.
+            if error.is_upstream_attempt_timeout() {
+                let turn_attempts = state.turn_attempts();
+                state.terminal_detail = Some(connector_fatal_detail(
+                    error,
+                    turn_attempts,
+                    started.elapsed(),
+                    FatalCause::UpstreamAttemptBudgetExhausted {
+                        attempt_budget: self.connector.upstream_attempt_budget(),
+                        model: dispatch.model,
+                    },
+                ));
+                return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
+            }
             let class = RetryClass::of(error);
             let limit = if class.is_patient() {
                 self.config.edge_retry_limit
@@ -3324,7 +3352,7 @@ fn plan_retry_pause(requested: Duration, spent: Duration, budget: Duration) -> O
 
 /// Why the loop stopped re-dispatching.
 #[derive(Debug, Clone, Copy)]
-enum FatalCause {
+enum FatalCause<'a> {
     /// The same request would fail the same way — a 404 connector id, a bad
     /// key, an envelope the upstream marked non-retryable.
     NotRetryable,
@@ -3332,6 +3360,16 @@ enum FatalCause {
     RetriesSpent { limit: u32, class: RetryClass },
     /// The turn has slept as long as it may.
     PauseBudgetSpent { budget: Duration },
+    /// The upstream attempt was aborted for consuming the whole per-attempt
+    /// budget this client sent, and a re-dispatch could only repeat it
+    /// (A2-290).
+    UpstreamAttemptBudgetExhausted {
+        /// What one attempt was allowed, when the connector states it.
+        attempt_budget: Option<Duration>,
+        /// The model the turn was dispatched to — half of what an operator
+        /// has to change, the other half being the budget.
+        model: &'a str,
+    },
     /// The answer was still being produced upstream when the time that
     /// request may legitimately take ran out (A2-241).
     InFlightWaitSpent {
@@ -3361,7 +3399,7 @@ fn connector_fatal_detail(
     error: &ConnectorError,
     attempts: u32,
     elapsed: Duration,
-    cause: FatalCause,
+    cause: FatalCause<'_>,
 ) -> String {
     let why = match cause {
         FatalCause::NotRetryable => {
@@ -3375,6 +3413,27 @@ fn connector_fatal_detail(
             "the {}s this turn may spend waiting between re-dispatches are spent",
             budget.as_secs()
         ),
+        FatalCause::UpstreamAttemptBudgetExhausted {
+            attempt_budget,
+            model,
+        } => {
+            let budget = attempt_budget.map_or_else(
+                || "the per-attempt budget".to_owned(),
+                |budget| {
+                    format!(
+                        "the {}s this client allows one upstream attempt",
+                        budget.as_secs()
+                    )
+                },
+            );
+            format!(
+                "not retryable — the upstream attempt was aborted for spending {budget}, and a \
+                 re-dispatch would send the same prompt to {model} under the same budget. Raise \
+                 the per-attempt budget or dispatch to a faster model; re-running it as it \
+                 stands only buys another aborted attempt, which the provider charges for and \
+                 Model Connector reports as usage 0"
+            )
+        }
         // Both budgets, deliberately. The one that ran out is a clock, and an
         // operator who reads "re-dispatches are spent" would go looking for a
         // limit to raise that has nothing to do with why the turn was

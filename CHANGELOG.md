@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A run no longer re-dispatches to a model that cannot answer inside its
+  budget.** Model Connector aborts the provider call it makes for us when that
+  call has consumed the whole per-attempt budget THIS client sent
+  (`ExecuteRequest.timeout`), and reports it as `status: "timeout"` with
+  `retryable: true` — its action map marks every `timeout` that way
+  (`connector.interface.ts:115`). The loop read only the flag, so the class
+  landed in "transient connector failure" and bought two more flat
+  re-dispatches of byte-identical bytes under the identical budget.
+
+  Measured on pilot A2-278 run 5 (2026-09-24, live): `deepseek-v4-pro`, a
+  ~37 000-token turn, 120 s per attempt. The run ended `ConnectorFatal` after
+  **15 attempts, 33 turns and no answer**, having spent $0.086584 on the three
+  dispatches that did return — and two further full 120 s budgets of provider
+  compute that nothing bounded, because Model Connector reports an aborted
+  attempt as `usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }`
+  (`base-api.connector.ts:503-511`) although the provider has already been fed
+  the whole prompt. `--max-cost-usd` is computed from that usage, so it cannot
+  see this class at all.
+
+  An exhausted attempt budget is now terminal on the FIRST refusal, and the
+  verdict names the two things an operator changes: *"the upstream attempt was
+  aborted for spending the 120s this client allows one upstream attempt, and a
+  re-dispatch would send the same prompt to deepseek-v4-pro under the same
+  budget. Raise the per-attempt budget or dispatch to a faster model…"*.
+
+  Narrow on purpose: `queue_timeout` (the request never left Model Connector's
+  queue, so nothing was computed and nothing was charged) and a client-side
+  socket timeout keep their re-dispatches, and a regression test asserts it.
 - **`arcana run` said "Completed" for work it never wrote.** The done-marker's
   `completed` was decided by the terminal reason and the number of tool calls
   that executed, and a count cannot tell reading from writing. Pilot A2-278
