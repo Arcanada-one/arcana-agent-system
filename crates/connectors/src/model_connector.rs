@@ -483,6 +483,18 @@ impl ModelConnector for ModelConnectorClient {
         Some(self.http_wait)
     }
 
+    /// The `timeout` this client puts on the wire for ONE upstream attempt —
+    /// the number Model Connector hands to `AbortSignal.timeout`, and so the
+    /// number an attempt aborted for exhausting it ran out of.
+    ///
+    /// [`Self::upstream_dispatch_budget`] is the whole request and is the
+    /// wrong figure to quote in that verdict: it already multiplies this one
+    /// by the server's attempts, and an operator told "the model ran out of
+    /// 340 s" would go looking for a budget nothing here sets.
+    fn upstream_attempt_budget(&self) -> Option<Duration> {
+        Some(self.request_timeout)
+    }
+
     async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
         let url = self.execute_url()?;
         let mut req = req;
