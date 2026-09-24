@@ -66,6 +66,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is handed are both taken from the complete text.
   (`crates/core/tests/driver_reply_intake_cap.rs`.)
 
+- **Waiting for an answer already bought no longer costs a prompt build per
+  poll.** A2-241 made the loop wait out a turn Model Connector is still
+  computing, and left every poll re-entering the whole of `step()`: the prompt
+  was re-serialized from the history, a block was appended to
+  `--save-transcript` and a `dispatch` record to `audit.log` — for a request
+  that is not being re-asked but collected. Measured on the A2-240 fixture with
+  a turn of 80 000 characters: **13 prompt builds and 1 040 782 bytes of
+  transcript for one waited turn**, and the live pilot's turn was larger still.
+
+  The wait now owns its re-dispatches. It keeps the exact bytes the dispatch
+  built and re-sends them under the same `Idempotency-Key`, so one waited turn
+  is one prompt build, one transcript block and one `dispatch` record whatever
+  the poll count. Everything an operator can observe is unchanged — the same
+  deadline, the same key, the same poll schedule, the same two verdict lines,
+  and `RunOutput::turns` still counts every poll. Re-sending what was sent is
+  also the stricter reading of the key: a replay only holds while the payload is
+  identical, and a rebuilt prompt is only *probably* identical.
+
+  `crates/core/tests/driver_idempotent_turn.rs` counts the builds where they
+  land — `===== dispatch` blocks in the transcript and `dispatch` events in the
+  audit log — and re-introducing the per-poll build turns it red with exactly
+  the numbers above (A2-245).
+
 - **A complete tool call followed by one surplus `}` is that call, not
   garbage.** Turn 62 of pilot A2-240b opened this runner's own
   ```` ```tool_call ```` fence and wrote a whole `write` call — right tool,
@@ -96,6 +119,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only "not valid JSON".
 
 ### Tests
+- **Every waiting test now runs under a ceiling, so an unbounded wait fails in
+  seconds instead of running until the CI job is killed.** A mutation of the
+  A2-241 fix that restarts the in-flight clock on every same-key re-dispatch —
+  an unbounded wait, the precise defect the deadline exists to prevent — turned
+  no test red: `driver_idempotent_turn` ran for over thirty minutes and had to
+  be killed, because on a paused clock an unbounded wait is an infinitely fast
+  infinite loop. Every run in that file now goes through a
+  `tokio::time::timeout` at twenty-five times the deadline the connector's own
+  stated dispatch budget implies, and the failure message names that deadline.
+  The same mutant is now two red tests in 0.05 s (A2-245).
+
 - **Exactly which permission denials may be retried is now pinned, name by
   name.** `recoverable_denial_layers_are_exactly_pinned`
   (`crates/core/src/agent_loop.rs`) writes down every layer the cascade or the

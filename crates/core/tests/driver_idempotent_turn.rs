@@ -29,8 +29,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use arcana_core::agent_loop::{
-    Driver, DriverConfig, RunOutput, TerminalReason, DEFAULT_CONNECTOR_RETRY_LIMIT,
-    DEFAULT_EDGE_RETRY_LIMIT,
+    Driver, DriverConfig, RunOutput, TerminalReason, ASSUMED_UPSTREAM_DISPATCH_BUDGET,
+    DEFAULT_CONNECTOR_RETRY_LIMIT, DEFAULT_EDGE_RETRY_LIMIT, IN_FLIGHT_SETTLE_MARGIN,
 };
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, IdempotencyKey, ModelConnector,
@@ -135,7 +135,49 @@ fn config() -> DriverConfig {
     config
 }
 
+/// How far past its own deadline a waiting run is allowed to go before the
+/// test calls it unbounded, as a multiple of that deadline.
+///
+/// Twenty-five, which is an absurd number of deadlines and that is the point:
+/// it can only be reached by a wait that is not bounded at all, so the ceiling
+/// never has to be tuned against jitter or a schedule change.
+const WAIT_CEILING_DEADLINES: u32 = 25;
+
+/// Drive the task, under a ceiling on how long the run may take.
+///
+/// **Every waiting test in this file goes through here**, and that is A2-245's
+/// second half. Control mutated A2-241's fix so that the in-flight clock
+/// restarted on every same-key re-dispatch — an unbounded wait, the exact
+/// defect the deadline exists to prevent — and no test went red:
+/// `driver_idempotent_turn` ran for over thirty minutes and was killed, because
+/// on a paused clock an unbounded wait is an infinitely fast infinite loop. A
+/// defect that removes a bound has to be a red test in seconds, not a CI job
+/// that runs until the runner's limit.
+///
+/// The ceiling is virtual time, so it costs no wall-clock; it is derived from
+/// the connector's own stated dispatch budget, so the failure message names the
+/// deadline the run was supposed to stop at rather than an arbitrary constant.
+/// It bounds a wait that SLEEPS — which every schedule in this loop does. A
+/// mutant that polled without sleeping at all would spin the virtual clock in
+/// place, and only a wall-clock bound outside the runtime could catch that.
 async fn drive(connector: &dyn ModelConnector, config: DriverConfig) -> RunOutput {
+    let deadline = connector
+        .upstream_dispatch_budget()
+        .unwrap_or(ASSUMED_UPSTREAM_DISPATCH_BUDGET)
+        .saturating_add(IN_FLIGHT_SETTLE_MARGIN);
+    let ceiling = deadline.saturating_mul(WAIT_CEILING_DEADLINES);
+    let Ok(out) = tokio::time::timeout(ceiling, drive_unbounded(connector, config)).await else {
+        panic!(
+            "the run was still going after {ceiling:?} of virtual time. Its in-flight wait is \
+             bounded by {deadline:?} — the connector's stated dispatch budget plus the \
+             {IN_FLIGHT_SETTLE_MARGIN:?} settle margin — so it must end far inside this \
+             ceiling. A wait that outlives its own deadline is unbounded."
+        )
+    };
+    out
+}
+
+async fn drive_unbounded(connector: &dyn ModelConnector, config: DriverConfig) -> RunOutput {
     let (executor, _audit_dir) = common::test_executor(
         ToolDispatcher::new(),
         common::allow_cascade(),
@@ -222,7 +264,7 @@ async fn an_in_flight_conflict_is_waited_out_on_the_patient_budget() {
 ///
 /// It should never fire — `TurnIntentSeries::stamp` compares the payload and
 /// mints a new key before the server has to — so this measures the backstop.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_key_the_server_says_belongs_to_another_request_is_replaced_not_repeated() {
     let connector = KeyRecordingConnector::new(1, key_reused);
     let out = drive(&connector, config()).await;
@@ -243,7 +285,7 @@ async fn a_key_the_server_says_belongs_to_another_request_is_replaced_not_repeat
 
 /// And the replacement is bounded like everything else: a server that refuses
 /// every key does not get an unbounded supply of them.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn replacing_a_reused_key_is_bounded_by_the_ordinary_retry_budget() {
     let connector = KeyRecordingConnector::new(usize::MAX, key_reused);
     let out = drive(&connector, config()).await;
@@ -260,7 +302,7 @@ async fn replacing_a_reused_key_is_bounded_by_the_ordinary_retry_budget() {
 /// buy a second execution of work already bought, so the run stops — and the
 /// verdict has to say the money is spent, or an operator reads a dead turn as
 /// a turn that never happened.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_answer_too_large_to_replay_stops_the_run_and_says_it_was_already_charged() {
     let connector = KeyRecordingConnector::new(usize::MAX, replay_unavailable);
     let out = drive(&connector, config()).await;
@@ -529,5 +571,149 @@ async fn waiting_out_an_in_flight_turn_does_not_spend_the_edge_budget() {
         "the in-flight wait fitted inside the edge budget, so the two are still \
          sharing it: {} conflict(s)",
         connector.conflicts()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A2-245: what one waited turn costs the client that waits.
+
+/// A task big enough that rebuilding its prompt is a cost worth counting.
+///
+/// 80 000 characters — just under the 90 000-unit working ceiling, so the
+/// guard leaves it alone and every dispatch carries the whole of it. The live
+/// turn this comes from (A2-240, turn 24) was 144k tokens, which is larger
+/// than this loop will now send at all: the point of the number is that it is
+/// the biggest prompt a real run can rebuild, not that it matches the pilot.
+fn bulky_task() -> String {
+    "sift the evidence and report. ".repeat(80_000 / 30)
+}
+
+/// What one run wrote while it waited.
+struct WaitCost {
+    out: RunOutput,
+    /// Prompt builds, counted where they land: one `===== dispatch` block per
+    /// call to `compose_request`.
+    prompt_builds: usize,
+    /// Bytes the wait added to the operator's transcript file.
+    transcript_bytes: u64,
+    /// `dispatch` events in the audit log — the other per-build record.
+    dispatch_records: usize,
+    /// Polls the upstream answered `idempotency_conflict`.
+    conflicts: usize,
+}
+
+/// Run the waiting fixture with both artefacts a dispatch writes to disk kept,
+/// and count what one waited turn cost.
+async fn measure_waited_turn(computing_for: Duration, budget: Duration) -> WaitCost {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let transcript = dir.path().join("transcript.txt");
+    let audit = arcana_core::hooks::audit::AuditLog::new(dir.path()).expect("audit log");
+    let executor = arcana_core::execution::CapabilityExecutor::new(
+        ToolDispatcher::new(),
+        common::allow_cascade(),
+        HookChain::new(),
+        audit,
+    );
+    let connector = CutThenStillComputing::new(computing_for, Some(budget));
+    let mut config = waiting_config();
+    config.transcript_path = Some(transcript.clone());
+
+    let deadline = budget.saturating_add(IN_FLIGHT_SETTLE_MARGIN);
+    let ceiling = deadline.saturating_mul(WAIT_CEILING_DEADLINES);
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        Arc::new(CostTracker::new()),
+        CancellationToken::new(),
+        config,
+    );
+    let Ok(out) = tokio::time::timeout(ceiling, driver.run(&bulky_task())).await else {
+        panic!(
+            "the run was still going after {ceiling:?} of virtual time, against a \
+             {deadline:?} deadline — the wait is unbounded"
+        )
+    };
+
+    let written = std::fs::read_to_string(&transcript).expect("transcript");
+    let audit_log = std::fs::read_to_string(dir.path().join("audit.log")).expect("audit.log");
+    WaitCost {
+        prompt_builds: written.matches("===== dispatch ").count(),
+        transcript_bytes: u64::try_from(written.len()).unwrap(),
+        dispatch_records: audit_log
+            .lines()
+            .filter(|line| line.contains("\"dispatch\""))
+            .count(),
+        conflicts: connector.conflicts(),
+        out,
+    }
+}
+
+/// One waited turn = one prompt build and one transcript record.
+///
+/// A2-241 made the loop wait, and left each poll going through the whole of
+/// `step()`: prompt rebuilt from the history, block appended to the
+/// transcript, `dispatch` event appended to the audit log — for a request the
+/// client is not re-asking but merely collecting. Measured here before the fix
+/// on this very fixture: **13 prompt builds and 1 040 782 bytes of transcript**
+/// for a single turn of 80 000 characters waited out over 100 s (11 polls; the
+/// schedule is jittered, so a run lands between 11 and 13 polls).
+///
+/// Two builds, not one, is the honest expectation: the first dispatch, and the
+/// one re-dispatch the 524 earned. What must not scale is the wait — the
+/// twenty-odd polls between them.
+#[tokio::test(start_paused = true)]
+async fn one_waited_turn_builds_one_prompt_per_dispatch_and_none_per_poll() {
+    let cost = measure_waited_turn(Duration::from_secs(100), Duration::from_secs(110)).await;
+
+    assert_eq!(
+        cost.out.reason,
+        TerminalReason::Completed,
+        "{:?}",
+        cost.out.terminal_detail
+    );
+    assert!(
+        cost.conflicts >= 8,
+        "the fixture did not exercise a long wait, so it measures nothing: {} conflict(s)",
+        cost.conflicts
+    );
+    assert_eq!(
+        cost.prompt_builds, 2,
+        "one build for the first dispatch and one for the re-dispatch the 524 earned — the \
+         {} poll(s) in between must re-send the request they are waiting on, not rebuild it \
+         ({} prompt build(s), {} bytes of transcript)",
+        cost.conflicts, cost.prompt_builds, cost.transcript_bytes
+    );
+    assert_eq!(
+        cost.dispatch_records, 2,
+        "a poll appended a `dispatch` record: {} record(s) for 2 dispatches",
+        cost.dispatch_records
+    );
+    // The transcript is the operator's file and the bigger of the two: a
+    // per-poll block turns one 80 kB turn into megabytes.
+    assert!(
+        cost.transcript_bytes < 300_000,
+        "the wait grew the transcript past two dispatches' worth: {} bytes",
+        cost.transcript_bytes
+    );
+}
+
+/// The polls still reach the upstream, and still under the same key — the
+/// saving is the local work, not the asking.
+#[tokio::test(start_paused = true)]
+async fn a_wait_that_costs_no_prompt_build_still_polls_the_upstream() {
+    let cost = measure_waited_turn(Duration::from_secs(100), Duration::from_secs(110)).await;
+
+    assert_eq!(cost.out.reason, TerminalReason::Completed);
+    assert_eq!(
+        cost.out.final_text.as_deref(),
+        Some("the answer this turn had already paid for"),
+        "the run did not collect the answer it waited for"
+    );
+    assert!(
+        cost.out.turns > u32::try_from(cost.prompt_builds).unwrap(),
+        "the polls stopped being reported when they stopped costing a build: {} turn(s), {} \
+         prompt build(s)",
+        cost.out.turns,
+        cost.prompt_builds
     );
 }

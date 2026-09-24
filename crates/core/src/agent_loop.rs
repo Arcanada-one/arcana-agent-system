@@ -1529,6 +1529,41 @@ pub struct Driver<'a> {
     config: DriverConfig,
 }
 
+/// The request one dispatch of this turn carries, kept whole.
+///
+/// A poll for an answer the turn has already bought re-sends exactly this,
+/// rather than rebuilding it from the history: the two are supposed to be the
+/// same bytes — the key only replays while they are — and rebuilding them was
+/// measured at 13 prompt builds and 1.04 MB of transcript for one waited turn
+/// of 80 000 characters (A2-245).
+struct Dispatch<'a> {
+    prompt: &'a str,
+    model: &'a str,
+}
+
+/// What the recovery path made of a failed dispatch.
+enum Recovered {
+    /// The answer arrived after all — on a poll inside the in-flight wait,
+    /// under the key the turn was dispatched with. It is a response like any
+    /// other and takes the ordinary path through the step.
+    Answered(Box<ConnectorResponse>),
+    /// The step is over: a re-dispatch to make, or a verdict to report.
+    Step(StepResult),
+}
+
+/// What one in-flight wait made of the turn it was waiting for.
+enum Polled {
+    /// The answer landed.
+    Answered(Box<ConnectorResponse>),
+    /// The wait ended the step — its deadline ran out, or the operator
+    /// interrupted it.
+    Stop(StepResult),
+    /// A poll was refused by something other than "still in flight". The wait
+    /// has no opinion on it; the ordinary recovery decides, with the counters
+    /// it owns.
+    Refused(ConnectorError),
+}
+
 /// Internal per-step result: a `Continue` reason, or a terminal cause carrying
 /// the final text (only for `Completed`).
 enum StepResult {
@@ -2112,32 +2147,17 @@ impl<'a> Driver<'a> {
         if let Some(step) = self.record_dispatch(turn, &choice.model_id, &prompt) {
             return step;
         }
-        let resp = match self
-            .call_connector(
-                &mut state.intent,
-                prompt,
-                Some(choice.model_id),
-                first_dispatch,
-            )
-            .await
-        {
-            Ok(resp) => {
-                // A response — of any shape — means the upstream is answering
-                // again, so the retry budget starts over. Counting retries
-                // across a whole run would let three slow turns spread over an
-                // hour end it as if the connector had failed three times in a
-                // row.
-                state.connector_retries = 0;
-                state.in_flight_polls = 0;
-                state.connector_retry_pause_spent = Duration::ZERO;
-                state.connector_failure_since = None;
-                // The question was answered, so the next dispatch is a new
-                // one and gets a new key. A replayed response counts: it is
-                // the answer, arriving late and already paid for.
-                state.intent.finish_turn();
-                resp
-            }
-            Err(error) => return self.recover_or_stop(state, &error, first_dispatch).await,
+        // The request this turn is sending, kept for as long as the turn may
+        // need to send it again. A poll under the same key is the same
+        // question, so it re-sends these bytes instead of rebuilding them
+        // (A2-245).
+        let dispatch = Dispatch {
+            prompt: &prompt,
+            model: &choice.model_id,
+        };
+        let resp = match self.dispatch_turn(state, &dispatch, first_dispatch).await {
+            Ok(resp) => resp,
+            Err(step) => return step,
         };
         if first_dispatch {
             state
@@ -2303,6 +2323,61 @@ No other markup is executed, whatever your training says. \
         StepResult::Continue(ContinueReason::ToolCallFormatRejected)
     }
 
+    /// Send this turn's request and hand back the response the loop will
+    /// interpret, or the step that ends the turn without one.
+    ///
+    /// The dispatch, the recovery and the "a response arrived" bookkeeping are
+    /// one thing and live together: the response may come from the first call
+    /// or from a poll inside the in-flight wait (A2-245), and a counter reset
+    /// that ran on only one of those two paths would be a defect no single
+    /// test could see.
+    ///
+    /// # Errors
+    /// The step to return when there is no response to interpret.
+    async fn dispatch_turn(
+        &self,
+        state: &mut RunState,
+        dispatch: &Dispatch<'_>,
+        first_dispatch: bool,
+    ) -> Result<ConnectorResponse, StepResult> {
+        let resp = match self
+            .call_connector(
+                &mut state.intent,
+                dispatch.prompt,
+                Some(dispatch.model),
+                first_dispatch,
+            )
+            .await
+        {
+            Ok(resp) => resp,
+            Err(error) => {
+                match self
+                    .recover_or_stop(state, &error, first_dispatch, dispatch)
+                    .await
+                {
+                    // The in-flight wait collected the answer itself, under the
+                    // key the turn was dispatched with. From here it is a
+                    // response like any other.
+                    Recovered::Answered(resp) => *resp,
+                    Recovered::Step(step) => return Err(step),
+                }
+            }
+        };
+        // A response — of any shape — means the upstream is answering again, so
+        // the retry budget starts over. Counting retries across a whole run
+        // would let three slow turns spread over an hour end it as if the
+        // connector had failed three times in a row.
+        state.connector_retries = 0;
+        state.in_flight_polls = 0;
+        state.connector_retry_pause_spent = Duration::ZERO;
+        state.connector_failure_since = None;
+        // The question was answered, so the next dispatch is a new one and gets
+        // a new key. A replayed response counts: it is the answer, arriving
+        // late and already paid for.
+        state.intent.finish_turn();
+        Ok(resp)
+    }
+
     /// Decide what a failed connector attempt means for the run: another
     /// dispatch, or the end of it.
     ///
@@ -2316,85 +2391,150 @@ No other markup is executed, whatever your training says. \
     async fn recover_or_stop(
         &self,
         state: &mut RunState,
-        error: &ConnectorError,
+        failure: &ConnectorError,
         first_dispatch: bool,
-    ) -> StepResult {
+        dispatch: &Dispatch<'_>,
+    ) -> Recovered {
         if first_dispatch {
-            state.first_dispatch_observation = error.first_dispatch_observation().cloned();
+            state.first_dispatch_observation = failure.first_dispatch_observation().cloned();
         }
-        // The connector's own message is the diagnosis — `ConnectorError`
-        // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
-        // "arcana-repl" not found`. Mapping to `ConnectorFatal` without it left
-        // the operator a verdict and no evidence, and cost a four-commit bisect
-        // and two wrong root causes to recover what this one line says.
-        // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
-        // a log line here is discarded.
-        eprintln!("arcana: connector dispatch failed: {error}");
         // The clock the terminal verdict reports. Started at the first failure
         // of the streak, not at the start of the run: "94 turns" and "three
         // 502s over four seconds" are different facts and the second one is
         // what says whether the retry policy was a serious attempt.
+        //
+        // Hoisted above the loop, so a second lap — the in-flight wait handing
+        // back a refusal of a different class — measures the same streak rather
+        // than starting a new one.
         let started = *state
             .connector_failure_since
             .get_or_insert_with(Instant::now);
-        // A size refusal is not a connector failure: the request was ours and
-        // it was too big. Retrying sends the same oversized body again, and
-        // reporting `ConnectorFatal` points the operator at a service that did
-        // exactly what its contract says.
-        if error.is_request_too_large() {
-            return StepResult::Terminal(TerminalReason::RequestTooLarge, None);
-        }
-        let class = RetryClass::of(error);
-        let limit = if class.is_patient() {
-            self.config.edge_retry_limit
-        } else {
-            self.config.connector_retry_limit
-        };
-        // Attempts of THIS turn, the failed first dispatch included — the
-        // number an operator counts in the log, not either retry counter.
-        let attempts = state.turn_attempts();
-        // The key belongs to a DIFFERENT payload, so nothing of ours was
-        // dispatched or charged under it, and sending it again can only be
-        // refused again. Model Connector marks this non-retryable and says in
-        // the same breath what the recovery is — "Use a fresh key for a new
-        // request" — so dropping the key and re-dispatching is the upstream's
-        // own instruction rather than a second-guess of its flag. It should
-        // never fire: `TurnIntentSeries::stamp` compares the payload itself
-        // and mints a new key before the server has to. This is the backstop
-        // for the case that comparison failed to predict, and it says so.
-        let reused_key = error.is_idempotency_key_reused();
-        if reused_key {
-            eprintln!(
-                "arcana: the Idempotency-Key this turn was dispatched under belongs to a \
+        // The loop exists for exactly one transition: the in-flight wait owns
+        // its own re-dispatches (A2-245), so when a poll is refused by
+        // something that is NOT "still in flight", that refusal has to be
+        // judged here, by the counters that belong to it, without going back
+        // out through `step()` and rebuilding the request to be told the same
+        // thing again.
+        let mut polled: Option<ConnectorError> = None;
+        loop {
+            let error = polled.as_ref().unwrap_or(failure);
+            // The connector's own message is the diagnosis — `ConnectorError`
+            // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
+            // "arcana-repl" not found`. Mapping to `ConnectorFatal` without it left
+            // the operator a verdict and no evidence, and cost a four-commit bisect
+            // and two wrong root causes to recover what this one line says.
+            // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
+            // a log line here is discarded.
+            eprintln!("arcana: connector dispatch failed: {error}");
+            // A size refusal is not a connector failure: the request was ours and
+            // it was too big. Retrying sends the same oversized body again, and
+            // reporting `ConnectorFatal` points the operator at a service that did
+            // exactly what its contract says.
+            if error.is_request_too_large() {
+                return Recovered::Step(StepResult::Terminal(
+                    TerminalReason::RequestTooLarge,
+                    None,
+                ));
+            }
+            let class = RetryClass::of(error);
+            let limit = if class.is_patient() {
+                self.config.edge_retry_limit
+            } else {
+                self.config.connector_retry_limit
+            };
+            // Attempts of THIS turn, the failed first dispatch included — the
+            // number an operator counts in the log, not either retry counter.
+            let attempts = state.turn_attempts();
+            // The key belongs to a DIFFERENT payload, so nothing of ours was
+            // dispatched or charged under it, and sending it again can only be
+            // refused again. Model Connector marks this non-retryable and says in
+            // the same breath what the recovery is — "Use a fresh key for a new
+            // request" — so dropping the key and re-dispatching is the upstream's
+            // own instruction rather than a second-guess of its flag. It should
+            // never fire: `TurnIntentSeries::stamp` compares the payload itself
+            // and mints a new key before the server has to. This is the backstop
+            // for the case that comparison failed to predict, and it says so.
+            let reused_key = error.is_idempotency_key_reused();
+            if reused_key {
+                eprintln!(
+                    "arcana: the Idempotency-Key this turn was dispatched under belongs to a \
                  different request — re-dispatching under a fresh key; this is a defect in \
                  arcana, not in the connector"
-            );
-            state.intent.abandon_key();
+                );
+                state.intent.abandon_key();
+            }
+            if !reused_key && !error.is_transient() {
+                state.terminal_detail = Some(connector_fatal_detail(
+                    error,
+                    attempts,
+                    started.elapsed(),
+                    FatalCause::NotRetryable,
+                ));
+                return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
+            }
+            // A turn whose answer is still being produced upstream is not a
+            // failed request at all, and it is not bounded by a count. It leaves
+            // here for a wait with its own counter, its own clock and — since
+            // A2-245 — its own re-dispatches.
+            if class == RetryClass::InFlight {
+                match self
+                    .wait_out_in_flight(state, error, started, dispatch)
+                    .await
+                {
+                    Polled::Answered(resp) => return Recovered::Answered(resp),
+                    Polled::Stop(step) => return Recovered::Step(step),
+                    // Not an in-flight refusal any more: back to the top with it,
+                    // where the counters that judge its class live.
+                    Polled::Refused(next) => {
+                        polled = Some(next);
+                        continue;
+                    }
+                }
+            }
+            if state.connector_retries >= limit {
+                state.terminal_detail = Some(connector_fatal_detail(
+                    error,
+                    attempts,
+                    started.elapsed(),
+                    FatalCause::RetriesSpent { limit, class },
+                ));
+                return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
+            }
+            let wait = match self.plan_counted_redispatch(state, error, started, class, limit) {
+                Ok(wait) => wait,
+                Err(step) => return Recovered::Step(step),
+            };
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+            }
+            // The next step re-checks it too, but an operator who pressed Ctrl-C
+            // during the pause should not then watch another dispatch go out.
+            if self.cancel.is_cancelled() {
+                return Recovered::Step(StepResult::Terminal(
+                    TerminalReason::AbortedByOperator,
+                    None,
+                ));
+            }
+            return Recovered::Step(StepResult::Continue(ContinueReason::ConnectorRetry));
         }
-        if !reused_key && !error.is_transient() {
-            state.terminal_detail = Some(connector_fatal_detail(
-                error,
-                attempts,
-                started.elapsed(),
-                FatalCause::NotRetryable,
-            ));
-            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
-        }
-        // A turn whose answer is still being produced upstream is not a
-        // failed request at all, and it is not bounded by a count. It leaves
-        // here for a wait with its own counter and its own clock.
-        if class == RetryClass::InFlight {
-            return self.wait_out_in_flight(state, error, started).await;
-        }
-        if state.connector_retries >= limit {
-            state.terminal_detail = Some(connector_fatal_detail(
-                error,
-                attempts,
-                started.elapsed(),
-                FatalCause::RetriesSpent { limit, class },
-            ));
-            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
-        }
+    }
+
+    /// Book the next re-dispatch of a failed request on the counted budget and
+    /// say how long to sleep first — or refuse, with the verdict that says why.
+    ///
+    /// Split out of [`Self::recover_or_stop`] so the counted schedule and the
+    /// in-flight deadline read as the two separate policies they are.
+    ///
+    /// # Errors
+    /// The terminal step when the sleep budget is spent.
+    fn plan_counted_redispatch(
+        &self,
+        state: &mut RunState,
+        error: &ConnectorError,
+        started: Instant,
+        class: RetryClass,
+        limit: u32,
+    ) -> Result<Duration, StepResult> {
         let requested = retry_pause(
             error,
             state.connector_retries.saturating_add(1),
@@ -2408,13 +2548,13 @@ No other markup is executed, whatever your training says. \
         ) else {
             state.terminal_detail = Some(connector_fatal_detail(
                 error,
-                attempts,
+                state.turn_attempts(),
                 started.elapsed(),
                 FatalCause::PauseBudgetSpent {
                     budget: self.config.connector_retry_pause_budget,
                 },
             ));
-            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+            return Err(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
         };
         state.connector_retries = state.connector_retries.saturating_add(1);
         state.connector_retry_pause_spent = state.connector_retry_pause_spent.saturating_add(wait);
@@ -2430,15 +2570,7 @@ No other markup is executed, whatever your training says. \
                 },
             )
         );
-        if !wait.is_zero() {
-            tokio::time::sleep(wait).await;
-        }
-        // The next step re-checks it too, but an operator who pressed Ctrl-C
-        // during the pause should not then watch another dispatch go out.
-        if self.cancel.is_cancelled() {
-            return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
-        }
-        StepResult::Continue(ContinueReason::ConnectorRetry)
+        Ok(wait)
     }
 
     /// How long one dispatch may legitimately take upstream before the loop
@@ -2466,7 +2598,7 @@ No other markup is executed, whatever your training says. \
     /// charge — and then threw the answer away after 41 s, because the wait
     /// was five sleeps out of a counter it shared with the edge schedule.
     ///
-    /// Two things are therefore deliberate here:
+    /// Three things are therefore deliberate here:
     ///
     /// * The counter is `RunState::in_flight_polls`, not
     ///   `RunState::connector_retries`. The edge re-dispatch that PRECEDED the
@@ -2480,6 +2612,17 @@ No other markup is executed, whatever your training says. \
     ///   [`IN_FLIGHT_SETTLE_MARGIN`]. A count cannot express that: it is
     ///   whatever the schedule happens to add up to, and jitter shortened
     ///   A2-240's nominal 60 s to 41 s.
+    /// * The wait owns its re-dispatches. It used to return
+    ///   [`ContinueReason::ConnectorRetry`] after every pause, so every poll
+    ///   re-entered [`Self::step`]: the prompt rebuilt from the history, a
+    ///   block appended to the operator's transcript and a `dispatch` event to
+    ///   the audit log — for a request that is not being re-asked but
+    ///   collected. Measured on the `CutThenStillComputing` fixture with a
+    ///   turn of 80 000 characters: **13 prompt builds and 1 040 782 bytes of
+    ///   transcript for one waited turn**, against two dispatches' worth
+    ///   (A2-245). A poll now re-sends the bytes the dispatch already built
+    ///   ([`Dispatch`]) — which is also the only way they are guaranteed to be
+    ///   the same bytes, and the key replays only while they are.
     ///
     /// Waiting is also the cheap choice, and that is measured rather than
     /// assumed: the hold that makes the retry a replay rather than a second
@@ -2495,62 +2638,102 @@ No other markup is executed, whatever your training says. \
     async fn wait_out_in_flight(
         &self,
         state: &mut RunState,
-        error: &ConnectorError,
+        refusal: &ConnectorError,
         started: Instant,
-    ) -> StepResult {
+        dispatch: &Dispatch<'_>,
+    ) -> Polled {
         let budget = self.in_flight_budget();
-        // `started` (the first failure of the streak) is the fallback, not the
-        // preference: it is later than the dispatch and so can only shorten the
-        // wait, which is the safe direction for a bound that must not be a
-        // guess. In practice the key is always in force here — the conflict is
-        // an answer TO it.
-        let dispatched = state.intent.dispatched_at().unwrap_or(started);
-        let now = Instant::now();
-        let waited = now.saturating_duration_since(dispatched);
-        let remaining = budget.checked_sub(waited).unwrap_or(Duration::ZERO);
-        if remaining.is_zero() {
-            state.terminal_detail = Some(connector_fatal_detail(
-                error,
-                state.turn_attempts(),
-                started.elapsed(),
-                FatalCause::InFlightWaitSpent {
-                    waited,
-                    budget,
-                    polls: state.in_flight_polls,
-                    redispatches: state.connector_retries,
-                    redispatch_limit: self.config.edge_retry_limit,
-                },
-            ));
-            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+        // The most recent conflict, once this loop has collected one of its
+        // own. The verdict has to quote the refusal that ENDED the wait, not
+        // the one that started it.
+        let mut latest: Option<ConnectorError> = None;
+        loop {
+            let error = latest.as_ref().unwrap_or(refusal);
+            // `started` (the first failure of the streak) is the fallback, not
+            // the preference: it is later than the dispatch and so can only
+            // shorten the wait, which is the safe direction for a bound that
+            // must not be a guess. In practice the key is always in force here
+            // — the conflict is an answer TO it.
+            let dispatched = state.intent.dispatched_at().unwrap_or(started);
+            let waited = Instant::now().saturating_duration_since(dispatched);
+            let Some(remaining) = budget
+                .checked_sub(waited)
+                .filter(|remaining| !remaining.is_zero())
+            else {
+                state.terminal_detail = Some(connector_fatal_detail(
+                    error,
+                    state.turn_attempts(),
+                    started.elapsed(),
+                    FatalCause::InFlightWaitSpent {
+                        waited,
+                        budget,
+                        polls: state.in_flight_polls,
+                        redispatches: state.connector_retries,
+                        redispatch_limit: self.config.edge_retry_limit,
+                    },
+                ));
+                return Polled::Stop(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
+            };
+            state.in_flight_polls = state.in_flight_polls.saturating_add(1);
+            state.in_flight_polls_total = state.in_flight_polls_total.saturating_add(1);
+            // Clamped to what is left, so the last poll lands ON the deadline
+            // rather than past it: an answer that settles in the final second
+            // is still an answer this turn paid for.
+            let wait =
+                in_flight_poll_pause(state.in_flight_polls, jitter_permille()).min(remaining);
+            eprintln!(
+                "{}",
+                retry_line(
+                    error,
+                    wait,
+                    RetryClass::InFlight,
+                    RetryBudget::Deadline {
+                        poll: state.in_flight_polls,
+                        waited,
+                        budget,
+                    },
+                )
+            );
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+            }
+            // The step-level check cannot see this loop any more, and an
+            // operator who pressed Ctrl-C during a poll must not then watch
+            // another request go out.
+            if self.cancel.is_cancelled() {
+                return Polled::Stop(StepResult::Terminal(
+                    TerminalReason::AbortedByOperator,
+                    None,
+                ));
+            }
+            // The poll itself: the same bytes under the same key, and nothing
+            // else. `first_dispatch` is `false` because it is not one — the
+            // measurement metadata belongs to the attempt that opened the key,
+            // exactly as it did when a poll was a whole `step()`.
+            //
+            // `attempts` is still incremented, so `RunOutput::turns` keeps
+            // reporting every poll: what A2-241 exempted from `max_turns` is
+            // what the run is ALLOWED, never what it did.
+            state.attempts = state.attempts.saturating_add(1);
+            match self
+                .call_connector(
+                    &mut state.intent,
+                    dispatch.prompt,
+                    Some(dispatch.model),
+                    false,
+                )
+                .await
+            {
+                Ok(resp) => return Polled::Answered(Box::new(resp)),
+                Err(next) if RetryClass::of(&next) == RetryClass::InFlight => {
+                    // The same line a poll printed when it was a step of its
+                    // own: the wait got quieter in cost, not in evidence.
+                    eprintln!("arcana: connector dispatch failed: {next}");
+                    latest = Some(next);
+                }
+                Err(next) => return Polled::Refused(next),
+            }
         }
-        state.in_flight_polls = state.in_flight_polls.saturating_add(1);
-        state.in_flight_polls_total = state.in_flight_polls_total.saturating_add(1);
-        // Clamped to what is left, so the last poll lands ON the deadline
-        // rather than past it: an answer that settles in the final second is
-        // still an answer this turn paid for.
-        let wait = in_flight_poll_pause(state.in_flight_polls, jitter_permille()).min(remaining);
-        eprintln!(
-            "{}",
-            retry_line(
-                error,
-                wait,
-                RetryClass::InFlight,
-                RetryBudget::Deadline {
-                    poll: state.in_flight_polls,
-                    waited,
-                    budget,
-                },
-            )
-        );
-        if !wait.is_zero() {
-            tokio::time::sleep(wait).await;
-        }
-        // The next step re-checks it too, but an operator who pressed Ctrl-C
-        // during the pause should not then watch another dispatch go out.
-        if self.cancel.is_cancelled() {
-            return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
-        }
-        StepResult::Continue(ContinueReason::ConnectorRetry)
     }
 
     /// Build the request, call the connector, and record its cost.
@@ -2562,12 +2745,15 @@ No other markup is executed, whatever your training says. \
     async fn call_connector(
         &self,
         intent: &mut TurnIntentSeries,
-        prompt: String,
-        model: Option<String>,
+        prompt: &str,
+        model: Option<&str>,
         first_dispatch: bool,
     ) -> Result<ConnectorResponse, ConnectorError> {
+        // Borrowed, not moved: the caller keeps the request so a poll for the
+        // answer it bought can send it again without rebuilding it (A2-245).
+        // The copy made here is the one the wire needs either way.
         let mut req = ExecuteRequest::new(self.config.connector_id.clone(), prompt);
-        req.model = model;
+        req.model = model.map(ToOwned::to_owned);
         req.system_prompt = self.config.system_prompt.clone();
         // `self.config.max_turns` is deliberately NOT forwarded as the wire
         // field `maxTurns`. They are two different quantities: the config value
