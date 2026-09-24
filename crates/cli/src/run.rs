@@ -645,6 +645,10 @@ Shell commands run in `{root}`. The single exception is `{null_sink}`, which is 
 redirect target or argument because it discards what is written to it and yields nothing when \
 read; every other path outside `{root}` is refused, `/dev/` included.\n\
 \n\
+A `cd` earlier in the same command does NOT move this boundary: {relative_path_remedy} `{root}`. \
+So `cd sub && cp file ../other/` is refused even though `../other` would land inside the \
+workspace — write it as `cp sub/file other/` instead.\n\
+\n\
 NO CREDENTIALS ON THIS LANE. `bash` runs with a constructed, credential-free environment: \
 `HOME` is an empty directory created for this run — no git config, no credential helper, no \
 SSH key, no token — and your own `env_vars` are refused. A PRIVATE repository therefore cannot \
@@ -665,6 +669,7 @@ When the task is done, reply with a plain-text summary of what you changed and n
 block.",
         root = root.display(),
         null_sink = crate::workspace::NULL_SINK,
+        relative_path_remedy = crate::workspace::RELATIVE_PATH_REMEDY,
         floor = crate::workspace::destructive_floor_disclosure(),
     )
 }
