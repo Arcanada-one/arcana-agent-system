@@ -22,7 +22,11 @@ Environment:
                                 Purpose-scoped: an ARCANA_MC_TOKEN is refused.
   ARCANA_KB_CLIENT_SECRET_FILE  Path to the knowledge-base client secret,
                                 required by `kb-read`.
-  ARCANA_MC_BASE_URL            Override the Model Connector endpoint.";
+  ARCANA_MC_BASE_URL            Override the Model Connector endpoint.
+  ARCANA_MODEL                  Model id for this process, overriding the saved
+                                `models use` choice. `tier` asks for the tiered
+                                dispatch policy on purpose. `--model` wins over
+                                it.";
 
 #[derive(Parser)]
 #[command(
@@ -161,8 +165,13 @@ enum Cmd {
         /// Spend cap in USD for the run.
         #[arg(long)]
         max_cost_usd: Option<f64>,
-        /// Pin a model id instead of using the saved `arcana models use`
-        /// choice.
+        /// Pin a model id for this run.
+        ///
+        /// Highest authority in the order flag > `ARCANA_MODEL` > the saved
+        /// `arcana models use` choice > tiered policy. The run prints which of
+        /// them answered before it spends anything, and a contract-bound run
+        /// records it in the receipt as `mc_usage.model_source`. The value
+        /// `tier` selects the tiered dispatch policy on purpose.
         #[arg(long)]
         model: Option<String>,
         /// Seconds one model turn may take upstream (5..=600).
@@ -219,9 +228,14 @@ enum Cmd {
 #[derive(Subcommand)]
 enum ModelsCmd {
     /// Persist the model this agent should use by default.
+    ///
+    /// Written to the XDG config home, because a model choice is operator
+    /// configuration: a runner that isolates `XDG_STATE_HOME` — which is what
+    /// every unattended lane does — must still see it.
     Use {
         /// Model id, e.g. `deepseek-v4-flash`. Any id is accepted, including
-        /// one the curated list does not show.
+        /// one the curated list does not show. `tier` stores "use the tiered
+        /// dispatch policy" rather than a model.
         model: String,
     },
 }

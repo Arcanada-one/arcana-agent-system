@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use arcana_connectors::contract_source::ContractSource;
 use arcana_core::agent_loop::RunOutput;
 use arcana_core::contract::ContractBinding;
+
+use crate::models::ResolvedModel;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -42,12 +44,24 @@ pub struct Denial {
 }
 
 /// Model Connector spend and traffic for the run.
+///
+/// `configured_model` and `model_source` are the intent; `selected_models` is
+/// what was dispatched. Keeping both is the point: pilot A2-272's receipt
+/// listed `grok-3-latest` followed by five `deepseek-v4-flash` and there was
+/// nothing in it to say whether that was the lane's choice or the tier policy
+/// filling a gap the isolated state directory had left.
 #[derive(Debug, Clone, Serialize)]
 pub struct McUsage {
     pub calls: u64,
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub cost_usd_micros: u64,
+    /// The model this run was configured to use, or `null` when the tiered
+    /// dispatch policy chose per turn. `null` is an answer, not a gap — read
+    /// it with `model_source`.
+    pub configured_model: Option<String>,
+    /// `flag`, `env`, `config`, `legacy-state` or `tier-policy`.
+    pub model_source: String,
     pub selected_models: Vec<String>,
 }
 
@@ -121,12 +135,18 @@ pub struct ReadinessReceipt {
 
 /// Build the receipt for a finished contract-bound run.
 #[must_use]
+// Eight joins, each naming a different system the receipt has to be checkable
+// against — Muneral, the contract, its source, the tree, the run, the model
+// decision, the producer, the clock. Folding them into a parameter struct
+// would hide, not reduce, the number of authorities involved.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     task_id: &str,
     binding: &ContractBinding,
     source: &dyn ContractSource,
     root: &Path,
     out: &RunOutput,
+    model: &ResolvedModel,
     produced_by: String,
     measured_at: String,
 ) -> ReadinessReceipt {
@@ -156,6 +176,8 @@ pub fn build(
             tokens_in: out.cost.total_tokens_in,
             tokens_out: out.cost.total_tokens_out,
             cost_usd_micros: out.cost.total_cost_usd_micros,
+            configured_model: model.model.clone(),
+            model_source: model.source.as_str().to_owned(),
             selected_models: out.selected_models.clone(),
         },
         tool_calls: ToolCalls {

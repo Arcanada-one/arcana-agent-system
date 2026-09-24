@@ -116,6 +116,66 @@ local evidence there is.
 Every tool call, allowed or denied, is appended to the audit log named on the
 second line of stdout (`~/.local/state/arcana/run/audit.log`, mode 0600).
 
+## Which model the run uses
+
+A model choice is **configuration**, not run state. Five things can supply it,
+and the first one that does wins:
+
+| Order | Source | `model_source` | Where it comes from |
+|---|---|---|---|
+| 1 | `--model <id>` | `flag` | This invocation. |
+| 2 | `ARCANA_MODEL` | `env` | The process that started the run. What a lane, a CI step or a `tmux` dispatcher actually has — it needs no writable home at all. |
+| 3 | `$XDG_CONFIG_HOME/arcana/model.json` | `config` | Written by `arcana models use <id>`, beside `permissions.toml`. |
+| 4 | `$XDG_STATE_HOME/arcana/model.json` | `legacy-state` | Where the choice used to live. Still read, never written, and reported as deprecated on stderr. |
+| 5 | — | `tier-policy` | Nobody chose. The tiered policy routes per turn: a code turn to the expensive model, the rest to the cheap one. |
+
+The run says which of them answered, before it builds the Model Connector
+client and therefore before it can have spent anything:
+
+```
+model: deepseek-v4-flash (source: env)
+```
+
+**A resolved model pins the whole run.** Every dispatch uses it, whatever the
+turn's task type — that is the difference between a model choice and a hint.
+To ask for tiered dispatch on purpose, pass the value `tier` in any of the
+three top slots (`--model tier`, `ARCANA_MODEL=tier`, `arcana models use
+tier`); the run then prints `tiered dispatch policy — selected explicitly`, and
+the receipt still records which slot said so. "Nobody chose" and "route per
+turn, deliberately" are different facts and the receipt keeps them apart.
+
+### Why the choice is not in the state home
+
+Every isolated runner overrides `XDG_STATE_HOME`, so one run's audit log cannot
+leak into the next. Until A2-276 the model choice lived there too, and went
+with it. Measured on pilot A2-272 (2026-09-24): a contract-bound run under an
+overridden state home fell through to the tiered policy and dispatched its
+first turn to `grok-3-latest` and the other five to `deepseek-v4-flash`, while
+the lane had pinned one model. The receipt recorded the two ids and nothing
+that said why — which is why `mc_usage.model_source` now sits beside
+`mc_usage.selected_models`: the intent next to what was dispatched.
+
+## The receipt of a paid run is not committed
+
+`arcana run --work-item <id>` writes `receipts/ReadinessReceipt-<id>.json` into
+the worktree it ran in. That file belongs in the pull request body, in an
+attachment, or under the dispatcher's `runs/` directory — **not** in the
+repository tree.
+
+This is not tidiness. Graph admission reads a committed `ReadinessReceipt/v1`
+as a historical receipt (I14: asserted, never re-verified), returns
+`not_measured` for it, and the change's admission becomes `PAUSED_SAFE` — so
+committing the evidence of a run is what stops the change that run was meant to
+support. `.gitignore` carries the rule, so the ordinary case needs no
+discipline; a run in a worktree of THIS repository leaves its receipt on disk
+and out of `git status`.
+
+The measured-cost half of the same rule: a `ReadinessReceipt/v1` describes one
+execution, at one commit, for one contract digest. Re-reading it later tells
+you what happened then, never what happens now — which is exactly what the
+admission gate's `not_measured` verdict says, and why re-running is the only
+way to turn it into a pass.
+
 ## What the agent may do
 
 Registered tools: `read`, `write`, `edit`, `grep`, `bash`. `webfetch`,

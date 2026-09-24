@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The model choice is configuration, and survives an isolated state
+  directory.** It used to be read from `$XDG_STATE_HOME/arcana/model.json`.
+  Every isolated runner overrides that directory so one run's audit log cannot
+  leak into the next, and the choice went with it: a pilot run under an
+  overridden state home fell through to the tiered policy and dispatched its
+  first turn to `grok-3-latest` and its remaining five to `deepseek-v4-flash`,
+  while the lane had pinned a single model. Resolution is now, first answer
+  wins: `--model <id>` → `ARCANA_MODEL` → `$XDG_CONFIG_HOME/arcana/model.json`
+  (where `arcana models use` writes from now on, beside `permissions.toml`) →
+  the old state file, still read but reported as deprecated on stderr → the
+  tiered policy. A resolved model pins every dispatch in the run; the value
+  `tier` in any of the top three slots selects tiered dispatch on purpose, and
+  is reported as a decision rather than as an absence.
+
+  The run prints which source answered before the Model Connector client is
+  built, so it cannot have spent anything by the time it says so:
+  `model: deepseek-v4-flash (source: env)`. A contract-bound run records the
+  same answer in its receipt as `mc_usage.model_source` beside
+  `mc_usage.configured_model` — the intent next to `selected_models`, which is
+  what was dispatched. A receipt that carries only the second cannot tell a
+  lane's choice from a policy filling a gap.
+
+- **A `ReadinessReceipt/v1` written by a run is no longer committable by
+  accident.** `/receipts/ReadinessReceipt-*.json` is ignored. Graph admission
+  reads a committed run receipt as a historical claim — asserted, never
+  re-verified — and returns `not_measured`, which admits the change
+  `PAUSED_SAFE`; the evidence of a paid run belongs in the pull request and in
+  the dispatcher's run directory. `receipts/graph/` stays tracked: an admission
+  receipt is a claim about the change that carries it.
+
 ### Added
 - **`arcana run --work-item <id>` — one Muneral work item, executed under the
   KC2 contract it is bound to, and a `ReadinessReceipt/v1` that says so.** The

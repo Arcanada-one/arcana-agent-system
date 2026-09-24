@@ -57,11 +57,22 @@ async fn mount_raw(server: &MockServer, body: serde_json::Value) {
         .await;
 }
 
-fn arcana(server: &MockServer, state: &TempDir) -> Command {
+/// Both XDG homes point inside the case's own temporary directory, and
+/// `ARCANA_MODEL` is removed explicitly.
+///
+/// All three matter since A2-276 moved the saved choice from the state home to
+/// the config home: with only `XDG_STATE_HOME` isolated, `models use` wrote into
+/// the developer's real `~/.config/arcana/model.json` and the next case read it
+/// back — a suite that edited the machine it ran on and then failed because of
+/// it. An inherited `ARCANA_MODEL` would override the file these cases are
+/// about, so it is unset rather than assumed absent.
+fn arcana(server: &MockServer, home: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("arcana").unwrap();
     cmd.env("ARCANA_MC_BASE_URL", server.uri())
         .env("ARCANA_MC_TOKEN", "test-token")
-        .env("XDG_STATE_HOME", state.path());
+        .env_remove("ARCANA_MODEL")
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("XDG_CONFIG_HOME", home.path().join("config"));
     cmd
 }
 
@@ -159,7 +170,9 @@ async fn an_unreachable_connector_is_reported_not_panicked() {
         .unwrap()
         .env("ARCANA_MC_BASE_URL", "http://127.0.0.1:1")
         .env("ARCANA_MC_TOKEN", "test-token")
-        .env("XDG_STATE_HOME", state.path())
+        .env_remove("ARCANA_MODEL")
+        .env("XDG_STATE_HOME", state.path().join("state"))
+        .env("XDG_CONFIG_HOME", state.path().join("config"))
         .arg("models")
         .assert()
         .failure()
@@ -175,7 +188,9 @@ async fn a_missing_token_says_so_rather_than_showing_a_stale_list() {
     Command::cargo_bin("arcana")
         .unwrap()
         .env_remove("ARCANA_MC_TOKEN")
-        .env("XDG_STATE_HOME", state.path())
+        .env_remove("ARCANA_MODEL")
+        .env("XDG_STATE_HOME", state.path().join("state"))
+        .env("XDG_CONFIG_HOME", state.path().join("config"))
         .arg("models")
         .assert()
         .failure()
@@ -324,7 +339,9 @@ async fn a_reader_that_stops_early_does_not_crash_the_command() {
         .arg("models")
         .env("ARCANA_MC_BASE_URL", server.uri())
         .env("ARCANA_MC_TOKEN", "test-token")
-        .env("XDG_STATE_HOME", state.path())
+        .env_remove("ARCANA_MODEL")
+        .env("XDG_STATE_HOME", state.path().join("state"))
+        .env("XDG_CONFIG_HOME", state.path().join("config"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

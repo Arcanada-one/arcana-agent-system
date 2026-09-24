@@ -40,3 +40,14 @@ __pycache__/
 .env.*
 !.env.example
 dev-tools/smoke/.out/
+
+# Receipts of paid runs (`arcana run --work-item` writes them here).
+#
+# A `ReadinessReceipt/v1` committed into the tree is read by graph admission as
+# a historical receipt — asserted, never re-verified — so it returns
+# `not_measured` and the change it was meant to support is admitted
+# `PAUSED_SAFE`. The evidence of a run belongs in the pull request and in the
+# dispatcher's `runs/` directory. `receipts/graph/` is the opposite case and
+# stays tracked: an admission receipt is a claim ABOUT a change, made at the
+# commit that carries it.
+/receipts/ReadinessReceipt-*.json

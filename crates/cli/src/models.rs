@@ -15,7 +15,7 @@
 //! not make the shortlist.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -140,58 +140,208 @@ pub struct ModelPreference {
     pub connector: Option<String>,
 }
 
-/// Where the choice is stored: the per-user XDG state home, beside the audit
-/// log and credentials.
-fn state_dir() -> PathBuf {
+/// The file the choice is written to, under whichever base directory applies.
+const PREFERENCE_FILE: &str = "model.json";
+
+/// Environment override for the model, read before any file.
+///
+/// This is the knob a lane, a CI step or a `tmux` dispatcher actually has: it
+/// travels with the process that starts the run and needs no writable home at
+/// all.
+pub const MODEL_ENV: &str = "ARCANA_MODEL";
+
+/// The one value that selects the tiered dispatch policy ON PURPOSE.
+///
+/// Without it "no model configured" and "route per turn, deliberately" are the
+/// same state, and an operator who wants tiered dispatch back has to delete a
+/// file and hope nothing else supplies one.
+pub const TIER_POLICY_VALUE: &str = "tier";
+
+/// Where a model choice came from. Recorded in the run's receipt, because
+/// "which model" and "who chose it" are different questions and only the
+/// second one explains a surprise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelSource {
+    /// `--model <id>` on the command line.
+    Flag,
+    /// The [`MODEL_ENV`] environment variable.
+    Env,
+    /// The config file, written by `arcana models use`.
+    Config,
+    /// The pre-A2-276 file under the XDG **state** home. Read, reported as
+    /// deprecated, never written.
+    LegacyState,
+    /// Nobody chose: the tiered dispatch policy routes per turn.
+    TierPolicy,
+}
+
+impl ModelSource {
+    /// The spelling that goes into the receipt. Stable — a receipt is read by
+    /// tools, not only by people.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Flag => "flag",
+            Self::Env => "env",
+            Self::Config => "config",
+            Self::LegacyState => "legacy-state",
+            Self::TierPolicy => "tier-policy",
+        }
+    }
+}
+
+/// The answer to "which model does this run use, and who said so".
+///
+/// `model: None` means the tiered policy chooses per turn. That is a real
+/// answer and not a missing one, which is why it is `None` with a `source`
+/// rather than a string standing in for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedModel {
+    pub model: Option<String>,
+    pub source: ModelSource,
+}
+
+impl ResolvedModel {
+    /// One line for the operator, printed before the run spends anything.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match (&self.model, self.source) {
+            (Some(model), source) => format!("{model} (source: {})", source.as_str()),
+            (None, ModelSource::TierPolicy) => {
+                "tiered dispatch policy — no model configured (source: tier-policy)".to_owned()
+            }
+            (None, source) => format!(
+                "tiered dispatch policy — selected explicitly (source: {})",
+                source.as_str()
+            ),
+        }
+    }
+}
+
+/// Where the legacy choice was written before A2-276: the per-user XDG **state**
+/// home, beside the audit log.
+///
+/// Still read, never written. A model choice is operator configuration and not
+/// the residue of a run, and the difference is not philosophical: an isolated
+/// runner overrides `XDG_STATE_HOME` so one run's audit log cannot leak into the
+/// next, and a choice kept there went with it. Measured on pilot A2-272
+/// (2026-09-24): a contract-bound run under an overridden state home dispatched
+/// its first turn to `grok-3-latest` by tier policy and the other five to
+/// `deepseek-v4-flash`, while the lane had pinned one model — visible in that
+/// run's receipt as `mc_usage.selected_models`.
+fn legacy_state_dir() -> PathBuf {
     xdg::BaseDirectories::with_prefix("arcana")
         .get_state_home()
         .unwrap_or_else(|| PathBuf::from(".arcana-state"))
 }
 
+/// The pre-A2-276 location, kept so an existing choice is not silently lost.
+#[must_use]
+pub fn legacy_preference_path() -> PathBuf {
+    legacy_state_dir().join(PREFERENCE_FILE)
+}
+
+/// Where the choice is stored: the per-user XDG **config** home, beside
+/// `permissions.toml` — the other file that says how this agent may behave.
 #[must_use]
 pub fn preference_path() -> PathBuf {
-    state_dir().join("model.json")
+    xdg::BaseDirectories::with_prefix("arcana")
+        .get_config_file(PREFERENCE_FILE)
+        .unwrap_or_else(|| PathBuf::from(".arcana-config").join(PREFERENCE_FILE))
 }
 
-/// The operator's EXPLICIT choice, if they have made one.
+/// Resolve the model from already-gathered candidates, highest authority first.
 ///
-/// Distinct from [`selected_model`], which folds the default in. The caller
-/// needs the distinction: an explicit choice overrides the tiered model policy,
-/// whereas merely having a default must not — defaulting would silently pin
-/// every turn to one model and disable cost-tiered dispatch for everybody.
+/// Pure on purpose: the order is the whole of the rule, and a rule that can
+/// only be tested by arranging environment variables and home directories is a
+/// rule that gets tested once.
 #[must_use]
-pub fn explicit_model() -> Option<String> {
-    std::fs::read_to_string(preference_path())
+pub fn resolve_from(
+    flag: Option<&str>,
+    env: Option<&str>,
+    config: Option<&str>,
+    legacy: Option<&str>,
+) -> ResolvedModel {
+    let candidates = [
+        (flag, ModelSource::Flag),
+        (env, ModelSource::Env),
+        (config, ModelSource::Config),
+        (legacy, ModelSource::LegacyState),
+    ];
+    for (value, source) in candidates {
+        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if value.eq_ignore_ascii_case(TIER_POLICY_VALUE) {
+            return ResolvedModel {
+                model: None,
+                source,
+            };
+        }
+        return ResolvedModel {
+            model: Some(value.to_owned()),
+            source,
+        };
+    }
+    ResolvedModel {
+        model: None,
+        source: ModelSource::TierPolicy,
+    }
+}
+
+/// Resolve the model for this process: flag > environment > config > legacy
+/// state > tiered policy.
+#[must_use]
+pub fn resolve(flag: Option<&str>) -> ResolvedModel {
+    let env = std::env::var(MODEL_ENV).ok();
+    let config = read_preference(&preference_path());
+    let legacy = read_preference(&legacy_preference_path());
+    let resolved = resolve_from(flag, env.as_deref(), config.as_deref(), legacy.as_deref());
+    if resolved.source == ModelSource::LegacyState {
+        warn_legacy_once();
+    }
+    resolved
+}
+
+/// Read one preference file. A corrupt or unreadable file is "no choice"
+/// rather than an error: the agent must still run, and the next candidate down
+/// is a better answer than a refusal to start over a config file.
+fn read_preference(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<ModelPreference>(&raw).ok())
         .map(|pref| pref.model)
         .filter(|model| !model.trim().is_empty())
 }
 
-/// Read the operator's chosen model, falling back to the default.
+/// Say, once, that the choice came out of run state.
 ///
-/// A corrupt or unreadable preference file is treated as "no choice" rather
-/// than an error: the agent must still run, and silently defaulting is better
-/// than refusing to start over a cache file.
-#[must_use]
-pub fn selected_model() -> String {
-    std::fs::read_to_string(preference_path())
-        .ok()
-        .and_then(|raw| serde_json::from_str::<ModelPreference>(&raw).ok())
-        .map(|pref| pref.model)
-        .filter(|model| !model.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
+/// Once because the resolution is asked for more than once in a run — by the
+/// line that reports it and by the config that acts on it — and a warning
+/// repeated per caller reads like repeated events.
+fn warn_legacy_once() {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| {
+        eprintln!(
+            "arcana: deprecated — the model choice was read from the run-state file {}. \
+A model choice is configuration, not run state: any runner that isolates \
+`XDG_STATE_HOME` will not see it. Run `arcana models use <id>` again to write it to {}.",
+            legacy_preference_path().display(),
+            preference_path().display(),
+        );
+    });
 }
 
-/// Persist the operator's choice.
+/// Persist the operator's choice, as configuration.
 ///
 /// # Errors
 /// Propagates any filesystem failure; the caller reports it rather than
 /// pretending the choice was saved.
 pub fn save_preference(pref: &ModelPreference) -> std::io::Result<PathBuf> {
-    let dir = state_dir();
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("model.json");
+    let path = preference_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let json = serde_json::to_vec_pretty(pref)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     std::fs::write(&path, json)?;
@@ -408,7 +558,7 @@ pub fn run_list() -> i32 {
         }
     };
 
-    let current = selected_model();
+    let resolved = resolve(None);
     // Ask the policy rather than restating its ids here: a hard-coded copy
     // would drift the moment the dispatch table changed, which is how the list
     // came to omit both routed models in the first place.
@@ -418,7 +568,13 @@ pub fn run_list() -> i32 {
         .into_iter()
         .map(str::to_owned)
         .collect();
-    if !pinned.contains(&current) {
+    // The marker is for the model this agent will actually call. With nothing
+    // configured there is no such model — the policy picks per turn — so the
+    // marker belongs to nothing rather than to the cheap tier, which is what
+    // the header used to imply by printing `Selected: deepseek-v4-flash`
+    // above a run that dispatched its code turns to `grok-3-latest`.
+    let current = resolved.model.clone().unwrap_or_default();
+    if !current.is_empty() && !pinned.contains(&current) {
         pinned.push(current.clone());
     }
     let curated = curate(entries, &pinned);
@@ -432,7 +588,14 @@ pub fn run_list() -> i32 {
     // routinely piped into `head`, `grep` or `less`, and `println!` panics
     // (exit 101) the moment the reader goes away. See `crate::out`.
     let mut page = String::new();
-    let _ = writeln!(page, "Selected: {current}\n");
+    let _ = writeln!(page, "Selected: {}\n", resolved.describe());
+    if resolved.model.is_none() {
+        let _ = writeln!(
+            page,
+            "With no model configured the tiered policy routes per turn, to: {}.\n",
+            policy.routed_model_ids().join(", ")
+        );
+    }
     let mut provider = String::new();
     for entry in &curated {
         if entry.connector != provider {
@@ -451,7 +614,9 @@ pub fn run_list() -> i32 {
         page,
         "\nShowing at most {MAX_PER_PROVIDER} per provider, cheapest first; the \
          selected model and the ones the agent routes to are always listed. \
-         `arcana models use <id>` accepts any id, including one not listed."
+         `arcana models use <id>` accepts any id, including one not listed; \
+         `ARCANA_MODEL` and `--model` override it for one process or one run, \
+         and the value `tier` asks for the tiered policy on purpose."
     );
     crate::out::write_all(&page)
 }
@@ -484,9 +649,98 @@ pub fn run_use(model: &str) -> i32 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{
-        curate, price_label, sort_price, CatalogEntry, CatalogPricing, CatalogResponse,
-        MAX_PER_PROVIDER,
+        curate, price_label, resolve_from, sort_price, CatalogEntry, CatalogPricing,
+        CatalogResponse, ModelSource, MAX_PER_PROVIDER,
     };
+
+    // ---- model resolution (A2-276) ------------------------------------
+    //
+    // The order is the rule, so the order is what is tested — one case per
+    // authority, each proving that it beats everything below it. Testing only
+    // the top of the chain would pass against an implementation that read the
+    // flag and nothing else.
+
+    #[test]
+    fn the_flag_beats_every_other_source() {
+        let resolved = resolve_from(
+            Some("from-flag"),
+            Some("from-env"),
+            Some("from-config"),
+            Some("from-state"),
+        );
+        assert_eq!(resolved.model.as_deref(), Some("from-flag"));
+        assert_eq!(resolved.source, ModelSource::Flag);
+    }
+
+    #[test]
+    fn the_environment_beats_both_files() {
+        // This is the lane case: a dispatcher exports the model and has no
+        // writable home of its own to persist one in.
+        let resolved = resolve_from(
+            None,
+            Some("from-env"),
+            Some("from-config"),
+            Some("from-state"),
+        );
+        assert_eq!(resolved.model.as_deref(), Some("from-env"));
+        assert_eq!(resolved.source, ModelSource::Env);
+    }
+
+    #[test]
+    fn the_config_file_beats_the_legacy_state_file() {
+        let resolved = resolve_from(None, None, Some("from-config"), Some("from-state"));
+        assert_eq!(resolved.model.as_deref(), Some("from-config"));
+        assert_eq!(resolved.source, ModelSource::Config);
+    }
+
+    #[test]
+    fn the_legacy_state_file_is_still_read_and_says_where_it_came_from() {
+        // Read, because deleting an operator's existing choice to make a point
+        // about where it should live would be a regression dressed as a fix.
+        let resolved = resolve_from(None, None, None, Some("from-state"));
+        assert_eq!(resolved.model.as_deref(), Some("from-state"));
+        assert_eq!(resolved.source, ModelSource::LegacyState);
+        assert_eq!(resolved.source.as_str(), "legacy-state");
+    }
+
+    #[test]
+    fn nothing_configured_is_the_tier_policy_and_says_so() {
+        let resolved = resolve_from(None, None, None, None);
+        assert!(resolved.model.is_none());
+        assert_eq!(resolved.source, ModelSource::TierPolicy);
+        assert!(resolved.describe().contains("no model configured"));
+    }
+
+    #[test]
+    fn an_empty_or_blank_value_is_not_a_choice() {
+        // An exported-but-empty variable is how a shell says "unset" by
+        // accident; reading it as a model id would dispatch to the empty
+        // string and fail upstream with a message about the provider.
+        let resolved = resolve_from(Some("   "), Some(""), Some("from-config"), None);
+        assert_eq!(resolved.model.as_deref(), Some("from-config"));
+        assert_eq!(resolved.source, ModelSource::Config);
+    }
+
+    #[test]
+    fn the_tier_policy_can_be_asked_for_on_purpose_and_the_source_survives() {
+        // `model: None` with `source: env` is a different fact from `model:
+        // None` with `source: tier-policy`, and a receipt has to be able to
+        // tell them apart: one is a decision, the other is a gap.
+        let resolved = resolve_from(None, Some("tier"), Some("from-config"), None);
+        assert!(resolved.model.is_none());
+        assert_eq!(resolved.source, ModelSource::Env);
+        assert!(resolved.describe().contains("selected explicitly"));
+    }
+
+    #[test]
+    fn a_higher_authority_that_asks_for_tier_is_not_overruled_by_a_lower_one() {
+        // The failure this rules out: treating "tier" as "no answer" and
+        // falling through to the config file, which would make the sentinel
+        // silently do nothing wherever a saved choice exists.
+        let resolved = resolve_from(Some("TIER"), None, Some("from-config"), Some("from-state"));
+        assert!(resolved.model.is_none());
+        assert_eq!(resolved.source, ModelSource::Flag);
+    }
 
     /// The cap/order tests predate pinning and are about those properties, so
     /// they run with an empty pin set — which is exactly the old behaviour.
