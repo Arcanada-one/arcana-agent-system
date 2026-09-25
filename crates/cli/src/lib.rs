@@ -5,8 +5,10 @@
 //! logic lives here so it can be unit-tested without spawning a subprocess.
 
 pub mod bootstrap;
+pub mod cli;
 pub mod demo;
 pub mod effect;
+pub mod ground_truth;
 pub mod http_error;
 pub mod interrupt;
 pub mod kb_read;
