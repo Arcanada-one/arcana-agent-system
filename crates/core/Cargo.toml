@@ -14,7 +14,7 @@ async-trait = "0.1"
 # one decode and one sha256 is the whole of the client's check.
 base64 = "0.22"
 blake3 = "1"
-jsonschema = { version = "0.53", default-features = false }
+jsonschema = { version = "0.56", default-features = false }
 regex = "1.10"
 serde = { version = "1", features = ["derive"] }
 # The contract digest is re-hashed byte for byte before a work item binds to it
