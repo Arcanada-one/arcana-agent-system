@@ -1,9 +1,9 @@
 {
  "admission": {
-  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4) | control (admitting agent, 2026-09-25): two not_measured rows exempted as recorded DEC-AUP-0037 R3 decisions to proceed.",
   "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
-  "verdict": "paused_safe"
+  "verdict": "admitted_with_exemptions"
  },
  "captured_at_utc": "2026-09-25T02:42:13Z",
  "change_set": {
@@ -158,7 +158,22 @@
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
- "exemptions": [],
+ "exemptions": [
+  {
+   "entity": "code_unit:dev-tools/prose-review/review.py",
+   "evidence": "control re-measured 2026-09-25 on head 3ab8b73: turning cargo_install_finding off makes 3 prose_claims tests red (incl. the_check_is_red_on_the_install_command_pr222_published); restored 14/14 + 14/14 green. Control read the regenerated page against the source: refusal texts equal ContractRefusal::Display (crates/core/src/contract.rs:354+), every refusal code exists, ARCANA_MUNERAL_URL/default URL, the 'tier' value and mc_usage.model_source are real; install points at install.md.",
+   "expires_at_utc": "2026-10-09T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / program owner",
+   "reason": "DEC-AUP-0037 R3 decision to proceed, recorded by the ADMITTING agent: dev-tools/prose-review/review.py is an operator-run review script, never in CI and never deployed; it has no canary contour and the repository declares its env surface in cli.rs help text, not an env file (DEC-AUP-0052 names this class NO_CONTOUR_FOR_ENTITY, not yet calibrated). Nothing admitted here widens what the product does."
+  },
+  {
+   "entity": "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+   "evidence": "control re-measured 2026-09-25 on head 3ab8b73: turning cargo_install_finding off makes 3 prose_claims tests red (incl. the_check_is_red_on_the_install_command_pr222_published); restored 14/14 + 14/14 green. Control read the regenerated page against the source: refusal texts equal ContractRefusal::Display (crates/core/src/contract.rs:354+), every refusal code exists, ARCANA_MUNERAL_URL/default URL, the 'tier' value and mc_usage.model_source are real; install points at install.md.",
+   "expires_at_utc": "2026-10-09T00:00:00Z",
+   "owner": "control session (Mac orchestrator, Arcanada) / program owner",
+   "reason": "DEC-AUP-0037 R3 decision to proceed, recorded by the ADMITTING agent: a historical receipt file (A2-297b) is asserted, never re-verified (I14); it is evidence carried forward, not code."
+  }
+ ],
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
