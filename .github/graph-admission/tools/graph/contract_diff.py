@@ -1514,6 +1514,17 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
     breaking = [{"contract": cid, **c} for cid, c in contracts.items() for c in c["changes"] if c["severity"] == "breaking"]
     # edges
     edges_in = edges_from_graph(graph) if graph else discover_edges(ex_h, ch, ex_b, cb)
+    # `--only` narrows WHAT IS MEASURED, so it has to narrow the OBLIGATIONS with it. Filtering the
+    # contract maps alone left every graph edge whose target had just been filtered out still in the
+    # run, where it could only land on `not_measured` ("contract node has no extracted schema at
+    # either revision") and drive the process exit code to 1 — so "check everything except this one
+    # contract" was not expressible at all (measured by A2-274). The number of edges the narrowing
+    # dropped is REPORTED, never silent: a narrowed run has to say how much it did not look at.
+    out_of_scope = 0
+    if only:
+        in_scope = [e for e in edges_in if e["to"] in contracts]
+        out_of_scope = len(edges_in) - len(in_scope)
+        edges_in = in_scope
     edges_out = []
     for e in sorted(edges_in, key=lambda e: (e["to"], e["type"], e["from"])):
         cid = e["to"]
@@ -1539,6 +1550,9 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
             rec["requires_canary"] = True
         edges_out.append(rec)
     for cid, keys in (consumer_keys or {}).items():
+        if only and cid not in contracts:
+            out_of_scope += 1   # a declared external consumer of a contract this run does not measure
+            continue
         if cid not in contracts:
             edges_out.append({"edge": {"from": keys["from"], "type": "consumes_contract", "to": cid, "provenance": "observed"}, "verdict": "not_measured",
                               "reasons": ["declared external consumer, contract not extracted"]})
@@ -1567,7 +1581,8 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
             "contracts": contracts, "breaking": breaking, "edges": edges_out,
             "limitations": sorted(set(ex_b.limitations + ex_h.limitations)),
             "summary": {"contracts_base": len(cb), "contracts_head": len(ch), "statuses": dict(sorted(statuses.items())), "codes": dict(sorted(codes.items())),
-                        "breaking": len(breaking), "edges": len(edges_out), "edge_verdicts": dict(sorted(verdicts.items()))}}
+                        "breaking": len(breaking), "edges": len(edges_out), "edge_verdicts": dict(sorted(verdicts.items())),
+                        **({"only": {"contracts": sorted(only), "edges_out_of_scope": out_of_scope}} if only else {})}}
 
 
 def exit_code_for(result: dict) -> int:
@@ -1579,6 +1594,11 @@ def human(result: dict) -> str:
     lines = [f"contract-diff {result['base']['commit'][:12]} → {result['head']['commit'][:12]}: {result['summary']['contracts_base']} → "
              f"{result['summary']['contracts_head']} contracts; statuses {result['summary']['statuses']}; breaking {result['summary']['breaking']}; "
              f"edges {result['summary']['edges']} {result['summary']['edge_verdicts']}"]
+    narrowed = result["summary"].get("only")
+    if narrowed:
+        lines.append(f"  NARROWED by --only to {len(narrowed['contracts'])} contract id/symbol(s): "
+                     f"{', '.join(narrowed['contracts'][:6])}; {narrowed['edges_out_of_scope']} edge(s) "
+                     f"out of scope and NOT measured by this run")
     for cid, c in result["contracts"].items():
         if c["status"] in ("unchanged",):
             continue
@@ -1902,7 +1922,7 @@ def main(argv=None) -> int:
     ap.add_argument("--head", help="head revision (default HEAD; --worktree uses the working tree)")
     ap.add_argument("--worktree", action="store_true")
     ap.add_argument("--subdir", default="")
-    ap.add_argument("--graph", type=Path, help="RelationshipGraph/v1 whose contract edges are verified (must be built at head)")
+    ap.add_argument("--graph", help="RelationshipGraph/v1 whose contract edges are verified (must be built at head), or 'auto' to build it at head from git objects — the same word verify.py takes")
     ap.add_argument("--direction", action="append", default=[], help="SYM_or_id=input|output|bidirectional")
     ap.add_argument("--consumer-keys", action="append", default=[], help="contract_id=from_id:key1,key2 (external consumer)")
     ap.add_argument("--only", action="append", default=[], help="restrict to these contract ids / symbols")
@@ -1936,7 +1956,11 @@ def main(argv=None) -> int:
             raise Refusal("UNKNOWN_REV", (e.stderr or str(e)).strip()) from e
         graph = None
         if a.graph:
-            graph = json.loads(a.graph.read_text(encoding="utf-8"))
+            # `auto` builds the graph at HEAD — the only revision a contract diff may bind it to.
+            # With --worktree that is the working tree, so the commit check below still compares
+            # like with like. See build_graph.graph_is_auto for why the word lives in one place.
+            graph = build_graph.graph_for(a.graph, a.repo, rev=(a.head or "HEAD"), subdir=a.subdir,
+                                          worktree=a.worktree)
             viol = schema_check.check_graph(graph, schema_check.load_schema(schema_check.GRAPH_SCHEMA_PATH))
             if viol:
                 raise Refusal("GRAPH_INVALID", "; ".join(v["code"] for v in viol[:5]))

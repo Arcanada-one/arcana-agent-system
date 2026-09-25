@@ -66,7 +66,10 @@ CHECK_IDS = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10
 # would report a permanent survivor for a check that does not block by design. They are held to the
 # property instead — asserted in the selftest — and their behaviour is measured by the dedicated
 # gate2a mutation battery in ci_gate.py, where the four mutants of the card each flip the verdict.
-INFORMATIONAL_CHECK_IDS = ["C14", "C15", "C17"]
+INFORMATIONAL_CHECK_IDS = ["C14", "C15", "C17", "C20"]
+# How many C18 coverage problems the one-line human rendering shows before it says how many it is
+# not showing. The JSON check entry always carries every one of them (A2-274).
+C18_PROBLEMS_SHOWN = 20
 VERDICT_RANK = {"admit": 0, "paused_safe": 1, "refuse": 2}
 EXIT_OF = {"admit": 0, "paused_safe": 3, "refuse": 5}
 
@@ -1523,6 +1526,30 @@ def _bundle_policy_check_ids(bundle_root: Path) -> list[str] | None:
         return None
 
 
+TOOLCHAIN_MISMATCH_CODE = "ARTEFACT_VERIFIER_TOOLCHAIN_MISMATCH"
+TOOLCHAIN_MISMATCH_RE = re.compile(r"TOOLCHAIN_MISMATCH|toolchain mismatch|unsupported engine|"
+                                   r"wrong node version|engine \"?node", re.I)
+
+
+def _interpreter_identity(argv: list) -> str:
+    """WHICH binary the gate ran, resolved from PATH, and what it calls itself.
+
+    A2-275 measured the cost of leaving this out: muneral's artefact verifier pins node major.minor,
+    arcana-devs had 24.20.0 while the evidence was recorded on 24.21.0, and the gate reported
+    CHANGE_SET_INCOMPLETE — "your change set is incomplete" — for a fact about PATH. The versions were
+    in the verifier's own output; the one thing missing was which binary the gate had picked.
+    """
+    exe = str(argv[0]) if argv else ""
+    resolved = shutil.which(exe) or (exe if exe and os.path.exists(exe) else None)
+    if not resolved:
+        return f"{exe!r} — not found on PATH={os.environ.get('PATH', '')[:200]}"
+    try:
+        ver = subprocess.run([resolved, "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        ver = ""
+    return f"{exe} → {resolved} ({ver.splitlines()[0][:40] if ver else 'no --version'})"
+
+
 def _run_declared(argv: list[str], cwd: Path, timeout: int) -> tuple[int | None, str]:
     """Run a caller-declared command. Bounded, captured, and never shell-interpreted: argv is a list."""
     try:
@@ -1667,6 +1694,14 @@ def evaluate_derived(repo: Path, base: str, head: str, derived: list[str], decl:
                         break
                 rc_c, tail_c = _run_declared(ver["argv"], vcwd, DERIVED_VERIFY_TIMEOUT_S)
                 runs.append({"path": pth, "stage": "clean", "argv": ver["argv"], "rc": rc_c})
+                if rc_c != 0 and TOOLCHAIN_MISMATCH_RE.search(tail_c or ""):
+                    ev["toolchain_mismatch"] = {"code": TOOLCHAIN_MISMATCH_CODE, "path": pth,
+                                               "interpreter": _interpreter_identity(ver["argv"]),
+                                               "tail": tail_c}
+                    tail_c = (f"{TOOLCHAIN_MISMATCH_CODE}: {tail_c} — the gate ran "
+                              f"{ev['toolchain_mismatch']['interpreter']}. This is a fact about PATH on the "
+                              f"host running the gate, NOT about the change set: put the pinned interpreter "
+                              f"first on PATH (the repository's .nvmrc / engines) and re-run")
                 if not arm("B6.4", rc_c == 0,
                            (f"{pth}: the declared verifier {' '.join(map(str, ver['argv']))[:90]} accepts the head "
                             f"tree (exit 0). A stale artefact, or one hand-edited to a value the verifier does not "
@@ -2263,8 +2298,12 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                               "B6.4/B6.5, not granted by the declaration")
     if not ev.get("eligible"):
         failed = [c for c in ev["checks"] if c["verdict"] != "verified"]
-        problems.append(f"{code}: the gate re-measured the evidence battery and it does not pass — "
-                        + "; ".join(f"{c['id']} {c['code']} {c['verdict']}: {c['detail'][:140]}" for c in failed[:3]))
+        # A2-275 defect 1: the battery can fail for a reason that belongs to the HOST, and reporting
+        # that under the change-set code sends the reader to rebuild a change set that is fine. The
+        # mismatch keeps its own code, in its own check, and the blocking verdict still stands.
+        head_code = TOOLCHAIN_MISMATCH_CODE + " — " if ev.get("toolchain_mismatch") else ""
+        problems.append(f"{code}: {head_code}the gate re-measured the evidence battery and it does not pass — "
+                        + "; ".join(f"{c['id']} {c['code']} {c['verdict']}: {c['detail'][:240]}" for c in failed[:3]))
     return problems, ev
 
 
@@ -2580,12 +2619,12 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                                                   "enforcement_values.off). Pass --enforcement explicitly to override.")
     pol_checks = {c["id"]: c for c in policy["checks"]}
 
-    def add(cid: str, detail: str, entities=None, verdict=None):
+    def add(cid: str, detail: str, entities=None, verdict=None, **extra):
         if cid in disabled:
             return
         spec = pol_checks[cid]
         checks.append({"id": cid, "code": spec["code"], "verdict": verdict or spec["verdict"],
-                       "detail": detail, **({"entities": entities[:40]} if entities else {})})
+                       "detail": detail, **({"entities": entities[:40]} if entities else {}), **extra})
 
     desc_l = (description or "").lower()
 
@@ -2729,7 +2768,17 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
             coverage_problems = ["dual graph coverage could not be measured: "
                                  + type(exc).__name__ + ": " + detail]
         if coverage_problems:
-            add("C18", f"{Path(rec['path']).name}: " + "; ".join(coverage_problems[:4]))
+            # A2-274 measured what truncation costs: ten real coverage problems, four printed, so
+            # an author fixed the four and got the same red check back with the next four — two
+            # extra receipt-rebuild cycles for a list the gate already held in memory. The whole
+            # list now travels in the check entry, and the human line names the remainder instead
+            # of hiding it: a gate that knows ten problems must never report "4".
+            shown = coverage_problems[:C18_PROBLEMS_SHOWN]
+            more = len(coverage_problems) - len(shown)
+            add("C18", f"{Path(rec['path']).name}: " + "; ".join(shown)
+                       + (f" …and {more} more of {len(coverage_problems)} (the full list is in this check's "
+                          f"`coverage_problems` — re-run the gate with --json)" if more else ""),
+                coverage_problems=list(coverage_problems))
 
         # verdict aggregation with admissible exemptions
         captured = parse_iso(doc.get("captured_at_utc")) or datetime.now(timezone.utc)
@@ -2771,6 +2820,11 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                                            "entities": sorted(str(x.get("entity")) for x in struct),
                                            "re_measured": [c for c in (sev.get("checks") or [])],
                                            "problems": problems}
+            if sev.get("toolchain_mismatch"):
+                tm = sev["toolchain_mismatch"]
+                add("C20", f"{Path(rec['path']).name}: {tm['path']}: the declared artefact verifier refused the "
+                           f"head tree over its toolchain, not over these bytes. The gate ran "
+                           f"{tm['interpreter']}. {tm['tail'][:200]}")
             if problems:
                 add("C16", f"{Path(rec['path']).name}: " + "; ".join(problems[:3]))
                 valid_exempt -= {x.get("entity") for x in struct}
@@ -3944,6 +3998,97 @@ def cmd_gate(a) -> int:
     return doc["exit_code"]
 
 
+def previous_self_receipts(repo: Path, rev: str, work_item: str) -> list[str]:
+    """Every ChangeAdmissionReceipt/v1 under `receipts/graph/` at `rev` that declares `work_item`.
+
+    Read out of the GIT OBJECT at `rev`, not off the working tree: a reissue is run with the new
+    draft already written by a previous attempt, and the tree copy would then be the document the
+    caller is about to replace rather than the one that is committed.
+    """
+    out = git_text_or_none(repo, "ls-tree", "-r", "--name-only", rev) or ""
+    found = []
+    for rel in out.splitlines():
+        if not RECEIPT_ISSUE_RE.match(rel.strip()):
+            continue
+        rel = rel.strip()
+        raw = git_text_or_none(repo, "show", f"{rev}:{rel}") or ""
+        try:
+            doc = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        if str(doc.get("schema", "")).startswith("ChangeAdmissionReceipt") and doc.get("work_item") == work_item:
+            found.append(rel)
+    return sorted(found)
+
+
+def cmd_reissue(a) -> int:
+    """A2-289 — re-issue a ChangeAdmissionReceipt AT THE PATH IT ALREADY OCCUPIES, in one commit.
+
+    THE DANCE THIS REMOVES, measured on ARAS #212 (A2-278, commits c2126aa…466a4a9). The receipt is
+    filed, then something forces another commit — a red `changelog` check, a rebase, a review fix —
+    and the range the receipt names no longer describes the branch, so it must be re-issued. The
+    agent re-ran verify.py, which timestamps its output path, and the new receipt landed BESIDE the
+    old one. DEC-AUP-0035 supersedes the previous draft only AT THE SAME PATH (condition: «the
+    document at the path this run writes to declares this run's work item»), so the old receipt was
+    an ordinary receipt entity the matrix gives no verifier — an I14 `not_measured` — and the change
+    became PAUSED_SAFE. The fix was two commits: one deleting the stale receipt, then the re-issue
+    over the range that deletion created (87bf2a6, 466a4a9). Both measured in test_reissue.py.
+
+    WHY NOT THE OTHER OPTION. A2-278 offered an alternative — document «changelog before receipt» in
+    docs/graph-admission.md. That removes ONE TRIGGER, not the mechanism: the same pause is
+    reproduced with no changelog anywhere in the fixture, by any second commit at all
+    (`TheDanceItself.test_a_second_commit_alone_reproduces_it`). Ordering advice cannot be measured
+    by anything, and a rebase does not read it. So the ordering note is worth writing and is NOT the
+    answer to this defect.
+
+    WHAT THIS COMMAND WILL NOT DO. It never picks between two candidate receipts and it never
+    deletes one. Several receipts for one work item under `receipts/graph/` is the debt A2-278 left
+    behind, and «the tool quietly chose the newest» is how a record of a different range gets
+    overwritten. It names them and exits 2; `--supersede <path>` is the caller saying which.
+    """
+    repo = Path(a.repo).resolve()
+    base, head = resolve_range(a)
+    if a.supersede:
+        dest = a.supersede
+        why = "named by --supersede"
+        if not git_ok(repo, "cat-file", "-e", f"{head}:{dest}"):
+            raise UsageError(f"--supersede {dest} is not a file at {head[:12]} — a re-issue replaces a receipt "
+                             f"that is COMMITTED; a path only in the working tree is a first issuance, and "
+                             f"DEC-AUP-0035 has nothing at that path to supersede.")
+    else:
+        found = previous_self_receipts(repo, head, a.work_item)
+        if not found:
+            raise UsageError(
+                f"no ChangeAdmissionReceipt/v1 under receipts/graph/ at {head[:12]} declares work item "
+                f"{a.work_item}. Nothing to re-issue: this is a FIRST issuance — run verify.py --out "
+                f"receipts/graph/<name>.json --work-item {a.work_item}. (A receipt filed without "
+                f"--work-item cannot be found here, and cannot be superseded at its path either — "
+                f"verify.py warns about that when it writes one.)")
+        if len(found) > 1:
+            raise UsageError(
+                f"{len(found)} receipts under receipts/graph/ declare work item {a.work_item}: "
+                f"{', '.join(found)}. A re-issue supersedes exactly ONE path and this command will not "
+                f"guess which — the other copies are records of ranges that are no longer this branch's. "
+                f"Name it with --supersede <path>, and delete the stale copies in that same commit.")
+        dest = found[0]
+        why = f"the only receipt at {head[:12]} declaring work item {a.work_item}"
+
+    print(f"re-issuing at {dest}  ({why})", file=sys.stderr)
+    if a.print_path:
+        print(dest)
+        return 0
+
+    verify = Path(a.verify) if a.verify else (Path(__file__).resolve().parent / "verify.py")
+    if not verify.exists():
+        raise UsageError(f"no verify.py at {verify} — pass --verify <path>")
+    argv = [sys.executable, str(verify), "--repo", str(repo), "--diff", f"{base}..{head}",
+            "--graph", "auto", "--work-item", a.work_item, "--out", str(repo / dest), *(a.verify_args or [])]
+    print("+ " + " ".join(argv), file=sys.stderr)
+    return subprocess.run(argv).returncode
+
+
 def cmd_exempt(a) -> int:
     """AUP-GRAPH-006:gate4b — the GATE issues a structural exemption into a receipt.
 
@@ -4092,6 +4237,21 @@ def main(argv=None) -> int:
     g.add_argument("--workdir", help="scratch directory for the graph build and an authored receipt")
     g.add_argument("--bundle-dir", default=DEFAULT_BUNDLE_DIR, help="the vendored gate bundle directory, for the gate4b self-update classification")
     g.set_defaults(fn=cmd_gate)
+
+    ri = sub.add_parser("reissue", help="re-issue a ChangeAdmissionReceipt at the path it already occupies "
+                                        "(DEC-AUP-0035 supersedes the previous draft only at the SAME path)")
+    ri.add_argument("--repo", required=True)
+    ri.add_argument("--range", help="<base>..<head>")
+    ri.add_argument("--base"), ri.add_argument("--head")
+    ri.add_argument("--work-item", required=True, help="the work item BOTH drafts declare — condition 3 of "
+                                                       "DEC-AUP-0035 compares it, and a receipt filed without "
+                                                       "one can never be superseded at its path")
+    ri.add_argument("--supersede", help="the receipt path to replace, when more than one declares this work item")
+    ri.add_argument("--print-path", action="store_true", help="resolve the destination and print it; run nothing")
+    ri.add_argument("--verify", help="path to verify.py (default: beside this file)")
+    ri.add_argument("verify_args", nargs="*", help="further arguments passed through to verify.py "
+                                                    "(--tsc, --select, --canary, …); put them after `--`")
+    ri.set_defaults(fn=cmd_reissue)
 
     ex = sub.add_parser("exempt", help="issue a structural exemption into a receipt (gate4b) — the gate, "
                                        "never the change author by hand")
