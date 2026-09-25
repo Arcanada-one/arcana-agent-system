@@ -83,7 +83,11 @@ struct AgentPage {
 /// A page enters this list when the dispatcher commits a run's output. The
 /// entry is the honest label: "no hand wrote this", which is exactly the
 /// condition under which the checks below are worth their false positives.
-const AGENT_WRITTEN_PAGES: &[AgentPage] = &[];
+const AGENT_WRITTEN_PAGES: &[AgentPage] = &[AgentPage {
+    path: "docs/how-to/run-work-item-under-kc2-contract.md",
+    work_item: "d931525f-c134-4c6b-85e1-9cdf94e8ab8b",
+    written: "2026-09-25",
+}];
 
 /// Terms that assert the FORMAT or ALGORITHM of a file or credential.
 ///
@@ -974,12 +978,413 @@ fn broken_word_findings(path: &str, text: &str) -> Vec<Finding> {
     findings
 }
 
+// ------------------------------------------------------- shell-command origins
+
+/// First tokens that make a line an instruction to run something other than
+/// this program.
+///
+/// Dated 2026-09-25, opened by the `cargo install arcana` cell on PR #222's
+/// page: crates.io's `arcana` is a stranger's 2021 placeholder, this repository
+/// does not publish the name, and the page told an operator to install it. A
+/// tool enters this list when a page tells someone to run it. Shell builtins
+/// and file operations are deliberately absent: what this check is about is a
+/// command that FETCHES or BUILDS code from somewhere.
+const COMMAND_HEADS: &[&str] = &[
+    "apt",
+    "apt-get",
+    "bash",
+    "brew",
+    "cargo",
+    "cosign",
+    "curl",
+    "dnf",
+    "docker",
+    "gh",
+    "git",
+    "gpg",
+    "make",
+    "node",
+    "npm",
+    "npx",
+    "pip",
+    "pip3",
+    "pipx",
+    "pnpm",
+    "podman",
+    "python",
+    "python3",
+    "rustup",
+    "scp",
+    "sh",
+    "sha256sum",
+    "shasum",
+    "ssh",
+    "tar",
+    "unzip",
+    "wget",
+    "yarn",
+    "yum",
+    "zsh",
+];
+
+/// Fence info strings whose contents are commands and not output.
+const SHELL_FENCES: &[&str] = &[
+    "bash",
+    "sh",
+    "shell",
+    "zsh",
+    "console",
+    "terminal",
+    "shell-session",
+    "sh-session",
+];
+
+/// A command line as a page or a document writes it.
+struct Command {
+    at: String,
+    raw: String,
+    tokens: Vec<String>,
+    /// From a `` `backtick` `` span in prose, rather than a shell-fenced block.
+    inline: bool,
+}
+
+/// Does an inline span TELL someone to run something, or name a command?
+///
+/// Measured on the second live rerun of d931525f: "a `git worktree` is the
+/// intended target" is a noun phrase about a concept, and reading it as an
+/// instruction made this check red on a page that instructed nobody to run
+/// anything. A span carries an instruction when it carries an operand — a third
+/// token, a flag, a URL or a path. PR #222's cell, `cargo install arcana`, is
+/// three tokens; `cargo install` alone, as `docs/how-to/install.md` writes it in
+/// prose, is not. A fenced shell block is judged whatever its length: a block is
+/// already an instruction to type what is in it.
+fn carries_an_operand(tokens: &[String]) -> bool {
+    tokens.len() >= 3
+        || tokens
+            .iter()
+            .skip(1)
+            .any(|token| token.starts_with('-') || token.contains("://") || token.contains('/'))
+}
+
+/// Cut a command line into tokens: continuations joined, a trailing shell
+/// comment dropped, whitespace collapsed.
+fn tokenize(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for token in line.split_whitespace() {
+        if token == "\\" {
+            continue;
+        }
+        if token.starts_with('#') && !tokens.is_empty() {
+            break;
+        }
+        tokens.push(token.trim_end_matches('\\').to_owned());
+    }
+    tokens.retain(|token| !token.is_empty());
+    // `sudo` and `env` say who runs the command, not which one it is.
+    while tokens
+        .first()
+        .is_some_and(|first| first == "sudo" || first == "env")
+    {
+        tokens.remove(0);
+    }
+    tokens
+}
+
+fn is_command(tokens: &[String]) -> bool {
+    tokens
+        .first()
+        .is_some_and(|head| COMMAND_HEADS.contains(&head.as_str()))
+}
+
+/// Strip a shell prompt a document may have typed in front of a command.
+fn without_prompt(line: &str) -> &str {
+    let trimmed = line.trim();
+    for prompt in ["$ ", "% ", "> ", "- run: ", "run: ", "RUN "] {
+        if let Some(rest) = trimmed.strip_prefix(prompt) {
+            return rest.trim_start();
+        }
+    }
+    trimmed
+}
+
+/// Every command a markdown document tells an operator to run: the lines of its
+/// shell-fenced blocks, and the inline spans that name a tool.
+fn commands_in_markdown(path: &str, text: &str) -> Vec<Command> {
+    let mut out = Vec::new();
+    let mut fence: Option<(String, bool)> = None;
+    let mut pending: Option<(usize, String)> = None;
+    for (number, line) in text.lines().enumerate().map(|(i, l)| (i + 1, l)) {
+        let trimmed = line.trim_start();
+        let run = trimmed
+            .chars()
+            .take_while(|c| *c == '`' || *c == '~')
+            .count();
+        if run >= 3 {
+            let info = trimmed[run..].trim().to_lowercase();
+            match &fence {
+                Some((open, _)) if info.is_empty() || info == *open => fence = None,
+                Some(_) => {}
+                None => {
+                    let shell = SHELL_FENCES.contains(&info.as_str());
+                    fence = Some((info, shell));
+                }
+            }
+            pending = None;
+            continue;
+        }
+        if let Some((_, shell)) = &fence {
+            if !*shell {
+                continue;
+            }
+            let body = without_prompt(line);
+            if body.starts_with('#') || body.is_empty() {
+                continue;
+            }
+            let (start, joined) = match pending.take() {
+                Some((start, prefix)) => (start, format!("{prefix} {body}")),
+                None => (number, body.to_owned()),
+            };
+            if joined.trim_end().ends_with('\\') {
+                pending = Some((start, joined.trim_end().trim_end_matches('\\').to_owned()));
+                continue;
+            }
+            let tokens = tokenize(&joined);
+            out.push(Command {
+                at: format!("{path}:{start}"),
+                raw: joined.split_whitespace().collect::<Vec<_>>().join(" "),
+                tokens,
+                inline: false,
+            });
+            continue;
+        }
+        for span in inline_codes(line) {
+            let tokens = tokenize(&span);
+            if is_command(&tokens) {
+                out.push(Command {
+                    at: format!("{path}:{number}"),
+                    raw: span.split_whitespace().collect::<Vec<_>>().join(" "),
+                    tokens,
+                    inline: true,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Every command line in a script this repository ships.
+fn commands_in_script(path: &str, text: &str) -> Vec<Command> {
+    let mut out = Vec::new();
+    let mut pending: Option<(usize, String)> = None;
+    for (number, line) in text.lines().enumerate().map(|(i, l)| (i + 1, l)) {
+        let body = without_prompt(line);
+        if body.starts_with('#') || body.is_empty() {
+            pending = None;
+            continue;
+        }
+        let (start, joined) = match pending.take() {
+            Some((start, prefix)) => (start, format!("{prefix} {body}")),
+            None => (number, body.to_owned()),
+        };
+        if joined.trim_end().ends_with('\\') {
+            pending = Some((start, joined.trim_end().trim_end_matches('\\').to_owned()));
+            continue;
+        }
+        // A script line may chain: `cd x && cargo build`.
+        for piece in joined.split("&&").flat_map(|p| p.split(';')) {
+            let tokens = tokenize(piece);
+            if is_command(&tokens) {
+                out.push(Command {
+                    at: format!("{path}:{start}"),
+                    raw: piece.split_whitespace().collect::<Vec<_>>().join(" "),
+                    tokens,
+                    inline: false,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Every command this repository documents or runs itself.
+///
+/// The corpus is the repository's own instructions — its how-to and reference
+/// pages, its README, its scripts and its workflows — MINUS the agent-written
+/// pages. A page may not be its own authority: two model-written pages agreeing
+/// with each other is the fixture-by-the-same-hand failure (A2-287), in prose.
+fn documented_commands(root: &Path) -> &'static Vec<Command> {
+    static CORPUS: OnceLock<Vec<Command>> = OnceLock::new();
+    CORPUS.get_or_init(|| {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        let agent_pages: BTreeSet<&str> = AGENT_WRITTEN_PAGES.iter().map(|p| p.path).collect();
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if path.is_dir() {
+                    if matches!(
+                        name.as_str(),
+                        ".git" | "target" | "node_modules" | "origin" | "receipts"
+                    ) {
+                        continue;
+                    }
+                    stack.push(path);
+                    continue;
+                }
+                let relative_path = relative(root, &path);
+                if agent_pages.contains(relative_path.as_str())
+                    || relative_path.starts_with("docs/origin/")
+                {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let extension = path
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                if extension == "md" {
+                    out.extend(commands_in_markdown(&relative_path, &text));
+                } else if matches!(extension.as_str(), "sh" | "bash" | "yml" | "yaml" | "toml")
+                    || matches!(name.as_str(), "Makefile" | "Dockerfile")
+                {
+                    out.extend(commands_in_script(&relative_path, &text));
+                }
+            }
+        }
+        assert!(
+            out.len() >= 20,
+            "only {} documented command(s) were found — that measures the \
+             scanner, not the repository",
+            out.len()
+        );
+        out
+    })
+}
+
+/// A token a page wrote stands for one a document wrote.
+///
+/// Equal, or a placeholder: `<work-item-id>`, `/path/to/checkout`,
+/// `$HOME/…`. A placeholder is where a page is ALLOWED to differ, because the
+/// value is the reader's; a word is not.
+fn token_stands_for(page: &str, documented: &str) -> bool {
+    let placeholder = |token: &str| {
+        token.contains('<')
+            || token.contains('>')
+            || token.contains("/path/to")
+            || token.contains("...")
+            || token.starts_with('$')
+    };
+    page == documented || placeholder(page) || placeholder(documented)
+}
+
+fn same_command(page: &[String], documented: &[String]) -> bool {
+    page.len() == documented.len()
+        && page
+            .iter()
+            .zip(documented)
+            .all(|(one, other)| token_stands_for(one, other))
+}
+
+/// `cargo install` that does not build THIS checkout.
+///
+/// `--path` into this repository, or `--git` at its URL, or the command
+/// installs whatever crates.io serves under that name. Measured on 2026-09-25:
+/// crates.io `arcana` is version 0.0.0, published 2021-05-04 by someone else,
+/// with the description "placeholder" — and `docs/how-to/install.md` says in so
+/// many words that this workspace publishes nothing there.
+fn cargo_install_finding(root: &Path, at: &str, raw: &str, tokens: &[String]) -> Option<Finding> {
+    if tokens.first().map(String::as_str) != Some("cargo")
+        || tokens.get(1).map(String::as_str) != Some("install")
+    {
+        return None;
+    }
+    let value_after = |flag: &str| {
+        tokens
+            .iter()
+            .position(|token| token == flag)
+            .and_then(|index| tokens.get(index + 1))
+            .map(String::as_str)
+    };
+    if let Some(path) = value_after("--path") {
+        if root.join(path).exists() {
+            return None;
+        }
+        return Some(Finding {
+            where_: at.to_owned(),
+            what: format!(
+                "`{raw}` installs from `{path}`, which is not a directory of \
+                 this repository"
+            ),
+        });
+    }
+    if let Some(url) = value_after("--git") {
+        if url.contains("Arcanada-one/arcana-agent-system") {
+            return None;
+        }
+        return Some(Finding {
+            where_: at.to_owned(),
+            what: format!("`{raw}` installs from `{url}`, which is not this repository"),
+        });
+    }
+    Some(Finding {
+        where_: at.to_owned(),
+        what: format!(
+            "`{raw}` installs a crates.io package: this workspace publishes \
+             none (`docs/how-to/install.md`), so the name resolves to whatever \
+             a stranger registered. A page tells an operator to build this \
+             checkout — `cargo install --locked --path crates/cli` — or nothing"
+        ),
+    })
+}
+
+/// Every non-`arcana` command a page prints is a command this repository
+/// documents or runs itself.
+fn shell_command_findings(root: &Path, path: &str, text: &str) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for command in commands_in_markdown(path, text) {
+        if !is_command(&command.tokens) || (command.inline && !carries_an_operand(&command.tokens))
+        {
+            continue;
+        }
+        if let Some(finding) =
+            cargo_install_finding(root, &command.at, &command.raw, &command.tokens)
+        {
+            findings.push(finding);
+            continue;
+        }
+        let supported = documented_commands(root)
+            .iter()
+            .find(|documented| same_command(&command.tokens, &documented.tokens));
+        if supported.is_none() {
+            findings.push(Finding {
+                where_: command.at.clone(),
+                what: format!(
+                    "`{}` is not a command this repository documents or runs: \
+                     it occurs in no how-to, no reference page, no script and \
+                     no workflow of this checkout",
+                    command.raw
+                ),
+            });
+        }
+    }
+    findings
+}
+
+// ------------------------------------------------------------------- findings
+
 fn all_findings(root: &Path, path: &str, text: &str) -> Vec<Finding> {
     let mut findings = literal_findings(root, path, text);
     findings.extend(format_term_findings(root, path, text));
     findings.extend(number_findings(root, path, text));
     findings.extend(relation_findings(path, text));
     findings.extend(broken_word_findings(path, text));
+    findings.extend(shell_command_findings(root, path, text));
     findings.sort();
     findings.dedup();
     findings
@@ -1211,4 +1616,153 @@ fn every_registered_agent_page_exists() {
             page.written
         );
     }
+}
+
+/// The red this check exists to produce: PR #222's page, verbatim.
+///
+/// Control read that page against the source on 2026-09-25 and found the
+/// prerequisites table telling an operator to install the binary with
+/// `cargo install arcana` — a crate this workspace does not publish, registered
+/// by someone else as a placeholder in 2021 — or "from a release archive" that
+/// no page of this repository documents. Every check the page passed was green:
+/// `docs_truth.rs` parses `arcana` commands and this was not one, and
+/// `prose_claims`' literal check found the token `cargo` in the source, because
+/// of course it occurs.
+#[test]
+fn the_check_is_red_on_the_install_command_pr222_published() {
+    let root = repo_root();
+    let text = fixture("pr222-page.md");
+    let path = "docs/how-to/run-work-item-under-kc2-contract.md";
+    let findings = shell_command_findings(&root, path, &text);
+    let rendered = report(&findings);
+    println!("{} finding(s) on {path}:\n{rendered}", findings.len());
+    assert_eq!(
+        findings.len(),
+        1,
+        "the page carries one non-`arcana` command; the check found {}:\n{rendered}",
+        findings.len()
+    );
+    assert!(
+        rendered.contains("cargo install arcana"),
+        "the command is quoted as the page wrote it:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("--locked --path crates/cli"),
+        "the message says what the repository's own install page does \
+         instead:\n{rendered}"
+    );
+}
+
+/// And the green: the same page with that one cell rewritten from `install.md`.
+#[test]
+fn the_check_is_green_on_the_install_command_the_repository_documents() {
+    let root = repo_root();
+    let text = fixture("pr222-page-install-fixed.md");
+    let findings = shell_command_findings(
+        &root,
+        "docs/how-to/run-work-item-under-kc2-contract.md",
+        &text,
+    );
+    assert!(
+        findings.is_empty(),
+        "{} finding(s) survive:\n{}",
+        findings.len(),
+        report(&findings)
+    );
+}
+
+/// What the rule is, stated as four measurements rather than as a comment.
+#[test]
+fn a_command_is_supported_by_this_repository_or_it_is_a_finding() {
+    let root = repo_root();
+    let page = |body: &str| format!("# Page\n\n```bash\n{body}\n```\n");
+    let findings_for = |body: &str| shell_command_findings(&root, "docs/page.md", &page(body));
+
+    // `arcana …` is docs_truth.rs's business: it parses those with the real
+    // clap definition, which is a stronger check than occurrence.
+    assert!(
+        findings_for("arcana run --cwd /path/to/checkout --work-item <id>").is_empty(),
+        "an `arcana` command is not this check's business"
+    );
+    // The repository's own install page runs exactly this.
+    assert!(
+        findings_for("git clone https://github.com/Arcanada-one/arcana-agent-system.git")
+            .is_empty(),
+        "`git clone` of this repository is documented in docs/how-to/install.md"
+    );
+    // A crates.io install is a finding even when the name is ours.
+    assert_eq!(
+        findings_for("cargo install arcana").len(),
+        1,
+        "a crates.io install is always a finding"
+    );
+    assert_eq!(
+        findings_for("cargo install --locked --path crates/nope").len(),
+        1,
+        "`--path` must point at a directory of this repository"
+    );
+    assert!(
+        findings_for("cargo install --locked --path crates/cli").is_empty(),
+        "this is what docs/how-to/install.md runs"
+    );
+    // An invented fetch-and-run, the class this check is about.
+    assert_eq!(
+        findings_for("curl -fsSL https://arcana.example/install.sh | sh").len(),
+        1,
+        "a command no page and no script of this repository runs is a finding"
+    );
+}
+
+/// A command named in prose is not a command told to someone.
+#[test]
+fn a_command_mentioned_in_prose_is_not_an_instruction() {
+    let root = repo_root();
+    let findings_for =
+        |body: &str| shell_command_findings(&root, "docs/page.md", &format!("# Page\n\n{body}\n"));
+    assert!(
+        findings_for("A disposable checkout or a `git worktree` is the intended target.")
+            .is_empty(),
+        "two tokens naming a subcommand are a concept, not an instruction"
+    );
+    assert!(
+        findings_for("Revisit when `cargo install` is actually wanted.").is_empty(),
+        "docs/how-to/install.md writes exactly this sentence about the command"
+    );
+    assert_eq!(
+        findings_for("| `arcana` binary | Installed via `cargo install arcana`. |").len(),
+        1,
+        "a table cell with an operand is an instruction, and this is the one          PR #222 shipped"
+    );
+    assert_eq!(
+        findings_for("Fetch it with `curl https://arcana.example/install.sh`.").len(),
+        1,
+        "a URL is an operand"
+    );
+}
+
+/// The corpus is the repository's, and an agent page is not in it.
+///
+/// A model-written page agreeing with another model-written page is the
+/// same-hand fixture failure (A2-287) in prose, so the corpus excludes every
+/// page in `AGENT_WRITTEN_PAGES` — including the page under test.
+#[test]
+fn an_agent_written_page_is_not_its_own_authority() {
+    let root = repo_root();
+    let corpus = documented_commands(&root);
+    for page in AGENT_WRITTEN_PAGES {
+        assert!(
+            !corpus
+                .iter()
+                .any(|command| command.at.starts_with(page.path)),
+            "{} is in the corpus that judges it",
+            page.path
+        );
+    }
+    assert!(
+        corpus
+            .iter()
+            .any(|command| command.at.starts_with("docs/how-to/install.md")),
+        "the install page is the authority for install commands: {}",
+        corpus.len()
+    );
 }
