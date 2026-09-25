@@ -28,7 +28,7 @@ Extractors (each one separately disable-able for the mutation battery; `manifest
                marker — a non-test source declaring `class X extends <ImportedBase>Adapter`, never a Playwright dependency
                (a transport); file containment → deploys_to (deterministic)
   docs         *.md → document; explicit repo paths and `METHOD /path` mentions                  → documents (deterministic)
-  work_items   work-item ids (default `MUN-dddd`) in code comments and documents                 → documents (deterministic)
+  work_items   work-item ids (default `MUN-dddd`) in code comments and documents                 → names (deterministic)
   receipts     receipts/**/*.json with a `...Receipt/v1` schema; explicit repo paths inside      → verifies (deterministic)
   rust         AUP-GRAPH-009: Cargo.toml (tomllib) → deployable_unit (service/cli/library) + containment; `mod x;`
                file declarations and `use crate::…` / `use <workspace-crate>::…` paths resolved through the crate's
@@ -1318,15 +1318,32 @@ class Builder:
                     self.g.edge(f"document:{p}", "documents", nid, "deterministic", via=via)
 
     def x_work_items(self):
+        """A work-item id found in text is a MENTION: `names`, from the mentioner to the work item.
+
+        DEC-AUP-0052. This was `documents`, emitted from the work item to the code unit for a comment
+        and from the document to the work item for markdown — the same extractor pointing one relation
+        both ways. The matrix reads `documents` as «verify the document (edge from)», so in the comment
+        direction the gate declared the IDENTIFIER the document and demanded `doc_reference` of it: an
+        identifier makes no references, the matrix gives `work_item` no verifier, and `impact.neighbours`
+        walks reverse edges — so every change to a JS/TS file whose comment named an id acquired an
+        affected entity whose only possible verdict was `not_measured`, i.e. `paused_safe` forever
+        (measured: muneral#171, and both fixtures of A2-300's MEASUREMENTS M1/M2).
+
+        `names` is declared non-verification-bearing in the matrix and constrained to `-> work_item` by
+        the graph schema, and this is its only producer. The mention is not deleted: the node and the
+        edge stay, so «which work item does this file name» is still a graph query, and GRAPH-006 still
+        binds the work item to the admission receipt. What goes away is the obligation, which nobody
+        ever decided to create.
+        """
         for f in self.ts.values():
             for wid in sorted(set(self.work_item_re.findall(f.comments))):
                 self.g.node(f"work_item:{wid}", "work_item", sha_text(wid), symbol=wid)
-                self.g.edge(f"work_item:{wid}", "documents", f"code_unit:{f.path}", "deterministic", via="explicit-id-in-comment")
+                self.g.edge(f"code_unit:{f.path}", "names", f"work_item:{wid}", "deterministic", via="explicit-id-in-comment")
         for p in self.tree.paths:
             if p.endswith((".md", ".markdown")) and f"document:{p}" in self.g.nodes:
                 for wid in sorted(set(self.work_item_re.findall(self.tree.text(p)))):
                     self.g.node(f"work_item:{wid}", "work_item", sha_text(wid), symbol=wid)
-                    self.g.edge(f"document:{p}", "documents", f"work_item:{wid}", "deterministic", via="explicit-id")
+                    self.g.edge(f"document:{p}", "names", f"work_item:{wid}", "deterministic", via="explicit-id")
 
     def x_receipts(self):
         t = self.tree

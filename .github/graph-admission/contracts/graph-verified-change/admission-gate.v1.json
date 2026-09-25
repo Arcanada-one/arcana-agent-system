@@ -29,17 +29,29 @@
   "ci_required_repositories": [
    "Arcanada-one/muneral"
   ],
+  "ci_vendoring_repositories": {
+   "source": "contracts/graph-verified-change/bundle-callers.v1.json",
+   "rule": "Deliberately NOT a list here. The repositories that vendor the gate bundle are whatever the org sweep finds (`bundle_sync.py discover`), recorded in the file named above and re-measured daily by the `bundle-drift` workflow. A second, hand-written copy of that set in this contract is how this field came to name seven repositories when four vendored: a list nothing reads is a list nothing maintains, and until A2-298 nothing in this repository read `ci_proposed_repositories` at all (measured by `rg`: zero readers). `tools/graph/test_admission_scope_matches_sweep.py` now reads both and fails when they diverge."
+  },
   "ci_proposed_repositories": [
-   "Arcanada-one/model-connector",
-   "Arcanada-one/scrutator",
-   "Arcanada-one/prompt-assembly",
    "Arcanada-one/arcana-agent-system",
    "Arcanada-one/auth-arcana",
-   "Arcanada-one/arcanada-publisher",
-   "Arcanada-one/disk-arcana"
+   "Arcanada-one/scrutator"
   ],
-  "ci_scope_rule": "`ci_required_repositories` are the repositories where the `graph-admission` job is a REQUIRED-for-merge check. `ci_proposed_repositories` carry a proposal pull request that adds the same job as NON-required (dark launch): the owner's broker decides promotion, and per AUP-GRAPH-009's method clause a repository is promoted only after a GRAPH-007 mutation calibration of its own language/population. A repository being here is never by itself a merge condition.",
-  "ci_promotion_rule": "A repository MUST NOT be promoted to `ci_required_repositories` while its row in retrofit-registry.v1.json has `calibration.status != \"verified\"`. AUP-GRAPH-009's method clause requires a per-language AUP-GRAPH-007 mutation calibration before the gate is made required on a repository: without a measured proxy recall the gate's red is of unknown value, and a required check of unknown value is a tax, not a control. `not_measured` is not a pass (DEC-AUP-0008 I4)."
+  "ci_proposed_repositories_measured_2026_09_25": "These three carry the `graph-admission` job as a NON-required check and vendor the bundle: read from the live API on 2026-09-25 — `.github/graph-admission/BUNDLE.json` present and `.github/workflows/graph-admission.yml` + `graph-admission-call.yml` present in each. Together with `Arcanada-one/muneral` (required) they are the four callers of ci_vendoring_repositories, and the two sets are asserted equal by the check named there.",
+  "ci_intended_repositories": {
+   "repositories": [
+    "Arcanada-one/model-connector",
+    "Arcanada-one/prompt-assembly",
+    "Arcanada-one/arcanada-publisher",
+    "Arcanada-one/disk-arcana"
+   ],
+   "measured_2026_09_25": "None of these four carries the bundle or ANY graph-admission workflow: `repos/Arcanada-one/<r>/contents/.github/graph-admission/BUNDLE.json` → 404 and no `graph-admission*.yml` under `.github/workflows` for each. They were listed as `ci_proposed_repositories` — the field whose own rule says a proposal pull request EXISTS — and no such pull request does.",
+   "status": "intended, not proposed. An intention carries no dark launch, produces no runs, and is not evidence of anything; it is here so that the ambition stays visible without being counted as coverage. Moving a repository out of this list means opening the proposal pull request and letting the sweep see the bundle — in that order."
+  },
+  "ci_scope_rule": "`ci_required_repositories` are the repositories where the `graph-admission` job is a REQUIRED-for-merge check. `ci_proposed_repositories` carry the same job as NON-required (dark launch): the owner's broker decides promotion, and per AUP-GRAPH-009's method clause a repository is promoted only after a GRAPH-007 mutation calibration of its own language/population. A repository being here is never by itself a merge condition. WHAT IS MEASURED AND WHAT IS INTENDED ARE NOW DIFFERENT FIELDS (A2-298): required + proposed is exactly the vendoring set the sweep finds, and `ci_intended_repositories` holds the repositories we mean to reach, with no claim that anything runs there. The divergence that made this split necessary is recorded, not tidied away: the field said seven, the sweep found four, and the conflict stood for weeks because no code compared them.",
+  "ci_promotion_rule": "A repository MUST NOT be promoted to `ci_required_repositories` while its row in retrofit-registry.v1.json has `calibration.status != \"verified\"`. AUP-GRAPH-009's method clause requires a per-language AUP-GRAPH-007 mutation calibration before the gate is made required on a repository: without a measured proxy recall the gate's red is of unknown value, and a required check of unknown value is a tax, not a control. `not_measured` is not a pass (DEC-AUP-0008 I4).",
+  "ci_scope_divergence_check": "tools/graph/test_admission_scope_matches_sweep.py — run in CI by tools/ci/self_check.py's tools/graph/test_*.py sweep. It fails when required+proposed is not exactly the measured caller roster of bundle-callers.v1.json, when an intended repository turns out to vendor the bundle, when a vendoring repository is named nowhere, and when a literal repository list reappears under ci_vendoring_repositories."
  },
  "gate_verdicts": {
   "admit": "exit 0 — merge allowed",
@@ -583,7 +595,7 @@
    "rotation": "changing the key means re-bundling every caller and updating both the committed public key and every caller's pinned fingerprint. No automation exists for that yet: recorded as a cost, not as a solved problem."
   }
  },
- "updated_at_utc": "2026-09-24T19:00:00Z",
+ "updated_at_utc": "2026-09-25T02:10:00Z",
  "automated_authors": {
   "status": "NORMATIVE_DRAFT — AUP-GRAPH-006:gate2a, 2026-09-06",
   "purpose": "Close the operational hole the required check opened: a repository that auto-merged its dependency updates suddenly needed a human on every one of them, because a dependency bot cannot author a ChangeAdmissionReceipt/v1. The rule is not relaxed — the RECEIPT AUTHOR is typed. The gate itself authors the receipt for a registered automated author, over the identical impact computation, and the receipt is then subject to every check that any other receipt is subject to.",

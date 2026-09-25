@@ -776,6 +776,149 @@ def admissible_ranges_invariant(admissible: set, head: str, record_head: str | N
     return None
 
 
+# ============================================================================================
+# A2-298 / DEC-AUP-0051 — «Update branch» is not a second change.
+#
+# Measured by control on arcana-agent-system#218, 2026-09-25. A bundle refresh was open, `main` moved,
+# the branch was updated from `main` through GitHub's button, and the refresh stopped being admissible:
+# `graph-admission` refused BUNDLE_MODIFIED_BY_PR, the receipt found 0 receipts at head, `reissue` gave
+# PAUSED_SAFE, and `exempt` said NOT ELIGIBLE with «2 changed paths are outside the bundle». The pull
+# request was rebuilt from scratch on `main` as #221. Nothing was wrong with it; the SHAPE RULE could
+# not see the difference between a file this pull request wrote and a file the base branch wrote and
+# the merge carried in.
+#
+# B1's model is «a bundle refresh changes nothing but the bundle», and `git diff base..head` after an
+# update-branch merge contains every path the base branch moved since `base` — none of which the
+# refresh authored. This is the FOURTH time B1's model has been false about a caller (the program_ref
+# pin, the declared derived artefact, the refresh's own receipt), and it is admitted the same way:
+# one exactly identified set of paths, every condition re-derived from Git, nothing taken on trust.
+#
+# WHAT THE SHAPE PROVES, and it is proved rather than assumed. For each path the split admits, the git
+# BLOB OID at head is byte-identical to the blob OID at `A` — the merge-base of the base branch and
+# head, i.e. the base branch commit this branch was brought up to. Identical OIDs are identical bytes:
+# the pull request contributes NOTHING at that path, it merely contains the base branch. Two further
+# conditions make that reading safe:
+#   * every non-first parent merged into this range must be an ancestor of the base branch, so a
+#     feature branch merged in sideways (which also descends from `base`) is NOT admitted here; and
+#   * no merge commit in the range may touch a bundle-managed path relative to its first parent —
+#     a merge that rewrites gate bytes is a change to the gate, whoever resolved it.
+#
+# WHAT IT DOES NOT PROVE, written here rather than left for someone to discover: that the bytes at A
+# were themselves admitted. The shape proves they are the BASE BRANCH's bytes, unmodified; that the
+# base branch only accepts admitted bytes is a property of that branch's protection rule and of
+# nothing in this file — the same residual `evaluate_workflow_integrity` names for the vendored
+# workflow. If `main` can take an unadmitted commit, this licence carries it; so can any merge.
+#
+# The base branch is never GUESSED by name. Either the caller names it (`--base-branch`), or the
+# repository itself says which branch it clones (`refs/remotes/origin/HEAD`). When neither resolves,
+# the paths are NOT admitted and the arm is not_measured — today's refusal, unchanged.
+def resolve_base_branch(repo: Path, base_branch: str | None) -> tuple[str | None, str]:
+    """→ (a ref that resolves in this clone, why). Never invents a branch name."""
+    if base_branch:
+        if git_ok(repo, "rev-parse", "--verify", f"{base_branch}^{{commit}}"):
+            return base_branch, f"named by --base-branch ({base_branch})"
+        return None, (f"--base-branch {base_branch!r} does not resolve to a commit in this clone, so the "
+                      f"base branch is unknown — a ref that is not there is not a base branch")
+    tgt = git(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD", check=False).strip()
+    if tgt and git_ok(repo, "rev-parse", "--verify", f"{tgt}^{{commit}}"):
+        return tgt, (f"read from the repository itself: refs/remotes/origin/HEAD → {tgt}; no --base-branch "
+                     f"was given and no branch name was assumed")
+    return None, ("no base branch: --base-branch was not given and this clone has no "
+                  "refs/remotes/origin/HEAD to read one from (a bare fetch of one pull-request ref has none)")
+
+
+def _range_merges(repo: Path, base: str, head: str) -> list[dict]:
+    """Every merge commit on the FIRST-PARENT line of base..head, with its parents. The first-parent
+    line is the branch's own history: a merge reachable only through someone else's second parent was
+    not performed on this branch and is not this branch's update."""
+    out = []
+    for line in git(repo, "rev-list", "--merges", "--first-parent", "--parents",
+                    f"{base}..{head}", check=False).splitlines():
+        ids = line.split()
+        if len(ids) >= 3:
+            out.append({"commit": ids[0], "first_parent": ids[1], "merged_in": ids[2:]})
+    return out
+
+
+def split_base_branch_merge(repo: Path, base: str, head: str, outside: list[str], changed: dict,
+                            managed: set[str], base_branch: str | None = None,
+                            ) -> tuple[list[str], list[str], dict]:
+    """→ (paths the BASE BRANCH brought in, the rest of `outside`, evidence). DEC-AUP-0051."""
+    ev: dict = {"rule": "DEC-AUP-0051", "merges": [], "admitted": [], "refused": {}, "base_branch": None}
+    merges = _range_merges(repo, base, head)
+    ev["merges"] = [m["commit"][:12] for m in merges]
+    if not merges:
+        ev["verdict"] = "vacuous"
+        ev["why"] = "no merge commit on the first-parent line of this range — nothing was merged in"
+        return [], list(outside), ev
+    ref, why = resolve_base_branch(repo, base_branch)
+    ev["base_branch"], ev["base_branch_why"] = ref, why
+    if not ref:
+        ev["verdict"] = "not_measured"
+        ev["why"] = why
+        return [], list(outside), ev
+    anchor = git(repo, "merge-base", ref, head, check=False).strip()
+    ev["anchor"] = anchor or None
+    if not anchor:
+        ev["verdict"] = "not_measured"
+        ev["why"] = f"{ref} and {head[:12]} have no merge base in this clone"
+        return [], list(outside), ev
+    sideways = [m["commit"][:12] for m in merges
+                for p in m["merged_in"] if not git_ok(repo, "merge-base", "--is-ancestor", p, ref)]
+    if sideways:
+        ev["verdict"] = "failed"
+        ev["why"] = (f"merge commit(s) {', '.join(sorted(set(sideways)))} bring in a parent that is NOT an "
+                     f"ancestor of {ref} — something other than the base branch was merged into this "
+                     f"refresh, and a sideways merge descends from the base too, so descent proves nothing")
+        return [], list(outside), ev
+    if not git_ok(repo, "merge-base", "--is-ancestor", base, anchor) or anchor == base:
+        ev["verdict"] = "failed" if anchor != base else "vacuous"
+        ev["why"] = (f"the base branch anchor {anchor[:12]} is {base[:12]} itself — the base branch has not "
+                     f"moved, so no path in this diff can have come from it"
+                     if anchor == base else
+                     f"the base branch anchor {anchor[:12]} is not a descendant of the range's base "
+                     f"{base[:12]}: this is not a branch brought UP TO its base branch")
+        return [], list(outside), ev
+    touched_bundle = {}
+    for m in merges:
+        moved = {x for x in git(repo, "diff", "--name-only", "--no-renames", m["first_parent"], m["commit"],
+                                check=False).split("\n") if x}
+        ev.setdefault("merge_brought_in", {})[m["commit"][:12]] = sorted(moved)[:24]
+        bad = sorted(moved & managed)
+        if bad:
+            touched_bundle[m["commit"][:12]] = bad
+    if touched_bundle:
+        ev["verdict"] = "failed"
+        ev["merge_touched_bundle"] = touched_bundle
+        ev["why"] = (f"merge commit(s) {', '.join(touched_bundle)} modify bundle-managed path(s) "
+                     f"({'; '.join(sorted({p for v in touched_bundle.values() for p in v})[:4])}) relative to "
+                     f"their first parent — gate bytes written by a merge resolution are a change to the gate")
+        return [], list(outside), ev
+    admitted, rest = [], []
+    for p in outside:
+        at_head = git(repo, "rev-parse", f"{head}:{p}", check=False).strip() or None
+        at_anchor = git(repo, "rev-parse", f"{anchor}:{p}", check=False).strip() or None
+        if at_head is not None and at_head == at_anchor:
+            admitted.append(p)
+            ev.setdefault("blob_identity", {})[p] = at_head[:12]
+        elif at_head is None and at_anchor is None:
+            admitted.append(p)
+            ev.setdefault("blob_identity", {})[p] = "absent at head and at the base branch anchor"
+        else:
+            rest.append(p)
+            ev["refused"][p] = (f"head {str(at_head)[:12] if at_head else 'absent'} is not the base branch's "
+                                f"{str(at_anchor)[:12] if at_anchor else 'absent'} — this pull request wrote it")
+    ev["admitted"] = admitted
+    ev["verdict"] = "verified" if admitted else "vacuous"
+    ev["why"] = (f"{len(admitted)} changed path(s) carry, at head, the very git blob the base branch carries at "
+                 f"{anchor[:12]} ({ref}), brought in by merge commit(s) {', '.join(ev['merges'])} that touch no "
+                 f"bundle-managed path: this change contributes nothing at those paths"
+                 if admitted else
+                 f"this range merges the base branch ({anchor[:12]}), but no changed path outside the bundle "
+                 f"carries the base branch's bytes at head")
+    return admitted, rest, ev
+
+
 def split_outside(repo: Path, base: str, head: str, outside: list[str],
                   expect_ref: str | None,
                   declared: frozenset = frozenset()) -> tuple[list[str], list[str], list[str]]:
@@ -1126,7 +1269,8 @@ def evaluate_declaration_amend(repo: Path, base: str, head: str, files: list[dic
 
 
 def structural_case(repo: Path, base: str, head: str, files: list[dict],
-                    bundle_rel: str = DEFAULT_BUNDLE_DIR) -> tuple[str | None, dict]:
+                    bundle_rel: str = DEFAULT_BUNDLE_DIR,
+                    base_branch: str | None = None) -> tuple[str | None, dict]:
     """Classify the diff from GIT STATUSES ALONE (cheap, no graph, no subprocess beyond git).
 
     → ('gate_self_update' | 'no_impact_by_construction' | None, evidence). The order matters: a
@@ -1187,13 +1331,23 @@ def structural_case(repo: Path, base: str, head: str, files: list[dict],
                                          if managed else ([], outside, {"rule": "DEC-AUP-0038",
                                                                         "candidates": [], "admitted": None,
                                                                         "why": "no bundle at base or head"}))
+    # DEC-AUP-0051. Set aside what the BASE BRANCH wrote and an update-branch merge carried in, before the
+    # pin/derived split: a path whose head bytes are the base branch's bytes is not a pin candidate and not
+    # a derived artefact — it is not this change's path at all.
+    merged_in, outside, merge_ev = (split_base_branch_merge(repo, base, head, outside, changed, managed,
+                                                           base_branch)
+                                    if outside and managed else
+                                    ([], outside, {"rule": "DEC-AUP-0051", "merges": [], "admitted": [],
+                                                   "why": "no path outside the bundle, or no bundle"}))
     pin_only, derived, outside_real = (
         split_outside(repo, base, head, outside, (man_h or {}).get("program_ref"), frozenset(declared))
         if outside and managed else ([], [], outside))
     ev.update({"edited": sorted(edited), "outside_the_bundle": outside_real[:12],
                "program_ref_pin_updates": pin_only, "declared_derived_artefacts": derived,
-               "self_update_receipt": receipt_ev,
+               "self_update_receipt": receipt_ev, "base_branch_merge": merge_ev,
+               "base_branch_merge_paths": merged_in,
                "managed_at_base": len(managed_base), "managed_at_head": len(managed_head)})
+    edited = {p: st for p, st in edited.items() if p not in set(merged_in)}
     if managed and not outside_real and any(p in managed_base for p in edited):
         ev["self_update_receipt_admitted"] = self_receipt
         ev["program_ref"] = {"base": (man_b or {}).get("program_ref"), "head": (man_h or {}).get("program_ref")}
@@ -1853,12 +2007,14 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
                          bundle_rel: str = DEFAULT_BUNDLE_DIR, *,
                          declaration_rel: str = DEFAULT_DECLARATION_REL,
                          verifier_job: str | None = None,
-                         verifier_conclusion: str | None = None) -> dict:
+                         verifier_conclusion: str | None = None,
+                         base_branch: str | None = None) -> dict:
     """B1-B5. The anchor is B2 and only B2: on a bundle-refresh pull request every byte of the head
     checkout is written by the pull request, so evidence collected by the head bundle is evidence the
     artefact under review collected about itself. B2 verifies the head manifest with the BASE tree's
     sshsig.py against the BASE tree's public key — a self-update is judged by the gate it replaces."""
     ev: dict = {"case": "gate_self_update", "checks": [], "eligible": False, "coverage_gap": []}
+    b1m = True
     rel = bundle_rel.strip("/")
     wd = Path(workdir)
     managed_base, man_b = bundle_paths_at(repo, base, bundle_rel)
@@ -1872,6 +2028,12 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
         outside = [x for x in outside if x != declaration_rel]
         ev["declaration_bootstrap"] = declaration_rel
     self_receipt, outside, receipt_ev = split_self_update_receipt(repo, base, head, outside, changed)
+    merged_in, outside, merge_ev = (split_base_branch_merge(repo, base, head, outside, changed,
+                                                           managed_base | managed_head, base_branch)
+                                    if outside else ([], outside, {"rule": "DEC-AUP-0051", "merges": [],
+                                                                   "admitted": [],
+                                                                   "why": "no path outside the bundle"}))
+    ev["base_branch_merge"] = merge_ev
     pin_only, derived, outside_real = (
         split_outside(repo, base, head, outside, (man_h or {}).get("program_ref"), frozenset(declared))
         if outside else ([], [], []))
@@ -1898,6 +2060,18 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
                   f"{receipt_ev.get('work_item')} over this very range (DEC-AUP-0038: at most one, ADDED by "
                   f"the range, re-derived from Git — set aside as a CASE, then judged by every check below "
                   f"exactly as a receipt handed in from the pull-request body)" if self_receipt else "")))
+    # DEC-AUP-0051 — B1M. Its own arm rather than a clause of B1, so that «the base branch was merged
+    # in and could not be read» is a not_measured that PAUSES the change, never a silent widening of B1.
+    b1m = _chk(ev, "B1M", "SELF_UPDATE_BASE_BRANCH_MERGE",
+               {"verified": True, "vacuous": True, "not_measured": None, "failed": False,
+                None: True}.get(merge_ev.get("verdict"), False),
+               (f"{len(merged_in)} changed path(s) are the BASE BRANCH's own, carried in by "
+                f"{len(merge_ev.get('merges') or [])} merge commit(s) and proved by git blob identity with "
+                f"{str(merge_ev.get('anchor'))[:12]} on {merge_ev.get('base_branch')}: "
+                f"{', '.join(merged_in[:4])}{' …' if len(merged_in) > 4 else ''}. Their ADMISSION is the base "
+                f"branch's protection rule, not this arm — what is proved here is that this change did not "
+                f"write them"
+                if merged_in else str(merge_ev.get("why") or "no merge commit in this range")))
     b6 = evaluate_derived(repo, base, head, derived, decl, decl_why, bad_entries, files, wd, ev,
                           declaration_rel=declaration_rel, case="gate_self_update",
                           verifier_job=verifier_job, verifier_conclusion=verifier_conclusion)
@@ -1978,7 +2152,7 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
          f"never an enforced check")
     b8 = evaluate_workflow_integrity(repo, head, man_h, ev)
     ev["program_ref"] = {"base": (man_b or {}).get("program_ref"), "head": (man_h or {}).get("program_ref")}
-    ev["eligible"] = bool(b1 and b2 and b3 and b4 and b6 and b8)
+    ev["eligible"] = bool(b1 and b1m and b2 and b3 and b4 and b6 and b8)
     return ev
 
 
@@ -1987,7 +2161,7 @@ def evaluate_structural(repo: Path, base: str, head: str, files: list[dict], cas
                         declaration_rel: str = DEFAULT_DECLARATION_REL,
                         verifier_job: str | None = None, verifier_conclusion: str | None = None,
                         candidate_range: str | None = None, authority_id: str | None = None,
-                        second_opinion: dict | None = None) -> dict:
+                        second_opinion: dict | None = None, base_branch: str | None = None) -> dict:
     Path(workdir).mkdir(parents=True, exist_ok=True)
     if case == "no_impact_by_construction":
         return evaluate_no_impact(repo, base, head, files, Path(workdir),
@@ -2003,7 +2177,7 @@ def evaluate_structural(repo: Path, base: str, head: str, files: list[dict], cas
                                           verifier_job=verifier_job, verifier_conclusion=verifier_conclusion)
     return evaluate_self_update(repo, base, head, files, Path(workdir), bundle_rel,
                                 declaration_rel=declaration_rel, verifier_job=verifier_job,
-                                verifier_conclusion=verifier_conclusion)
+                                verifier_conclusion=verifier_conclusion, base_branch=base_branch)
 
 
 MATRIX_REL = "contracts/graph-verified-change/verifier-matrix.v1.json"
@@ -2084,15 +2258,17 @@ def structural_exemption(repo: Path, base: str, head: str, files: list[dict], po
                          verifier_job: str | None = None,
                          verifier_conclusion: str | None = None,
                          candidate_range: str | None = None, authority_id: str | None = None,
-                         second_opinion: dict | None = None) -> tuple[list[dict], dict]:
+                         second_opinion: dict | None = None,
+                         base_branch: str | None = None) -> tuple[list[dict], dict]:
     """The gate issues the exemption(s). → (exemptions, evidence). [] means: not eligible, stay paused."""
-    case, cev = structural_case(repo, base, head, files, bundle_rel)
+    case, cev = structural_case(repo, base, head, files, bundle_rel, base_branch)
     if case is None:
         return [], {"case": None, "eligible": False, **cev}
     ev = evaluate_structural(repo, base, head, files, case, workdir, bundle_rel,
                              declaration_rel=declaration_rel, verifier_job=verifier_job,
                              verifier_conclusion=verifier_conclusion, candidate_range=candidate_range,
-                             authority_id=authority_id, second_opinion=second_opinion)
+                             authority_id=authority_id, second_opinion=second_opinion,
+                             base_branch=base_branch)
     ev.update({k: v for k, v in cev.items() if k not in ev})
     if not ev["eligible"]:
         return [], ev
@@ -2164,7 +2340,8 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                        declaration_rel: str = DEFAULT_DECLARATION_REL,
                        verifier_job: str | None = None,
                        verifier_conclusion: str | None = None,
-                       receipt_head: str | None = None) -> tuple[list[str], dict]:
+                       receipt_head: str | None = None,
+                       base_branch: str | None = None) -> tuple[list[str], dict]:
     """C16 — the gate RE-MEASURES the battery of every structural exemption it is shown.
 
     The cheap discriminators run first (the git-status classification, then the binding digest), so
@@ -2183,7 +2360,7 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
     codes = {x.get("code") for x in exemptions}
     if len(codes) > 1:
         return [f"a receipt may carry at most one structural exemption code; it carries {sorted(codes)}"], ev
-    case, cev = structural_case(repo, base, head, files, bundle_rel)
+    case, cev = structural_case(repo, base, head, files, bundle_rel, base_branch)
     digest = diff_digest(repo, base, head)
     admissible = {(digest, base, head)}
     filed = (cev.get("self_update_receipt") or {}).get("admitted") if case == "gate_self_update" else None
@@ -2595,7 +2772,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
          verifier_conclusion: str | None = None, verifier_output_ref: str | None = None,
          automated_workdir: Path | None = None,
          bundle_rel: str = DEFAULT_BUNDLE_DIR,
-         structural_workdir: Path | None = None) -> dict:
+         structural_workdir: Path | None = None,
+         base_branch: str | None = None) -> dict:
     checks: list[dict] = []
     # A2-238. The policy's own words: `off` means "the attachment is not required (never used in a
     # PROGRAM-OWNED repository)", and `.github/workflows/graph-admission.yml` therefore defaults its
@@ -2815,7 +2993,7 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                                                verdict_entities=list(verdict_of), workdir=swd,
                                                bundle_rel=bundle_rel, verifier_job=verifier_job,
                                                verifier_conclusion=verifier_conclusion,
-                                               receipt_head=_receipt_head(doc))
+                                               receipt_head=_receipt_head(doc), base_branch=base_branch)
             rec["structural_exemption"] = {"code": sorted({x.get("code") for x in struct})[0],
                                            "entities": sorted(str(x.get("entity")) for x in struct),
                                            "re_measured": [c for c in (sev.get("checks") or [])],
@@ -3984,7 +4162,8 @@ def cmd_gate(a) -> int:
                verifier_conclusion=a.verifier_conclusion, verifier_output_ref=a.verifier_output_ref,
                automated_workdir=Path(a.workdir) if a.workdir else None,
                bundle_rel=getattr(a, "bundle_dir", None) or DEFAULT_BUNDLE_DIR,
-               structural_workdir=(Path(a.workdir) / "gate4b") if a.workdir else None)
+               structural_workdir=(Path(a.workdir) / "gate4b") if a.workdir else None,
+               base_branch=getattr(a, "base_branch", None))
     if a.out:
         write_json(Path(a.out), doc)
     if a.json:
@@ -4108,6 +4287,7 @@ def cmd_exempt(a) -> int:
     if getattr(a, "b7_second_opinion", None):
         second_opinion = json.loads(Path(a.b7_second_opinion).read_text(encoding="utf-8"))
     exemptions, ev = structural_exemption(repo, base, head, files, policy, repo_name=repo_name,
+                                          base_branch=getattr(a, "base_branch", None),
                                           verifier_job=getattr(a, "verifier_job", None),
                                           verifier_conclusion=getattr(a, "verifier_conclusion", None),
                                           workdir=wd, bundle_rel=a.bundle_dir,
@@ -4236,6 +4416,10 @@ def main(argv=None) -> int:
     g.add_argument("--verifier-output-ref", help="a URL or id the verdict can be traced to (the workflow run)")
     g.add_argument("--workdir", help="scratch directory for the graph build and an authored receipt")
     g.add_argument("--bundle-dir", default=DEFAULT_BUNDLE_DIR, help="the vendored gate bundle directory, for the gate4b self-update classification")
+    g.add_argument("--base-branch", help="DEC-AUP-0051: the ref of the branch this change targets (origin/main). A bundle refresh whose branch was UPDATED from its base branch carries the base "
+                                         "branch's own commits in its range; paths whose head blob is byte-identical to that branch's are not this change's paths. Default: refs/remotes/origin/HEAD, "
+                                         "read from the clone — never a guessed branch name; unresolvable means not_measured, which pauses, never admits")
+
     g.set_defaults(fn=cmd_gate)
 
     ri = sub.add_parser("reissue", help="re-issue a ChangeAdmissionReceipt at the path it already occupies "
@@ -4262,6 +4446,10 @@ def main(argv=None) -> int:
     ex.add_argument("--out", help="write the amended receipt here (default: in place)")
     ex.add_argument("--evidence-out", help="write the StructuralExemptionEvidence/v1 report here")
     ex.add_argument("--bundle-dir", default=DEFAULT_BUNDLE_DIR)
+    ex.add_argument("--base-branch", help="DEC-AUP-0051: the ref of the branch this change targets (origin/main). A bundle refresh whose branch was UPDATED from its base branch carries the base "
+                                         "branch's own commits in its range; paths whose head blob is byte-identical to that branch's are not this change's paths. Default: refs/remotes/origin/HEAD, "
+                                         "read from the clone — never a guessed branch name; unresolvable means not_measured, which pauses, never admits")
+
     ex.add_argument("--owner", help="the exemption owner (default: the gate itself)")
     ex.add_argument("--program-receipt", help="digest or path of the program-side ChangeAdmissionReceipt the "
                                               "bundle's program_ref was admitted with (B5, recorded not enforced)")
