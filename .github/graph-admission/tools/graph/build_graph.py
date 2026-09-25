@@ -1467,6 +1467,34 @@ def build(repo: Path, *, rev="HEAD", subdir="", worktree=False, built_at=None, d
     return Builder(tree, set(disabled), work_item_pattern).build(built_at or now_iso())
 
 
+GRAPH_AUTO = "auto"
+
+
+def graph_is_auto(value) -> bool:
+    """Does this `--graph` argument mean «build the graph from git objects» rather than «read this file»?
+
+    `verify.py` has accepted `--graph auto` for as long as it has had the flag. `contract_diff.py`
+    typed the same argument as a `Path` and called `Path("auto").read_text()`, so the word that is
+    documented for one tool was a bare `FileNotFoundError` for the other — measured by A2-274 while
+    it was trying to narrow a contract diff, and worked around by building the graph by hand. The
+    word is defined once, here, so the two flags cannot drift apart again.
+    """
+    return not value or str(value) == GRAPH_AUTO
+
+
+def graph_for(value, repo: Path, *, rev: str = "HEAD", subdir: str = "", worktree: bool = False,
+              built_at: str | None = None) -> dict:
+    """Resolve a present `--graph` argument into a RelationshipGraph/v1 document.
+
+    A path is read from disk; `auto` is BUILT from git objects at the revision the caller is about to
+    verify. Callers that treat «no --graph at all» as a different mode (contract_diff discovers its
+    edges by import instead) keep that decision to themselves and only route a value they were given.
+    """
+    if graph_is_auto(value):
+        return build(repo, rev=rev, subdir=subdir, worktree=worktree, built_at=built_at or FIXED_BUILT_AT)
+    return json.loads(Path(value).read_text(encoding="utf-8"))
+
+
 # ----------------------------------------------------------------------------------------------- selftest
 def _classify(doc: dict, ignore_dirty: bool) -> dict:
     gschema = schema_check.load_schema(schema_check.GRAPH_SCHEMA_PATH)

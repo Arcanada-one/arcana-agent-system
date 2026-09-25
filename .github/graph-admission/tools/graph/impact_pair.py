@@ -192,13 +192,44 @@ A paired receipt must match both graph digests and the complete dual selection.
                 continue
             referenced = [verifiers.get(i, {}) for i in record.get("verifier_ids", [])]
             covered_kinds = {v.get("kind") for v in referenced
-                             if entity in v.get("entities", []) and v.get("exit_code") == 0
+                             if entity in v.get("entities", []) and row_measured_verified(v, entity)
                              and isinstance(v.get("output_ref"), str) and v["output_ref"].strip()}
             if set(minimum) - covered_kinds:
                 problems.append("verified entity lacks referenced mandatory output scope: " + entity)
+            # The finer check the per-entity record makes possible, and the direction that must stay
+            # red: a receipt whose top-level verdict is BETTER than what its own verifier wrote down
+            # for that entity is contradicting itself, and that is a different defect from a run
+            # that failed somewhere else.
+            for v in referenced:
+                per = v.get("entity_verdicts")
+                if isinstance(per, dict) and per.get(entity) in ("failed", "not_measured"):
+                    problems.append(f"receipt claims {entity} verified while its own {v.get('kind')} row "
+                                    f"({v.get('id')}) records {per[entity]}")
     if selection["unmeasured_head_files"]:
         problems.append("head code extraction not measured: " + ", ".join(selection["unmeasured_head_files"]))
     return problems
+
+
+def row_measured_verified(v: dict, entity: str) -> bool:
+    """Did THIS verifier row measure THIS entity and find it good?
+
+    The process exit code answers a different question — «did the whole run come out clean» — and a
+    run covers every entity the verifier was handed. Reading it per entity is what A2-274 measured on
+    its own range: one additive `ENUM_VALUE_ADDED` in one contract put `contract_diff` at rc 1, and
+    every entity whose only mandatory verifier it was lost `verified` — including entities whose
+    contract is byte-identical at base and head. The honest answer exists: the verifier computed a
+    verdict per entity and now records it (`entity_verdicts`). A finding elsewhere in the run, additive
+    or breaking, demotes nobody it did not touch; a finding on THIS entity still demotes it, because
+    the row then says `failed` or `not_measured` here.
+
+    A row without the field — every receipt written before this change, and any verifier that records
+    nothing per entity — keeps the process code as its answer. That is the old behaviour, not a
+    silent pass: it is the only evidence such a row carries.
+    """
+    per = v.get("entity_verdicts")
+    if isinstance(per, dict) and entity in per:
+        return per[entity] == "verified"
+    return v.get("exit_code") == 0
 
 
 def structural_exclusions_rederived(repo: impact.Repo, doc: dict, base: str, head: str,
