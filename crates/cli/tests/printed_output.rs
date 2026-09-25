@@ -41,6 +41,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use arcana_cli::ground_truth::GroundTruthRefusal;
 use arcana_cli::run::{done_marker_body, DoneMarker, DONE_MARKER};
 use arcana_cli::work_item::{refusal_line, refusal_marker};
 use arcana_core::contract::{ContractRefusal, DigestPreimage};
@@ -336,7 +337,11 @@ fn findings(root: &Path, path: &str, text: &str) -> Vec<Finding> {
         let known = codes.contains(code);
         if known {
             let expected = refusal_line(code, detail);
-            if line != expected {
+            if line == expected {
+                // The shape is the writers'; what is left to judge is the
+                // sentence, against the `Display` arm that renders it.
+                findings.extend(detail_findings(&at(), code, "line", line));
+            } else {
                 findings.push(Finding {
                     where_: at(),
                     what: format!(
@@ -422,7 +427,9 @@ fn done_marker_findings(at: &str, line: &str, keys: &BTreeSet<String>) -> Vec<Fi
         let expected: serde_json::Value =
             serde_json::from_str(&marker_json(&refusal_marker(code, detail)))
                 .expect("the writer emits JSON");
-        if value != expected {
+        if value == expected {
+            findings.extend(detail_findings(at, code, "marker detail", detail));
+        } else {
             findings.push(Finding {
                 where_: at.to_owned(),
                 what: format!(
@@ -433,6 +440,193 @@ fn done_marker_findings(at: &str, line: &str, keys: &BTreeSet<String>) -> Vec<Fi
         }
     }
     findings
+}
+
+// ------------------------------------------- the detail a typed refusal prints
+
+/// A character no source file and no page contains: it marks the place a
+/// runtime value stands in a rendered refusal.
+const SLOT: char = '\u{1}';
+
+/// Every typed refusal this program can print, instantiated with [`SLOT`] where
+/// a runtime value goes.
+///
+/// The sentences are RENDERED, not spelled here: each variant's own `Display`
+/// arm writes the text, so a documented line is compared with the program's
+/// words and not with a second copy of them in this file — a copy drifts, and
+/// a drifted copy passes exactly the line this check exists to catch. What the
+/// list below fixes is the set of VARIANTS, and
+/// `every_typed_refusal_code_has_a_template` holds that set against the codes
+/// the source declares.
+fn typed_refusals() -> Vec<(&'static str, String)> {
+    let slot = || SLOT.to_string();
+    let mut refusals: Vec<(&'static str, String)> = Vec::new();
+    let mut contract = vec![
+        ContractRefusal::Missing,
+        ContractRefusal::MalformedDigest { value: slot() },
+        ContractRefusal::NotFound { digest: slot() },
+        ContractRefusal::Unverifiable {
+            digest: slot(),
+            detail: slot(),
+        },
+        ContractRefusal::Unavailable { detail: slot() },
+    ];
+    // `preimage` is an enum, not a runtime string: it renders one of three
+    // words the source names, so each is its own template rather than a slot
+    // that would accept any word at all.
+    for preimage in [
+        DigestPreimage::CanonicalBytesB64,
+        DigestPreimage::CanonicalBytes,
+        DigestPreimage::Projection,
+    ] {
+        contract.push(ContractRefusal::DigestMismatch {
+            expected: slot(),
+            computed: slot(),
+            preimage,
+        });
+    }
+    for refusal in contract {
+        refusals.push((refusal.code(), refusal.to_string()));
+    }
+    for refusal in [
+        GroundTruthRefusal::Unreadable {
+            path: slot(),
+            detail: slot(),
+        },
+        GroundTruthRefusal::Empty { path: slot() },
+    ] {
+        refusals.push((refusal.code(), refusal.to_string()));
+    }
+    refusals
+}
+
+/// Compile-time company for [`typed_refusals`]: a variant added to either enum
+/// stops this function compiling, before any test can be green without it.
+#[allow(dead_code)]
+fn every_variant_is_named(
+    contract: &ContractRefusal,
+    ground: &GroundTruthRefusal,
+    preimage: DigestPreimage,
+) {
+    match contract {
+        ContractRefusal::Missing
+        | ContractRefusal::MalformedDigest { .. }
+        | ContractRefusal::NotFound { .. }
+        | ContractRefusal::DigestMismatch { .. }
+        | ContractRefusal::Unverifiable { .. }
+        | ContractRefusal::Unavailable { .. } => {}
+    }
+    match ground {
+        GroundTruthRefusal::Unreadable { .. } | GroundTruthRefusal::Empty { .. } => {}
+    }
+    match preimage {
+        DigestPreimage::CanonicalBytesB64
+        | DigestPreimage::CanonicalBytes
+        | DigestPreimage::Projection => {}
+    }
+}
+
+/// A rendered refusal, cut at its runtime values: literal segments in order,
+/// with one runtime value standing between each pair.
+fn segments(rendered: &str) -> Vec<String> {
+    rendered.split(SLOT).map(ToOwned::to_owned).collect()
+}
+
+/// The full stderr LINES, and the marker `error` details, `code` can print.
+fn templates_for(code: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let mut lines = Vec::new();
+    let mut details = Vec::new();
+    for (refusal_code, rendered) in typed_refusals() {
+        if refusal_code != code {
+            continue;
+        }
+        lines.push(segments(&refusal_line(code, &rendered)));
+        let marker: serde_json::Value =
+            serde_json::from_str(&marker_json(&refusal_marker(code, &rendered)))
+                .expect("the writer emits JSON");
+        let error = marker
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .expect("a refusal marker carries its detail");
+        details.push(segments(error));
+    }
+    (lines, details)
+}
+
+/// A runtime value, as a page is allowed to write one.
+///
+/// Ids, digests, paths, numbers — one token with no whitespace in it — or an
+/// `<angle-bracketed>` placeholder standing for one. Free prose is NOT a
+/// runtime value: a refusal whose detail ends in an operating-system message
+/// must be documented with a placeholder, because a page that writes a sentence
+/// there is writing the program's words for it.
+fn runtime_value(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    if let Some(inner) = value
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        return !inner.contains('<') && !inner.contains('>');
+    }
+    !value.contains(char::is_whitespace)
+}
+
+/// Match `text` against the literal segments of a template.
+fn matches_template(template: &[String], text: &str) -> bool {
+    let (literal, rest) = template
+        .split_first()
+        .expect("a template has at least one literal segment");
+    let Some(tail) = text.strip_prefix(literal.as_str()) else {
+        return false;
+    };
+    if rest.is_empty() {
+        return tail.is_empty();
+    }
+    let mut cuts: Vec<usize> = tail
+        .char_indices()
+        .map(|(index, _)| index)
+        .skip(1)
+        .collect();
+    cuts.push(tail.len());
+    cuts.iter().any(|cut| {
+        let (value, remainder) = tail.split_at(*cut);
+        runtime_value(value) && matches_template(rest, remainder)
+    })
+}
+
+/// A template as a message shows it: runtime values as `<…>`.
+fn shown(template: &[String]) -> String {
+    template.join("<…>")
+}
+
+/// Judge the detail of a well-formed refusal line, or of a marker's `error`.
+///
+/// Reached only for a line whose shape the writers already agreed with: the
+/// question left is whether the SENTENCE is the one the `Display` arm renders.
+/// A code with no typed refusal behind it (`MUNERAL_UNAVAILABLE` carries an
+/// HTTP error's own words) has no template, and no template is not a pass: it
+/// is the third verdict, and the coverage test below says which codes are in it.
+fn detail_findings(at: &str, code: &str, what: &str, text: &str) -> Vec<Finding> {
+    let (lines, details) = templates_for(code);
+    let templates = if what == "line" { lines } else { details };
+    if templates.is_empty() || templates.iter().any(|t| matches_template(t, text)) {
+        return Vec::new();
+    }
+    let expected = templates
+        .iter()
+        .map(|template| format!("`{}`", shown(template)))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    vec![Finding {
+        where_: at.to_owned(),
+        what: format!(
+            "the detail of a `{code}` refusal is not the page's words but the \
+             ones its `Display` arm renders: this {what} reads `{text}`, the \
+             program prints {expected}"
+        ),
+    }]
 }
 
 fn report(findings: &[Finding]) -> String {
@@ -506,8 +700,11 @@ fn the_check_is_red_on_the_output_the_first_live_run_invented() {
 #[test]
 fn the_check_is_green_on_the_lines_the_writers_produce() {
     let root = repo_root();
-    let refusal = refusal_line("CONTRACT_MISSING", "the work item names no contract");
-    let marker = refusal_marker("CONTRACT_MISSING", "the work item names no contract");
+    // The detail is the refusal's own `Display`, not a sentence written here:
+    // this test is the green half of the detail check as well as of the shape.
+    let missing = ContractRefusal::Missing.to_string();
+    let refusal = refusal_line("CONTRACT_MISSING", &missing);
+    let marker = refusal_marker("CONTRACT_MISSING", &missing);
     let run_marker = done_marker_body(&DoneMarker {
         completed: true,
         reason: "Completed",
@@ -683,5 +880,151 @@ fn a_detail_that_opens_with_a_different_code_is_untouched() {
     assert_eq!(
         line,
         "arcana run: CONTRACT_MISSING: MUNERAL_UNAVAILABLE: the API refused"
+    );
+}
+
+/// The red this check exists to produce: PR #222's page, verbatim.
+///
+/// Both blocks passed every check that existed when the page was committed —
+/// the prefix is right, the code is real, `reason` and `code` agree, and every
+/// key is the writer's. What nothing looked at is the sentence after the code,
+/// and both of these are the model's paraphrase of it: the program says "the
+/// work item carries no contractDigest, so nothing says what this run may do;
+/// refused before the first model call", and "the document returned for
+/// <expected> hashes to <computed> over its canonical.bytes_b64 — the contract
+/// is not the one the work item names". An operator grepping for either
+/// sentence finds nothing.
+#[test]
+fn the_check_is_red_on_the_refusal_details_pr222_published() {
+    let root = repo_root();
+    let text = fixture("pr222-refusal-details.md");
+    let findings = findings(&root, "docs/how-to/pr222.md", &text);
+    let rendered = report(&findings);
+    println!("{} finding(s):\n{rendered}", findings.len());
+    assert_eq!(
+        findings.len(),
+        4,
+        "two refusal lines and the two done-markers beside them carry an \
+         invented detail; the check found {}:\n{rendered}",
+        findings.len()
+    );
+    for code in ["CONTRACT_MISSING", "CONTRACT_DIGEST_MISMATCH"] {
+        assert!(
+            rendered.contains(&format!("the detail of a `{code}` refusal")),
+            "{code}'s detail is not named:\n{rendered}"
+        );
+    }
+    assert!(
+        rendered.contains("the work item carries no contractDigest"),
+        "the message quotes what the program really prints:\n{rendered}"
+    );
+}
+
+/// The same page with both details taken from the program.
+///
+/// Red on one page and green on nothing is a check that only knows how to
+/// complain: this fixture differs from the one above in the two sentences and
+/// the two `error` values, and in nothing else.
+#[test]
+fn the_check_is_green_when_the_detail_is_the_programs_own() {
+    let root = repo_root();
+    let text = fixture("pr222-refusal-details-fixed.md");
+    let findings = findings(&root, "docs/how-to/pr222.md", &text);
+    assert!(
+        findings.is_empty(),
+        "{} finding(s) survive:\n{}",
+        findings.len(),
+        report(&findings)
+    );
+}
+
+/// Every code a typed refusal declares has a template, and the codes that do
+/// not are named rather than counted as green.
+///
+/// The variants are listed in [`typed_refusals`]; the codes are read out of the
+/// two source files that declare them. A variant added to an enum and not to
+/// the list turns this red — which is the only reason the list is allowed to
+/// exist.
+#[test]
+fn every_typed_refusal_code_has_a_template() {
+    let root = repo_root();
+    let mut declared = BTreeSet::new();
+    for file in [
+        "crates/core/src/contract.rs",
+        "crates/cli/src/ground_truth.rs",
+    ] {
+        let text = std::fs::read_to_string(root.join(file)).expect("a readable source file");
+        collect_codes(&text, &mut declared);
+    }
+    let covered: BTreeSet<String> = typed_refusals()
+        .into_iter()
+        .map(|(code, _)| code.to_owned())
+        .collect();
+    assert_eq!(
+        declared, covered,
+        "the codes these two enums declare and the codes this file renders a \
+         template for are not the same set"
+    );
+    assert!(
+        covered.len() >= 8,
+        "eight typed refusals exist; {} were rendered: {covered:?}",
+        covered.len()
+    );
+    // The third verdict, named: a refusal whose detail is another system's
+    // error string has no template, and `detail_findings` returns nothing for
+    // it rather than pretending to have judged it.
+    for untyped in ["MUNERAL_UNAVAILABLE", "WORK_ITEM_UNREADABLE"] {
+        assert!(
+            refusal_codes(&root).contains(untyped),
+            "{untyped} is a code this program prints"
+        );
+        assert!(
+            templates_for(untyped).0.is_empty(),
+            "{untyped} carries an HTTP or IO error's own words, and a template \
+             for it would judge text the program does not choose"
+        );
+    }
+}
+
+/// What a page may put where the program puts a value, and what it may not.
+#[test]
+fn a_runtime_value_is_a_value_and_not_a_sentence() {
+    let real = ContractRefusal::DigestMismatch {
+        expected: "sha256:aa".to_owned(),
+        computed: "sha256:bb".to_owned(),
+        preimage: DigestPreimage::CanonicalBytesB64,
+    };
+    let line = refusal_line(real.code(), &real.to_string());
+    let (templates, _) = templates_for(real.code());
+    assert!(
+        templates.iter().any(|t| matches_template(t, &line)),
+        "the program's own line does not match its own template: {line}"
+    );
+    let placeholders = line
+        .replace("sha256:aa", "<expected>")
+        .replace("sha256:bb", "<computed>");
+    assert!(
+        templates.iter().any(|t| matches_template(t, &placeholders)),
+        "a page may write a placeholder where a digest goes: {placeholders}"
+    );
+    let prose = line.replace("sha256:bb", "some other digest entirely");
+    assert!(
+        !templates.iter().any(|t| matches_template(t, &prose)),
+        "three words are not a runtime value: {prose}"
+    );
+    let reworded = line.replace("hashes to", "hashes out to");
+    assert!(
+        !templates.iter().any(|t| matches_template(t, &reworded)),
+        "the words between the values are the program's: {reworded}"
+    );
+    assert!(runtime_value("3"), "a number is a runtime value");
+    assert!(
+        runtime_value("/home/runner/checkout"),
+        "a path is a runtime value"
+    );
+    assert!(!runtime_value(""), "a value is not nothing");
+    assert!(
+        !runtime_value("<a> and <b>"),
+        "two placeholders are not one value"
     );
 }
