@@ -112,7 +112,7 @@
    "code": "CHANGE_SET_INCOMPLETE",
    "verdict": "refuse",
    "order": 6,
-   "rule": "Every file changed in the gated range must appear in the union of the change_set of the bound receipts. Uncovered paths are listed in the gate receipt — a receipt that describes a subset of the change is not a receipt for the change. GATEORDER-0 (contracts/graph-verified-change/trailing-record-commits.v1.md): a commit after every bound receipt's head may carry only RECORD paths — (a) a bound receipt file whose bytes at head are the bytes the gate bound, (b) an exact path of .arcana/derived-artefacts.v1.json READ AT BASE whose own verifier accepts it at head and refuses it with one byte corrupted. Such a path, touched by no receipt's own range, is not counted as uncovered; it adds nothing to what any receipt must verify. Any other path changed after the receipt head refuses here, even when the change_set lists it, and a derived verifier that cannot run is not_measured, never a pass."
+   "rule": "Every file changed in the gated range must appear in the union of the change_set of the bound receipts. Uncovered paths are listed in the gate receipt — a receipt that describes a subset of the change is not a receipt for the change. GATEORDER-0 (contracts/graph-verified-change/trailing-record-commits.v1.md): a commit after every bound receipt's head may carry only RECORD paths — (a) a bound receipt file whose bytes at head are the bytes the gate bound, (b) an exact path of .arcana/derived-artefacts.v1.json READ AT BASE whose own verifier accepts it at head and refuses it with one byte corrupted, (c) A2-309: the work-item evidence ledger `receipts/graph/work-item-evidence/<work item>.json` of a receipt this gate run bound, when C13 is ENFORCED in this repository (work_item_evidence.enforcement != off), the blob at head is a regular file parsing as WorkItemEvidenceLedger/v1 for that work item, nothing outside `attachments`/`updated_at_utc` changed since base, no attachment present at base was rewritten or dropped, and every ADDED attachment's evidence_ref.digest is a digest the gate itself computed from a receipt it bound. C13 demands a ledger entry over the receipt's final bytes, so `attach` can only run after them; before this clause the ledger had nowhere legal to go and the receipt's bytes and the ledger's digest were a fixed point with no reason to converge (program#137 paused_safe, #138 merged with a stale attachment). Such a path, touched by no receipt's own range, is not counted as uncovered; it adds nothing to what any receipt must verify. Any other path changed after the receipt head refuses here, even when the change_set lists it, and a derived verifier that cannot run is not_measured, never a pass."
   },
   {
    "id": "C07",
@@ -212,6 +212,13 @@
    "informational": true,
    "what": "A declared derived-artefact verifier (B6.4) refused the honest head tree because the toolchain it runs on is not the one the artefact was recorded on. The change set is not the subject: the PATH of the host running the gate is. Reported under its own code because the blocking verdict that accompanies it (CHANGE_SET_INCOMPLETE / GATE_SELF_UPDATE) names the wrong thing to fix, which cost A2-275 a diagnosis it had to make by reading the tool.",
    "measured_by": "tools/graph/admit_change.py evaluate_derived — the verifier's own output plus the interpreter the gate resolved from PATH, both printed"
+  },
+  {
+   "id": "C21",
+   "code": "DECISION_EXEMPTION_INVALID",
+   "verdict": "refuse",
+   "order": 21,
+   "rule": "A2-314. A non-structural exemption is a DECISION to proceed (DEC-AUP-0037 R3) and is issued only by `admit_change.py exempt-decision`: a DecisionExemption/v1 payload signed (SSHSIG, Ed25519, namespace decision_exemptions.namespace) by a signer listed in decision_exemptions.signers AS READ AT BASE (program repository) or in the pinned bundle (caller). The gate re-verifies the signature, the binding to the receipt's own diff (digest), the expiry by the GATE's clock and max_ttl_days, the DEC-AUP-0037 R3 wording, and the class eligibility against the receipt it is shown. Any problem: the exemption exempts nothing and the change is refused. A signed exemption is always checked; under enforcement=signed an UNSIGNED non-structural exemption is refused too. Gate-issued exemptions (structural codes, the automated-author receipt) are not decisions and are not judged here."
   }
  ],
  "work_item_evidence": {
@@ -798,7 +805,9 @@
    "rejected_remedy": {
     "what": "change muneral's mutation evidence so a whole-tree hash is not a precondition of every unrelated change",
     "why_rejected": "the mutation outcome (KILLED_BY_TEST / KILLED_BY_TYPECHECK) is a function of the WHOLE tracked tree — any test file, tsconfig or transitively imported source can change either answer — so trackedTreeWithoutEvidence is exactly as broad as the claim it guards, and narrowing it would make the evidence assert more than it measured. It is also a foreign repository's discipline: the mirror image of gate3b's «vendored code is foreign and belongs to its vendor». And decisively, the audit that opened this thread measured that the ONLY pull requests merged past the required check with an admin override were the gate's own updates; changing the thing that says no is that same move in a different costume.",
-    "what_it_is_right_about": "muneral's only regeneration route today is a full 85-mutant census. That is a defect in the ROUTE, not in the ASSERTION; fixing it is additive and is muneral's to make. Nothing here requires it."
+    "what_it_is_right_about": "muneral's only regeneration route today is a full 85-mutant census. That is a defect in the ROUTE, not in the ASSERTION; fixing it is additive and is muneral's to make. Nothing here requires it.",
+    "amended_by": "DEC-AUP-0055 (2026-09-25)",
+    "amendment": "REJECTED AS THE GATE'S ANSWER - unchanged, and that is what `why_rejected` argues: the gate may not require a caller to re-engineer its evidence in order to be admitted, and the tolerance below is NOT withdrawn or narrowed for callers who cannot. NOT REJECTED AS THE CALLER'S OWN CHOICE. The shipped text did not say which it meant, and was read twice as a standing prohibition; DEC-AUP-0041 option B had already said the opposite ('NOT forbidden as a caller's own choice ... strictly better where it is available'). DEC-AUP-0055 resolves the two readings in favour of the caller, under R2-R5: the narrowing must be a DENYLIST, recorded inside the artefact, and guarded by a standing two-directional test shown red before green. The `why_rejected` premise 'the mutation outcome is a function of the WHOLE tracked tree' was MEASURED FALSE for muneral on 2026-09-25: two of the three preceding merges to main touched only `.github/**` and `receipts/graph/**`, which the battery cannot read, and still forced a rewrite. The 'changing the thing that says no' objection is discharged here because the mover is the caller, in the caller's own repository, changing only the caller's own artefact - not the gate."
    },
    "cost_of_the_chosen_remedy": [
     "six new measured arms inside the most load-bearing check — complexity in a gate is itself a hole, and this is the largest cost",
@@ -819,5 +828,54 @@
     "residual": "a refresh may name a dependent-less file that some existing base command binds; B6.6 checks the verifier job's name and conclusion, never that the job runs the declared command"
    }
   }
+ },
+ "decision_exemptions": {
+  "schema": "DecisionExemption/v1",
+  "portion_id": "A2-314",
+  "decision_ref": "DEC-AUP-0037 R3 (a decision to proceed, recorded by the admitting agent); the DEC of A2-314",
+  "enforcement": "off",
+  "enforcement_values": {
+   "off": "main's behaviour before A2-314: an unsigned exemption is judged by C10 alone (owner + expiry after captured_at_utc). A signed one is still fully verified (C21).",
+   "signed": "every non-structural, non-gate-issued exemption must be a valid DecisionExemption/v1; an unsigned one exempts nothing (C21). Switching to it is control's decision."
+  },
+  "namespace": "aup-decision-exemption",
+  "max_ttl_days": 14,
+  "signers_rule": "Only PUBLIC keys. The private key of each signer lives outside every repository, on the host of the admitting agent (the control session). The list is read at BASE in the program repository, so a change cannot enrol the key that admits it; enrolling a signer is its own reviewed change. Empty by design until control enrols its own key: an empty list refuses every signed decision, it does not admit one.",
+  "signers": [
+    {
+      "id": "control-arcana-devs",
+      "role": "admitting agent (the Arcanada 2 control session on arcana-devs)",
+      "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIButTpljWpAGEc5qn6EFNNjgzWF9xMPK27OPxo+8rxo7 aup-decision-exemption control@arcana-devs",
+      "fingerprint": "SHA256:AW+H4Uh2Hw7o7eDqv6jX7cckdvHLw6Z2Va0CgUGqL3c",
+      "algorithm": "ssh-ed25519",
+      "enrolled_utc": "2026-09-25T12:05:00Z",
+      "private_key_location": "outside every repository, on arcana-devs under ~/.config/arcanada/ (key mode 600, directory 0700). Never committed, never printed, never passed through an environment variable.",
+      "why": "A2-314 shipped the instrument with signers empty BY DESIGN — an empty list refuses every signed decision rather than admitting one — so the instrument could not be used at all until control enrolled its own key. This change enrols exactly one signer and changes nothing else.",
+      "scope": "DecisionExemption/v1 only; classes historical_receipt and no_live_contour; max_ttl_days 14 as the policy already bounds.",
+      "reverse_if": "the key is suspected exposed, or a decision exemption signed with it is found naming a measurement that was in fact possible -> remove this entry (itself a reviewed change) and re-issue every live exemption."
+    }
+  ],
+  "classes": {
+   "historical_receipt": {
+    "verifier": "I14",
+    "entity_prefix": "receipt:",
+    "reason_marker": "(I14)",
+    "requires_added_in_range": true,
+    "why": "a receipt records an observation at a moment (a live probe, a scan); no verifier can re-run the moment. Covered only when the receipt is ADDED by the range — an edited record is a rewritten one."
+   },
+   "no_live_contour": {
+    "verifier": "v-canary",
+    "reason_marker": "INFERRED_BOUNDARY_WITHOUT_CANARY",
+    "live_contours": {
+     "Arcanada-one/muneral": "contracts/graph-verified-change/canary-plans/muneral-production.v1.json"
+    },
+    "why": "matrix P6 / observed-edges C1 wants a canary on a live contour; for a repository with no declared contour (the gate's own tools/graph/**, receipts/** scripts) no canary can exist. A repository listed in live_contours is NOT covered: run the canary."
+   }
+  },
+  "not_covered": [
+   "a `failed` verdict — a defect to fix, never a decision",
+   "the work-item evidence ledger (receipts/graph/work-item-evidence/**): its out-of-repository attachments are a build_attachment defect (absolute-path fallback), refused as ATTACHMENT_NOT_EXEMPTIBLE",
+   "any entity whose verdict reason is not one of the classes' markers"
+  ]
  }
 }
