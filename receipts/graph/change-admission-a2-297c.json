@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "paused_safe"
  },
- "captured_at_utc": "2026-09-25T02:39:10Z",
+ "captured_at_utc": "2026-09-25T02:42:13Z",
  "change_set": {
   "base": "0d191e0c6206322e9fa792e0a710e172425d0ddf",
   "files": [
@@ -143,9 +143,18 @@
     ],
     "path": "receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
     "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-a2-297c.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-a2-297c.json"
+    ],
+    "path": "receipts/graph/change-admission-a2-297c.json",
+    "status": "A"
    }
   ],
-  "head": "7255facdb552e9ff6d307024c221782a79194ccb",
+  "head": "78f3fe8a40631222e627a196f32348f157d491dd",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -160,12 +169,12 @@
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:9b20216776ce085e9e71e32be1c2644014a9fc8a36bee4d9456bda4be8cc146e",
-  "path": "/tmp/arcana-verify/verifier-out/graph-head-7255facdb552.json",
-  "source_commit": "7255facdb552e9ff6d307024c221782a79194ccb",
+  "graph_digest": "sha256:b001dc865c5250b584f7144da248ee53359faa904cc5a571eb5481fdf2add8d6",
+  "path": "/tmp/arcana-verify/verifier-out/graph-head-78f3fe8a4063.json",
+  "source_commit": "78f3fe8a40631222e627a196f32348f157d491dd",
   "staleness": {
-   "checked_at_utc": "2026-09-25T02:39:13Z",
-   "checked_nodes": 372,
+   "checked_at_utc": "2026-09-25T02:42:16Z",
+   "checked_nodes": 373,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -732,7 +741,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.0.1"
  },
- "receipt_id": "car-verify-20260925T023910Z-7255facd",
+ "receipt_id": "car-verify-20260925T024213Z-78f3fe8a",
  "receipt_path": "receipts/graph/change-admission-a2-297c.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -783,14 +792,15 @@
    "receipt:receipts/graph/change-admission-a2-234.json",
    "receipt:receipts/graph/change-admission-a2-272.json",
    "receipt:receipts/graph/change-admission-a2-297-20260925T005326Z.json",
-   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json"
+   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+   "receipt:receipts/graph/change-admission-a2-297c.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-25T02:39:13Z",
+  "checked_at_utc": "2026-09-25T02:42:16Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -861,10 +871,25 @@
    "path": "receipts/graph/change-admission-a2-297-20260925T005326Z.json",
    "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
    "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:5435512a7d2cda973fd9f8eb4d1273cf6d7d12b41b33fb2595f4e7a1cedf9e81"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-297c.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-297c.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-a2-297c.json for work item A2-297c",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-a2-297c.json",
+    "work_item": "A2-297c"
+   }
   }
  ],
  "tree": {
-  "commit": "7255facdb552e9ff6d307024c221782a79194ccb",
+  "commit": "78f3fe8a40631222e627a196f32348f157d491dd",
   "dirty": false
  },
  "verdicts": [
@@ -1034,12 +1059,12 @@
    "id": "v-config-schema",
    "kind": "config_schema",
    "output_ref": "/tmp/arcana-verify/verifier-out/v-config-schema.json",
-   "started_at_utc": "2026-09-25T02:39:15Z",
+   "started_at_utc": "2026-09-25T02:42:18Z",
    "summary": "0 source(s), 0 new / 0 frozen undeclared reads, 0 failed"
   },
   {
    "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
-   "duration_s": 0.0,
+   "duration_s": 0.01,
    "entities": [
     "code_unit:crates/cli/src/learning_trace.rs",
     "code_unit:crates/cli/src/lib.rs",
@@ -1068,7 +1093,7 @@
    "id": "v-fitness",
    "kind": "fitness_rules",
    "output_ref": "/tmp/arcana-verify/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-09-25T02:39:15Z",
+   "started_at_utc": "2026-09-25T02:42:18Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -1098,7 +1123,7 @@
    "id": "v-doc-reference",
    "kind": "doc_reference",
    "output_ref": "/tmp/arcana-verify/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-09-25T02:39:15Z",
+   "started_at_utc": "2026-09-25T02:42:18Z",
    "summary": "8 document(s), 0 failed"
   },
   {
@@ -1114,16 +1139,22 @@
    "id": "v-canary",
    "kind": "canary",
    "output_ref": "/tmp/arcana-verify/verifier-out/v-canary.json",
-   "started_at_utc": "2026-09-25T02:39:15Z",
+   "started_at_utc": "2026-09-25T02:42:18Z",
    "summary": "0 canary result(s); 0 verified / 0 failed / 1 not_measured of 1 entities"
   }
  ],
  "verify": {
   "events": [
    {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-a2-297c.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-a2-297c.json is the previous version of the one this run is writing, for the same work item A2-297c — superseded by construction, so it owes this change no verdict"
+   },
+   {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "6 affected entity(ies) owe no verdict (receipt: 6): unchanged at both revisions and given no verifier by the matrix"
+    "text": "7 affected entity(ies) owe no verdict (receipt: 7): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -1189,12 +1220,13 @@
    "receipt:receipts/graph/change-admission-a2-234.json": [],
    "receipt:receipts/graph/change-admission-a2-272.json": [],
    "receipt:receipts/graph/change-admission-a2-297-20260925T005326Z.json": [],
-   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json": []
+   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json": [],
+   "receipt:receipts/graph/change-admission-a2-297c.json": []
   },
   "seconds": {
-   "prepare": 1.63,
-   "total": 5.01,
-   "verifiers": 0.01
+   "prepare": 1.73,
+   "total": 5.02,
+   "verifiers": 0.02
   }
  },
  "work_item": "A2-297c"
