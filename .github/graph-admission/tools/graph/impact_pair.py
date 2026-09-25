@@ -194,7 +194,7 @@ A paired receipt must match both graph digests and the complete dual selection.
             covered_kinds = {v.get("kind") for v in referenced
                              if entity in v.get("entities", []) and row_measured_verified(v, entity)
                              and isinstance(v.get("output_ref"), str) and v["output_ref"].strip()}
-            if set(minimum) - covered_kinds:
+            if uncovered_row_kinds(minimum, covered_kinds):
                 problems.append("verified entity lacks referenced mandatory output scope: " + entity)
             # The finer check the per-entity record makes possible, and the direction that must stay
             # red: a receipt whose top-level verdict is BETTER than what its own verifier wrote down
@@ -208,6 +208,26 @@ A paired receipt must match both graph digests and the complete dual selection.
     if selection["unmeasured_head_files"]:
         problems.append("head code extraction not measured: " + ", ".join(selection["unmeasured_head_files"]))
     return problems
+
+
+def uncovered_row_kinds(minimum, covered_kinds: set) -> set:
+    """The mandatory verifiers whose receipt row KIND is absent from `covered_kinds`.
+
+    `minimum` holds verifier-matrix ids; a receipt row carries a `kind` from the receipt schema's
+    `kind_values`. The two vocabularies are not the same: the matrix declares
+    `route_config_consistency` with `kind: config_schema`, and the receipt schema has no
+    `route_config_consistency` kind at all, so verify.py writes that row as `config_schema`. Comparing
+    the ids with the kinds directly made every route introduced by a change `paused_safe
+    HEAD_IMPACT_NOT_COVERED` whatever its evidence (A2-337, muneral #182 `route:GET /health/routes`).
+    The id is translated through the matrix's own declaration; an id the matrix does not declare keeps
+    itself, which is the old comparison.
+    """
+    declared = _matrix()["verifiers"]
+    return {m for m in minimum if declared.get(m, {}).get("kind", m) not in covered_kinds}
+
+
+def _matrix() -> dict:
+    return json.loads((Path(__file__).resolve().parents[2] / "contracts/graph-verified-change/verifier-matrix.v1.json").read_text())
 
 
 def row_measured_verified(v: dict, entity: str) -> bool:

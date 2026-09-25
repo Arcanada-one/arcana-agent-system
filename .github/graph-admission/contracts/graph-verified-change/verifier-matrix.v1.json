@@ -384,7 +384,7 @@
    "kind": "config_schema",
    "tool": "tools/graph/verify.py (built in)",
    "verdict_rule": "verified when every key read is declared; failed on UNDECLARED_CONFIG_KEY unless frozen in the baseline; not_measured when the repo declares no env source at all",
-   "what": "every config key read by an affected code unit at head (process.env.X, process.env['X'], configService.get('X')) is declared in an env declaration source of the repo (.env.example / .env.schema / .env.template / env.schema.json / docker-compose*.yml environment:), framework-owned prefixes excluded (NODE_ENV, CI, PORT, NEXT_*, VERCEL_*, NEXTAUTH_*, AUTH_*, WS_NO_*, NO_PROXY, DEBUG)"
+   "what": "every config key read by an affected code unit at head (process.env.X, process.env['X'], configService.get('X'), os.environ/os.getenv, std::env::var) is declared in an env declaration source of the repo (.env.example / .env.schema / .env.template / env.schema.json / docker-compose*.yml environment:), or - A2-311 - by the annotated fields and `env_prefix` of a pydantic-settings BaseSettings class, which is where a Python service actually declares its configuration (NOT read from one, and therefore still undeclared: Field(alias=...)/validation_alias, a computed prefix, a class assembled at runtime; the reader may only ADD to the declared set, so a bound of it yields a visible false UNDECLARED_CONFIG_KEY, never a false pass), framework-owned prefixes excluded (NODE_ENV, CI, PORT, NEXT_*, VERCEL_*, NEXTAUTH_*, AUTH_*, WS_NO_*, NO_PROXY, DEBUG)"
   },
   "contract_diff": {
    "applies_to_nodes": [
