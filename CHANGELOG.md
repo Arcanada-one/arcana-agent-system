@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`arcana run --work-item` attaches its own receipt to the work item.** After
+  `receipts/ReadinessReceipt-<id>.json` is written the run calls
+  `POST /tasks/<id>/evidence` with the sha256 of the receipt's bytes on disk,
+  `application/json` and `file://<receipt>` (or `--evidence-uri`), and reports
+  the outcome on stdout/stderr, in the done-marker's new `evidence` object and
+  in `receipts/ReadinessReceipt-<id>.evidence.json`. A run that succeeded but
+  whose receipt did not land exits `3` (`EVIDENCE_NOT_ATTACHED`) and keeps the
+  receipt; `arcana attach-receipt` is the idempotent retry. The work item's
+  status is still never touched. Until now the attach was a hand-made `POST`,
+  and A2-297c's second receipt never reached its work item (NR-0016, A2-332;
+  fixed in A2-336). `MuneralClient::attach_evidence` is the connector half; a
+  `409` keeps the server's whole body.
 - **A line of printed output quoted in our documentation is now checked against
   the functions that print it.** `crates/cli/tests/printed_output.rs` takes every
   fenced line under `docs/` and in `README.md` that claims to be this program's

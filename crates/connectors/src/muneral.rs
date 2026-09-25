@@ -1,9 +1,21 @@
 //! `MuneralClient` — the work-item half of a contract-bound run.
 //!
 //! Muneral is the authority on work: what a task is, what it is bound to, and
-//! who may execute it. This client reads; it never writes. A run that closed
-//! its own work item would be the executor grading its own homework, and the
+//! who may execute it. This client reads the work item and it attaches
+//! evidence to it; it never moves the work item's status. A run that closed its
+//! own work item would be the executor grading its own homework, and the
 //! transition is the control plane's to make.
+//!
+//! ## Evidence is not a transition
+//!
+//! [`MuneralClient::attach_evidence`] is the one write, and it is a different
+//! kind of write: `POST /tasks/{id}/evidence` records a CLAIM — "these bytes
+//! (by sha256), of this media type, are at this uri" — under the agent that
+//! made it. It changes no status, no assignee and no field of the task, and
+//! the server never fetches the uri. The executor is the only party that holds
+//! its receipt at the moment the run ends; before this call existed a human
+//! had to carry it across by hand, and one was lost (NR-0016, A2-332). Judging
+//! the evidence, and moving the status on it, remain the control plane's.
 //!
 //! ## The key
 //!
@@ -81,11 +93,55 @@ pub enum MuneralError {
     NotFound(String),
     #[error("Muneral answered HTTP {status}: {body}")]
     Status { status: u16, body: String },
+    /// `409`: the same digest is already attached to this task under a
+    /// different uri or media type. The server's whole body is kept — it names
+    /// the stored and the attempted values, which is what an operator needs to
+    /// decide which claim is wrong.
+    #[error("Muneral refused the request (HTTP 409): {0}")]
+    Conflict(String),
     #[error("Muneral's answer could not be read as a work item: {0}")]
     Decode(String),
+    /// A 2xx whose record is not the attachment that was asked for — another
+    /// task, or other bytes. Reported rather than trusted: a success that does
+    /// not name our digest is not evidence that our digest was recorded.
+    #[error("Muneral answered with an evidence record that is not the one attached: {0}")]
+    EvidenceMismatch(String),
 }
 
-/// Read-only client for the Muneral work-item API.
+/// `WorkItemEvidenceAttachment/v1`, as `POST /tasks/{id}/evidence` answers it.
+///
+/// `snake_case`, as Muneral spells it. `idempotent` is `false` on the `201` that
+/// created the record and `true` on the `200` that found it already stored.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkItemEvidenceAttachment {
+    pub schema: String,
+    pub evidence_id: String,
+    pub task_id: String,
+    pub uri: String,
+    pub sha256: String,
+    pub content_type: String,
+    #[serde(default)]
+    pub created_by_agent_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// `None` only if the server stopped sending it; the HTTP status is then
+    /// the fallback (see [`MuneralClient::attach_evidence`]).
+    #[serde(default)]
+    pub idempotent: Option<bool>,
+}
+
+/// The request body of `POST /tasks/{id}/evidence` — camelCase, as
+/// `AttachEvidenceDto` declares it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachEvidenceBody<'a> {
+    uri: &'a str,
+    sha256: &'a str,
+    content_type: &'a str,
+}
+
+/// Client for the Muneral work-item API: reads work items, attaches evidence,
+/// never transitions status.
 #[derive(Debug, Clone)]
 pub struct MuneralClient {
     http: reqwest::Client,
@@ -157,6 +213,67 @@ impl MuneralClient {
         serde_json::from_str(&body).map_err(|err| MuneralError::Decode(err.to_string()))
     }
 
+    /// `POST /tasks/{task_id}/evidence` — attach one artefact, by digest.
+    ///
+    /// `sha256` is 64 lowercase hex characters with no algorithm prefix, and
+    /// `content_type` a lowercase media type; Muneral refuses anything else
+    /// with a `400` carrying a machine `code`, which is returned here as
+    /// [`MuneralError::Status`] with that body.
+    ///
+    /// Idempotent by the server's design: repeating the same
+    /// `(task, sha256, uri, content_type)` answers `200` with the stored record
+    /// and `idempotent: true`, so a caller that lost the first answer may
+    /// simply call again. The same digest under a different uri or media type
+    /// is [`MuneralError::Conflict`].
+    ///
+    /// # Errors
+    /// [`MuneralError`] — each variant is the server's answer, classified, plus
+    /// [`MuneralError::EvidenceMismatch`] when a 2xx names other bytes or
+    /// another task than the ones sent.
+    pub async fn attach_evidence(
+        &self,
+        task_id: &str,
+        uri: &str,
+        sha256: &str,
+        content_type: &str,
+    ) -> Result<WorkItemEvidenceAttachment, MuneralError> {
+        let url = self.endpoint(&["tasks", task_id, "evidence"])?;
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(self.key.expose_secret())
+            .json(&AttachEvidenceBody {
+                uri,
+                sha256,
+                content_type,
+            })
+            .send()
+            .await
+            .map_err(|err| MuneralError::Transport(err.to_string()))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| MuneralError::Transport(err.to_string()))?;
+        if !status.is_success() {
+            return Err(classify(status.as_u16(), task_id, &body));
+        }
+        let mut record: WorkItemEvidenceAttachment = serde_json::from_str(&body)
+            .map_err(|err| MuneralError::Decode(format!("evidence record: {err}")))?;
+        if record.task_id != task_id || record.sha256 != sha256 {
+            return Err(MuneralError::EvidenceMismatch(format!(
+                "sent task {task_id} sha256 {sha256}, answered task {} sha256 {}",
+                record.task_id, record.sha256
+            )));
+        }
+        // The route documents 201 = new, 200 = repeat. If the flag is ever
+        // absent, the status still says which one it was.
+        if record.idempotent.is_none() {
+            record.idempotent = Some(status.as_u16() == 200);
+        }
+        Ok(record)
+    }
+
     fn endpoint(&self, segments: &[&str]) -> Result<Url, MuneralError> {
         let mut url = self.base_url.clone();
         {
@@ -179,12 +296,16 @@ impl MuneralClient {
 /// `403` keeps the server's body: Muneral answers a foreign task with a
 /// machine reason, and dropping it would turn "this agent is not assigned to
 /// that item" into "forbidden", which is exactly the sentence an operator
-/// cannot act on.
+/// cannot act on. `409` keeps it too, and uncut up to [`CONFLICT_BODY_MAX`]:
+/// the body names the stored and the attempted uri, each up to 2048
+/// characters, and the 400-character excerpt would cut off the one that
+/// differs.
 fn classify(status: u16, id: &str, body: &str) -> MuneralError {
     match status {
         401 => MuneralError::Unauthorized,
         403 => MuneralError::Forbidden(excerpt(body)),
         404 => MuneralError::NotFound(id.to_owned()),
+        409 => MuneralError::Conflict(bounded(body, CONFLICT_BODY_MAX)),
         other => MuneralError::Status {
             status: other,
             body: excerpt(body),
@@ -195,11 +316,18 @@ fn classify(status: u16, id: &str, body: &str) -> MuneralError {
 /// At most 400 characters of a response body, so an HTML error page cannot
 /// become the whole of an operator's error line.
 fn excerpt(body: &str) -> String {
+    bounded(body, 400)
+}
+
+/// Longest `409` body kept: two 2048-character uris, the message and the keys.
+const CONFLICT_BODY_MAX: usize = 8192;
+
+fn bounded(body: &str, max: usize) -> String {
     let trimmed = body.trim();
-    if trimmed.chars().count() <= 400 {
+    if trimmed.chars().count() <= max {
         return trimmed.to_owned();
     }
-    trimmed.chars().take(400).collect::<String>() + "…"
+    trimmed.chars().take(max).collect::<String>() + "…"
 }
 
 /// Read a `mun_sk_` key out of a file, trimming the trailing newline an editor

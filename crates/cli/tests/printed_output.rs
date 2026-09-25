@@ -265,6 +265,7 @@ fn done_marker_keys() -> BTreeSet<String> {
         root: Path::new("/tmp/arcana-printed-output"),
         error: None,
         effect: None,
+        evidence: None,
     };
     for source in [
         done_marker_body(&run),
@@ -717,6 +718,7 @@ fn the_check_is_green_on_the_lines_the_writers_produce() {
         root: Path::new("/tmp/arcana-printed-output"),
         error: None,
         effect: None,
+        evidence: None,
     });
     let page = format!("# Page\n\n```text\n{refusal}\n{marker}\n{DONE_MARKER} {run_marker}\n```\n");
     let findings = findings(&root, "docs/how-to/real.md", &page);

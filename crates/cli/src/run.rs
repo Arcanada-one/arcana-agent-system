@@ -865,6 +865,21 @@ pub fn verdict_of(summary: &RunSummary) -> (bool, String) {
 /// from `--prompt` or from a work item.
 #[must_use]
 pub fn report_run(summary: &RunSummary, root: &Path) -> i32 {
+    report_run_with_evidence(summary, root, None)
+}
+
+/// [`report_run`], with the outcome of attaching the run's receipt to its work
+/// item carried in the done-marker as `evidence`.
+///
+/// Only a contract-bound run has one; every other run's marker is unchanged.
+/// The exit code here is the RUN's — the caller folds a failed attach into it,
+/// because this function does not know what the evidence was for.
+#[must_use]
+pub fn report_run_with_evidence(
+    summary: &RunSummary,
+    root: &Path,
+    evidence: Option<&serde_json::Value>,
+) -> i32 {
     let out = &summary.out;
     match out.final_text.as_deref() {
         Some(text) => println!("{text}"),
@@ -923,6 +938,7 @@ pub fn report_run(summary: &RunSummary, root: &Path) -> i32 {
             root,
             error: detail,
             effect: Some(effect),
+            evidence,
         })
     );
     let code = crate::interrupt::exit_code(out.reason);
@@ -957,6 +973,7 @@ fn exit_failed(error: &str, root: &Path) -> i32 {
             // A run that never started had no tree to compare. `null`, not an
             // empty object that would read as "measured, and nothing changed".
             effect: None,
+            evidence: None,
         })
     );
     1
@@ -996,6 +1013,9 @@ pub struct DoneMarker<'a> {
     pub error: Option<&'a str>,
     /// What the run left on disk, or `None` when there was no run to measure.
     pub effect: Option<&'a Effect>,
+    /// `EvidenceAttachOutcome/v1` of a contract-bound run. Omitted from the
+    /// JSON entirely when `None`, so a marker of any other run is unchanged.
+    pub evidence: Option<&'a serde_json::Value>,
 }
 
 /// Render the done-marker's JSON body — the one definition of its shape.
@@ -1013,8 +1033,9 @@ pub fn done_marker_body(marker: &DoneMarker<'_>) -> String {
         root,
         error,
         effect,
+        evidence,
     } = *marker;
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "completed": completed,
         "reason": reason,
         "turns": turns,
@@ -1038,6 +1059,9 @@ pub fn done_marker_body(marker: &DoneMarker<'_>) -> String {
         // claimed that is not on disk. `null` only when there was no run.
         "effect": effect,
     });
+    if let (Some(evidence), Some(object)) = (evidence, body.as_object_mut()) {
+        object.insert("evidence".to_owned(), evidence.clone());
+    }
     body.to_string()
 }
 
@@ -1154,6 +1178,7 @@ mod tests {
             root: Path::new("/tmp"),
             error: Some(detail),
             effect: None,
+            evidence: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["error"], detail, "the marker must not report null");
@@ -1177,6 +1202,7 @@ mod tests {
             root: Path::new("/tmp"),
             error: None,
             effect: None,
+            evidence: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], true);
@@ -1206,6 +1232,7 @@ mod tests {
             root: Path::new("/tmp"),
             error: Some("boom"),
             effect: None,
+            evidence: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["completed"], false);
@@ -1324,6 +1351,7 @@ mod tests {
             root: Path::new("/tmp"),
             error: None,
             effect: Some(&run.effect),
+            evidence: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["reason"], NO_EFFECT);

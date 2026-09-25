@@ -44,6 +44,7 @@ message instead:
 |------|-----------|
 | `0` | The run reached `Completed`, executed at least one tool call, **and** left an effect — the working tree after the run differs from the working tree before it, unless the task was dispatched with `--read-only`. |
 | `1` | The run failed, or never started: `--live` prerequisites unmet, `--cwd` unresolvable, no task, unreadable `permissions.toml`, audit-log setup failure, `NoAction` (the model answered without executing a single tool call), `ResponseTruncated` (two replies in a row were cut off by the model's output limit mid tool call), `UnsupportedToolCallFormat` (the model asked for a tool in an encoding this runner cannot execute, and repeated it after being told the one it reads), `RequestTooLarge` (the transcript could not be compacted into the connector's 100 000-character per-field request limit), `NoEffect` (the run completed and the working tree is byte-for-byte what it was — see below), `ClaimedButAbsent` (the run changed something, and the final message named a path that is not on disk), or any other non-`Completed` terminal verdict (including `PermissionDenied` on a refused tool call). |
+| `3` | `--work-item` only: the run itself would have exited `0`, but its receipt is NOT attached to the work item (`EVIDENCE_NOT_ATTACHED` on stderr; see below). A run that already failed keeps its own code. |
 | `130` | The operator interrupted the run; the spend line reports what the interrupted dispatch cost. |
 
 The last line of stdout is always `ARCANA_RUN_DONE <json>`, printed even when
@@ -105,6 +106,46 @@ has been created successfully.` in one turn, called nothing, created nothing —
 and the run reported `"completed":true` and exited `0`. The marker now carries
 `tool_calls`, the number of tool calls the executor actually carried out, and
 `"completed":true` with `"tool_calls":0` cannot be printed.
+
+### Evidence: `run --work-item` and `attach-receipt`
+
+At the end of `arcana run --work-item <id>`, after
+`receipts/ReadinessReceipt-<id>.json` is written, the run attaches that receipt
+to the work item with `POST /tasks/<id>/evidence`: the sha256 of the receipt's
+bytes as read back from disk, `application/json`, and a locator — by default
+`file://<absolute path of the receipt>`, or the value of `--evidence-uri`. The
+default is the one locator that is true when the attach happens (the receipt
+has not been published anywhere else yet); it resolves only on the host that
+wrote it, and the digest, not the path, is what identifies the bytes. Muneral
+keeps the first locator for a digest and answers the same bytes under a
+different one with `409 EVIDENCE_DIGEST_CONFLICT`, so pick `--evidence-uri`
+before the first attach, not after.
+
+Attaching evidence does not move the work item's status; that stays with the
+control plane.
+
+The outcome is said three times: one `evidence:` line on stdout when it landed,
+or one `EVIDENCE_NOT_ATTACHED` line on stderr that names the kept receipt, its
+sha256 and the retry command when it did not; an `evidence` object
+(`EvidenceAttachOutcome/v1`) in the done-marker; and the same object in
+`receipts/ReadinessReceipt-<id>.evidence.json`. A marker of any run without
+`--work-item` has no `evidence` key. A failed attach never deletes the receipt.
+
+The retry sends the same bytes again, and a claim that did land the first time
+is answered `200` with `idempotent: true` rather than a second record:
+
+```bash
+arcana attach-receipt --work-item "<work-item-id>" --receipt "$CWD/receipts/ReadinessReceipt-<work-item-id>.json"
+```
+
+Pass `--evidence-uri` with the locator of the first attempt when it was not the
+default, and `--record <PATH>` to keep the outcome in a file.
+
+| Code | `attach-receipt` condition |
+|------|-----------|
+| `0` | Attached: a new record (`201`) or a repeat of a stored one (`200`, `idempotent: true`). |
+| `1` | Could not start: no key file, unusable `ARCANA_MUNERAL_URL`, async-runtime failure. |
+| `3` | Not attached: Muneral unreachable, `401`/`403`/`404`, `409 EVIDENCE_DIGEST_CONFLICT`, a `400` with a `code`, or a success that names other bytes. |
 
 ### `mcp serve` exit codes
 

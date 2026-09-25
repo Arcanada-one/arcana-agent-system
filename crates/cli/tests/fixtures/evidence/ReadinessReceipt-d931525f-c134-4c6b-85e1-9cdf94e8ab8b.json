@@ -1,0 +1,119 @@
+{
+  "schema": "ReadinessReceipt/v1",
+  "measured_at": "2026-09-25T02:24:55.602667157Z",
+  "produced_by": "arcana 0.2.0 (5e523ad)",
+  "task_id": "d931525f-c134-4c6b-85e1-9cdf94e8ab8b",
+  "contractDigest": "sha256:d1afc442572f70ea5d0d8ee7fe6490443bf4659fff99635ea0bf5cbcdb0762ab",
+  "contract": {
+    "source": "argana",
+    "origin": "http://127.0.0.1:18382/",
+    "digest_preimage": "canonical.bytes_b64",
+    "verified_against_live_endpoint": true,
+    "kc2_revision": "b3bf0da9a5f411a7379c43ffc35ff37227332270",
+    "kc2_snapshot": "sha256:192e2ce29dd00cf19dd682d948d6bd09f2fa8cc468ca44d2e6f1b2ff7abb563b",
+    "allowlist": [
+      "edit",
+      "grep",
+      "read",
+      "write"
+    ],
+    "allowlist_source": "default-no-shell"
+  },
+  "worktree": {
+    "path": "/home/dev/aup/arc2/runs/A2-297c/live/aras-run2",
+    "sha": null
+  },
+  "mc_usage": {
+    "calls": 2,
+    "tokens_in": 34199,
+    "tokens_out": 3004,
+    "cost_usd_micros": 5629,
+    "configured_model": "deepseek-v4-flash",
+    "model_source": "env",
+    "selected_models": [
+      "deepseek-v4-flash",
+      "deepseek-v4-flash"
+    ]
+  },
+  "tool_calls": {
+    "executed": 1,
+    "attempted": 1,
+    "denied": 0
+  },
+  "effect": {
+    "expectation": "artefact",
+    "tree_digest_before": "sha256:b9dccb1e00cd3ef09b2b7a5f5beeb123f6e128d88444cdd3ef754d73c0cb0cce",
+    "tree_digest_after": "sha256:fe92f9687b50960a92b6b28eb6ae4e25948368bcde07b78ba5f4a7d56c6d738b",
+    "tree_changed": true,
+    "changed_paths": [
+      "docs/how-to/run-work-item-under-kc2-contract.md"
+    ],
+    "changed_count": 1,
+    "writes": [
+      "write"
+    ],
+    "executed_tools": {
+      "write": 1
+    },
+    "claimed_paths": [
+      "docs/how-to/run-work-item-under-kc2-contract.md"
+    ],
+    "claimed_but_absent": [],
+    "claimed_but_unchanged": []
+  },
+  "denials": [],
+  "ground_truth": [
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/arcana-run-help.txt",
+      "sha256": "sha256:81f888690682e90f6584bc4883707cef3dc08d5ae63befc8d1274931a7ca57c8",
+      "bytes": 6006
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/refuse-and-done-marker.rs",
+      "sha256": "sha256:7f37de510f769436d07517b4c54720d4d515a0fa1e126062f1cd31965d4169c0",
+      "bytes": 1013
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/muneral-key.rs",
+      "sha256": "sha256:aa5c8d29f4316749f5e2a3894428fbb0dd546f40049c924339166a60c092a8be",
+      "bytes": 1871
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/cli-model-flag.rs",
+      "sha256": "sha256:a45183b30766e7396f9ec6af1c22070340e568f11cfcbda29cbb0709ed0444bc",
+      "bytes": 1625
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/docs-how-to-index.md",
+      "sha256": "sha256:6a70681140784150f27bde6149f8720e80bd978888af53fcdeea7fd57768be00",
+      "bytes": 733
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/mc-token.rs",
+      "sha256": "sha256:1d2f003520903d319da1b30b4756c07064e91ad23a7d376fa8b6a3357ac14821",
+      "bytes": 565
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/install.md",
+      "sha256": "sha256:038e5dd85636c9c6d597ddda00cf60fb4430f477584206bfeb612e18a0576914",
+      "bytes": 4673
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/contract-refusal-display.rs",
+      "sha256": "sha256:9b0ec93bebdf62154c388b305b8d7144838ccd2c14d92b2fb3fca9df6eb453c7",
+      "bytes": 3954
+    },
+    {
+      "path": "/home/dev/aup/arc2/runs/A2-297c/live/ground-truth/done-marker-example.md",
+      "sha256": "sha256:8cfc3f66dd9a2ec8e621676258726fe9a38a300e6828a8f1b2a1b2e172de979f",
+      "bytes": 1484
+    }
+  ],
+  "run": {
+    "completed": true,
+    "reason": "Completed",
+    "turns": 2,
+    "compactions": 0,
+    "detail": null
+  }
+}
