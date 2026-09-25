@@ -563,7 +563,7 @@ fn classify(raw: &str) -> Literal {
     {
         return Literal::NotAClaim;
     }
-    let token = token.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | ')'));
+    let token = token.trim_end_matches(['.', ',', ';', ':', ')']);
     if let Some(flag) = token.strip_prefix("--") {
         if !flag.is_empty() && flag.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
             return Literal::Flag(token.to_owned());
@@ -913,8 +913,7 @@ fn relation_findings(path: &str, text: &str) -> Vec<Finding> {
                     let at = lowered[..at].chars().count();
                     let subject = flags
                         .iter()
-                        .filter(|(offset, _)| *offset < at)
-                        .next_back()
+                        .rfind(|(offset, _)| *offset < at)
                         .map(|(_, flag)| flag.clone())
                         .or_else(|| heading_subject.clone());
                     let Some(subject) = subject else {
