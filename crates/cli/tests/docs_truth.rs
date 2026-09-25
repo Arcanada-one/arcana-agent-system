@@ -12,12 +12,15 @@
 //! in this repository. "The page was written" and "the page is true" are
 //! different measurements, and we had only the first (A2-292).
 //!
-//! What it is NOT. Nothing here judges prose, and nothing here judges printed
-//! OUTPUT: a fenced block showing an invented success line is invisible to a
-//! parser. It judges the one class of claim a machine can settle — that a
-//! command line we tell an operator to type is a command line this binary
-//! accepts, and that a variable we tell them to set is a name that occurs in
-//! the program.
+//! What it is NOT. Nothing here judges prose (`prose_claims.rs`) and nothing
+//! here judges printed OUTPUT: a fenced block showing an invented success line
+//! is invisible to a parser. It judges the one class of claim a machine can
+//! settle — that a command line we tell an operator to type is a command line
+//! this binary accepts, and that a variable we tell them to set is a name that
+//! occurs in the program. The output half is `printed_output.rs`, which
+//! rebuilds a quoted refusal or done-marker with the functions that print them;
+//! the hole this paragraph used to declare and leave open cost A2-292 a page
+//! whose commands were all real and whose two output lines were invented.
 //!
 //! The check is only as truthful as the definition it parses with, which is why
 //! `Cli` was moved out of `main.rs` into the library: a second copy of the

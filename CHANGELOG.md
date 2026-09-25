@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A line of printed output quoted in our documentation is now checked against
+  the functions that print it.** `crates/cli/tests/printed_output.rs` takes every
+  fenced line under `docs/` and in `README.md` that claims to be this program's
+  output and rebuilds it: a refusal through `work_item::refusal_line` /
+  `refusal_marker`, a done-marker through `run::done_marker_body`, whose keys the
+  test therefore reads off the writer instead of a list of its own. A refusal
+  code comes from the source that prints it — the `refuse("…")` call sites and
+  the `code()` functions — so an invented code is a finding and a real code
+  printed with a prefix no build uses (`Error: CONTRACT_MISSING: …`, A2-292's
+  first live page) is a finding too. `docs_truth.rs` declared printed output out
+  of scope and left it there; that hole shipped a page whose every command parsed
+  and whose two output lines nothing had read (A2-297b).
+- **`docs/how-to/run-work-item-under-kc2-contract.md`**, written end to end by
+  `arcana run --work-item d931525f-… --ground-truth …` and committed unedited —
+  the index line in `docs/how-to/README.md` is ours. It is the first page
+  registered in `AGENT_WRITTEN_PAGES`, so `prose_claims.rs`'s
+  `every_agent_written_page_is_supported_by_the_source` stops being vacuously
+  green and carries a real page (A2-297b).
+
+### Fixed
+- **A typed refusal printed its code twice.** `ContractRefusal`'s `Display`
+  already opens with the code and every contract call site passes it to
+  `refuse()` as the detail, so an operator read
+  `arcana run: CONTRACT_MISSING: CONTRACT_MISSING: …` on stderr and the same
+  doubling in the done-marker's `error`. Found by writing down the one shape this
+  program prints (A2-297b).
 - **`arcana run --work-item … --ground-truth <PATH>`** quotes a file from the
   repository into the work item's brief as the authority on names, flags and
   environment variables, and records each path with the sha256 of the bytes that

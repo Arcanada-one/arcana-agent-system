@@ -326,20 +326,58 @@ fn measured_at() -> String {
         .unwrap_or_else(|_| "not_measured".to_owned())
 }
 
-/// Print a typed refusal, its done-marker, and return exit code `1`.
+/// The stderr line a typed refusal prints: `arcana run: <CODE>: <detail>`.
 ///
-/// The code is the first token on stderr and is repeated in the marker, so a
-/// runner can branch on `CONTRACT_MISSING` without parsing a sentence.
-fn refuse(code: &str, detail: &str) -> i32 {
-    eprintln!("arcana run: {code}: {detail}");
-    println!(
+/// The code is printed ONCE. `ContractRefusal`'s own `Display` already opens
+/// with the code (`CONTRACT_MISSING: the work item carries no contractDigest,
+/// …`), and every contract call site passes that string as the detail, so
+/// until this stripped it an operator read
+/// `arcana run: CONTRACT_MISSING: CONTRACT_MISSING: …`. Measured while
+/// building `crates/cli/tests/printed_output.rs`: writing down the one shape
+/// this program prints is what made the doubled one visible.
+///
+/// Public because it is the ONE definition of that shape. A documentation page
+/// that quotes a refusal is checked against this function
+/// (`crates/cli/tests/printed_output.rs`), not against a second spelling of the
+/// format in a test — A2-292's first live page printed
+/// `Error: CONTRACT_MISSING: …`, which no build of this program has ever
+/// produced, and every check in CI was green on it.
+#[must_use]
+pub fn refusal_line(code: &str, detail: &str) -> String {
+    format!("arcana run: {code}: {}", undoubled(code, detail))
+}
+
+/// `detail` with a leading `<CODE>: ` removed, when it is the same code.
+fn undoubled<'a>(code: &str, detail: &'a str) -> &'a str {
+    detail
+        .strip_prefix(code)
+        .and_then(|rest| rest.strip_prefix(": "))
+        .unwrap_or(detail)
+}
+
+/// The done-marker line a typed refusal prints, marker included.
+///
+/// `reason` and `code` carry the same code on purpose: a runner that branches
+/// on either reads the same thing.
+#[must_use]
+pub fn refusal_marker(code: &str, detail: &str) -> String {
+    format!(
         "{DONE_MARKER} {}",
         serde_json::json!({
             "completed": false,
             "reason": code,
             "code": code,
-            "error": detail,
+            "error": undoubled(code, detail),
         })
-    );
+    )
+}
+
+/// Print a typed refusal, its done-marker, and return exit code `1`.
+///
+/// The code is the first token on stderr and is repeated in the marker, so a
+/// runner can branch on `CONTRACT_MISSING` without parsing a sentence.
+fn refuse(code: &str, detail: &str) -> i32 {
+    eprintln!("{}", refusal_line(code, detail));
+    println!("{}", refusal_marker(code, detail));
     1
 }
