@@ -25,9 +25,9 @@ it.
 
 ### 1. Point `ARCANA_MUNERAL_KEY_FILE` at the agent key
 
-The key file holds the agent's `mun_sk_` key as one line of text, mode
-0600. It is read from the file and never from a command line. Export the
-path:
+The key file holds the agent's `mun_sk_` key, mode 0600. The key is read
+from a FILE, never from a command line and never from an inherited plain
+environment variable holding the value itself. Export the path:
 
 ```bash
 export ARCANA_MUNERAL_KEY_FILE="$HOME/.config/arcana/muneral-agent-key.pem"
