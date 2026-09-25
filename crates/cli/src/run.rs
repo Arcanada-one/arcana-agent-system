@@ -977,22 +977,30 @@ fn outcome_line(reason: TerminalReason, verdict: &str, detail: Option<&str>) -> 
 }
 
 /// The JSON body of the done-marker line.
-struct DoneMarker<'a> {
-    completed: bool,
-    reason: &'a str,
-    turns: u32,
-    tool_calls: u32,
-    tool_calls_attempted: u32,
-    tool_calls_denied: u32,
-    cost_usd_micros: u64,
-    compactions: u32,
-    root: &'a Path,
-    error: Option<&'a str>,
+///
+/// Public, with its writer, because a documentation page that quotes an
+/// `ARCANA_RUN_DONE` line is checked against THIS writer's keys
+/// (`crates/cli/tests/printed_output.rs`). A key list copied into a test would
+/// drift from the program the first time a field was added here, and a drifted
+/// copy would pass an invented field in silence.
+pub struct DoneMarker<'a> {
+    pub completed: bool,
+    pub reason: &'a str,
+    pub turns: u32,
+    pub tool_calls: u32,
+    pub tool_calls_attempted: u32,
+    pub tool_calls_denied: u32,
+    pub cost_usd_micros: u64,
+    pub compactions: u32,
+    pub root: &'a Path,
+    pub error: Option<&'a str>,
     /// What the run left on disk, or `None` when there was no run to measure.
-    effect: Option<&'a Effect>,
+    pub effect: Option<&'a Effect>,
 }
 
-fn done_marker_body(marker: &DoneMarker<'_>) -> String {
+/// Render the done-marker's JSON body — the one definition of its shape.
+#[must_use]
+pub fn done_marker_body(marker: &DoneMarker<'_>) -> String {
     let DoneMarker {
         completed,
         reason,
