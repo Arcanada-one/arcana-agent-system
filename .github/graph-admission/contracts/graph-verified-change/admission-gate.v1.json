@@ -192,6 +192,14 @@
    "verdict": "refuse",
    "order": 19,
    "rule": "DEC-AUP-0039. An entity claimed `verified` on a verifier of kind endpoint_probe among whose `observed` rows one is failed or not_measured, or on a probe row under which no observation is recorded at all. The gate also COUNTS the probe before it counts the verdict: the entity's verdict is lowered to what was actually observed, so C08/C09 and the ordinary exemption rules then treat a failed probe exactly as they treat a failed type-check. Measured on A2-251: while `observed` was an unread key, a receipt every one of whose fifteen observations had failed was admitted by both the validator and the gate."
+  },
+  {
+   "id": "C20",
+   "code": "ARTEFACT_VERIFIER_TOOLCHAIN_MISMATCH",
+   "verdict": "admit",
+   "informational": true,
+   "what": "A declared derived-artefact verifier (B6.4) refused the honest head tree because the toolchain it runs on is not the one the artefact was recorded on. The change set is not the subject: the PATH of the host running the gate is. Reported under its own code because the blocking verdict that accompanies it (CHANGE_SET_INCOMPLETE / GATE_SELF_UPDATE) names the wrong thing to fix, which cost A2-275 a diagnosis it had to make by reading the tool.",
+   "measured_by": "tools/graph/admit_change.py evaluate_derived — the verifier's own output plus the interpreter the gate resolved from PATH, both printed"
   }
  ],
  "work_item_evidence": {
@@ -575,7 +583,7 @@
    "rotation": "changing the key means re-bundling every caller and updating both the committed public key and every caller's pinned fingerprint. No automation exists for that yet: recorded as a cost, not as a solved problem."
   }
  },
- "updated_at_utc": "2026-09-24T00:00:00Z",
+ "updated_at_utc": "2026-09-24T19:00:00Z",
  "automated_authors": {
   "status": "NORMATIVE_DRAFT — AUP-GRAPH-006:gate2a, 2026-09-06",
   "purpose": "Close the operational hole the required check opened: a repository that auto-merged its dependency updates suddenly needed a human on every one of them, because a dependency bot cannot author a ChangeAdmissionReceipt/v1. The rule is not relaxed — the RECEIPT AUTHOR is typed. The gate itself authors the receipt for a registered automated author, over the identical impact computation, and the receipt is then subject to every check that any other receipt is subject to.",
