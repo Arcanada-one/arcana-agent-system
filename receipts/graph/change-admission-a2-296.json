@@ -1,0 +1,315 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted"
+ },
+ "captured_at_utc": "2026-09-25T00:17:14Z",
+ "change_set": {
+  "base": "be20277d9642cd629b5776984d7c28ae9b60179c",
+  "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/interrupt.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/interrupt.rs"
+    ],
+    "path": "crates/cli/src/interrupt.rs",
+    "status": "M"
+   }
+  ],
+  "head": "5fcde14022f16174edbbc05bafa036807e7c7069",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:8a67f0b143b31a152cd74db8b244394a87570e64444bdfe05d096330934aea56",
+  "path": "/home/dev/aup/arc2/runs/A2-296/work/wd/verifier-out/graph-be20277d9642.json",
+  "source_commit": "be20277d9642cd629b5776984d7c28ae9b60179c"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:499779a614684dfe87932c204434b4a4e3c478651c713c9fa37ff72a529f6f45",
+  "path": "/home/dev/aup/arc2/runs/A2-296/work/wd/verifier-out/graph-head-5fcde14022f1.json",
+  "source_commit": "5fcde14022f16174edbbc05bafa036807e7c7069",
+  "staleness": {
+   "checked_at_utc": "2026-09-25T00:17:17Z",
+   "checked_nodes": 356,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/interrupt.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/interrupt.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/interrupt.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/interrupt.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/interrupt.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/interrupt.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 2
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.0.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.0.1"
+ },
+ "receipt_id": "car-verify-20260925T001714Z-5fcde140",
+ "receipt_path": "receipts/graph/change-admission-a2-296.json",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/aup/arc2/runs/A2-296/work/aas"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/interrupt.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "deployable_unit:crates/cli",
+   "document:CHANGELOG.md"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/interrupt.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "deployable_unit:crates/cli",
+   "document:CHANGELOG.md"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-09-25T00:17:17Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [],
+ "tree": {
+  "commit": "5fcde14022f16174edbbc05bafa036807e7c7069",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/interrupt.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 3 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifiers": [
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/interrupt.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "deployable_unit:crates/cli"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/interrupt.rs": "verified",
+    "code_unit:crates/cli/src/lib.rs": "verified",
+    "deployable_unit:crates/cli": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-296/work/wd/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-25T00:17:18Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md"
+   ],
+   "entity_verdicts": {
+    "document:CHANGELOG.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-296/work/wd/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-09-25T00:17:18Z",
+   "summary": "1 document(s), 0 failed"
+  }
+ ],
+ "verify": {
+  "events": [],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/interrupt.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ]
+  },
+  "seconds": {
+   "prepare": 1.48,
+   "total": 4.57,
+   "verifiers": 0.01
+  }
+ },
+ "work_item": "A2-296"
+}

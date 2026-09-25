@@ -68,6 +68,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `null`, not `0`, for every tool that does not write (A2-292).
 
 ### Fixed
+- **Ctrl-C in the first milliseconds of a command no longer kills `arcana`
+  without reporting the spend.** `Interrupt::install` reported success as soon
+  as the `arcana-sigint` thread was spawned, but SIGINT only becomes ours later,
+  inside that thread, once `tokio::signal::unix::signal(SIGINT)` has succeeded.
+  A Ctrl-C arriving between the two got the kernel's DEFAULT disposition and
+  ended the process where it stood — no cost report, no audit line, which is the
+  whole failure the interrupt handler exists to prevent.
+
+  Not theoretical: on a loaded 16-core machine the end-to-end `sigint_real_signal`
+  test, which signals immediately after `install()`, was killed by its own signal
+  in **44 of 200 runs** and 61 of a further 200 (rc 130). It also caused a red
+  check on an unrelated pull request (#216) that does not touch `crates/cli` at
+  all, so a change was blamed for a race that was always there.
+
+  `install` now returns only once the listener reports that it has registered,
+  over a rendezvous channel, and returns `None` — telling the operator Ctrl-C is
+  unarmed — if it cannot within 2 s. The three failure causes are distinguished
+  in the message because they are fixed by different things: the thread would not
+  spawn, the thread gave up before registering, or nothing was heard in time.
+  Only the last leaves the process-wide install latch taken, since that thread
+  may still take the signal and a second listener racing it would be worse than
+  none. After the change the same test passes 250 of 250 under the same load.
 - **A run no longer re-dispatches to a model that cannot answer inside its
   budget.** Model Connector aborts the provider call it makes for us when that
   call has consumed the whole per-attempt budget THIS client sent
