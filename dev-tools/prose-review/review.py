@@ -22,13 +22,35 @@ and the quote is then re-read from the file on disk. A quote that is not in the
 file is itself a finding (`QUOTE_NOT_IN_FILE`) — a reviewer that invents its
 evidence is the failure mode we are checking the page for, one level up.
 
+Two passes, and the second one is the classifier. Pass 1 is blind and narrow:
+it reads the excerpts it was given, and an UNSUPPORTED there means "not in this
+excerpt", which is not the same as "false". Measured on A2-297b: 15 UNSUPPORTED
+items, 11 of them true and simply outside the excerpt — and they were sorted
+into true/false by the EXECUTOR, the party that wanted the page green. That is
+not a check. So pass 2 re-reads every UNSUPPORTED claim against the FULL text of
+the relevant files and must answer with a quote:
+
+    SUPPORTED <file> | <quote>      the full file states it after all
+    CONTRADICTED <file> | <quote>   the full file says otherwise — a defect
+    ABSENT                          nothing in these files bears on it
+
+Every quote is re-read from disk exactly as in pass 1. The classification in the
+JSON is pass 2's own answer: nothing downstream of this script may relabel a
+claim, and both passes' raw output is recorded so the relabelling would be
+visible if it happened.
+
 Never in CI: it costs money and it is not deterministic. Run it before
 committing a page a model wrote, and keep the JSON beside the run.
 
 Usage:
   review.py --page docs/how-to/x.md --source crates/cli/src/cli.rs \
             [--source crates/connectors/src/muneral.rs:1..60] \
+            [--full-source crates/cli/src/run.rs] \
             [--model deepseek-v4-flash] [--out findings.json]
+
+`--full-source` names the files pass 2 reads whole (default: every `--source`
+path, span stripped). Pass 2 is skipped only with `--no-classify`, and the JSON
+says so where a verdict would be.
 
 Environment: ARCANA_MC_TOKEN (required), ARCANA_MC_BASE_URL (optional).
 """
@@ -40,6 +62,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
 
@@ -47,10 +70,18 @@ DEFAULT_BASE_URL = "https://connector.arcanada.ai"
 # One normalization, and it is named: source and markdown both wrap lines, so a
 # quote is compared with runs of whitespace collapsed. Nothing else is relaxed.
 WS = re.compile(r"\s+")
+# A2-297b measured nine QUOTE_NOT_IN_FILE verdicts that were the checker's
+# fault: the model quotes a wrapped doc comment and drops the interior `/// `,
+# so the quote is not in the file once whitespace alone is collapsed. Comment
+# markers are removed from BOTH sides before comparing, and nothing else is.
+COMMENT_MARKER = re.compile(r"(?m)^[ \t]*(///|//!|//|\*(?!/)|\*/|/\*)[ \t]?")
+# The Model Connector refuses a prompt over 100 000 characters (HTTP 400). A
+# budget measured before the call is cheaper than a traceback after it.
+MAX_PROMPT_CHARS = 100_000
 
 
 def collapse(text: str) -> str:
-    return WS.sub(" ", text).strip()
+    return WS.sub(" ", COMMENT_MARKER.sub("", text)).strip()
 
 
 @dataclass
@@ -158,6 +189,160 @@ Answer every claim, in order, with no other text.
 """
 
 
+CLASSIFY_PROMPT = """\
+You are reading whole source files of a program and deciding, for each numbered
+statement below, whether those files STATE it, CONTRADICT it, or say nothing
+about it. You do not know who wrote the statements and you must not assume any
+of them is true.
+
+For EACH numbered statement, answer on ONE line, in this exact format:
+
+  <n>: SUPPORTED <file> | <quote>
+  <n>: CONTRADICTED <file> | <quote>
+  <n>: ABSENT
+
+<quote> must be copied CHARACTER FOR CHARACTER out of the file you name, as it
+appears below (without the line-number prefix). Do not paraphrase and do not
+shorten with "...". SUPPORTED means the quote states the statement.
+CONTRADICTED means the quote says something the statement cannot be true
+beside — a different value, a different name, a different behaviour; quote the
+line that conflicts. ABSENT means these files do not settle it either way, and
+takes no quote.
+
+Answer every statement, in order, with no other text.
+
+=== SOURCE FILES (complete) ===
+{sources}
+
+=== STATEMENTS ===
+{claims}
+"""
+
+
+def verdict_lines(output: str) -> dict[int, str]:
+    """`3: SUPPORTED file | quote` -> {3: "SUPPORTED file | quote"}."""
+    verdicts: dict[int, str] = {}
+    for line in output.splitlines():
+        match = re.match(r"\s*\**\s*(\d+)\s*[:.)]\s*(.*)", line)
+        if match:
+            verdicts[int(match.group(1))] = match.group(2).strip()
+    return verdicts
+
+
+def quote_in_file(paths: list[str], named: str, quote: str) -> tuple[str | None, bool]:
+    """Re-read a cited quote from disk: (the file it was found in, whether it is)."""
+    named = named.strip("`*").strip()
+    candidates = [path for path in paths if path.endswith(named) or named.endswith(path)]
+    if not candidates:
+        return None, False
+    body = collapse(open(candidates[0], encoding="utf-8").read())
+    return candidates[0], collapse(quote.strip("`\"' ")) in body
+
+
+def numbered(path: str) -> str:
+    lines = open(path, encoding="utf-8").read().splitlines()
+    return "\n".join(f"{n:>5}  {line}" for n, line in enumerate(lines, start=1))
+
+
+def file_groups(paths: list[str], overhead: int) -> list[list[str]]:
+    """Split full files into groups whose prompt fits the connector's limit."""
+    budget = MAX_PROMPT_CHARS - overhead
+    groups: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for path in paths:
+        cost = len(numbered(path)) + len(path) + 16
+        if cost > budget:
+            raise SystemExit(
+                f"{path} alone renders {cost} characters and the budget for a "
+                f"classification prompt is {budget}: pass a narrower file"
+            )
+        if current and size + cost > budget:
+            groups.append(current)
+            current, size = [], 0
+        current.append(path)
+        size += cost
+    if current:
+        groups.append(current)
+    return groups
+
+
+def classify(
+    base: str,
+    token: str,
+    connector: str,
+    model: str,
+    timeout_ms: int,
+    claims: list[Claim],
+    paths: list[str],
+) -> tuple[dict[int, dict], list[dict]]:
+    """Second reviewer run: an UNSUPPORTED claim against the FULL files.
+
+    The verdict this returns IS the classification. Nothing downstream may
+    relabel it — that is the whole point of the pass: on A2-297b the executor
+    sorted pass 1's UNSUPPORTED list into "true, outside the excerpt" and
+    "unverifiable" by hand, and one of the items it called unverifiable was the
+    page telling an operator to install a stranger's crate.
+    """
+    rendered_claims = "\n".join(f"{claim.index}: {claim.text}" for claim in claims)
+    overhead = len(CLASSIFY_PROMPT) + len(rendered_claims)
+    runs: list[dict] = []
+    merged: dict[int, dict] = {}
+    for group in file_groups(paths, overhead):
+        sources = "\n".join(f"--- {path} (complete) ---\n{numbered(path)}" for path in group)
+        prompt = CLASSIFY_PROMPT.format(sources=sources, claims=rendered_claims)
+        answer = dispatch(base, token, connector, model, prompt, timeout_ms)
+        output = answer.get("output") or answer.get("result") or answer.get("text") or ""
+        if not isinstance(output, str):
+            output = json.dumps(output)
+        runs.append(
+            {
+                "files": group,
+                "prompt_chars": len(prompt),
+                "usage": answer.get("usage"),
+                "raw_output": output,
+            }
+        )
+        verdicts = verdict_lines(output)
+        for claim in claims:
+            raw = verdicts.get(claim.index)
+            if raw is None:
+                merged.setdefault(
+                    claim.index,
+                    {"verdict": "NO_VERDICT", "detail": "the classifier returned no line"},
+                )
+                continue
+            upper = raw.upper()
+            if upper.startswith("ABSENT"):
+                merged.setdefault(claim.index, {"verdict": "ABSENT", "detail": raw[:200]})
+                continue
+            label = "CONTRADICTED" if upper.startswith("CONTRADICTED") else "SUPPORTED"
+            rest = raw[len(label):].strip() if upper.startswith(label) else raw
+            if "|" not in rest:
+                merged.setdefault(
+                    claim.index,
+                    {"verdict": "MALFORMED", "detail": f"no quote in the verdict: {raw[:160]}"},
+                )
+                continue
+            named, quote = (part.strip() for part in rest.split("|", 1))
+            found, ok = quote_in_file(group, named, quote)
+            record = {
+                "verdict": label if ok else "QUOTE_NOT_IN_FILE",
+                "file": found or named,
+                "quote": quote[:400],
+                "quote_verified": ok,
+                "detail": raw[:200] if ok else f"{found or named} does not contain the quote",
+            }
+            # A quote-backed verdict outranks an ABSENT from another group: the
+            # group that held the answer is the one that could answer.
+            previous = merged.get(claim.index)
+            if previous is None or previous["verdict"] in {"ABSENT", "NO_VERDICT"} or (
+                previous["verdict"] == "SUPPORTED" and record["verdict"] == "CONTRADICTED"
+            ):
+                merged[claim.index] = record
+    return merged, runs
+
+
 def dispatch(base: str, token: str, connector: str, model: str, prompt: str, timeout_ms: int) -> dict:
     body = json.dumps(
         {"connector": connector, "prompt": prompt, "model": model, "timeout": timeout_ms}
@@ -172,8 +357,19 @@ def dispatch(base: str, token: str, connector: str, model: str, prompt: str, tim
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 60) as response:
-        return json.loads(response.read())
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise SystemExit(
+            f"prompt is {len(prompt)} characters and the Model Connector accepts "
+            f"{MAX_PROMPT_CHARS}: narrow the excerpts or pass fewer files"
+        )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 60) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        # The body says WHY; a traceback out of urllib says only that something
+        # was rejected, and A2-297b spent a card's time on that.
+        detail = error.read().decode("utf-8", "replace")[:2000]
+        raise SystemExit(f"Model Connector returned {error.code}: {detail}") from error
 
 
 def connector_for(base: str, token: str, model: str) -> str:
@@ -194,6 +390,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--page", required=True)
     parser.add_argument("--source", action="append", required=True)
+    parser.add_argument(
+        "--full-source",
+        action="append",
+        default=[],
+        help="file pass 2 reads whole (default: every --source path, span stripped)",
+    )
+    parser.add_argument(
+        "--no-classify",
+        action="store_true",
+        help="skip pass 2 — then an UNSUPPORTED claim stays unclassified, and says so",
+    )
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--connector")
     parser.add_argument("--out")
@@ -224,13 +431,10 @@ def main() -> int:
     if not isinstance(output, str):
         output = json.dumps(output)
 
-    verdicts: dict[int, str] = {}
-    for line in output.splitlines():
-        match = re.match(r"\s*\**\s*(\d+)\s*[:.)]\s*(.*)", line)
-        if match:
-            verdicts[int(match.group(1))] = match.group(2).strip()
+    verdicts = verdict_lines(output)
 
     findings: list[Finding] = []
+    unsupported_claims: list[Claim] = []
     supported = unsupported = not_a_claim = 0
     for claim in claims:
         verdict = verdicts.get(claim.index)
@@ -242,10 +446,9 @@ def main() -> int:
             continue
         if verdict.upper().startswith("UNSUPPORTED"):
             unsupported += 1
-            findings.append(
-                Finding(claim.index, claim.line, claim.text, "UNSUPPORTED",
-                        "the reviewer could not quote support for this claim")
-            )
+            # Not a finding yet, and not the executor's to sort: pass 2 below
+            # says what it is.
+            unsupported_claims.append(claim)
             continue
         if verdict.upper().startswith("NOT_A_CLAIM"):
             not_a_claim += 1
@@ -275,6 +478,39 @@ def main() -> int:
             continue
         supported += 1
 
+    full_paths = args.full_source or sorted(sources)
+    classification: dict[str, dict] = {}
+    pass2_runs: list[dict] = []
+    if unsupported_claims and not args.no_classify:
+        verdict_by_claim, pass2_runs = classify(
+            base, token, connector, args.model, args.timeout_ms, unsupported_claims, full_paths
+        )
+        for claim in unsupported_claims:
+            record = verdict_by_claim.get(
+                claim.index, {"verdict": "NO_VERDICT", "detail": "the classifier answered nothing"}
+            )
+            classification[str(claim.index)] = {
+                "line": claim.line,
+                "text": claim.text,
+                **record,
+            }
+            if record["verdict"] == "CONTRADICTED":
+                findings.append(
+                    Finding(claim.index, claim.line, claim.text, "FALSE_CLAIM",
+                            f"the classifier quotes {record.get('file')}: {record.get('quote', '')[:200]}")
+                )
+            elif record["verdict"] in {"QUOTE_NOT_IN_FILE", "MALFORMED", "NO_VERDICT"}:
+                findings.append(
+                    Finding(claim.index, claim.line, claim.text, f"CLASSIFIER_{record['verdict']}",
+                            record.get("detail", ""))
+                )
+    elif unsupported_claims:
+        for claim in unsupported_claims:
+            findings.append(
+                Finding(claim.index, claim.line, claim.text, "UNSUPPORTED_UNCLASSIFIED",
+                        "pass 1 could not quote support and pass 2 was not run (--no-classify)")
+            )
+
     result = {
         "page": args.page,
         "model": args.model,
@@ -283,8 +519,22 @@ def main() -> int:
         "supported": supported,
         "unsupported": unsupported,
         "not_a_claim": not_a_claim,
+        # Whose verdict this is, written into the artefact: an UNSUPPORTED claim
+        # is classified by the second reviewer run, and the executor quotes that
+        # answer rather than replacing it.
+        "classification_authority": "reviewer-pass-2" if pass2_runs else "none (pass 2 not run)",
+        "classification": classification,
+        "classified_counts": {
+            verdict: sum(1 for item in classification.values() if item["verdict"] == verdict)
+            for verdict in sorted({item["verdict"] for item in classification.values()})
+        },
         "usage": answer.get("usage"),
         "findings": [asdict(finding) for finding in findings],
+        "passes": [
+            {"pass": 1, "kind": "blind-excerpts", "prompt_chars": len(prompt),
+             "usage": answer.get("usage"), "raw_output": output},
+            *[{"pass": 2, "kind": "classify-full-files", **run} for run in pass2_runs],
+        ],
         "raw_output": output,
     }
     rendered = json.dumps(result, indent=2, ensure_ascii=False)
