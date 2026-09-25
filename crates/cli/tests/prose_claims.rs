@@ -83,7 +83,11 @@ struct AgentPage {
 /// A page enters this list when the dispatcher commits a run's output. The
 /// entry is the honest label: "no hand wrote this", which is exactly the
 /// condition under which the checks below are worth their false positives.
-const AGENT_WRITTEN_PAGES: &[AgentPage] = &[];
+const AGENT_WRITTEN_PAGES: &[AgentPage] = &[AgentPage {
+    path: "docs/how-to/run-work-item-under-kc2-contract.md",
+    work_item: "d931525f-c134-4c6b-85e1-9cdf94e8ab8b",
+    written: "2026-09-25",
+}];
 
 /// Terms that assert the FORMAT or ALGORITHM of a file or credential.
 ///
