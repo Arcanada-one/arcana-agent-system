@@ -53,6 +53,10 @@ jobs:
         # A2-238. The defect this guards is an EMPTY check list, so it cannot be guarded by a check
         # that only runs when the list is populated — it is asserted here, on every event.
         run: dev-tools/check-workflow-triggers.sh
+      - name: every environment variable the code reads is declared in .env.example
+        # A2-361. `.env.example` is the env source graph admission's `v-config-schema` reads; this
+        # also resolves reads through a `const` name, which that verifier does not.
+        run: dev-tools/check-env-declared.py
       - name: SEC-0030 governance and platform control contracts
         run: |
           sudo apt-get update
