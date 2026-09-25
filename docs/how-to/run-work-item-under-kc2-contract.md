@@ -1,104 +1,108 @@
-# Run a work item under its KC2 contract
+# How-to: run a work item under its KC2 contract
 
-How to execute a Muneral work item that carries a KC2 contract digest — the
-`arcana run --work-item` path.
-
-Use this when a task was dispatched through Muneral and the operator needs to
-carry it out exactly as the contract defines, with a readiness receipt that
-proves the binding was checked before the first model call.
+Drive one Muneral work item to completion, bound by the KC2 contract its
+`contractDigest` names. The task text comes from the work item and the
+contract, not from `--prompt`. The run writes a readiness receipt to
+`receipts/ReadinessReceipt-<id>.json` and never changes the work item's own
+status.
 
 ## Prerequisites
 
-| Variable / file | Purpose |
-|-----------------|---------|
-| `ARCANA_MC_TOKEN` | Model Connector API key. The run will refuse to start if absent. |
-| `ARCANA_MUNERAL_KEY_FILE` | Path to the file holding the agent's `mun_sk_` secret key (mode `0600`). Read once at startup; never inherited from the command line or plain env. |
-| `arcana` binary | Installed via `cargo install arcana` or from a release archive. |
+- The `arcana` binary installed (see [`install.md`](install.md)).
+- `ARCANA_MC_TOKEN` set to a Model Connector API key.
+- `ARCANA_MUNERAL_KEY_FILE` set to a file holding the agent's `mun_sk_` key
+  (mode 0600, one line, the trailing newline is trimmed automatically).
+- The work item ID you want to execute.
 
-## Run the work item
+Both environment variables are required and checked before the first model call.
 
-```bash
-arcana run --cwd /path/to/checkout --work-item <work-item-id>
+## Steps
+
+1. **Choose a working directory.**  Every tool the agent runs is rooted
+   inside this directory; paths outside are refused.  A disposable checkout or
+   a `git worktree` is the intended target.
+
+   ```bash
+   export CWD=/path/to/a/clean/checkout
+   ```
+
+2. **Run the work item.**
+
+   ```bash
+   arcana run --cwd "$CWD" --work-item "<work-item-id>"
+   ```
+
+   Replace `<work-item-id>` with the actual Muneral work item ID (a UUID, e.g.
+   `d931525f-c134-4c6b-85e1-9cdf94e8ab8b`).  The command reads the agent key
+   from the file named by `ARCANA_MUNERAL_KEY_FILE`, fetches the work item from
+   Muneral (`https://api.muneral.com/api/v1` unless `ARCANA_MUNERAL_URL`
+   overrides it), re-hashes the contract document named by the work item's
+   `contractDigest`, and runs the task under that binding.
+
+3. **Read the result.**  Every run — success or refusal — prints the
+   done-marker as its last line of stdout:
+
+   ```
+   ARCANA_RUN_DONE {"completed":true,"reason":"Completed","turns":3,"tool_calls":2,"cost_usd_micros":59,"workspace":"/path/to/worktree","error":null}
+   ```
+
+   A runner can always find this line and never has to infer whether the run
+   finished.  On success the receipt file is created at
+   `receipts/ReadinessReceipt-<work-item-id>.json` inside the working directory.
+
+## What happens on refusal
+
+### Work item without `contractDigest`
+
+If the work item carries no `contractDigest` field, the run refuses before the
+first model call and prints:
+
+```text
+arcana run: CONTRACT_MISSING: the work item carries no contractDigest, so nothing says what this run may do; refused before the first model call
+ARCANA_RUN_DONE {"completed":false,"reason":"CONTRACT_MISSING","code":"CONTRACT_MISSING","error":"the work item carries no contractDigest, so nothing says what this run may do; refused before the first model call"}
 ```
 
-`--cwd` is the working directory — the repository checkout the agent may modify.
-`--work-item` identifies the Muneral work item. The task text and the contract
-digest come from the work item itself, not from `--prompt`.
+The code `CONTRACT_MISSING` is the first token on stderr, repeated in the
+done-marker JSON, so a runner can branch on it without parsing a sentence.
+No model cost is incurred — the check happens before any connector dispatch.
 
-### Example
+### Digest mismatch
 
-```bash
-arcana run \
-  --cwd /home/runner/arcana-agent-system \
-  --work-item d931525f-c134-4c6b-85e1-9cdf94e8ab8b
+If the contract document the source returns does not hash to the digest the
+work item names, the run refuses before the first model call with:
+
+```text
+arcana run: CONTRACT_DIGEST_MISMATCH: the document returned for sha256:abc123... hashes to sha256:def456... over its canonical.bytes_b64 — the contract is not the one the work item names
+ARCANA_RUN_DONE {"completed":false,"reason":"CONTRACT_DIGEST_MISMATCH","code":"CONTRACT_DIGEST_MISMATCH","error":"the document returned for sha256:abc123... hashes to sha256:def456... over its canonical.bytes_b64 — the contract is not the one the work item names"}
 ```
 
-### Extra options
+The message states the expected digest, the computed digest, and over which
+preimage (`canonical.bytes_b64`, `canonical_bytes`, or `projection`) the
+computation ran.  This makes it possible to debug a stale or mis-linked
+contract without needing the contract body.  Again, no model call has been made
+at this point: the digest check is pure local arithmetic.
 
-Most flags documented in [`run-one-task-unattended.md`](run-one-task-unattended.md)
-also apply here — `--max-turns`, `--model`, `--request-timeout`, etc.
+## Notes
 
-Two flags are specific to the contract-bound path:
+- **The agent key must be in a file.**  The value of `ARCANA_MUNERAL_KEY_FILE`
+  points at a file whose first line is the `mun_sk_` secret.  Passing the key
+  on the command line or through a plain environment variable is never
+  accepted: every error path is built from the response, not from the request,
+  so the key never appears in logs or error messages.
 
-| Flag | Meaning |
-|------|---------|
-| `--contract-file <PATH>` | Read the contract document from a local file instead of fetching it from Argana. The file is re-hashed and must match the digest — otherwise the run is refused before any model call. The receipt records `contract.source: "file"`. |
-| `--ground-truth <PATH>` | Quote this file into the work item's brief as ground truth. Repeatable. Pass a file from the repository that contains the actual commands the task expects — `arcana run --help`, an existing how-to, etc. |
+- **Optional: pin a model.**  Pass `--model <id>` or set `ARCANA_MODEL`.
+  The run prints which source answered before spending anything, and a
+  contract-bound run records it in the receipt as `mc_usage.model_source`.
+  The value `tier` selects the tiered dispatch policy.
 
-## What happens on success
+- **Optional: check a contract from a local file.**  The `--contract-file
+  <PATH>` flag reads the contract document from a local file instead of from
+  Argana.  The file is re-hashed exactly like the service's answer, so it
+  cannot be used to run under a digest it does not hash to — and the receipt
+  records `contract.source: "file"`, which is NOT the same verdict as a
+  binding checked against the live endpoint.
 
-1. The run fetches the work item from Muneral, reads its `contractDigest`, and
-downloads the contract (or reads it from `--contract-file`).
-2. The contract bytes are re-hashed. If the digest matches, the run proceeds.
-3. The agent executes the task inside `--cwd`.
-4. On completion the last line of stdout is the machine-readable done-marker:
-
-```
-ARCANA_RUN_DONE {"completed":true,"reason":"Completed","turns":3,"tool_calls":2,"cost_usd_micros":59,"workspace":"/path/to/checkout","error":null}
-```
-
-5. A readiness receipt is written to `receipts/ReadinessReceipt-<work-item-id>.json`.
-The run **never** changes the work item's status — this is an execution, not a
-transition.
-
-Exit code `0`: the run completed and executed at least one tool call.
-
-## Refusal: no `contractDigest`
-
-If the work item has no `contractDigest` field, the run refuses **before any
-model call** — no tokens are spent, no money leaves the account.
-
-```
-arcana run: CONTRACT_MISSING: work item <id> has no contractDigest
-ARCANA_RUN_DONE {"completed":false,"reason":"CONTRACT_MISSING","code":"CONTRACT_MISSING","error":"work item <id> has no contractDigest"}
-```
-
-Exit code `1`. The done-marker is printed so a runner never waits for a line
-that will not arrive.
-
-## Refusal: contract digest mismatch
-
-If the fetched (or file-provided) contract bytes do not hash to the digest in
-the work item, the run refuses before any model call:
-
-```
-arcana run: CONTRACT_DIGEST_MISMATCH: contract bytes for digest <expected> hash to <actual>
-ARCANA_RUN_DONE {"completed":false,"reason":"CONTRACT_DIGEST_MISMATCH","code":"CONTRACT_DIGEST_MISMATCH","error":"contract bytes for digest <expected> hash to <actual>"}
-```
-
-Exit code `1`. The receipt records the mismatch as well.
-
-## Why refusal happens before any model call
-
-The contract binding is validated in the client, before the first dispatch to
-the Model Connector. Neither `--contract-file` nor the live Argana endpoint
-triggers a model turn — the work item is read, the contract is fetched or
-loaded, the digest is verified, and only then does the loop open its first
-connector request. A refused run costs only the time to check a local file or
-a single HTTP request to Muneral + Argana; no model inference is paid for.
-
-## See also
-
-- [`run-one-task-unattended.md`](run-one-task-unattended.md) — the prompt-based
-  `arcana run` command.
-- [`install.md`](install.md) — how to get the `arcana` binary.
+- **Other refusal codes** (`CONTRACT_DIGEST_MALFORMED`, `CONTRACT_NOT_FOUND`,
+  `CONTRACT_UNVERIFIABLE`, `CONTRACT_SOURCE_UNAVAILABLE`) follow the same
+  pattern: the code on stderr, the detail on the same line, and the machine-
+  readable marker on stdout.  All happen before the first model call.

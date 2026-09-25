@@ -74,14 +74,26 @@ WS = re.compile(r"\s+")
 # fault: the model quotes a wrapped doc comment and drops the interior `/// `,
 # so the quote is not in the file once whitespace alone is collapsed. Comment
 # markers are removed from BOTH sides before comparing, and nothing else is.
-COMMENT_MARKER = re.compile(r"(?m)^[ \t]*(///|//!|//|\*(?!/)|\*/|/\*)[ \t]?")
+# Measured twice on 2026-09-25: a model quoting a wrapped doc comment carries
+# the interior `//!` into the MIDDLE of its one-line quote, and a `write!`
+# string wrapped with a trailing `\` keeps that backslash in the file and not
+# in the quote. Both are removed from BOTH sides; nothing else is relaxed, and
+# because the same normalization runs over the file, a quote cannot be made to
+# match by inventing a marker.
+COMMENT_MARKER = re.compile(r"(?m)///|//!|//|^[ \t]*(\*(?!/)|\*/|/\*)[ \t]?|\\\n")
 # The Model Connector refuses a prompt over 100 000 characters (HTTP 400). A
 # budget measured before the call is cheaper than a traceback after it.
 MAX_PROMPT_CHARS = 100_000
 
 
+# A model answering on ONE line escapes the newlines inside its quote: the third
+# normalization measured on 2026-09-25, on a quote that was in the file at
+# `crates/cli/src/work_item.rs:8` and read as invented.
+ESCAPED_WS = re.compile(r"\\[nt]")
+
+
 def collapse(text: str) -> str:
-    return WS.sub(" ", COMMENT_MARKER.sub("", text)).strip()
+    return WS.sub(" ", ESCAPED_WS.sub(" ", COMMENT_MARKER.sub("", text))).strip()
 
 
 @dataclass
@@ -434,11 +446,16 @@ def main() -> int:
     verdicts = verdict_lines(output)
 
     findings: list[Finding] = []
-    unsupported_claims: list[Claim] = []
+    # Every claim pass 1 did not settle WITH A VERIFIED QUOTE: UNSUPPORTED, and
+    # also the ones whose support could not be re-read (an unverifiable quote
+    # leaves the claim unjudged exactly as an absent one does). None of them is
+    # the executor's to sort.
+    unsettled: list[Claim] = []
     supported = unsupported = not_a_claim = 0
     for claim in claims:
         verdict = verdicts.get(claim.index)
         if verdict is None:
+            unsettled.append(claim)
             findings.append(
                 Finding(claim.index, claim.line, claim.text, "NO_VERDICT",
                         "the reviewer returned no line for this claim")
@@ -448,13 +465,14 @@ def main() -> int:
             unsupported += 1
             # Not a finding yet, and not the executor's to sort: pass 2 below
             # says what it is.
-            unsupported_claims.append(claim)
+            unsettled.append(claim)
             continue
         if verdict.upper().startswith("NOT_A_CLAIM"):
             not_a_claim += 1
             continue
         rest = verdict[len("SUPPORTED"):].strip() if verdict.upper().startswith("SUPPORTED") else verdict
         if "|" not in rest:
+            unsettled.append(claim)
             findings.append(
                 Finding(claim.index, claim.line, claim.text, "MALFORMED",
                         f"no quote in the verdict: {verdict[:120]}")
@@ -464,6 +482,7 @@ def main() -> int:
         named = named.strip("`*").strip()
         candidates = [path for path in sources if path.endswith(named) or named.endswith(path)]
         if not candidates:
+            unsettled.append(claim)
             findings.append(
                 Finding(claim.index, claim.line, claim.text, "QUOTE_FILE_UNKNOWN",
                         f"the reviewer cited `{named}`, which is not an excerpt it was given")
@@ -471,6 +490,7 @@ def main() -> int:
             continue
         body = collapse(open(candidates[0], encoding="utf-8").read())
         if collapse(quote.strip("`\"' ")) not in body:
+            unsettled.append(claim)
             findings.append(
                 Finding(claim.index, claim.line, claim.text, "QUOTE_NOT_IN_FILE",
                         f"{candidates[0]} does not contain the quote: {quote[:160]}")
@@ -481,11 +501,11 @@ def main() -> int:
     full_paths = args.full_source or sorted(sources)
     classification: dict[str, dict] = {}
     pass2_runs: list[dict] = []
-    if unsupported_claims and not args.no_classify:
+    if unsettled and not args.no_classify:
         verdict_by_claim, pass2_runs = classify(
-            base, token, connector, args.model, args.timeout_ms, unsupported_claims, full_paths
+            base, token, connector, args.model, args.timeout_ms, unsettled, full_paths
         )
-        for claim in unsupported_claims:
+        for claim in unsettled:
             record = verdict_by_claim.get(
                 claim.index, {"verdict": "NO_VERDICT", "detail": "the classifier answered nothing"}
             )
@@ -504,11 +524,12 @@ def main() -> int:
                     Finding(claim.index, claim.line, claim.text, f"CLASSIFIER_{record['verdict']}",
                             record.get("detail", ""))
                 )
-    elif unsupported_claims:
-        for claim in unsupported_claims:
+    elif unsettled:
+        for claim in unsettled:
             findings.append(
-                Finding(claim.index, claim.line, claim.text, "UNSUPPORTED_UNCLASSIFIED",
-                        "pass 1 could not quote support and pass 2 was not run (--no-classify)")
+                Finding(claim.index, claim.line, claim.text, "UNSETTLED_UNCLASSIFIED",
+                        "pass 1 did not settle this claim with a verified quote and pass 2 "
+                        "was not run (--no-classify)")
             )
 
     result = {

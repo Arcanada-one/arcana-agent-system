@@ -1044,6 +1044,26 @@ struct Command {
     at: String,
     raw: String,
     tokens: Vec<String>,
+    /// From a `` `backtick` `` span in prose, rather than a shell-fenced block.
+    inline: bool,
+}
+
+/// Does an inline span TELL someone to run something, or name a command?
+///
+/// Measured on the second live rerun of d931525f: "a `git worktree` is the
+/// intended target" is a noun phrase about a concept, and reading it as an
+/// instruction made this check red on a page that instructed nobody to run
+/// anything. A span carries an instruction when it carries an operand — a third
+/// token, a flag, a URL or a path. PR #222's cell, `cargo install arcana`, is
+/// three tokens; `cargo install` alone, as `docs/how-to/install.md` writes it in
+/// prose, is not. A fenced shell block is judged whatever its length: a block is
+/// already an instruction to type what is in it.
+fn carries_an_operand(tokens: &[String]) -> bool {
+    tokens.len() >= 3
+        || tokens
+            .iter()
+            .skip(1)
+            .any(|token| token.starts_with('-') || token.contains("://") || token.contains('/'))
 }
 
 /// Cut a command line into tokens: continuations joined, a trailing shell
@@ -1133,6 +1153,7 @@ fn commands_in_markdown(path: &str, text: &str) -> Vec<Command> {
                 at: format!("{path}:{start}"),
                 raw: joined.split_whitespace().collect::<Vec<_>>().join(" "),
                 tokens,
+                inline: false,
             });
             continue;
         }
@@ -1143,6 +1164,7 @@ fn commands_in_markdown(path: &str, text: &str) -> Vec<Command> {
                     at: format!("{path}:{number}"),
                     raw: span.split_whitespace().collect::<Vec<_>>().join(" "),
                     tokens,
+                    inline: true,
                 });
             }
         }
@@ -1176,6 +1198,7 @@ fn commands_in_script(path: &str, text: &str) -> Vec<Command> {
                     at: format!("{path}:{start}"),
                     raw: piece.split_whitespace().collect::<Vec<_>>().join(" "),
                     tokens,
+                    inline: false,
                 });
             }
         }
@@ -1325,7 +1348,8 @@ fn cargo_install_finding(root: &Path, at: &str, raw: &str, tokens: &[String]) ->
 fn shell_command_findings(root: &Path, path: &str, text: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     for command in commands_in_markdown(path, text) {
-        if !is_command(&command.tokens) {
+        if !is_command(&command.tokens) || (command.inline && !carries_an_operand(&command.tokens))
+        {
             continue;
         }
         if let Some(finding) =
@@ -1686,6 +1710,33 @@ fn a_command_is_supported_by_this_repository_or_it_is_a_finding() {
         findings_for("curl -fsSL https://arcana.example/install.sh | sh").len(),
         1,
         "a command no page and no script of this repository runs is a finding"
+    );
+}
+
+/// A command named in prose is not a command told to someone.
+#[test]
+fn a_command_mentioned_in_prose_is_not_an_instruction() {
+    let root = repo_root();
+    let findings_for =
+        |body: &str| shell_command_findings(&root, "docs/page.md", &format!("# Page\n\n{body}\n"));
+    assert!(
+        findings_for("A disposable checkout or a `git worktree` is the intended target.")
+            .is_empty(),
+        "two tokens naming a subcommand are a concept, not an instruction"
+    );
+    assert!(
+        findings_for("Revisit when `cargo install` is actually wanted.").is_empty(),
+        "docs/how-to/install.md writes exactly this sentence about the command"
+    );
+    assert_eq!(
+        findings_for("| `arcana` binary | Installed via `cargo install arcana`. |").len(),
+        1,
+        "a table cell with an operand is an instruction, and this is the one          PR #222 shipped"
+    );
+    assert_eq!(
+        findings_for("Fetch it with `curl https://arcana.example/install.sh`.").len(),
+        1,
+        "a URL is an operand"
     );
 }
 
