@@ -109,6 +109,18 @@
    "selectable": [],
    "target_of_verification": "the document (edge from)"
   },
+  "names": {
+   "calibration": {
+    "reason": "a bare textual mention carries no code mutation site at all: there is nothing at the work-item end for a mutant to break, so the class is not reachable by the mutation calibration and never will be",
+    "receipt": "receipts/graph/mutcal0-20260905T130900Z.json",
+    "state": "not_applicable"
+   },
+   "mandatory": [],
+   "selectable": [],
+   "verification_bearing": false,
+   "target_of_verification": "nothing local — a mention is a traceability link, not a dependency. The work item is state in Muneral; GRAPH-006 binds it to the admission receipt, not to this edge",
+   "note": "DEC-AUP-0052. The ONLY producer is build_graph.x_work_items, and the graph schema constrains the edge to `-> work_item`. `verification_bearing: false` is read from the matrix AT BASE, so a change cannot widen its own licence by shipping a matrix; it is declared here positively rather than inferred from an empty `mandatory`, because `verifies` also has an empty `mandatory` and is NOT a mention."
+  },
   "implements_contract": {
    "calibration": {
     "canary": "MANDATORY for inferred contract edges (unchanged), and the class stays IN PILOT: the pooled recall 0.986 is inflated by the selection oracle, whose own miss rate 0.1832 exceeded the preregistered 0.10 bound, and the bias-free subsample reads 0.8713 (88/101) on 15 mutants. The 0.80 threshold is met by that estimate but not on a denominator the manifest accepts, so GRAPH-006 is NOT released from the pilot on this evidence.",
