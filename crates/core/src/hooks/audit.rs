@@ -40,6 +40,14 @@ pub const OUTCOME_SUCCESS: &str = "success";
 
 /// The `outcome` when the tool was dispatched and failed inside itself.
 pub const OUTCOME_TOOL_ERROR: &str = "tool_error";
+
+/// The metadata key a writing tool reports its byte count under, and the field
+/// name it is recorded as in the `result` record.
+///
+/// One name, exported, used at both ends (`arcana_tools::write`): a tool that
+/// renamed its metadata key would otherwise keep reporting success while the
+/// audit record silently went back to `null`.
+pub const BYTES_WRITTEN: &str = "bytes_written";
 const HASH_HEX_PREFIX: usize = 16;
 
 /// Construction and durable-write failures for [`AuditLog`].
@@ -222,6 +230,20 @@ impl AuditLog {
         }))
     }
 
+    /// Append one `result` record.
+    ///
+    /// The output itself is hashed, never written: it carries file contents and
+    /// model-supplied text, and this log is never rotated. But a hash answers
+    /// only "was it this exact output", and the question an incident actually
+    /// asks is "did the call do anything". In the A2-285 live run two `write`
+    /// calls were recorded `outcome: success` over the same 0-byte file, and the
+    /// log could not distinguish them from a call that wrote the page — the
+    /// argument was gone, and `output_hash` is opaque by design.
+    ///
+    /// So one number is lifted out of the tool's own metadata:
+    /// `bytes_written`. A count is not content — it carries no file text and no
+    /// model text — and it is the field that separates "wrote the deliverable"
+    /// from "wrote nothing". Absent (`null`) for every tool that does not write.
     pub(crate) fn record_result(
         &self,
         invocation_id: u64,
@@ -235,6 +257,10 @@ impl AuditLog {
                 "metadata": value.metadata,
             }))
         });
+        let bytes_written = output
+            .and_then(|value| value.metadata.as_ref())
+            .and_then(|metadata| metadata.get(BYTES_WRITTEN))
+            .and_then(serde_json::Value::as_u64);
         self.append(&serde_json::json!({
             "version": AUDIT_VERSION,
             "ts": now_rfc3339(),
@@ -243,6 +269,7 @@ impl AuditLog {
             "tool": tool,
             "outcome": outcome,
             "output_hash": output_hash,
+            "bytes_written": bytes_written,
         }))
     }
 
