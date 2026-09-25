@@ -1,0 +1,1741 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted"
+ },
+ "captured_at_utc": "2026-09-25T13:27:34Z",
+ "change_set": {
+  "base": "cd93708e1bcc22148581607fc16fc25b1f347170",
+  "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
+   {
+    "kind": "config",
+    "path": "crates/cli/Cargo.toml",
+    "status": "M",
+    "uncovered": true
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/cli.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/cli.rs"
+    ],
+    "path": "crates/cli/src/cli.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/evidence.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/evidence.rs"
+    ],
+    "path": "crates/cli/src/evidence.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/lib.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/lib.rs"
+    ],
+    "path": "crates/cli/src/lib.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/main.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/main.rs"
+    ],
+    "path": "crates/cli/src/main.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/run.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/run.rs"
+    ],
+    "path": "crates/cli/src/run.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/work_item.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/work_item.rs"
+    ],
+    "path": "crates/cli/src/work_item.rs",
+    "status": "M"
+   },
+   {
+    "kind": "test",
+    "new": true,
+    "path": "crates/cli/tests/fixtures/evidence/ReadinessReceipt-d931525f-c134-4c6b-85e1-9cdf94e8ab8b.json",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/printed_output.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/printed_output.rs"
+    ],
+    "path": "crates/cli/tests/printed_output.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/run_work_item_evidence.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/run_work_item_evidence.rs"
+    ],
+    "path": "crates/cli/tests/run_work_item_evidence.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/connectors/src/muneral.rs",
+    "node_ids": [
+     "code_unit:crates/connectors/src/muneral.rs"
+    ],
+    "path": "crates/connectors/src/muneral.rs",
+    "status": "M"
+   },
+   {
+    "kind": "test",
+    "new": true,
+    "path": "crates/connectors/tests/fixtures/muneral-evidence-attach-200-idempotent.json",
+    "status": "A"
+   },
+   {
+    "kind": "test",
+    "new": true,
+    "path": "crates/connectors/tests/fixtures/muneral-evidence-attach-201.json",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/connectors/tests/muneral_contract.rs",
+    "node_ids": [
+     "code_unit:crates/connectors/tests/muneral_contract.rs"
+    ],
+    "path": "crates/connectors/tests/muneral_contract.rs",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/reference/cli-exit-codes.md",
+    "node_ids": [
+     "document:docs/reference/cli-exit-codes.md"
+    ],
+    "path": "docs/reference/cli-exit-codes.md",
+    "status": "M"
+   }
+  ],
+  "head": "8a29e6087d9a373907a7f5b2327492182d6b92c4",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:a486035f33e390064fc17ad52b01ddb55e74c25ca71f4faad4c2a80b1c3aa47e",
+  "path": "/home/dev/aup/arc2/runs/A2-336/work/tmp/arcana-verify/verifier-out/graph-cd93708e1bcc.json",
+  "source_commit": "cd93708e1bcc22148581607fc16fc25b1f347170"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:0d7f1d5ecd85be237eeaff6fc52ff86196f7c2ce567cf1b8c149020e295b6fed",
+  "path": "/home/dev/aup/arc2/runs/A2-336/work/tmp/arcana-verify/verifier-out/graph-head-8a29e6087d9a.json",
+  "source_commit": "8a29e6087d9a373907a7f5b2327492182d6b92c4",
+  "staleness": {
+   "checked_at_utc": "2026-09-25T13:27:38Z",
+   "checked_nodes": 376,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/learning_trace.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/learning_trace.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/run.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/learning_trace.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/learning_trace.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/run.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/learning_trace.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/learning_trace.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/run.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/receipt.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/receipt.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/run.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/receipt.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/receipt.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/run.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/cli/src/receipt.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/cli/src/receipt.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/cli/src/run.rs",
+        "via": "rust-use-crate-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/connectors/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/muneral.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/connectors/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "code_unit:crates/connectors/src/lib.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/muneral.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/lib.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/lib.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/lib.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/muneral.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/lib.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/lib.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/lib.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/muneral.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/lib.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/lib.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 2,
+      "entity": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+      "node_type": "code_unit",
+      "path": [
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/src/lib.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/muneral.rs",
+        "via": "rust-mod-decl"
+       },
+       {
+        "edge_type": "imports",
+        "from": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+        "provenance": "deterministic",
+        "to": "code_unit:crates/connectors/src/lib.rs",
+        "via": "rust-use-workspace-crate"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "type-check / compile of the importer"
+     }
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/cli.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/cli.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/cli.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/connectors",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/connectors/src/muneral.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/connectors",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/connectors",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/connectors/src/muneral.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/connectors",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/connectors",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/connectors/src/muneral.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/connectors",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/A2-106/receipt.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/A2-106/receipt.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/A2-106/receipt.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/A2-106/receipt.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/A2-106/receipt.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/A2-106/receipt.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-003.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-003b.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003b.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-003b.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-208.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-208.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-208.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-212.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-212.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-212.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-216.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-216.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-216.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-230.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-230.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-230.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-234.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-234.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-234.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-272.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-272.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-272.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+      "provenance": "deterministic",
+      "to": "document:docs/reference/cli-exit-codes.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+        "provenance": "deterministic",
+        "to": "document:docs/reference/cli-exit-codes.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 18
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.0.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.0.1"
+ },
+ "receipt_id": "car-verify-20260925T132734Z-8a29e608",
+ "receipt_path": "receipts/graph/change-admission-a2-336.json",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/aup/arc2/runs/A2-336/work/arcana-agent-system"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/cli.rs",
+   "code_unit:crates/cli/src/learning_trace.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/receipt.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/work_item.rs",
+   "code_unit:crates/cli/tests/printed_output.rs",
+   "code_unit:crates/connectors/src/lib.rs",
+   "code_unit:crates/connectors/src/muneral.rs",
+   "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+   "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+   "code_unit:crates/connectors/tests/muneral_contract.rs",
+   "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/connectors",
+   "document:CHANGELOG.md",
+   "document:docs/reference/cli-exit-codes.md",
+   "receipt:receipts/graph/A2-106/receipt.json",
+   "receipt:receipts/graph/change-admission-a2-003.json",
+   "receipt:receipts/graph/change-admission-a2-003b.json",
+   "receipt:receipts/graph/change-admission-a2-208.json",
+   "receipt:receipts/graph/change-admission-a2-212.json",
+   "receipt:receipts/graph/change-admission-a2-216.json",
+   "receipt:receipts/graph/change-admission-a2-230.json",
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-272.json",
+   "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/cli.rs",
+   "code_unit:crates/cli/src/evidence.rs",
+   "code_unit:crates/cli/src/learning_trace.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/receipt.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/work_item.rs",
+   "code_unit:crates/cli/tests/printed_output.rs",
+   "code_unit:crates/cli/tests/run_work_item_evidence.rs",
+   "code_unit:crates/connectors/src/lib.rs",
+   "code_unit:crates/connectors/src/muneral.rs",
+   "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+   "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+   "code_unit:crates/connectors/tests/muneral_contract.rs",
+   "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/connectors",
+   "document:CHANGELOG.md",
+   "document:docs/reference/cli-exit-codes.md",
+   "receipt:receipts/graph/A2-106/receipt.json",
+   "receipt:receipts/graph/change-admission-a2-003.json",
+   "receipt:receipts/graph/change-admission-a2-003b.json",
+   "receipt:receipts/graph/change-admission-a2-208.json",
+   "receipt:receipts/graph/change-admission-a2-212.json",
+   "receipt:receipts/graph/change-admission-a2-216.json",
+   "receipt:receipts/graph/change-admission-a2-230.json",
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-272.json",
+   "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-09-25T13:27:38Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": "sha256:4c3547ae566c7cb03612f0f9aa268d8221917fa15dc17c7f72454c2c676cfd39",
+    "head": "sha256:4c3547ae566c7cb03612f0f9aa268d8221917fa15dc17c7f72454c2c676cfd39"
+   },
+   "entity": "receipt:receipts/graph/A2-106/receipt.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/A2-106/receipt.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:f08dcf06010c70f9c0195c9b381f69e4ab66ef039312873a1a7aee4cab37ee76",
+    "head": "sha256:f08dcf06010c70f9c0195c9b381f69e4ab66ef039312873a1a7aee4cab37ee76"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-003.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-003.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:74418a869a3dc9331e14a49a658fd7193f7d4771a174fb110ca4485986553e7c",
+    "head": "sha256:74418a869a3dc9331e14a49a658fd7193f7d4771a174fb110ca4485986553e7c"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-003b.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-003b.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:3fb4f6eea6850f5413b62874eb8007997073000a72bbccbe793836816a1368df",
+    "head": "sha256:3fb4f6eea6850f5413b62874eb8007997073000a72bbccbe793836816a1368df"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-208.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-208.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:e38997f0ebbda7d9c96716c0f3225fca76ab4ea62cb7c69eed62ed6058d497ab",
+    "head": "sha256:e38997f0ebbda7d9c96716c0f3225fca76ab4ea62cb7c69eed62ed6058d497ab"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-212.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-212.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:676c56c4327c93540c2797b2a2a61afa9c3eb2db059d5c2bf7d7a93cdeb3ec2e",
+    "head": "sha256:676c56c4327c93540c2797b2a2a61afa9c3eb2db059d5c2bf7d7a93cdeb3ec2e"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-216.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-216.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:6f3c72a7c03f47bd911ede189763e0ec6798791b471abed704b667b1bc0f2dff",
+    "head": "sha256:6f3c72a7c03f47bd911ede189763e0ec6798791b471abed704b667b1bc0f2dff"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-230.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-230.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf",
+    "head": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-234.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:34f00f2284d7bbc045f731d2fe3a5ec0eb47efbd0ce39c06eac5c62932f3909b",
+    "head": "sha256:34f00f2284d7bbc045f731d2fe3a5ec0eb47efbd0ce39c06eac5c62932f3909b"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-272.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:fa36f74a3c15a970d74d784af5ce02a993010189e7cdd7b6de81313d98ca812a",
+    "head": "sha256:fa36f74a3c15a970d74d784af5ce02a993010189e7cdd7b6de81313d98ca812a"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-285-20260924T201627Z.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  }
+ ],
+ "tree": {
+  "commit": "8a29e6087d9a373907a7f5b2327492182d6b92c4",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/cli.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/evidence.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/learning_trace.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/main.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/receipt.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/run.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/work_item.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/printed_output.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/run_work_item_evidence.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/src/muneral.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/muneral_contract.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/connectors",
+   "reason": "v-fitness: no new violation in crates/connectors",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 5 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/reference/cli-exit-codes.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifiers": [
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/cli.rs",
+    "code_unit:crates/cli/src/evidence.rs",
+    "code_unit:crates/cli/src/learning_trace.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/receipt.rs",
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/src/work_item.rs",
+    "code_unit:crates/cli/tests/printed_output.rs",
+    "code_unit:crates/cli/tests/run_work_item_evidence.rs",
+    "code_unit:crates/connectors/src/lib.rs",
+    "code_unit:crates/connectors/src/muneral.rs",
+    "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+    "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+    "code_unit:crates/connectors/tests/muneral_contract.rs",
+    "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/connectors"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/cli.rs": "verified",
+    "code_unit:crates/cli/src/evidence.rs": "verified",
+    "code_unit:crates/cli/src/learning_trace.rs": "verified",
+    "code_unit:crates/cli/src/lib.rs": "verified",
+    "code_unit:crates/cli/src/main.rs": "verified",
+    "code_unit:crates/cli/src/receipt.rs": "verified",
+    "code_unit:crates/cli/src/run.rs": "verified",
+    "code_unit:crates/cli/src/work_item.rs": "verified",
+    "code_unit:crates/cli/tests/printed_output.rs": "verified",
+    "code_unit:crates/cli/tests/run_work_item_evidence.rs": "verified",
+    "code_unit:crates/connectors/src/lib.rs": "verified",
+    "code_unit:crates/connectors/src/muneral.rs": "verified",
+    "code_unit:crates/connectors/tests/idempotent_turn_retry.rs": "verified",
+    "code_unit:crates/connectors/tests/model_connector_error_reporting.rs": "verified",
+    "code_unit:crates/connectors/tests/muneral_contract.rs": "verified",
+    "code_unit:crates/connectors/tests/skill_store_cutover.rs": "verified",
+    "deployable_unit:crates/cli": "verified",
+    "deployable_unit:crates/connectors": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-336/work/tmp/arcana-verify/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-25T13:27:40Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md",
+    "document:docs/reference/cli-exit-codes.md"
+   ],
+   "entity_verdicts": {
+    "document:CHANGELOG.md": "verified",
+    "document:docs/reference/cli-exit-codes.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/aup/arc2/runs/A2-336/work/tmp/arcana-verify/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-09-25T13:27:40Z",
+   "summary": "2 document(s), 0 failed"
+  }
+ ],
+ "verify": {
+  "events": [
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "10 affected entity(ies) owe no verdict (receipt: 10): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/cli.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/evidence.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/learning_trace.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/main.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/receipt.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/run.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/work_item.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/printed_output.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/run_work_item_evidence.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/src/muneral.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/idempotent_turn_retry.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/model_connector_error_reporting.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/muneral_contract.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/skill_store_cutover.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/connectors": [
+    "fitness_rules"
+   ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
+   "document:docs/reference/cli-exit-codes.md": [
+    "doc_reference"
+   ],
+   "receipt:receipts/graph/A2-106/receipt.json": [],
+   "receipt:receipts/graph/change-admission-a2-003.json": [],
+   "receipt:receipts/graph/change-admission-a2-003b.json": [],
+   "receipt:receipts/graph/change-admission-a2-208.json": [],
+   "receipt:receipts/graph/change-admission-a2-212.json": [],
+   "receipt:receipts/graph/change-admission-a2-216.json": [],
+   "receipt:receipts/graph/change-admission-a2-230.json": [],
+   "receipt:receipts/graph/change-admission-a2-234.json": [],
+   "receipt:receipts/graph/change-admission-a2-272.json": [],
+   "receipt:receipts/graph/change-admission-a2-285-20260924T201627Z.json": []
+  },
+  "seconds": {
+   "prepare": 1.65,
+   "total": 5.18,
+   "verifiers": 0.01
+  }
+ },
+ "work_item": "A2-336"
+}

@@ -16,9 +16,14 @@
 //!    first model call.
 //! 4. Only then run, with the contract's allowlist in the permission cascade,
 //!    and write `receipts/ReadinessReceipt-<id>.json`.
+//! 5. Attach THAT receipt to the work item — sha256 of its bytes on disk,
+//!    `application/json`, a locator — and say whether it landed, on stdout or
+//!    loudly on stderr, in the done-marker's `evidence` and in
+//!    `receipts/ReadinessReceipt-<id>.evidence.json`. See [`crate::evidence`].
 //!
-//! What this command never does is write to Muneral. The work item's status is
-//! the control plane's to move, and an executor that closed its own work item
+//! What this command never does is move the work item's status. Attaching
+//! evidence is a claim about bytes, not a transition: the status is the
+//! control plane's to move, and an executor that closed its own work item
 //! would be the only witness to its own success.
 
 use std::path::{Path, PathBuf};
@@ -44,6 +49,8 @@ pub struct WorkItemRequest {
     /// Files quoted into the brief as ground truth about this repository, in
     /// the order the dispatcher named them. See [`crate::ground_truth`].
     pub ground_truth: Vec<PathBuf>,
+    /// Locator to attach the receipt under; `None` is `file://<receipt>`.
+    pub evidence_uri: Option<String>,
     /// The run itself. `prompt` is overwritten from the work item and the
     /// contract; `contract` is filled in once the binding is verified.
     pub run: RunRequest,
@@ -183,7 +190,64 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         Err(err) => eprintln!("arcana run: the learning trace was not written: {err}"),
     }
 
-    crate::run::report_run(&summary, &root)
+    conclude_with_evidence(
+        &client,
+        &item.id,
+        &receipt_path,
+        request.evidence_uri.as_deref(),
+        &summary,
+        &root,
+    )
+    .await
+}
+
+/// Step 5, and the end of the run: attach the receipt just written, say
+/// whether it landed, print the done-marker carrying that, and return the exit
+/// code with the attach folded in.
+///
+/// After the receipt and the trace, before the marker, so the marker — the
+/// last line, the one a runner reads — can say whether the evidence landed.
+/// Attempted for a failed run too: a receipt of a failure is evidence of the
+/// failure, and the control plane is the one that decides what it means.
+///
+/// Public so that it can be driven with a real run summary against a mock
+/// Muneral: the run above it needs the live Model Connector, whose origin is
+/// pinned, so no offline test reaches this point through [`run`].
+pub async fn conclude_with_evidence(
+    client: &MuneralClient,
+    task_id: &str,
+    receipt_path: &Path,
+    evidence_uri: Option<&str>,
+    summary: &crate::run::RunSummary,
+    root: &Path,
+) -> i32 {
+    let evidence =
+        crate::evidence::attach(client, task_id, receipt_path, evidence_uri, measured_at()).await;
+    crate::evidence::report(&evidence, "arcana run");
+    let sidecar = crate::evidence::sidecar_path(receipt_path);
+    match crate::evidence::write(&sidecar, &evidence) {
+        Ok(()) => println!("evidence outcome: {}", sidecar.display()),
+        Err(err) => eprintln!("arcana run: {err}"),
+    }
+    let marker_evidence = serde_json::to_value(&evidence).ok();
+    let code = crate::run::report_run_with_evidence(summary, root, marker_evidence.as_ref());
+    exit_code_with_evidence(code, evidence.attached)
+}
+
+/// Fold the attach outcome into the run's exit code.
+///
+/// A run that succeeded and whose receipt is not on its work item exits
+/// [`crate::evidence::EXIT_NOT_ATTACHED`], never `0`: that `0` is exactly what
+/// let A2-297c's second receipt go missing without anyone noticing. A run that
+/// already failed keeps its own code — the marker's `evidence` still says the
+/// attach failed.
+#[must_use]
+pub fn exit_code_with_evidence(run_code: i32, attached: bool) -> i32 {
+    if run_code == 0 && !attached {
+        crate::evidence::EXIT_NOT_ATTACHED
+    } else {
+        run_code
+    }
 }
 
 /// Steps 2b and 3: pick the contract source, fetch the document under `digest`,

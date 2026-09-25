@@ -89,6 +89,7 @@ fn main() {
             work_item,
             contract_file,
             ground_truth,
+            evidence_uri,
             prompt_stdin,
             max_turns,
             max_cost_usd,
@@ -105,6 +106,7 @@ fn main() {
                 work_item,
                 contract_file,
                 ground_truth,
+                evidence_uri,
                 prompt_stdin,
                 max_turns,
                 max_cost_usd,
@@ -116,6 +118,7 @@ fn main() {
                 read_only,
             ));
         }
+        Some(cmd @ Cmd::AttachReceipt { .. }) => std::process::exit(attach_receipt(cmd)),
         Some(Cmd::Mcp {
             command: McpCmd::Serve { bind },
         }) => {
@@ -127,6 +130,25 @@ fn main() {
     }
 }
 
+/// `arcana attach-receipt` — unpacked here so `main`'s match stays in budget.
+fn attach_receipt(cmd: Cmd) -> i32 {
+    let Cmd::AttachReceipt {
+        work_item,
+        receipt,
+        evidence_uri,
+        record,
+    } = cmd
+    else {
+        return 1;
+    };
+    arcana_cli::evidence::run_attach_receipt(
+        &work_item,
+        &receipt,
+        evidence_uri.as_deref(),
+        record.as_deref(),
+    )
+}
+
 /// Resolve the task text and hand the run to `arcana_cli::run`.
 #[allow(clippy::too_many_arguments)]
 fn run_headless(
@@ -135,6 +157,7 @@ fn run_headless(
     work_item: Option<String>,
     contract_file: Option<PathBuf>,
     ground_truth: Vec<PathBuf>,
+    evidence_uri: Option<String>,
     prompt_stdin: bool,
     max_turns: u32,
     max_cost_usd: Option<f64>,
@@ -160,6 +183,7 @@ fn run_headless(
             id,
             contract_file,
             ground_truth,
+            evidence_uri,
             run: arcana_cli::run::RunRequest {
                 cwd,
                 prompt: String::new(),

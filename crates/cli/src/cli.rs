@@ -172,6 +172,19 @@ pub enum Cmd {
         /// sha256 of the bytes that reached the prompt.
         #[arg(long, value_name = "PATH", requires = "work_item")]
         ground_truth: Vec<PathBuf>,
+        /// The locator to attach the run's receipt under, instead of
+        /// `file://<absolute path of the receipt>`.
+        ///
+        /// At the end of the run the receipt is attached to the work item
+        /// (`POST /tasks/<id>/evidence`: its uri, the sha256 of its bytes on
+        /// disk, `application/json`). The default locator is true when it is
+        /// made and resolves only on this host; name another one only if the
+        /// bytes will be readable there. Muneral keeps the first locator for a
+        /// digest and refuses a different one for the same bytes. A failed
+        /// attach prints `EVIDENCE_NOT_ATTACHED`, keeps the receipt, and exits
+        /// `3` if the run itself succeeded.
+        #[arg(long, value_name = "URI", requires = "work_item")]
+        evidence_uri: Option<String>,
         /// Read the task from stdin. Preferred for anything with quotes,
         /// newlines, or shell metacharacters in it.
         #[arg(long)]
@@ -249,6 +262,29 @@ pub enum Cmd {
         /// can set it.
         #[arg(long)]
         read_only: bool,
+    },
+    /// Attach an existing receipt file to its Muneral work item, by sha256.
+    ///
+    /// The retry for a run that printed `EVIDENCE_NOT_ATTACHED`. Sends the
+    /// sha256 of the file's bytes, `application/json`, and the locator; a
+    /// repeat of a claim that already landed is answered `200` with
+    /// `idempotent: true`, so retrying is safe. Never changes the work item's
+    /// status. Exit `0` attached, `3` not attached, `1` could not start.
+    /// Reads the agent key from the file named by `ARCANA_MUNERAL_KEY_FILE`.
+    AttachReceipt {
+        /// The Muneral work item id.
+        #[arg(long, value_name = "ID")]
+        work_item: String,
+        /// The receipt file to attach.
+        #[arg(long, value_name = "PATH")]
+        receipt: PathBuf,
+        /// The locator; default `file://<absolute path of --receipt>`. To
+        /// repeat an attachment, pass the uri it was first made under.
+        #[arg(long, value_name = "URI")]
+        evidence_uri: Option<String>,
+        /// Also write the outcome (`EvidenceAttachOutcome/v1`) to this file.
+        #[arg(long, value_name = "PATH")]
+        record: Option<PathBuf>,
     },
     /// Serve this agent's tools to an MCP client over local loopback.
     Mcp {
