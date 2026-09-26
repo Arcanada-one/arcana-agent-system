@@ -46,6 +46,7 @@ from __future__ import annotations
 import workflow_config
 import canary_evidence
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -266,6 +267,110 @@ def config_keys_read(code: str, lang: str = "ts") -> set[str]:
     return keys
 
 
+# A2-311. A repository does not have to declare its configuration in a dotfile. A Python service
+# on pydantic-settings declares it in CODE — a `Settings(BaseSettings)` class whose annotated
+# fields ARE the keys and whose `env_prefix` says how they are spelled in the environment. Read
+# only `.env.example`-style files, `config_schema` called every such key UNDECLARED, and the author
+# was pushed to write the same list down twice so the verifier would agree with a declaration that
+# was already there. Measured on Arcanada-one/scrutator: `SCRUTATOR_TEST_DSN` is declared at
+# `src/scrutator/config.py:143` and A2-308's first receipt reported it undeclared (A2-308 §9.1).
+#
+# WHAT IS MEASURED: annotated class-level fields of a class deriving from `BaseSettings`, directly
+# or through another settings class in the same module, and the `env_prefix` of its
+# `model_config` (a dict literal or a `SettingsConfigDict(...)` call) or of a legacy
+# `class Config:`. Key = (prefix + field name), upper-cased, which is pydantic-settings' own rule
+# for a case-insensitive environment.
+#
+# WHAT IS NOT, and is never claimed: `Field(alias=…)` / `validation_alias` / `AliasChoices`, which
+# rename a key at the field level; a prefix computed rather than written; and any settings class
+# assembled at runtime. Those keys stay undeclared, which is the safe direction — this function may
+# only ever ADD to the declared set, so a bound of the reader can produce a false UNDECLARED_CONFIG_KEY
+# (visible, arguable) and never a false pass.
+PY_SETTINGS_BASE = "BaseSettings"
+
+
+def _py_str(node) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _py_base_names(node: ast.ClassDef) -> set[str]:
+    names = set()
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.add(base.attr)
+    return names
+
+
+def _py_env_prefix(node: ast.ClassDef) -> str:
+    """The `env_prefix` this settings class declares, or "" when it declares none."""
+    for stmt in node.body:
+        if isinstance(stmt, ast.ClassDef) and stmt.name == "Config":       # pydantic v1 idiom
+            for inner in stmt.body:
+                if isinstance(inner, ast.Assign) and any(
+                        isinstance(t, ast.Name) and t.id == "env_prefix" for t in inner.targets):
+                    return _py_str(inner.value) or ""
+            continue
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        if not any(isinstance(t, ast.Name) and t.id == "model_config" for t in targets):
+            continue
+        value = stmt.value
+        if isinstance(value, ast.Dict):
+            for key, item in zip(value.keys, value.values):
+                if _py_str(key) == "env_prefix":
+                    return _py_str(item) or ""
+        elif isinstance(value, ast.Call):                                   # SettingsConfigDict(...)
+            for kw in value.keywords:
+                if kw.arg == "env_prefix":
+                    return _py_str(kw.value) or ""
+    return ""
+
+
+def _py_settings_classes(module: ast.Module) -> list[ast.ClassDef]:
+    """Classes deriving from BaseSettings, directly or via another settings class in this module."""
+    classes = [n for n in module.body if isinstance(n, ast.ClassDef)]
+    by_name = {c.name: c for c in classes}
+    settings, changed = set(), True
+    while changed:
+        changed = False
+        for cls in classes:
+            if cls.name in settings:
+                continue
+            bases = _py_base_names(cls)
+            if PY_SETTINGS_BASE in bases or bases & settings:
+                settings.add(cls.name)
+                changed = True
+    return [by_name[name] for name in sorted(settings)]
+
+
+def pydantic_settings_keys(tree: build_graph.Tree) -> tuple[set[str], list[str]]:
+    keys, sources = set(), []
+    for path in sorted(tree.paths):
+        if not path.endswith(".py") or PY_SETTINGS_BASE not in tree.text(path):
+            continue
+        try:
+            module = ast.parse(tree.text(path))
+        except (SyntaxError, ValueError):
+            continue        # an unparseable file declares nothing; it is not a finding of this verifier
+        found = set()
+        for cls in _py_settings_classes(module):
+            prefix = _py_env_prefix(cls)
+            for stmt in cls.body:
+                if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.target, ast.Name):
+                    continue
+                field = stmt.target.id
+                if field.startswith("_") or field == "model_config":
+                    continue
+                found.add((prefix + field).upper())
+        if found:
+            keys |= found
+            sources.append(path)
+    return keys, sources
+
+
 def declared_config_keys(tree: build_graph.Tree, deployable_dirs: list[str], extra_files: list[str]) -> tuple[set[str], list[str]]:
     keys, sources = set(), []
     candidates = list(ENV_DECL_FILES) + list(extra_files)
@@ -289,6 +394,9 @@ def declared_config_keys(tree: build_graph.Tree, deployable_dirs: list[str], ext
         if re.match(r"^(docker-compose[\w.-]*\.ya?ml|compose[\w.-]*\.ya?ml)$", os.path.basename(p)) and p.count("/") <= 1:
             sources.append(p)
             keys |= set(re.findall(r"^\s*-?\s*([A-Z_][A-Z0-9_]*)\s*[:=]", tree.text(p), re.M))
+    settings_keys, settings_sources = pydantic_settings_keys(tree)
+    keys |= settings_keys
+    sources += settings_sources
     return keys, sorted(set(sources))
 
 
@@ -1016,7 +1124,19 @@ class Verify:
         return n.get("path")
 
     def record(self, vid: str, kind: str, command: str, entities: list[str], exit_code: int, output: str, started: str,
-               secs: float, summary: str, verdicts: dict[str, tuple[str, str]], ext: str = "txt"):
+               secs: float, summary: str, verdicts: dict[str, tuple[str, str]], ext: str = "txt",
+               evidence_ref: str | None = None):
+        # `evidence_ref` — the row's output is a COMMITTED document of the repository under test, not
+        # this run's log. A2-312: a canary row's output_ref is opened by the gate
+        # (admit_change.canary_coverage) out of git objects at head and must be that CanaryResult;
+        # pointing it at the log made every receipt that actually cashed a canary unadmittable.
+        if evidence_ref is not None:
+            self.verifiers.append({"id": vid, "kind": kind, "command": command, "entities": sorted(entities),
+                                   "exit_code": int(exit_code), "output_ref": evidence_ref, "started_at_utc": started,
+                                   "duration_s": secs, "summary": summary,
+                                   **({"entity_verdicts": {e: v[0] for e, v in sorted(verdicts.items())}} if verdicts else {})})
+            self.ev.setdefault(vid, {}).update(verdicts)
+            return
         # A `.json` path must hold JSON. Callers that pass ext="json" hand us a JSON blob with a
         # human-readable log appended after it, which no parser can read: 23 such files are committed
         # under receipts/ and carried in tools/ci/self-check-baseline.json as `Extra data` debt. The
@@ -1638,14 +1758,33 @@ class Verify:
             return
         started, t0 = now_iso(), time.monotonic()
         self.canary_verified.difference_update(ents)
+        # A2-312. A verdict read from a CanaryResult that is committed at the candidate head is
+        # attributed to a row of its own whose output_ref IS that document (repository-relative),
+        # consumed here out of git objects exactly as admit_change.canary_coverage re-reads it. The
+        # single `v-canary` row used to cite this run's LOG for every verdict, so a receipt whose
+        # canary actually measured something was refused CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE by
+        # both the validator and the gate (arcanada-universal-program#146, A2-311). Evidence that is
+        # NOT committed keeps the previous path onto `v-canary` unchanged: the gate refuses it there
+        # by name, which is right — this change adds no way to cash what the gate cannot open.
         listed: dict[str, dict] = {}
-        sources = []
+        sources, doc_rows = [], []
         rank = {"failed": 2, "not_measured": 1, "verified": 0}
+        top = Path(self.top).resolve()
         for path in self.canary_paths:
             candidate = self.head if self.mode == "diff" else self.repo.head()
-            rows, errors, doc = canary_evidence.consume(path, self.top, candidate,
-                dirty=self.mode != "diff" and self.repo.dirty())
-            sources.append({"path": rel_ref(Path(path)), "errors": errors,
+            try:
+                rel = Path(path).resolve().relative_to(top).as_posix()
+            except ValueError:
+                rel = None
+            committed = bool(rel) and schema_check.repo_relative(rel) and subprocess.run(
+                ["git", "-C", str(top), "cat-file", "-e", f"{candidate}:{rel}"], capture_output=True).returncode == 0
+            if committed:
+                rows, errors, doc = canary_evidence.consume(path, self.top, candidate, at_head=rel)
+            else:
+                rows, errors, doc = canary_evidence.consume(path, self.top, candidate,
+                    dirty=self.mode != "diff" and self.repo.dirty())
+            sources.append({"path": rel if committed else rel_ref(Path(path)), "committed_at_head": bool(committed),
+                            "errors": errors,
                             "subject": doc.get("subject"), "environment": doc.get("environment"),
                             "captured_at_utc": doc.get("captured_at_utc"),
                             # A2-263: a freshness re-read the consuming host could not perform is a
@@ -1654,11 +1793,23 @@ class Verify:
             if errors:
                 rows = {e: {"entity": e, "verdict": "not_measured",
                             "reason": "CANARY_EVIDENCE_UNVERIFIABLE: " + "; ".join(errors)} for e in ents}
+            meta = {"plan": (doc.get("plan") or {}).get("id") if isinstance(doc.get("plan"), dict) else None,
+                    "phase": doc.get("phase"), "environment": doc.get("environment")}
+            row_id = None
+            if committed and not errors:
+                mine = {eid: v for eid, v in rows.items() if eid in ents}
+                if mine:
+                    row_id = f"v-canary-{len(doc_rows) + 1}"
+                    doc_rows.append((row_id, rel, mine, meta))
             for eid, v in rows.items():
                 cur = listed.get(eid)
-                if cur is None or rank[v["verdict"]] > rank[cur["verdict"]]:
-                    listed[eid] = {**v, "plan": (doc.get("plan") or {}).get("id") if isinstance(doc.get("plan"), dict) else None,
-                                   "phase": doc.get("phase"), "environment": doc.get("environment")}
+                if cur is None or rank[v["verdict"]] > rank[cur["verdict"]] or \
+                        (rank[v["verdict"]] == rank[cur["verdict"]] and cur["row"] is None and row_id is not None):
+                    listed[eid] = {**v, **meta, "row": row_id}
+
+        def why(cv: dict) -> str:
+            return f"canary {cv['plan']} ({cv['phase']}) on {cv['environment']}: {(cv.get('reason') or '')[:200]}"
+
         verdicts, lines = {}, []
         for eid in sorted(ents):
             cv = listed.get(eid)
@@ -1667,20 +1818,32 @@ class Verify:
                                  "INFERRED_BOUNDARY_WITHOUT_CANARY: no canary result lists this entity "
                                  "(matrix P6, observed-edges-and-deploy-gate.v1 rule C1)")
             else:
-                verdicts[eid] = (cv["verdict"], f"canary {cv['plan']} ({cv['phase']}) on {cv['environment']}: "
-                                                f"{(cv.get('reason') or '')[:200]}")
+                verdicts[eid] = (cv["verdict"], why(cv))
                 if cv["verdict"] == "verified":
                     self.canary_verified.add(eid)
             lines.append(f"{verdicts[eid][0]:12} {eid}  {verdicts[eid][1][:160]}")
-        summary = (f"{len(self.canary_paths)} canary result(s); "
+        secs = round(time.monotonic() - t0, 2)
+        cmd = "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)"
+        # One row per committed document, naming exactly the entities that document lists — the gate
+        # reports any entity a cashed row names that its document does not (canary_coverage surplus).
+        for row_id, rel, mine, meta in doc_rows:
+            vd = {eid: (v["verdict"], why({**v, **meta})) for eid, v in mine.items()}
+            self.record(row_id, "canary", cmd, sorted(mine), 1 if any(v[0] == "failed" for v in vd.values()) else 0,
+                        "", started, secs,
+                        f"{rel}: {sum(1 for v in vd.values() if v[0] == 'verified')} verified / "
+                        f"{sum(1 for v in vd.values() if v[0] == 'failed')} failed / "
+                        f"{sum(1 for v in vd.values() if v[0] == 'not_measured')} not_measured",
+                        vd, evidence_ref=rel)
+        # `v-canary` keeps the run's own log and every entity whose verdict no committed document decided.
+        rest = {eid: v for eid, v in verdicts.items() if (listed.get(eid) or {}).get("row") is None}
+        summary = (f"{len(self.canary_paths)} canary result(s), {len(doc_rows)} committed at head; "
                    f"{sum(1 for v in verdicts.values() if v[0] == 'verified')} verified / "
                    f"{sum(1 for v in verdicts.values() if v[0] == 'failed')} failed / "
                    f"{sum(1 for v in verdicts.values() if v[0] == 'not_measured')} not_measured of {len(ents)} entities")
-        self.record("v-canary", "canary",
-                    "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
-                    sorted(ents), 0, json.dumps({"sources": sources, "verdicts": {k: v for k, v in verdicts.items()}},
+        self.record("v-canary", "canary", cmd,
+                    sorted(rest), 0, json.dumps({"sources": sources, "verdicts": {k: v for k, v in verdicts.items()}},
                                                 ensure_ascii=False, indent=1) + "\n\n" + "\n".join(lines),
-                    started, round(time.monotonic() - t0, 2), summary, verdicts, ext="json")
+                    started, secs, summary, rest, ext="json")
 
     # ---- targeted_test (selectable): plan, runner, run
     def targeted_test_plan(self) -> list[dict]:
