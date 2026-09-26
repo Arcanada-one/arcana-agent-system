@@ -305,10 +305,36 @@ def validate(raw):
                 # It is raised OutOfScope rather than added to the allowed set,
                 # because allowing it would report `verified` — a claim that
                 # the field was checked, when nothing about it is.
+                # A2-311. The note above is right that `verified` must not be claimed for a
+                # field nothing looks at — and wrong that the only alternative is to measure
+                # nothing. `environment` has a bounded shape, documented by GitHub and no wider
+                # than `workflow_dispatch.inputs` or `schedule`: a string, or a mapping whose only
+                # keys are `name` and `url`, both scalars. That shape is measured here, the same
+                # way and for the same reason those two were taught.
+                #
+                # What stays NOT_MEASURED, and is never claimed: what the environment IS — its
+                # protection rules, its reviewers, its secrets, whether it exists at all. None of
+                # that is readable from the file, and all of it lives under the same blanket as
+                # hosted execution.
+                #
+                # The cost of the previous answer was measured: every change touching a deploy
+                # workflow came back not_measured, one not_measured without an exemption pauses the
+                # admission, and the pause reported a bound of this checker rather than anything
+                # about the change. A2-311 hit it on Arcanada-one/scrutator#108, where the deploy
+                # job has carried `environment: kb-production` since long before that branch.
                 if 'environment' in job:
-                    raise OutOfScope('job-level `environment` outside this bounded checker')
-                mapping(job, 'name needs if runs-on permissions env defaults concurrency outputs '
-                             'steps timeout-minutes continue-on-error services strategy')
+                    env = job['environment']
+                    if isinstance(env, dict):
+                        mapping(env, 'name url')
+                        if 'name' not in env:
+                            raise ValueError('environment mapping requires a name')
+                        for key in ('name', 'url'):
+                            if key in env:
+                                scalar(env[key])
+                    else:
+                        scalar(env)
+                mapping(job, 'name needs if runs-on permissions env environment defaults concurrency '
+                             'outputs steps timeout-minutes continue-on-error services strategy')
             common(job)
             if 'needs' in job:
                 if isinstance(job['needs'], list):

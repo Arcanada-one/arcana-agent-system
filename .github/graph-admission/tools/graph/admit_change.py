@@ -41,6 +41,7 @@ sys.dont_write_bytecode = True
 import schema_check  # noqa: E402  (sibling tool, reused as a library)
 import impact_pair  # noqa: E402
 import canary_evidence  # noqa: E402  (DEC-AUP-0037: the gate reads the canary document, not the claim)
+import sshsig  # noqa: E402  (A2-314: the decision exemption is verified with the bundle's own verifier)
 
 TOOL = "tools/graph/admit_change.py"
 VERSION = "1.0.0"
@@ -48,7 +49,15 @@ MODEL = "claude-opus-5"
 PROGRAM_ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = PROGRAM_ROOT / "contracts/graph-verified-change/admission-gate.v1.json"
 FIXTURE_DIR = PROGRAM_ROOT / "contracts/graph-verified-change/fixtures/admission"
-LEDGER_DIR = PROGRAM_ROOT / "receipts/graph/work-item-evidence"
+# The ledger's location INSIDE the repository that owns it. Kept as a repository-relative constant
+# because the two questions are different: `--ledger-dir` says where this gate RUN reads the ledger
+# (C13), while C06 clause (c) asks which PATH OF THE GATED TREE can be the ledger. Deriving the second
+# from the first was measured wrong on #141's second CI run: the program repository's own workflow runs
+# the gate from a bundle built into the runner's temp directory, so PROGRAM_ROOT — and with it the
+# default --ledger-dir — is outside the checkout, `relative_to` raised, and clause (c) switched itself
+# off in CI while the local run admitted the same bytes.
+LEDGER_REL = "receipts/graph/work-item-evidence"
+LEDGER_DIR = PROGRAM_ROOT / LEDGER_REL
 
 # The BLOCKING checks: the mutation battery disables each one and demands that at least one blocked
 # fixture then gets through — a check that cannot be killed that way is a check that never blocked.
@@ -59,7 +68,10 @@ CHECK_IDS = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10
              # DEC-AUP-0039 — C19 REFUSES a `verified` claim its own probe evidence contradicts, and it
              # is what LOWERS that entity's verdict to what was observed, so disabling it must (and does)
              # let a blocked fixture through: it belongs in the disable battery.
-             "C19"]
+             "C19",
+             # A2-314 — C21 REFUSES a decision exemption whose signature, binding, expiry or eligibility
+             # the gate does not confirm, so disabling it lets the forged fixture through.
+             "C21"]
 # AUP-GRAPH-006:gate2a. C14/C15 are INFORMATIONAL: they name why the gate did or did not author a
 # receipt on the automated-author path, and they never raise the verdict (their policy verdict is
 # `admit`, rank 0). Disabling one therefore cannot let anything through, so the disabled-check battery
@@ -758,6 +770,96 @@ def record_path_refusal(repo: Path, base: str, head: str, path: str, entries: di
         return (f"{path} is itself named by a declared setup/verify argv — an artefact that IS the verifier "
                 f"would vouch for its own replacement")
     return None
+
+
+LEDGER_SCHEMA = "WorkItemEvidenceLedger/v1"
+
+
+def ledger_record_path_refusal(repo: Path, base: str, head: str, path: str, bound: list[dict],
+                               ledger_rel: str | None) -> str | None:
+    """→ the reason `path` may NOT be the work-item evidence ledger of a trailing commit, or None.
+
+    C06 clause (c), A2-309. C13 binds the ledger's `evidence_ref.digest` to the receipt's BYTES, so
+    `attach` can only run once those bytes are final — after which the ledger it writes has nowhere
+    legal to go: a trailing commit was not a record path, and the content range forces a re-issue that
+    changes the very bytes the ledger names. The receipt's bytes depended on the ledger and the
+    ledger's digest depended on the receipt's bytes (trailing-record-commits.v1.md, clause (c)).
+
+    What makes this admissible rather than a hole: everything the record commit may add to the ledger
+    is a digest THIS GATE RUN computed itself from a receipt it bound. Anything else in the file — a
+    new key, an edited older attachment, a dropped one, a digest of bytes the gate never saw — is
+    content, and stays refused. Read from git at base and head; the receipt contributes only the
+    digests the gate already holds."""
+    if not ledger_rel:
+        return (f"{path}: the work-item evidence ledger is not inside this repository, so no path of "
+                f"this change can be it")
+    prefix = ledger_rel.rstrip("/") + "/"
+    if not path.startswith(prefix) or not path.endswith(".json") or "/" in path[len(prefix):]:
+        return f"{path} is not a {prefix}<work-item>.json path"
+    wanted = path[len(prefix):-len(".json")]
+    if not any(work_item_id(r["_doc"].get("work_item")) == wanted for r in bound):
+        return (f"{path} is the ledger of work item {wanted!r}, which is not the work item of any "
+                f"receipt this gate bound")
+    mode_h = blob_mode(repo, head, path)
+    if mode_h is None:
+        return f"{path} does not exist at head {head[:12]}"
+    if mode_h not in REGULAR_MODES:
+        return (f"{path} is mode {mode_h} at head {head[:12]}, not a regular file — the bytes the gate "
+                f"would read as this repository's own record are somewhere else")
+    doc_h = _ledger_doc(repo, head, path)
+    if doc_h is None:
+        return f"{path} does not parse as a {LEDGER_SCHEMA} object at head {head[:12]}"
+    if work_item_id(doc_h.get("work_item")) != wanted:
+        return (f"{path} is named for work item {wanted!r} but carries "
+                f"{work_item_id(doc_h.get('work_item'))!r}")
+    doc_b = _ledger_doc(repo, base, path)
+    if doc_b is None and blob_mode(repo, base, path) is not None:
+        return f"{path} does not parse as a {LEDGER_SCHEMA} object at base {base[:12]}"
+    doc_b = doc_b if doc_b is not None else {"schema": LEDGER_SCHEMA, "work_item": doc_h.get("work_item"),
+                                             "system": doc_h.get("system"), "attachments": []}
+    skel_h = {k: v for k, v in doc_h.items() if k not in ("attachments", "updated_at_utc")}
+    skel_b = {k: v for k, v in doc_b.items() if k not in ("attachments", "updated_at_utc")}
+    if canonical(skel_h) != canonical(skel_b):
+        changed = sorted(set(skel_h) ^ set(skel_b)) or sorted(k for k in skel_h if skel_h[k] != skel_b.get(k))
+        return (f"{path} changes {', '.join(changed) or 'a key'} outside `attachments` — a record commit "
+                f"may add the evidence of this change, not rewrite the ledger around it")
+    mine = {r["digest"] for r in bound if r.get("digest")}
+    at_base = {}
+    for a in doc_b.get("attachments", []) or []:
+        at_base.setdefault(_att_digest(a), canonical(a))
+    seen = set()
+    for a in doc_h.get("attachments", []) or []:
+        d = _att_digest(a)
+        seen.add(d)
+        if d in mine:
+            continue                       # the gate computed this digest itself from a receipt it bound
+        if d in at_base and canonical(a) == at_base[d]:
+            continue                       # untouched since base
+        if d in at_base:
+            return (f"{path} rewrites the attachment for {str(d)[:19]}…, which this change did not "
+                    f"produce")
+        return (f"{path} adds an attachment whose evidence_ref.digest {str(d)[:19]}… is not the bytes of "
+                f"any receipt this gate bound — an unverified fact riding in on a record path")
+    lost = sorted(d for d in at_base if d not in seen)
+    if lost:
+        return (f"{path} drops {len(lost)} attachment(s) present at base ({', '.join(str(x)[:19] for x in lost[:3])}…) "
+                f"— a record commit may add this change's evidence, never erase an earlier card's")
+    return None
+
+
+def _ledger_doc(repo: Path, ref: str, path: str) -> dict | None:
+    r = subprocess.run(["git", "-C", str(repo), "show", f"{ref}:{path}"], capture_output=True)
+    if r.returncode != 0:
+        return None
+    try:
+        doc = json.loads(r.stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return doc if isinstance(doc, dict) and doc.get("schema") == LEDGER_SCHEMA else None
+
+
+def _att_digest(a) -> str | None:
+    return (a.get("evidence_ref") or {}).get("digest") if isinstance(a, dict) else None
 
 
 def admissible_ranges_invariant(admissible: set, head: str, record_head: str | None) -> str | None:
@@ -2519,7 +2621,7 @@ def _names(repo: Path, *args: str) -> set[str]:
 
 
 def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict], changed: set[str],
-                            workdir: Path) -> dict:
+                            workdir: Path, ledger_rel: str | None = None) -> dict:
     """GATEORDER-0 — the commits after every bound receipt's head, and which of their paths are record paths.
 
     The rule and its residuals: contracts/graph-verified-change/trailing-record-commits.v1.md. Everything here
@@ -2528,8 +2630,9 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
     heads = sorted({h for h in (_receipt_head(r["_doc"]) for r in bound)
                     if h and git_ok(repo, "cat-file", "-e", f"{h}^{{commit}}")})
     out = {"rule": "contracts/graph-verified-change/trailing-record-commits.v1.md", "receipt_heads": heads,
-           "trailing_commits": [], "admitted_paths": {"receipts": [], "derived": []},
-           "edited_after_receipt_head": [], "derived_verification": {"verdict": None, "why": "no declared path"}}
+           "trailing_commits": [], "admitted_paths": {"receipts": [], "derived": [], "work_item_evidence": []},
+           "edited_after_receipt_head": [], "derived_verification": {"verdict": None, "why": "no declared path"},
+           "work_item_evidence_ledger": {"dir": ledger_rel, "paths": []}}
     if not heads:
         return out
     trailing = [c for c in git(repo, "rev-list", head, f"^{base}", *[f"^{h}" for h in heads]).split() if c]
@@ -2572,9 +2675,21 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
     # by the mutation test, and a path that is itself a declared verifier would vouch for its replacement.
     decl, why_decl = read_declaration(repo, base)
     declared, _bad = declared_artefacts(decl)
-    refused = {p: r for p in trailing_paths if p not in receipt_paths
-               for r in [record_path_refusal(repo, base, head, p, declared)] if r}
-    derived = [p for p in trailing_paths if p not in receipt_paths and p not in refused]
+    # (c) A2-309 — the work-item evidence ledger `attach` wrote from the receipt's final bytes. Tried
+    # BEFORE (b): a path under the ledger directory is never a declared derived artefact, and trying
+    # (b) first would report the declaration's refusal for a file the declaration says nothing about.
+    ledger_paths, ledger_refused = [], {}
+    for p in trailing_paths:
+        if p in receipt_paths or not ledger_rel or not p.startswith(ledger_rel.rstrip("/") + "/"):
+            continue
+        why = ledger_record_path_refusal(repo, base, head, p, bound, ledger_rel)
+        (ledger_refused.update({p: why}) if why else ledger_paths.append(p))
+    out["work_item_evidence_ledger"]["paths"] = sorted(ledger_paths)
+
+    refused = {p: r for p in trailing_paths if p not in receipt_paths and p not in ledger_paths
+               for r in [ledger_refused.get(p) or record_path_refusal(repo, base, head, p, declared)] if r}
+    derived = [p for p in trailing_paths if p not in receipt_paths and p not in ledger_paths
+               and p not in refused]
     out["not_record_paths"] = refused
     derived_ok: set[str] = set()
     if derived:
@@ -2586,12 +2701,14 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
     elif decl is None:
         out["derived_verification"]["why"] = why_decl
 
-    record = receipt_paths | derived_ok
+    record = receipt_paths | derived_ok | set(ledger_paths)
     out["edited_after_receipt_head"] = [p for p in trailing_paths if p not in record]
     out["admitted_paths"] = {"receipts": sorted(p for p in trailing_paths if p in receipt_paths
                                                 and p not in in_receipt_ranges),
                              "derived": sorted(p for p in trailing_paths if p in derived_ok
-                                               and p not in in_receipt_ranges)}
+                                               and p not in in_receipt_ranges),
+                             "work_item_evidence": sorted(p for p in ledger_paths
+                                                          if p not in in_receipt_ranges)}
     return out
 
 
@@ -2981,6 +3098,32 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         if bad_exempt:
             add("C10", f"{Path(rec['path']).name}: " + "; ".join(bad_exempt[:6]))
 
+        # A2-314 — C21: a non-structural exemption is a DECISION, and a decision is signed by an
+        # admitting agent whose key the change did not enrol. A signed one is always verified (a bad
+        # signature is refused whatever the enforcement); under `signed`, an unsigned one exempts nothing.
+        d_enf = decision_policy(policy).get("enforcement") or "off"
+        d_problems = []
+        gate_issued = rec["path"] == automated.get("receipt_path")
+        for x in doc.get("exemptions") or []:
+            if not isinstance(x, dict) or x.get("code") in STRUCTURAL_CODES or gate_issued:
+                continue
+            if x.get("code") == DECISION_CODE or "decision" in x or "signature" in x:
+                probs = verify_decision_exemption(repo, doc, x, policy, base=base,
+                                                  repo_name=repo_name or repo_remote_name(repo),
+                                                  now=datetime.now(timezone.utc))
+            elif d_enf == "signed":
+                probs = [f"{x.get('entity')}: an unsigned {x.get('code') or 'uncoded'} exemption — under "
+                         f"decision_exemptions.enforcement=signed only `admit_change.py exempt-decision` issues one"]
+            else:
+                probs = []
+            if probs:
+                d_problems += probs
+                valid_exempt.discard(x.get("entity"))
+        rec["decision_exemptions"] = {"enforcement": d_enf, "problems": d_problems}
+        if d_problems:
+            add("C21", f"{Path(rec['path']).name}: {len(d_problems)} problem(s) [enforcement={d_enf}]: "
+                       + "; ".join(d_problems[:4]), decision_problems=d_problems)
+
         # --- AUP-GRAPH-006:gate4b — C16/C17: the receipt is never believed about its own structural
         # exemption. The gate re-measures A1-A4 / B1-B5 here, from git and from a graph rebuilt at
         # head, every time it evaluates this range.
@@ -3086,9 +3229,18 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
     record = None
     if bound:
         wd_rc = Path(automated_workdir) if automated_workdir else Path(tempfile.mkdtemp(prefix="gateorder0-"))
-        record = trailing_record_commits(repo, base, head, bound, changed, wd_rc)
+        # Clause (c) is licensed by OWNING the ledger, not by the enforcement flag. Measured on this
+        # card's own pull request (#141): the program repository's `ci.yml` calls the reusable gate
+        # without setting `enforcement`, so CI runs with `off` — and an earlier version of this line,
+        # which read `enforcement != "off"`, made CI REFUSE (C06) the very record commit the local
+        # authoritative gate admitted. The flag says whether the gate CHECKS for an attachment;
+        # ownership says whether a file at that path can be anything but the artefact of that check.
+        # A caller repository owns no ledger, so there the path stays ordinary content.
+        ledger_rel = LEDGER_REL if is_program_repo(repo, repo_name) else None
+        record = trailing_record_commits(repo, base, head, bound, changed, wd_rc, ledger_rel)
         uncovered = sorted(changed - covered - set(record["admitted_paths"]["receipts"])
-                           - set(record["admitted_paths"]["derived"]))
+                           - set(record["admitted_paths"]["derived"])
+                           - set(record["admitted_paths"]["work_item_evidence"]))
         after = record["edited_after_receipt_head"]
         if uncovered or after:
             parts = []
@@ -3096,8 +3248,9 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                 parts.append(f"{len(uncovered)}/{len(changed)} changed file(s) are absent from the receipt change_set")
             if after:
                 parts.append(f"{len(after)} path(s) changed AFTER the receipt head by a commit no receipt has seen "
-                             f"({', '.join(after[:4])}) — only the receipt file itself and a declared derived "
-                             f"artefact that its own verifier accepts are record commits; re-issue the receipt on "
+                             f"({', '.join(after[:4])}) — only the receipt file itself, a declared derived "
+                             f"artefact that its own verifier accepts, and the work-item evidence ledger this "
+                             f"gate run's own receipts produced are record commits; re-issue the receipt on "
                              f"the full range")
             if record["derived_verification"].get("verdict") not in (None, True):
                 parts.append("declared derived artefact(s) not admitted: " + str(record["derived_verification"]["why"]))
@@ -3221,13 +3374,28 @@ def ledger_lookup(ledger_dir: Path, work_item, digest: str | None) -> dict | Non
     return None
 
 
+class AttachRefusal(ValueError):
+    """`attach` will not write a ledger the gate is certain to refuse, or one that names bytes the
+    repository never holds. The message is the whole answer: what is wrong and the command that fixes it."""
+
+
 def build_attachment(receipt_path: Path, doc: dict, work_item: str, label: str, uri: str | None,
-                     muneral_task_id: str | None = None) -> dict:
-    digest = sha256_file(receipt_path)
+                     muneral_task_id: str | None = None, root: Path | None = None) -> dict:
+    """A2-331. `receipt_path` MUST lie inside `root` (the repository that commits the ledger; default the
+    program repository). The fallback this replaced recorded the ABSOLUTE path when it did not — 19 of
+    115 attachments on main name /tmp/claude-*/… or a sibling worktree, bytes no checkout of this
+    repository ever holds, and #148 already declared them ATTACHMENT_NOT_EXEMPTIBLE. A refusal at the
+    door is the only remedy that does not leave a dead entry behind."""
+    root = (root or PROGRAM_ROOT).resolve()
     try:
-        rel = str(receipt_path.resolve().relative_to(PROGRAM_ROOT))
+        rel = receipt_path.resolve().relative_to(root).as_posix()
     except ValueError:
-        rel = str(receipt_path)
+        raise AttachRefusal(
+            f"ATTACH_RECEIPT_OUTSIDE_REPOSITORY: {receipt_path} resolves outside {root}. An attachment records "
+            f"a repository-relative receipt_path whose bytes the gate reads back from git; a path outside the "
+            f"repository names bytes it never holds. Commit the receipt into {root} and attach that copy: "
+            f"admit_change.py attach --receipt {root}/receipts/<dir>/<name>.json --work-item {work_item}") from None
+    digest = sha256_file(receipt_path)
     return {
         "schema": "WorkItemEvidenceAttachment/v1",
         "attachment_kind": "evidence",
@@ -3281,6 +3449,15 @@ def muneral_probe(task_id: str, key: str, base_url: str, ua: str) -> list[dict]:
     return out
 
 
+def _repo_root_of(d: Path) -> Path | None:
+    """The git work tree the ledger directory lives in (nearest existing ancestor), or None."""
+    q = d.resolve()
+    while not q.exists() and q != q.parent:
+        q = q.parent
+    r = subprocess.run(["git", "-C", str(q), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
+
+
 def cmd_attach(a) -> int:
     policy = load_policy(a.policy)
     receipt_path = Path(a.receipt).resolve()
@@ -3292,8 +3469,15 @@ def cmd_attach(a) -> int:
     if not wi:
         print("no work item: pass --work-item or set receipt.work_item", file=sys.stderr)
         return 2
-    att = build_attachment(receipt_path, doc, wi, a.label or f"ChangeAdmissionReceipt/v1 {doc.get('receipt_id')}",
-                           a.uri, a.muneral_task_id)
+    ledger_dir = Path(a.ledger_dir) if a.ledger_dir else LEDGER_DIR
+    p = ledger_path(ledger_dir, wi)
+    root = _repo_root_of(ledger_dir) or PROGRAM_ROOT
+    try:
+        att = build_attachment(receipt_path, doc, wi, a.label or f"ChangeAdmissionReceipt/v1 {doc.get('receipt_id')}",
+                               a.uri, a.muneral_task_id, root=root)
+    except AttachRefusal as e:
+        print(f"refuse {e}", file=sys.stderr)
+        return 2
 
     if a.post:
         key = os.environ.get("MUNERAL_API_KEY")
@@ -3311,27 +3495,105 @@ def cmd_attach(a) -> int:
                 att["delivery"]["note"] = ("a candidate route answered; posting is enabled only after the route "
                                            "is declared in admission-gate.v1.json work_item_evidence.muneral.evidence_route")
 
-    ledger_dir = Path(a.ledger_dir) if a.ledger_dir else LEDGER_DIR
-    p = ledger_path(ledger_dir, wi)
     ledger = {"schema": "WorkItemEvidenceLedger/v1", "work_item": wi, "system": "muneral", "attachments": []}
     if p.exists():
         try:
             ledger = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             pass
-    existing = {(x.get("evidence_ref") or {}).get("digest") for x in ledger.get("attachments", [])}
-    if att["evidence_ref"]["digest"] in existing:
-        for i, x in enumerate(ledger["attachments"]):
-            if (x.get("evidence_ref") or {}).get("digest") == att["evidence_ref"]["digest"]:
-                ledger["attachments"][i] = att | {"attached_at_utc": x.get("attached_at_utc", att["attached_at_utc"])}
-    else:
-        ledger["attachments"].append(att)
+    try:
+        base_ledger, base_where = _attach_base_ledger(root, p, a.base) if _stale_for(ledger, att) else (None, None)
+        ledger, outcome = merge_attachment(ledger, att, base_ledger, base_where)
+    except AttachRefusal as e:
+        print(f"refuse {e}", file=sys.stderr)
+        return 2
     ledger["updated_at_utc"] = now_iso()
     write_json(p, ledger)
+    for s in outcome["superseded"]:
+        print(f"superseded {s['digest_old']} -> {s['digest_new']} ({s['receipt_path']}): not in the ledger at "
+              f"{base_where}, so the gate would refuse it (C06 CHANGE_SET_INCOMPLETE)", file=sys.stderr)
+    for k in outcome["kept_at_base"]:
+        print(f"kept {k['digest_old']} ({k['receipt_path']}): present in the ledger at {base_where}; the gate "
+              f"refuses dropping it, and admits it untouched beside {att['evidence_ref']['digest']}", file=sys.stderr)
     print(json.dumps({"ledger": str(p), "work_item": wi, "digest": att["evidence_ref"]["digest"],
+                      "action": outcome["action"], "superseded": outcome["superseded"],
+                      "kept_at_base": outcome["kept_at_base"],
                       "delivery": att["delivery"]["status"], "reason_code": att["delivery"].get("reason_code")},
                      ensure_ascii=False))
     return 0
+
+
+# A2-331. What the gate checks decides what `attach` must do with an older entry for the SAME receipt_path
+# whose digest is no longer the bytes at that path (the receipt was re-issued). C06 clause (c)
+# (`ledger_record_path_refusal`) admits a ledger entry only if its digest is a receipt the gate bound, or
+# it stands untouched since base; it refuses a dropped base entry. So:
+#   * the stale entry is NOT in the ledger at base → it can never be admitted (its bytes are gone and it
+#     is not history). Keeping it is certain CHANGE_SET_INCOMPLETE; removing it is exactly what the gate
+#     wants. `attach` supersedes it and says so, old and new digest.
+#   * the stale entry IS in the ledger at base → an earlier card's evidence. Dropping it is refused, and
+#     leaving it untouched is admitted. `attach` keeps it and says so.
+#   * base unknown → which of the two is unknowable here; refuse with the command that supplies it,
+#     rather than guess (a wrong guess is a gate refusal later, the defect this card exists for).
+# Supersede over refuse: in the first case a refusal would only make the author delete the entry by
+# hand — A2-328's workaround — for a result the tool can compute itself.
+def _stale_for(ledger: dict, att: dict) -> list[dict]:
+    d, rp = att["evidence_ref"]["digest"], att.get("receipt_path")
+    return [x for x in ledger.get("attachments", []) or []
+            if isinstance(x, dict) and x.get("receipt_path") == rp and _att_digest(x) != d]
+
+
+def _attach_base_ledger(root: Path, ledger_file: Path, base: str | None) -> tuple[dict, str]:
+    """→ (the ledger as it stands at base, a label naming base). Default base: merge-base of HEAD and
+    origin/main — the base the PR's gate will use. Raises AttachRefusal when it cannot be resolved."""
+    hint = (f"re-run with --base <the PR's base ref> (e.g. --base origin/main after `git fetch origin`)")
+    try:
+        rel = ledger_file.resolve().relative_to(root).as_posix()
+    except ValueError:
+        raise AttachRefusal(f"ATTACH_BASE_UNKNOWN: the ledger {ledger_file} is outside {root}; {hint}") from None
+    ref = base or "origin/main"
+    r = subprocess.run(["git", "-C", str(root), "merge-base", "HEAD", ref], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise AttachRefusal(f"ATTACH_BASE_UNKNOWN: the ledger holds an older entry for this receipt_path and "
+                            f"`git merge-base HEAD {ref}` did not resolve in {root}, so whether that entry is "
+                            f"history (keep) or dead (supersede) is unknown; {hint}")
+    sha = r.stdout.strip()
+    shown = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{rel}"], capture_output=True)
+    if shown.returncode != 0:
+        return {"attachments": []}, f"base {sha[:12]} (no ledger there)"
+    try:
+        doc = json.loads(shown.stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise AttachRefusal(f"ATTACH_BASE_UNKNOWN: {rel} at base {sha[:12]} does not parse; {hint}") from None
+    return (doc if isinstance(doc, dict) else {"attachments": []}), f"base {sha[:12]}"
+
+
+def merge_attachment(ledger: dict, att: dict, base_ledger: dict | None, base_where: str | None) -> tuple[dict, dict]:
+    """Put `att` into `ledger` the way the gate will admit it → (ledger, outcome). Pure."""
+    d = att["evidence_ref"]["digest"]
+    atts = list(ledger.get("attachments", []) or [])
+    stale = _stale_for(ledger, att)
+    at_base = {_att_digest(x): canonical(x) for x in (base_ledger or {}).get("attachments", []) or []
+               if isinstance(x, dict)}
+    if stale and base_ledger is None:
+        raise AttachRefusal("ATTACH_BASE_UNKNOWN: an older entry for this receipt_path exists and base was not read")
+    superseded, kept = [], []
+    for x in stale:
+        row = {"receipt_path": x.get("receipt_path"), "digest_old": _att_digest(x), "digest_new": d}
+        if at_base.get(_att_digest(x)) == canonical(x):
+            kept.append(row)
+        else:
+            superseded.append(row)
+    gone = {r["digest_old"] for r in superseded}
+    atts = [x for x in atts if not (x in stale and _att_digest(x) in gone)]
+    action = "superseded" if superseded else "appended"
+    for i, x in enumerate(atts):
+        if _att_digest(x) == d:
+            atts[i] = att | {"attached_at_utc": x.get("attached_at_utc", att["attached_at_utc"])}
+            action = "refreshed"
+            break
+    else:
+        atts.append(att)
+    return dict(ledger, attachments=atts), {"action": action, "superseded": superseded, "kept_at_base": kept}
 
 
 # ------------------------------------------------------------------ charter scan
@@ -3801,6 +4063,31 @@ def make_fixtures(base: str, head: str, repo: Path | None = None) -> dict[str, d
         "probe like any other verifier, so the entity is failed and the overstated claim is named",
         probe_contradicted)
 
+    def forged_decision(r):
+        # A2-314 — C21's blocking fixture: a decision exemption over a real not_measured verdict, owner and
+        # expiry in order (C10 is satisfied), signed by a key no policy enrols. Disable C21 and it admits.
+        for v in r["verdicts"]:
+            if v["entity"] == "code_unit:src/c.ts":
+                v["verdict"] = "not_measured"
+                v["reason"] = ("v-canary: INFERRED_BOUNDARY_WITHOUT_CANARY: no canary result lists this entity "
+                               "(matrix P6, observed-edges-and-deploy-gate.v1 rule C1)")
+        payload = {"schema": DECISION_SCHEMA, "entity": "code_unit:src/c.ts", "class": "no_live_contour",
+                   "verifier": "v-canary", "measured_reason": "forged", "why_unmeasurable": "forged",
+                   "decision_to_proceed": "a decision to proceed, forged", "evidence": "none",
+                   "reverse_if": "never", "repo": "Arcanada-one/fixture", "receipt_id": r["receipt_id"],
+                   "change_binding": {"base": base, "head": head, "digest": "sha256:" + "0" * 64},
+                   "issued_at_utc": "2026-09-05T12:00:00Z", "expires_at_utc": "2126-09-05T12:00:00Z",
+                   "signer": {"id": "fixture-self-enrolled", "fingerprint": None}}
+        r["exemptions"] = [{"entity": "code_unit:src/c.ts", "code": DECISION_CODE, "owner": "fixture-self-enrolled",
+                            "reason": payload["decision_to_proceed"], "expires_at_utc": payload["expires_at_utc"],
+                            "decision": payload,
+                            "signature": sshsig.make_detached(b"\x07" * 32, decision_payload_bytes(payload),
+                                                              "aup-decision-exemption")}]
+        r["admission"] = {"verdict": "admitted_with_exemptions", "rule": "fixture"}
+    add("violation-DECISION_EXEMPTION_INVALID", "refuse", ["DECISION_EXEMPTION_INVALID", "NOT_MEASURED_WITHOUT_EXEMPTION"],
+        "a non-structural exemption signed by a key the policy does not enrol exempts nothing (A2-314, C21)",
+        forged_decision)
+
     def no_wi(r):
         r["work_item"] = None
     add("violation-WORK_ITEM_EVIDENCE_MISSING", "paused_safe", ["WORK_ITEM_EVIDENCE_MISSING"],
@@ -3946,7 +4233,7 @@ def selftest(receipt_out: Path | None, keep: bool = False) -> int:
                 paths = [p] + paths
                 wi = work_item_id(doc.get("work_item"))
                 if wi:
-                    att = build_attachment(p, doc, wi, f"fixture {name}", None)
+                    att = build_attachment(p, doc, wi, f"fixture {name}", None, root=root)
                     lp = ledger_path(ledger_dir, wi)
                     led = json.loads(lp.read_text(encoding="utf-8")) if lp.exists() else \
                         {"schema": "WorkItemEvidenceLedger/v1", "work_item": wi, "system": "muneral", "attachments": []}
@@ -4042,7 +4329,7 @@ def selftest(receipt_out: Path | None, keep: bool = False) -> int:
         # 6. the attachment is evidence-shaped and never a status
         p = wd / "receipt.json"
         doc = json.loads(p.read_text(encoding="utf-8"))
-        att = build_attachment(p, doc, "AUP-GRAPH-006", "selftest", None)
+        att = build_attachment(p, doc, "AUP-GRAPH-006", "selftest", None, root=root)
         ok = (att["attachment_kind"] == "evidence" and att["evidence_ref"]["contentType"] == "application/json"
               and re.match(r"^sha256:[0-9a-f]{64}$", att["evidence_ref"]["digest"])
               and len(att["evidence_ref"]["uri"]) <= 512 and len(att["evidence_ref"]["label"]) <= 128
@@ -4347,6 +4634,336 @@ def cmd_exempt(a) -> int:
     return 0 if adm == "admitted_with_exemptions" else 3
 
 
+# ------------------------------------------------------------------ A2-314: the decision exemption
+# DEC-AUP-0037 R3 already names the ONE honest way past a not_measured that no verifier can discharge:
+# «an exemption attached for that reason records a decision to proceed, and MUST say so in its reason
+# field in those words». What it never named is who may record it, and the gate never checked: C10
+# admits ANY exemption with an owner and an expiry, and it measures that expiry against the receipt's
+# own `captured_at_utc` — so a hand-written exemption never expires once written. Control therefore
+# signed forty of them by hand on scrutator #107, while `exempt` (structural only) answered NOT
+# ELIGIBLE on every live case (I14 historical receipts; v-canary on tools with no live contour).
+#
+# DecisionExemption/v1 turns the de-facto form into an instrument:
+#   * issued by `admit_change.py exempt-decision`, signed with an Ed25519 SSH key of an ADMITTING
+#     agent. The key never enters a repository; the gate trusts only the public keys listed in the
+#     admission policy AS IT STOOD AT BASE (program repository) or in the pinned bundle (caller), so a
+#     change can never add the signer that admits it;
+#   * the signed payload names the entity, its verifier, the verdict reason as measured, WHY it cannot
+#     be measured, the decision to proceed (DEC-AUP-0037 R3 wording), the evidence, `reverse_if`, and
+#     the diff it is bound to — void for any other diff, and void after `max_ttl_days` by the GATE's
+#     clock, never the receipt's. An eternal exemption is a disabled gate;
+#   * only two classes exist, each re-checked by the gate against the receipt it is shown: a
+#     historical receipt ADDED by the range (I14), and a v-canary pause in a repository with no declared
+#     live contour. A `failed` verdict is never decision-exempted, nor is the work-item evidence ledger
+#     (its 19 out-of-repository attachments are a `build_attachment` defect, not an unmeasurable thing).
+# Under `decision_exemptions.enforcement: off` (main's behaviour) an unsigned exemption is still judged
+# by C10 alone; a signed one is always checked. Under `signed`, an unsigned non-structural exemption
+# exempts nothing (C21). Which setting is in force is control's decision, not this tool's.
+DECISION_CODE = "DECISION_TO_PROCEED"
+DECISION_SCHEMA = "DecisionExemption/v1"
+DECISION_PHRASE = "decision to proceed"
+
+
+def decision_policy(policy: dict) -> dict:
+    return policy.get("decision_exemptions") or {}
+
+
+def decision_signers(repo: Path, base: str, policy: dict, repo_name: str | None) -> tuple[list[dict], str]:
+    """The trusted signers → (signers, where they were read). Never the head the change wrote.
+
+    Program repository: the policy file at BASE — its CI builds the gate from the head under test, so
+    the head's own policy would let a pull request enrol the key that admits it. Caller repository: the
+    policy the pinned bundle carries (a bundle edit is BUNDLE_MODIFIED_BY_PR)."""
+    if is_program_repo(repo, repo_name):
+        raw = git_text_or_none(repo, "show", f"{base}:{POLICY_PATH.relative_to(PROGRAM_ROOT)}")
+        if raw is None:
+            return [], f"no admission policy at base {base[:12]}"
+        try:
+            pol = json.loads(raw)
+        except ValueError as e:
+            return [], f"admission policy at base {base[:12]} unreadable: {e}"
+        return list(decision_policy(pol).get("signers") or []), f"admission policy at base {base[:12]}"
+    return list(decision_policy(policy).get("signers") or []), "admission policy of the pinned bundle"
+
+
+def decision_payload_bytes(payload: dict) -> bytes:
+    return canonical(payload).encode("utf-8")
+
+
+def _range_status(repo: Path, base: str, head: str) -> dict[str, str]:
+    return {f["path"]: f["status"] for f in range_files(repo, base, head)}
+
+
+def decision_eligibility(repo: Path, doc: dict, entity: str, klass: str, policy: dict,
+                         repo_name: str) -> tuple[bool, str, dict]:
+    """Is `entity` of this receipt a thing a decision may cover? → (ok, reason, facts).
+
+    Called by the issuer AND by the gate on every evaluation: the receipt is never believed about its
+    own eligibility. Refusals name the reason, because each is a different action for the author."""
+    dp = decision_policy(policy)
+    classes = dp.get("classes") or {}
+    facts: dict = {"entity": entity, "class": klass}
+    if klass not in classes:
+        return False, f"class {klass!r} is not one of {sorted(classes)}", facts
+    v = next((x for x in doc.get("verdicts") or [] if isinstance(x, dict) and x.get("entity") == entity), None)
+    if v is None:
+        return False, "the receipt carries no verdict for this entity — nothing to exempt", facts
+    facts["verdict"], facts["measured_reason"] = v.get("verdict"), v.get("reason") or ""
+    if v.get("verdict") != "not_measured":
+        return False, (f"verdict is {v.get('verdict')!r}: only a not_measured verdict can be decided past — a "
+                       f"failed verdict is a defect to fix, a verified one needs nothing"), facts
+    path = entity.split(":", 1)[1] if ":" in entity else entity
+    if path.startswith(LEDGER_REL + "/") or path == LEDGER_REL:
+        return False, ("ATTACHMENT_NOT_EXEMPTIBLE: the work-item evidence ledger is not an unmeasurable thing. "
+                       "Its out-of-repository attachments (receipt_path under /tmp or a sibling worktree) come "
+                       "from build_attachment falling back to an absolute path instead of refusing "
+                       "(tools/graph/admit_change.py build_attachment, the `except ValueError` branch); the "
+                       "remedy is to re-attach from the committed receipt, not a decision"), facts
+    spec = classes[klass]
+    prefix = spec.get("entity_prefix")
+    if prefix and not entity.startswith(prefix):
+        return False, f"class {klass} covers only entities named {prefix}…", facts
+    marker = spec.get("reason_marker") or ""
+    if marker not in facts["measured_reason"]:
+        return False, (f"class {klass} covers a verdict whose reason carries {marker!r}; this one says "
+                       f"{facts['measured_reason'][:120]!r}"), facts
+    if spec.get("requires_added_in_range"):
+        cs = doc.get("change_set") or {}
+        st = _range_status(repo, cs.get("base") or "", cs.get("head") or "") if cs.get("base") and cs.get("head") else {}
+        facts["status_in_range"] = st.get(path)
+        if st.get(path) != "A":
+            return False, (f"a historical receipt is a record: the class covers one ADDED by the receipt's range; "
+                           f"{path} has status {st.get(path)!r} there — an edited record is a rewritten one"), facts
+    contours = spec.get("live_contours") or {}
+    if klass == "no_live_contour" and repo_name in contours:
+        return False, (f"a live contour IS declared for {repo_name} ({contours[repo_name]}): run the canary there. "
+                       f"A decision covers only a pause no measurement can clear"), facts
+    return True, "eligible", facts
+
+
+def verify_decision_exemption(repo: Path, doc: dict, x: dict, policy: dict, *, base: str,
+                              repo_name: str, now: datetime) -> list[str]:
+    """Every problem with one signed exemption; [] means it exempts its entity."""
+    dp = decision_policy(policy)
+    ent = x.get("entity")
+    p = x.get("decision")
+    sig = x.get("signature")
+    if not isinstance(p, dict) or not isinstance(sig, str):
+        return [f"{ent}: a {DECISION_CODE} exemption carries no signed `decision` payload"]
+    probs = []
+    if p.get("schema") != DECISION_SCHEMA:
+        probs.append(f"{ent}: payload schema {p.get('schema')!r}")
+    for k in ("entity", "class", "verifier", "measured_reason", "why_unmeasurable", "decision_to_proceed",
+              "evidence", "reverse_if", "issued_at_utc", "expires_at_utc", "signer", "change_binding"):
+        if not p.get(k):
+            probs.append(f"{ent}: payload field {k!r} is empty — a decision without it is not a decision")
+    if probs:
+        return probs
+    if p["entity"] != ent or x.get("expires_at_utc") != p["expires_at_utc"] or x.get("code") != DECISION_CODE:
+        probs.append(f"{ent}: the exemption's entity/expiry/code differ from what was signed")
+    if DECISION_PHRASE not in str(p["decision_to_proceed"]).lower():
+        probs.append(f"{ent}: DEC-AUP-0037 R3 — the decision must say «{DECISION_PHRASE}» in those words")
+    # the signer is a key the change did not write
+    signers, where = decision_signers(repo, base, policy, repo_name)
+    sid = (p.get("signer") or {}).get("id")
+    key = next((s for s in signers if s.get("id") == sid), None)
+    if key is None:
+        probs.append(f"{ent}: signer {sid!r} is not a trusted signer in the {where} "
+                     f"({len(signers)} trusted) — a key a change can enrol is not a signature")
+    else:
+        ok, why, det = sshsig.verify_detached(decision_payload_bytes(p), sig, key.get("public_key") or "",
+                                              dp.get("namespace") or "")
+        if not ok:
+            probs.append(f"{ent}: {why}")
+        elif (p.get("signer") or {}).get("fingerprint") != det.get("public_key_fingerprint"):
+            probs.append(f"{ent}: signed fingerprint {p['signer'].get('fingerprint')} is not {sid}'s key")
+    # expiry, by the GATE's clock
+    def _aware(d):
+        return d.replace(tzinfo=timezone.utc) if d is not None and d.tzinfo is None else d
+    iss, exp = _aware(parse_iso(p["issued_at_utc"])), _aware(parse_iso(p["expires_at_utc"]))
+    now = _aware(now)
+    ttl = int(dp.get("max_ttl_days") or 14)
+    if iss is None or exp is None:
+        probs.append(f"{ent}: issued/expires not ISO-8601")
+    else:
+        if exp <= now:
+            probs.append(f"{ent}: expired {p['expires_at_utc']} (gate clock {now.isoformat()})")
+        if exp - iss > timedelta(days=ttl):
+            probs.append(f"{ent}: lifetime {(exp - iss).days}d exceeds max_ttl_days={ttl}")
+        if iss > now + timedelta(minutes=5):
+            probs.append(f"{ent}: issued in the future ({p['issued_at_utc']})")
+    # bound to the receipt's own diff
+    cs = doc.get("change_set") or {}
+    b = p["change_binding"]
+    if b.get("base") != cs.get("base") or b.get("head") != cs.get("head"):
+        probs.append(f"{ent}: bound to {str(b.get('base'))[:12]}..{str(b.get('head'))[:12]}, the receipt is "
+                     f"{str(cs.get('base'))[:12]}..{str(cs.get('head'))[:12]}")
+    else:
+        try:
+            dg = diff_digest(repo, cs["base"], cs["head"])
+        except Exception as e:  # an unreadable range is not a matching one
+            dg = f"unmeasurable: {e}"
+        if b.get("digest") != dg:
+            probs.append(f"{ent}: diff digest {str(b.get('digest'))[:23]}… is not this range's {dg[:23]}…")
+    if p.get("repo") != repo_name:
+        probs.append(f"{ent}: signed for repository {p.get('repo')!r}, this is {repo_name!r}")
+    if p.get("receipt_id") != doc.get("receipt_id"):
+        probs.append(f"{ent}: signed for receipt {p.get('receipt_id')!r}, this is {doc.get('receipt_id')!r}")
+    # the class is re-derived here, from the receipt and the policy in force — never read from the payload
+    ok, why, facts = decision_eligibility(repo, doc, ent, p["class"], policy, repo_name)
+    if not ok:
+        probs.append(f"{ent}: not eligible — {why}")
+    elif facts.get("measured_reason") != p["measured_reason"]:
+        probs.append(f"{ent}: the verdict reason changed since the decision was signed")
+    return probs
+
+
+def ssh_sign(key_path: Path, message: bytes, namespace: str, workdir: Path) -> str:
+    """`ssh-keygen -Y sign` — the production signature, from a key file that is never in a repository."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    msg = workdir / "decision-payload.json"
+    msg.write_bytes(message)
+    sigp = Path(str(msg) + ".sig")
+    if sigp.exists():
+        sigp.unlink()
+    r = subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", str(key_path), "-n", namespace, str(msg)],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode != 0 or not sigp.exists():
+        raise UsageError(f"ssh-keygen -Y sign failed (rc {r.returncode}): {r.stderr.strip()[:200]}")
+    return sigp.read_text(encoding="utf-8")
+
+
+def _path_inside(p: Path, root: Path) -> bool:
+    try:
+        p.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def cmd_exempt_decision(a) -> int:
+    """A2-314 — an ADMITTING agent records a signed decision to proceed past named not_measured entities.
+
+    Refuses (exit 3, nothing written) when a reason, the evidence, reverse_if or the key is missing,
+    when the key file lives inside a repository, when the lifetime exceeds policy, or when any entity is
+    not eligible — naming the reason per entity. Never touches a verdict: the entity stays not_measured."""
+    policy = load_policy(a.policy)
+    dp = decision_policy(policy)
+    repo = Path(a.repo).resolve()
+    rp = Path(a.receipt)
+    doc = json.loads(rp.read_text(encoding="utf-8"))
+    repo_name = a.repo_name or (doc.get("repo") or {}).get("name") or repo_remote_name(repo)
+    cs = doc.get("change_set") or {}
+    refusals = []
+    for k in ("why_unmeasurable", "decision", "evidence", "reverse_if", "signer_id"):
+        if not (getattr(a, k, None) or "").strip():
+            refusals.append(f"--{k.replace('_', '-')} is empty: an unexplained exemption is a disabled gate")
+    if a.decision and DECISION_PHRASE not in a.decision.lower():
+        refusals.append(f"--decision must say «{DECISION_PHRASE}» in those words (DEC-AUP-0037 R3)")
+    key = Path(a.signing_key) if a.signing_key else None
+    if key is None or not key.exists():
+        refusals.append("--signing-key: no private key file — the decision is unsigned and is not issued")
+    elif _path_inside(key, repo) or _path_inside(key, PROGRAM_ROOT):
+        refusals.append(f"--signing-key {key} is inside a repository: a key anyone with the tree holds signs "
+                        f"nothing")
+    ttl = int(dp.get("max_ttl_days") or 14)
+    days = a.ttl_days if a.ttl_days is not None else ttl
+    if days <= 0 or days > ttl:
+        refusals.append(f"--ttl-days {days}: the policy allows 1..{ttl}; an exemption must expire")
+    if not dp.get("namespace"):
+        refusals.append("the admission policy declares no decision_exemptions.namespace")
+    if not cs.get("base") or not cs.get("head"):
+        refusals.append("the receipt has no change_set.base/head to bind to")
+    me = None
+    if cs.get("base") and a.signer_id:
+        signers, where = decision_signers(repo, cs["base"], policy, repo_name)
+        me = next((s for s in signers if s.get("id") == a.signer_id), None)
+        if me is None:
+            refusals.append(f"signer {a.signer_id!r} is not enrolled in the {where} ({len(signers)} enrolled): "
+                            f"the gate would refuse it (C21). Enrolment is its own reviewed change")
+        elif key is not None and key.exists():
+            pubp = Path(str(key) + ".pub")
+            mine = pubp.read_text().split()[:2] if pubp.exists() else []
+            if mine != (me.get("public_key") or "").split()[:2]:
+                refusals.append(f"--signing-key is not the key enrolled for {a.signer_id!r} (or its .pub is "
+                                f"missing beside it)")
+    ents = list(a.entity or [])
+    if a.all_eligible:
+        ents += [v["entity"] for v in doc.get("verdicts") or []
+                 if isinstance(v, dict) and v.get("verdict") == "not_measured" and v["entity"] not in ents]
+    if not ents:
+        refusals.append("no --entity and no --all-eligible: nothing to decide")
+    report = {"schema": "DecisionExemptionIssuance/v1", "producer": {"tool": TOOL, "version": VERSION},
+              "repo": repo_name, "receipt": str(rp), "class": a.klass, "issued": [], "refused": []}
+    elig = []
+    for e in ents:
+        ok, why, facts = decision_eligibility(repo, doc, e, a.klass, policy, repo_name)
+        (elig if ok else report["refused"]).append(facts if ok else {"entity": e, "reason": why})
+    if a.all_eligible:  # an --all-eligible sweep reports what it did not take; only named entities refuse
+        named = set(a.entity or [])
+        blocking = [r for r in report["refused"] if r["entity"] in named]
+    else:
+        blocking = report["refused"]
+    if refusals or blocking or not elig:
+        for r in refusals:
+            print(f"REFUSED: {r}")
+        for r in report["refused"]:
+            print(f"NOT ELIGIBLE {r['entity']}: {r['reason']}")
+        if not refusals and not blocking and not elig:
+            print("REFUSED: no entity is eligible")
+        report["verdict"] = "refused"
+        report["refusals"] = refusals
+        if a.evidence_out:
+            write_json(Path(a.evidence_out), report)
+        return 3
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires = (now + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fp = sshsig.fingerprint(*sshsig.parse_public_key(me["public_key"]))
+    binding = {"base": cs["base"], "head": cs["head"], "digest": diff_digest(repo, cs["base"], cs["head"])}
+    wd = Path(a.workdir) if a.workdir else Path(tempfile.mkdtemp(prefix="a2-314-decision-"))
+    new = []
+    for facts in elig:
+        e = facts["entity"]
+        verifier = "I14" if a.klass == "historical_receipt" else "v-canary"
+        payload = {"schema": DECISION_SCHEMA, "entity": e, "class": a.klass, "verifier": verifier,
+                   "measured_reason": facts["measured_reason"], "why_unmeasurable": a.why_unmeasurable.strip(),
+                   "decision_to_proceed": a.decision.strip(), "evidence": a.evidence.strip(),
+                   "reverse_if": a.reverse_if.strip(), "repo": repo_name, "receipt_id": doc.get("receipt_id"),
+                   "work_item": (doc.get("work_item") or {}).get("id") if isinstance(doc.get("work_item"), dict) else None,
+                   "change_binding": binding, "issued_at_utc": issued_at, "expires_at_utc": expires,
+                   "signer": {"id": a.signer_id, "fingerprint": fp},
+                   "decision_ref": "DEC-AUP-0037 R3; A2-314"}
+        sig = ssh_sign(key, decision_payload_bytes(payload), dp["namespace"], wd)
+        new.append({"entity": e, "code": DECISION_CODE, "owner": a.signer_id,
+                    "reason": a.decision.strip(), "expires_at_utc": expires,
+                    "decision": payload, "signature": sig})
+        report["issued"].append({"entity": e, "expires_at_utc": expires})
+    covered = {x["entity"] for x in new}
+    doc["exemptions"] = [x for x in (doc.get("exemptions") or [])
+                         if not (isinstance(x, dict) and x.get("entity") in covered)] + new
+    verdict_of = {v["entity"]: v.get("verdict") for v in doc.get("verdicts") or [] if isinstance(v, dict)}
+    exempted = {x.get("entity") for x in doc["exemptions"] if isinstance(x, dict)}
+    left = sorted(e for e, v in verdict_of.items() if v != "verified" and e not in exempted)
+    adm = ("refused" if any(verdict_of[e] == "failed" for e in left) else
+           ("paused_safe" if left else "admitted_with_exemptions"))
+    doc["admission"] = {"verdict": adm, "rule": (
+        "admitted_with_exemptions requires every non-verified entity to carry a valid exemption. "
+        f"{len(new)} {DECISION_CODE} exemption(s) were signed by {a.signer_id} (DEC-AUP-0037 R3: a decision to "
+        f"proceed recorded by the admitting agent); the gate re-verifies each signature, binding, expiry and "
+        f"eligibility (C21). The verdicts are unchanged: those entities are still not_measured.")}
+    out = Path(a.out) if a.out else rp
+    write_json(out, doc)
+    report["verdict"] = adm
+    if a.evidence_out:
+        write_json(Path(a.evidence_out), report)
+    for r in report["refused"]:
+        print(f"NOT ELIGIBLE {r['entity']}: {r['reason']}")
+    print(f"{adm.upper()}  {DECISION_CODE}  {len(new)} signed by {a.signer_id}  expires {expires}  "
+          f"binding {binding['digest'][:23]}…  left {len(left)}  → {out}")
+    return 0 if adm == "admitted_with_exemptions" else 3
+
+
 def cmd_b7_opine(a) -> int:
     """DEC-AUP-0020 rule 7 — the second, independent authority's OWN recomputation, never a copy of
     the primary's claim. Runs the full B7.1-B7.4 arm set itself, from git and from a scratch worktree
@@ -4468,6 +5085,29 @@ def main(argv=None) -> int:
                                                 "by a DIFFERENT authority-id")
     ex.set_defaults(fn=cmd_exempt)
 
+    xd = sub.add_parser("exempt-decision", help="A2-314 — an ADMITTING agent signs a decision to proceed "
+                                                "(DEC-AUP-0037 R3) past named not_measured entities; the gate "
+                                                "re-verifies it (C21). Never the change author, never by hand")
+    xd.add_argument("--repo", required=True)
+    xd.add_argument("--receipt", required=True, help="the ChangeAdmissionReceipt/v1 to issue into")
+    xd.add_argument("--class", dest="klass", required=True, choices=["historical_receipt", "no_live_contour"])
+    xd.add_argument("--entity", action="append", help="an entity to decide past (repeatable)")
+    xd.add_argument("--all-eligible", action="store_true",
+                    help="every not_measured entity of the receipt that this class covers; the rest are listed")
+    xd.add_argument("--why-unmeasurable", help="WHY no verifier can measure it — required")
+    xd.add_argument("--decision", help="the decision to proceed, in those words (DEC-AUP-0037 R3) — required")
+    xd.add_argument("--evidence", help="what WAS measured that the decision rests on — required")
+    xd.add_argument("--reverse-if", help="the observation that voids this decision — required")
+    xd.add_argument("--signer-id", help="the admitting agent's id as enrolled in decision_exemptions.signers")
+    xd.add_argument("--signing-key", help="the admitting agent's private Ed25519 key file (never in a repository)")
+    xd.add_argument("--ttl-days", type=int, help="lifetime in days, 1..decision_exemptions.max_ttl_days")
+    xd.add_argument("--out", help="write the amended receipt here (default: in place)")
+    xd.add_argument("--evidence-out", help="write the DecisionExemptionIssuance/v1 report here")
+    xd.add_argument("--policy", type=Path)
+    xd.add_argument("--repo-name")
+    xd.add_argument("--workdir")
+    xd.set_defaults(fn=cmd_exempt_decision)
+
     bo = sub.add_parser("b7-opine", help="DEC-AUP-0020 rule 7 — an independent authority's own recomputed "
                                          "verdict on a declaration amendment, for --b7-second-opinion")
     bo.add_argument("--repo", required=True)
@@ -4490,6 +5130,8 @@ def main(argv=None) -> int:
     at.add_argument("--ledger-dir")
     at.add_argument("--policy", type=Path)
     at.add_argument("--post", action="store_true", help="probe Muneral for a work-item evidence route and record it")
+    at.add_argument("--base", help="the PR's base ref; decides whether an older entry for the same receipt_path is "
+                                   "history (kept) or dead (superseded). Default: merge-base of HEAD and origin/main")
     at.set_defaults(fn=cmd_attach)
 
     cs = sub.add_parser("charter-scan", help="classify TDD / test-first hits across the live charter surfaces")
