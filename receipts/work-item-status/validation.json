@@ -1,0 +1,58 @@
+{
+  "schema": "WorkItemStatusValidationReceipt/v1",
+  "observed_at": "2026-09-27T21:10:18.869696+00:00",
+  "executor": "Codex Agent",
+  "work_item": "dc29125e-dcf8-44be-96cd-625e97fee2a0",
+  "code_commit": "29c32f29d729602e525d51839ce4bc7d7f5aa51e",
+  "files_sha256": {
+    "crates/cli/src/cli.rs": "eec308659a88ae104c02fe851e87f55327a003d5c44519bbc974220d95f9dd81",
+    "crates/cli/src/lib.rs": "dd2b974008c01769f9cd2f28384724bcf46c2b11bd6847c98dde1e951bff064d",
+    "crates/cli/src/main.rs": "e57dbd728694ab6651a360c83aedd47a3dedf938af747ef7003e4b6cafbab522",
+    "crates/cli/src/status.rs": "87d8f6401e27080f8d8b8251ae3e5f1112df21e478a5d188c0ee8b674249150e",
+    "crates/cli/tests/status_smoke.rs": "d90631c5d0070dace30a42b866233e191f2cfb60e188bd7b8f16f774280023d6",
+    "crates/connectors/src/muneral.rs": "daef4f7630a179eb1861d0f889a0e9299b522b426d4ea14c675d425fbfb42991",
+    "docs/how-to/work-item-status.md": "07081846c661ca4239c58a2d146826765e3a9417343e9ef6fc01fdcdefdec0d6"
+  },
+  "local": {
+    "binary_http_fixtures": {
+      "verdict": "verified",
+      "command": "cargo test -p arcana-agent --test status_smoke",
+      "passed": 6
+    },
+    "regression": {
+      "verdict": "verified",
+      "command": "cargo test -p arcana-agent -p arcana-connectors < /dev/null",
+      "passed": 504,
+      "ignored": 4,
+      "failed": 0
+    },
+    "clippy": {
+      "verdict": "verified",
+      "command": "cargo clippy -p arcana-agent -p arcana-connectors --all-targets -- -D warnings"
+    },
+    "format": {
+      "verdict": "verified",
+      "command": "cargo fmt --all -- --check"
+    },
+    "graph": {
+      "verdict": "admitted",
+      "receipt": "../graph/change-admission-work-item-status.json",
+      "scope": "fitness and document references; not a runtime observation"
+    }
+  },
+  "harness_note": "Initial tmux run waited for terminal input in two existing bootstrap tests. Closing stdin reproduced all four bootstrap tests successfully and the complete affected suite then passed. Product code was not changed for that harness issue.",
+  "not_measured": [
+    "independent review",
+    "remote CI at PR head",
+    "deployed Muneral status command",
+    "500ms SLO and saturated control capacity",
+    "full routing AT-002/003/046/056",
+    "runtime heartbeat/progress/ETA/cancellation"
+  ],
+  "log_sha256": {
+    "status-test-committed.log": "23dda075745957218d4be3e3a64637d76e06bc52425d51d09b41a6ebfd2da75b",
+    "status-clippy.log": "cb4194ae54bec400b69e8f9fb97a2c4f5b2bcc7013f279d4486cbcc940f47aea",
+    "status-regression.log": "65d2a799f450b56dacd49fd1261f208e3d24d58f2b4edcd2e5430437bbb6cc84",
+    "status-admission-gate.log": "5e6b89a2cab9012332a7a2b4986d3567bad52657e6388aec5d1ed0557b607446"
+  }
+}
