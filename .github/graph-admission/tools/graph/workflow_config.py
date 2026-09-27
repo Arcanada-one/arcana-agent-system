@@ -349,16 +349,32 @@ def validate(raw):
             # measured at all. A label set is a nonempty list of nonempty strings and nothing else,
             # which is the check `needs` already uses.
             runs_on = job.get('runs-on')
-            if isinstance(runs_on, list):
-                string_list(runs_on)
+            def label_set(labels):
+                string_list(labels)
                 # BaseLoader makes every scalar a str, so `[self-hosted, 5]` arrives as ['self-hosted',
                 # '5'] and a type check alone accepts it. Measured while counter-checking this very
                 # change: that mutation passed as `verified`. A runner label is not a number.
-                for label in runs_on:
+                for label in labels:
                     if re.fullmatch(r'[+-]?[0-9]+(\.[0-9]+)?', label):
                         raise ValueError(f'runs-on label is a number, not a label: {label!r}')
+            # A2-384: the third documented shape, `runs-on: {group: <runner group>, labels: <label |
+            # [labels]>}`. Rejecting it made scrutator's deploy.yml (`group: scrutator-prod`) FAILED for
+            # every change to the file once A2-311 stopped `environment:` from masking it as
+            # not_measured — a verdict about the checker, not about the change. Shape only: a nonempty
+            # group name and/or a label set, nothing else; which runners the group holds stays unmeasured.
+            if isinstance(runs_on, dict):
+                mapping(runs_on, 'group labels')
+                if not runs_on:
+                    raise ValueError('runs-on mapping needs group or labels')
+                if 'group' in runs_on and (not isinstance(runs_on['group'], str) or not runs_on['group']):
+                    raise ValueError('runs-on group must be a nonempty scalar')
+                if 'labels' in runs_on:
+                    labels = runs_on['labels']
+                    label_set([labels] if isinstance(labels, str) else labels)
+            elif isinstance(runs_on, list):
+                label_set(runs_on)
             elif not isinstance(runs_on, str) or not runs_on:
-                raise ValueError('literal/scalar runs-on or a label array required')
+                raise ValueError('literal/scalar runs-on, a label array or a {group, labels} mapping required')
             # `services` and `strategy` are validated for SHAPE, never interpreted: a service is a
             # named image with optional env/ports/options, a strategy is a matrix with optional
             # fail-fast. Accepting the shape is what lets the rest of the file be measured; the
@@ -368,6 +384,14 @@ def validate(raw):
                 scalar(svc.get('image', ''))
             if 'strategy' in job:
                 mapping(job['strategy'], 'matrix fail-fast max-parallel')
+                # A2-415. #40 (f7d986e4) made `strategy` a measured shape but left `matrix` optional, so
+                # `strategy: {}` — a shape GitHub rejects — came back `verified`. Green at f7d986e4~1, red
+                # at f7d986e4: test_unsupported_and_malformed_yaml_fail_closed caught it and nothing ran
+                # the test. Evidence that GitHub requires it: SchemaStore github-workflow.json,
+                # definitions.normalJob.properties.strategy.required = ["matrix"] — a community schema,
+                # the best evidence available, not GitHub's own.
+                if 'matrix' not in job['strategy']:
+                    raise ValueError('strategy requires a matrix')
             steps = job.get('steps')
             if not isinstance(steps, list) or not steps:
                 raise ValueError('nonempty steps required')

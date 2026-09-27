@@ -37,7 +37,8 @@
    "revision_selection",
    "structural_exclusions",
    "receipt_path",
-   "observed"
+   "observed",
+   "verifier_selection"
   ],
   "producer": {
    "required": [
@@ -310,6 +311,30 @@
     "not_measured"
    ],
    "rule": "probe ids are unique within the receipt; verifier_id names a verifier of this receipt whose kind is endpoint_probe; a row whose verdict is failed or not_measured carries a detail saying what was seen instead (the tri-valued discipline of verdict.rule, applied one level down)"
+  },
+  "verifier_selection": {
+   "schema": "VerifierSelection/v1",
+   "required": [
+    "schema",
+    "requested",
+    "applied",
+    "not_applied"
+   ],
+   "selectable_values": [
+    "targeted_test",
+    "property_check"
+   ],
+   "not_applied_reasons": [
+    "NO_SPEC_REACHES_ENTITY",
+    "NO_RUNNER_ON_HOST",
+    "NO_ENTITY_OF_APPLICABLE_TYPE",
+    "NO_PROPERTY_DECLARED"
+   ],
+   "required_from_producer": {
+    "tool": "tools/graph/verify.py",
+    "min_version": "1.1.0"
+   },
+   "rule": "A2-413. What was asked for (`requested`, the --select set, [] when nothing), what applied to which entity (`applied`: verifier → entities), and why a requested verifier did not apply (`not_applied`: verifier, reason, entities). Every requested verifier is accounted for in applied or not_applied; applied keys and not_applied verifiers are requested ones; when `verify.required_by_entity` is present, an entity is listed under applied[v] exactly when v is in its required set. The prose `selected:` note in `notes`, when present, must name the same set. Absent on receipts from producers that predate it — their silence is a dated fact, never backfilled — and required from tools/graph/verify.py >= 1.1.0."
   }
  },
  "rules": {
@@ -343,7 +368,10 @@
   "CANARY_CLAIM_WITHOUT_COMMITTED_EVIDENCE": "DEC-AUP-0037: a verifier of kind canary whose output_ref is not a repository-relative path (absolute path, URL, or a path escaping the repository) while some entity CASHES that claim — a verdict of verified citing the verifier id, or the verifier being what keeps INFERRED_BOUNDARY_WITHOUT_CANARY quiet for a boundary entity. Evidence the gate cannot open at the receipt's head is testimony, not measurement; the entities a canary covers are the ones its document lists, never the ones the receipt's verifier row lists.",
   "OBSERVED_ENTRY_INVALID": "an `observed` row is malformed: it is not an object, lacks probe/verifier_id/expected/observed/verdict/source, carries a verdict outside {verified, failed, not_measured}, repeats a probe id, omits `detail` on a failed/not_measured row, or names a verifier_id that is not a verifier of kind endpoint_probe in this receipt",
   "ENDPOINT_PROBE_WITHOUT_OBSERVATION": "a verifier of kind endpoint_probe that some entity CASHES — a `verified` verdict cites it — while no `observed` row names it: a claim of measurement with no measurement recorded. A probe row nothing rests on claims nothing and is not reported, the same `cashed` condition DEC-AUP-0037 applies to a canary",
-  "PROBE_CLAIM_CONTRADICTS_OBSERVATION": "an entity whose verdict is `verified` cites a verifier of kind endpoint_probe among whose `observed` rows at least one carries verdict failed or not_measured — the receipt claims more than the contour was observed to do. An exemption cannot waive this: an exemption is the instrument for a NON-verified entity, and this rule fires precisely where the receipt says `verified`. The honest shapes are a `not_measured`/`failed` verdict for the entity, or a second endpoint_probe row that carries only the probes that were green"
+  "PROBE_CLAIM_CONTRADICTS_OBSERVATION": "an entity whose verdict is `verified` cites a verifier of kind endpoint_probe among whose `observed` rows at least one carries verdict failed or not_measured — the receipt claims more than the contour was observed to do. An exemption cannot waive this: an exemption is the instrument for a NON-verified entity, and this rule fires precisely where the receipt says `verified`. The honest shapes are a `not_measured`/`failed` verdict for the entity, or a second endpoint_probe row that carries only the probes that were green",
+  "VERIFIER_SELECTION_INVALID": "verifier_selection is malformed or contradicts itself or verify.required_by_entity: unknown schema/verifier/reason, an applied or not_applied verifier that was not requested, a requested verifier accounted for nowhere, or an applied set that disagrees with the required set",
+  "VERIFIER_SELECTION_MISSING": "a receipt from a producer that writes verifier_selection (tools/graph/verify.py >= 1.1.0) carries none — the absence that cannot be told apart from «nobody asked»",
+  "VERIFIER_SELECTION_CONTRADICTS_NOTES": "the prose `selected:` note and verifier_selection.requested name different sets"
  },
  "verdicts": {
   "conformant": "0 violations",

@@ -26,6 +26,17 @@ def index_at(repo: impact.Repo, revision: str) -> impact.GraphIndex:
     return impact.GraphIndex(doc)
 
 
+def fallback_units(q: dict) -> set[str]:
+    """The entity a triggered global fallback collapses onto, for a live impact query.
+
+    The rule itself lives in `schema_check.fallback_units` — the module that imports nothing of
+    ours — so that verify.py, this module and the receipt conformance check cannot hold three
+    versions of it. Here it is only fed the query's rows.
+    """
+    return schema_check.fallback_units([e for section in ("deterministic_core", "inferred_tail")
+                                        for e in q["impact_set"][section]])
+
+
 def selected(q: dict) -> set[str]:
     # A global fallback (lockfile / global config) makes the impact the WHOLE REPOSITORY as ONE
     # entity - the Bazel/Nx rule of DEC-AUP-0008 - and its verifier is the repository's own test
@@ -37,8 +48,14 @@ def selected(q: dict) -> set[str]:
     # repository entity and the missing author - and then paused that same receipt with
     # HEAD_IMPACT_NOT_COVERED over 464 nodes it had itself collapsed into one. Two halves of one
     # gate disagreeing about how many entities a fallback carries.
+    #
+    # The seeds alone were NOT that one entity, and a manifest carries no seed: a change to
+    # package.json / pnpm-lock.yaml alone selected nothing at all, so the receipt printed
+    # `paused_safe` over an empty verdict list (A2-232, talomnia-backend: core=14, verdicts=0,
+    # verifiers=0, against core=4 / verdicts=6 for a .ts change in the same repository). The
+    # collapse was right; the entity it collapsed onto was missing. `fallback_units` supplies it.
     if q["impact_set"].get("global_fallback", {}).get("triggered"):
-        return set(q["seeds"])
+        return set(q["seeds"]) | fallback_units(q)
     return set(q["seeds"]) | {e["entity"] for section in ("deterministic_core", "inferred_tail")
                              for e in q["impact_set"][section]}
 
@@ -374,11 +391,11 @@ def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: 
     hops = {e: set() for e in affected}
     for section in ("deterministic_core", "inferred_tail"):
         for e in q["impact_set"][section]:
-            # A global fallback makes selected() return the seeds alone, while impact.py still
-            # lists the whole graph in deterministic_core as the readable blast radius. Rows
-            # outside the selection have no hops entry and are not entities to be verified -
-            # they ARE the radius. Skipping them keeps this function agreeing with selected()
-            # instead of raising KeyError on the first one (measured: muneral #108).
+            # A global fallback narrows selected() to the seeds plus the repository's own unit(s),
+            # while impact.py still lists the whole graph in deterministic_core as the readable
+            # blast radius. Rows outside the selection have no hops entry and are not entities to
+            # be verified - they ARE the radius. Skipping them keeps this function agreeing with
+            # selected() instead of raising KeyError on the first one (measured: muneral #108).
             if e["entity"] not in hops:
                 continue
             for path in e.get("revision_paths", [e]):

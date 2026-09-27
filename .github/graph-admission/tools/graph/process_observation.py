@@ -180,6 +180,29 @@ def result_errors(result):
     return errors
 
 
+def host_cannot_reach(exc) -> bool:
+    """A2-409. `os.path.exists` answers False for BOTH «the path is absent» and «this host may not
+    traverse there» (EACCES on a parent directory, ENOTDIR on a component). The §5.2 accommodation
+    below forgave only FileNotFoundError, so on such a host the two halves of one discriminator
+    disagreed: `tree_present` said «the producer's tree is not here», and the except branch said
+    «it is here and a member has been removed» — and refused.
+
+    Measured on this repository's own CI, 2026-09-27, on pull request #193: `execution_files` are
+    absolute paths by contract (the producer refuses a relative manifest with
+    CANARY_EVIDENCE_INVALID), the canary was produced under /home/dev, and the ci-general runner
+    account cannot traverse it — /home/dev is drwxr-x---+ and the ACL grants --x to uid 985 alone,
+    not to the runner's uid. Every re-read therefore raised PermissionError and the change was
+    REFUSED for a fact about the runner's account rather than about the change.
+
+    Forgiving it is safe and changes no verdict upward: the branch it reaches records the entry in
+    `execution_freshness_not_measured` BY NAME, the committed pins are still checked, and
+    `not_measured` is never read as a pass (DEC-AUP-0008 I4). What stays a refusal is the case the
+    discriminator is for: if ANY of the inventory resolves, the tree IS on this host and a missing
+    or unreadable member is a removal.
+    """
+    return isinstance(exc, (FileNotFoundError, NotADirectoryError, PermissionError))
+
+
 def bound_errors(doc, read):
     """Read original hash-bound plan and recompute its full entity/probe coverage.
 
@@ -235,7 +258,7 @@ def bound_errors(doc, read):
                 try:
                     if file_digest(p["argv"][0])[0] != p["executable_sha256"]: errors.append("executable changed since observation")
                 except (OSError, ValueError) as exc:
-                    if tree_present or not isinstance(exc, FileNotFoundError):
+                    if tree_present or not host_cannot_reach(exc):
                         errors.append("executable is no longer verifiable")
                     else:
                         unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
@@ -269,7 +292,7 @@ def bound_errors(doc, read):
                         # and the result's own `matched` must agree with its own recorded digest. A
                         # forged pair is refused here exactly as before; only the re-read is
                         # downgraded, and it is downgraded to not_measured by name, never to pass.
-                        if tree_present or not isinstance(exc, FileNotFoundError):
+                        if tree_present or not host_cannot_reach(exc):
                             # the tree IS here (or the path is here and unreadable — a FIFO, a
                             # symlink, an oversize blob): unchanged, fail closed.
                             if result["outcome"] != "not_measured":

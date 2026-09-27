@@ -69,7 +69,7 @@ import impact  # noqa: E402
 import impact_pair  # noqa: E402
 import contract_diff  # noqa: E402
 
-VERSION = "1.0.1"
+VERSION = "1.2.0"   # 1.1.0 (A2-413): every receipt carries `verifier_selection`; 1.2.0 (A2-418): property_check only where declared
 TOOL = "tools/graph/verify.py"
 MATRIX_PATH = ROOT / "contracts" / "graph-verified-change" / "verifier-matrix.v1.json"
 GATE_POLICY_PATH = ROOT / "contracts" / "graph-verified-change" / "admission-gate.v1.json"
@@ -135,7 +135,8 @@ MANDATORY_IDS = ["type_check", "contract_diff", "route_config_consistency", "sch
 SELECTABLE_IDS = ["targeted_test", "property_check"]
 # internal rules the mutation battery disables one at a time
 RULES = ["aggregate_failed_wins", "missing_required_not_measured", "disabled_mandatory_event", "inferred_boundary_hold",
-         "baseline_expiry", "admission_rule", "every_entity_verdict", "changed_node_outgoing"]
+         "baseline_expiry", "admission_rule", "every_entity_verdict", "changed_node_outgoing",
+         "impact_without_verdicts_event"]
 
 
 # ----------------------------------------------------------------------------------------------- helpers
@@ -585,6 +586,51 @@ def module_of(path: str, dep: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def is_test_path(path: str) -> bool:
+    """The TypeScript/JavaScript test-file rule build_graph applies (TsFile.is_test), for a repo path."""
+    return bool(re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", path) or "/test/" in path or "/__tests__/" in path
+                or path.startswith(("test/", "__tests__/")))
+
+
+def tsconfig_names(tree, cfg: str, rel: str) -> bool:
+    """Does `cfg` (a repository path) name `rel` (a path relative to that config) in `files` or
+    `include`? Only an EXPLICIT listing counts: a config that inherits its include through
+    `extends`, or that cannot be read, answers False, so an unreadable config never moves a file.
+    A config with neither `files` nor `include` nor `extends` covers everything (tsc's `**/*`)."""
+    try:
+        doc = build_graph.load_jsonc(tree.text(cfg) or "")
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(doc, dict):
+        # A2-353, found by control on the rebase. The `or {}` this replaced put «unreadable» into the
+        # SAME branch as «an object with neither files nor include nor extends», which returns True —
+        # so a config parsing to `[]`, or to nothing at all, answered «I name every file you ask me
+        # about». That is the one direction this routing can move a verdict onto a project that never
+        # compiled the code. Only a real object may make the tsc `**/*` claim.
+        return False
+    files, inc = doc.get("files"), doc.get("include")
+    if files is None and inc is None:
+        return "extends" not in doc
+    norm = lambda x: str(x).strip().removeprefix("./")  # noqa: E731
+    if rel in {norm(f) for f in (files or [])}:
+        return True
+    for pat in (norm(x) for x in (inc or [])):
+        if not any(ch in pat for ch in "*?"):
+            if rel == pat or rel.startswith(pat.rstrip("/") + "/"):
+                return True
+            continue
+        rx = re.escape(pat).replace(r"\*\*/", "(?:.*/)?").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+        if re.fullmatch(rx, rel):
+            return True
+    return False
+
+
+
+def canary_unreachable_test(ntype: str, path: str, inferred_boundary: bool | None) -> bool:
+    """A2-353: is this a test code_unit no canary can ever list (and no inferred boundary holds)?"""
+    return ntype == "code_unit" and not inferred_boundary and is_test_path(path or "")
+
+
 def type_project_of(path: str, deployables: dict[str, dict], tree: build_graph.Tree) -> str | None:
     """A root tooling tsconfig can own checks without being a runtime deployable.
 
@@ -827,6 +873,8 @@ class Verify:
         self.matrix = matrix
         self.disabled = {x.strip() for x in (getattr(a, "disable", "") or "").split(",") if x.strip()}
         self.selected = {x.strip() for x in (getattr(a, "select", "") or "").split(",") if x.strip()}
+        self.sel_applied: dict[str, set[str]] = {}                  # A2-413: verifier → entities it applied to
+        self.sel_not_applied: dict[tuple[str, str], set[str]] = {}  # A2-413: (verifier, reason) → entities
         self.rules = set(RULES) - {x.strip() for x in (getattr(a, "disable_rule", "") or "").split(",") if x.strip()}
         self.fr_rules = {"fr01", "fr02", "fr03", "fr04", "fr05", "rc01", "rc02", "rc03"} - \
             {x.strip() for x in (getattr(a, "disable_rule", "") or "").split(",") if x.strip()}
@@ -852,6 +900,7 @@ class Verify:
         self.ev: dict[str, dict[str, tuple[str, str]]] = {}   # verifier id → entity → (verdict, reason)
         self.canary_paths = list(getattr(a, "canary", None) or [])   # CanaryResult/v1 documents (AUP-GRAPH-008)
         self.canary_verified: set[str] = set()
+        self.canary_discharged_tests: list[str] = []   # A2-353: test code_units whose `canary` was discharged
         self.prep_seconds = 0.0
         # DEC-AUP-0035. WHERE this run's receipt is going, expressed relative to the repository, and
         # for which work item. Both are needed to recognise the one entity a receipt can never
@@ -978,9 +1027,15 @@ class Verify:
         # (measured on muneral #108: selected() 8 entities against 466 verdicts, 151 of them
         # not_measured, PAUSED_SAFE). selected() and mandatory_by_entity() already honour the flag;
         # this is the same disagreement at its source.
-        # `q["seeds"]` is exactly what impact_pair.selected() returns under a triggered fallback;
-        # read it directly rather than importing that module for one predicate.
-        selection = set(q["seeds"]) if imp.get("global_fallback", {}).get("triggered") else None
+        #
+        # This line used to read `q["seeds"]` directly - "exactly what impact_pair.selected()
+        # returns under a triggered fallback" - and that copy is how the rule came to disagree with
+        # itself a second time: a manifest carries no seed, so a lockfile-only change selected
+        # NOTHING and the receipt weighed nothing while printing paused_safe (A2-232,
+        # talomnia-backend: core=14, verdicts=0, verifiers=0). Call the one function instead. The
+        # repository's own deployable unit is the entity a fallback collapses onto, and it now
+        # comes back from selected() (A2-235).
+        selection = impact_pair.selected(q) if imp.get("global_fallback", {}).get("triggered") else None
         for section in ("deterministic_core", "inferred_tail"):
             for e in imp[section]:
                 if selection is not None and e["entity"] not in selection:
@@ -1022,6 +1077,17 @@ class Verify:
                 for e in self.head_fwd.get(ent["id"], []) + [x for x in self.idx.doc["edges"] if x["from"] == ent["id"]]:
                     req |= set(m["edge_types"].get(e["type"], {}).get("mandatory", []))
             req = {v for v in req if ntype in m["verifiers"][v]["applies_to_nodes"]}
+            # A2-353. A canary lists entities of the LIVE contour (routes, config keys, deployables); a
+            # test file is never on it, so no canary plan can ever name one and the obligation is
+            # permanently unsatisfiable — the same trap polyglot2 removed from `type_check`. Measured on
+            # muneral #177: `delete process.env.TELEGRAM_BOT_TOKEN` in test/auth.service.spec.ts gave the
+            # spec a `reads_config` edge, whose mandatory `canary` pinned the change at paused_safe
+            # while the canary itself (76 verified) could not list the file. The discharge is only for a
+            # test code_unit reached without an inferred boundary: `config_schema` stays mandatory, and
+            # an inferred-boundary entity keeps the P6 hold below. It is recorded, never silent.
+            if "canary" in req and canary_unreachable_test(ntype, ent["node"].get("path", ""), ent.get("inferred_boundary")):
+                req.discard("canary")
+                self.canary_discharged_tests.append(ent["id"])
             # AUP-GRAPH-009 polyglot2. `type_check` applies to three node types (code_unit,
             # deployable_unit, route) but the "this file is not TypeScript" discharge existed for ONE
             # of them. The same fact was answered two different ways: a non-TS code_unit had the
@@ -1052,13 +1118,36 @@ class Verify:
             # that spec's language exists on this host. Everything else keeps the verdict its own
             # verifiers gave it, and the inapplicable runner is recorded as INAPPLICABLE_RUNNER —
             # visible, never a pass, and never a demotion.
+            # A2-413: every decision below is RECORDED (receipt `verifier_selection`), not only taken.
+            # Before this the receipt said what was asked for (a prose `selected:` note) and never what
+            # applied: five receipts asked for targeted_test, applied it to nothing, and are
+            # indistinguishable from a run where the verifier was never reached. Recording changes no
+            # decision — the branches are the same three as before.
             for s in self.selected:
                 if ntype not in m["verifiers"][s]["applies_to_nodes"]:
                     continue
                 if s == "targeted_test" and ent["id"] not in self.targeted_test_runnable():
+                    planned = any(ent["id"] in g["entities"] for g in self.targeted_test_plan())
+                    self.sel_not_applied.setdefault((s, "NO_RUNNER_ON_HOST" if planned else "NO_SPEC_REACHES_ENTITY"), set()).add(ent["id"])
+                    continue
+                # A2-418. The same rule for the other selectable verifier. `property_check` is answered
+                # only for entities the profile declares a property for (`profile.property_checks`,
+                # v_property_check); demanding it of every entity of an applicable node type turned the
+                # flag into a demotion — every earlier `verified` became «required verifier
+                # property_check produced no verdict» (A2-417 § 2: 4 of 7 verified entities in the
+                # battery's S00 scenario). A selected verifier may add a measurement; it may never
+                # remove one. Where nothing is declared it is recorded, not demanded.
+                if s == "property_check" and not (self.profile.get("property_checks") or {}).get(ent["id"]):
+                    self.sel_not_applied.setdefault((s, "NO_PROPERTY_DECLARED"), set()).add(ent["id"])
                     continue
                 req.add(s)
+                self.sel_applied.setdefault(s, set()).add(ent["id"])
             ent["required"] = sorted(req)
+        if self.canary_discharged_tests:
+            self.notes.append(f"A2-353: `canary` discharged for {len(self.canary_discharged_tests)} test code_unit(s) — a "
+                              f"canary lists live-contour entities and can never name a test file; their other "
+                              f"verifiers (config_schema, type_check, fitness) still apply: "
+                              + ", ".join(sorted(self.canary_discharged_tests)[:10]))
         self.disabled_hits = sorted(v for v in self.disabled if any(v in e["required"] for e in self.entities.values()))
         if self.disabled_hits and "disabled_mandatory_event" in self.rules:
             self.events.append({"code": "MANDATORY_VERIFIER_DISABLED", "verifiers": self.disabled_hits,
@@ -1115,6 +1204,23 @@ class Verify:
                     break
             self._has_nest = found
         return self._has_nest
+
+    def verifier_selection(self) -> dict:
+        """A2-413 — what was asked for, what applied to which entity, and why the rest did not.
+
+        Written on EVERY receipt, `[]`/`{}` when nothing was requested: an absent field is exactly what
+        could not be told apart from «nobody asked». A requested verifier that no entity's node type
+        admits is recorded as NO_ENTITY_OF_APPLICABLE_TYPE with no entities, so every requested
+        verifier is accounted for in `applied` or `not_applied`. The prose `selected:` note stays.
+        """
+        applied = {v: sorted(es) for v, es in sorted(self.sel_applied.items()) if es}
+        not_applied = [{"verifier": v, "reason": r, "entities": sorted(es)}
+                       for (v, r), es in sorted(self.sel_not_applied.items()) if es]
+        seen = set(applied) | {x["verifier"] for x in not_applied}
+        for v in sorted(self.selected - seen):
+            not_applied.append({"verifier": v, "reason": "NO_ENTITY_OF_APPLICABLE_TYPE", "entities": []})
+        return {"schema": "VerifierSelection/v1", "requested": sorted(self.selected), "applied": applied,
+                "not_applied": not_applied}
 
     def needing(self, verifier: str) -> list[str]:
         return sorted(e for e, ent in self.entities.items() if verifier in ent["required"] and verifier not in self.disabled)
@@ -1193,6 +1299,7 @@ class Verify:
                 continue
             for cfg in cfgs:
                 groups.setdefault((dep, cfg), []).append(eid)
+        ran = []   # compilations that completed, judged below once every config has been listed
         for (dep, cfg), eids in sorted(groups.items()):
             started = now_iso()
             gen = self.generated_tsconfig(dep, cfg)
@@ -1233,6 +1340,15 @@ class Verify:
                                            f"not_measured: dependencies not installed",
                             {e: ("not_measured", why) for e in eids})
                 continue
+            ran.append((cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors))
+        # A2-334. A deployable can carry several projects that partition its files — auth-arcana
+        # checks `src/` under `tsconfig.json` (commonjs) and `scripts/` under `tsconfig.scripts.json`
+        # (ESM, `import.meta`). Aggregation lets a `not_measured` from one verifier beat a `verified`
+        # from another of the same kind, so "tsconfig.json does not include scripts/x.ts" used to
+        # erase the verdict of the project that did compile it. Non-membership is a verdict only
+        # when NO project of the run listed the file; otherwise the owning project speaks.
+        listed_anywhere = set().union(*(r[9] for r in ran)) if ran else set()
+        for cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors in ran:
             verdicts = {}
             for eid in eids:
                 n = self.entities[eid]["node"]
@@ -1254,6 +1370,8 @@ class Verify:
                 if path in errors_by_file:
                     verdicts[eid] = ("failed", f"{cfg}: " + "; ".join(errors_by_file[path][:3]))
                 elif path not in listed:
+                    if path in listed_anywhere:
+                        continue   # another project of this run compiled it; its verdict stands
                     verdicts[eid] = ("not_measured", f"{cfg} does not include {path}")
                 elif n_err == 0:
                     verdicts[eid] = ("verified", f"{cfg}: project compiles, 0 errors")
@@ -1332,6 +1450,14 @@ class Verify:
             rel = path[len(prefix):]
             is_test = bool(re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", rel) or rel.startswith(("test/", "__tests__/", "e2e/")))
             if test_cfg and is_test:
+                cfgs = [test_cfg]
+            # A2-353. The name heuristic above sends a root-level runner config (vitest.config.ts,
+            # jest.config.mjs) to the BUILD config, which by design does not include it — it emits to
+            # the image — and the verdict was a permanent `does not include`, although the test config
+            # names the file explicitly and `tsc -p tsconfig.test.json` checks it. Measured on muneral
+            # #177. A file the build configs do not name but the test config does is checked there.
+            elif (test_cfg and cfgs and test_cfg not in cfgs
+                  and not any(tsconfig_names(self.tree_head, c, rel) for c in cfgs) and tsconfig_names(self.tree_head, test_cfg, rel)):
                 cfgs = [test_cfg]
         if prof.get("synthetic_tsconfig") is not None and not cfgs:
             cfgs.append(f"synthetic:{dep}")
@@ -2389,6 +2515,32 @@ class Verify:
             verdicts.append(rec)
         if "every_entity_verdict" not in self.rules and verdicts:
             verdicts = verdicts[:-1]   # mutant: drop one verdict
+        # A2-235. An impact set that weighs nothing is a finding, never silence. The inline
+        # admission computation this commit also carried is NOT kept: `admission_verdict(verdicts,
+        # exemptions)` on main states the same rule in one place, including «an empty verdict list
+        # pauses», and stating it twice is how the two copies drift.
+        rows = q["impact_set"]["deterministic_core"] + q["impact_set"]["inferred_tail"]
+        if not verdicts and rows and "impact_without_verdicts_event" in self.rules:
+            # An impact set that weighs nothing is a finding, never silence. `paused_safe` over an
+            # empty verdict list is byte-for-byte the same admission as a pause somebody measured,
+            # and that is how a 14-row impact set on talomnia-backend read as "the third verdict was
+            # applied" when not one entity had been weighed (A2-232). Name what the radius held, so
+            # the difference is legible to a reader and to the CI gate.
+            by_type: dict[str, int] = {}
+            for e in rows:
+                t = e.get("node_type") or e["entity"].split(":", 1)[0]
+                by_type[t] = by_type.get(t, 0) + 1
+            held = ", ".join(f"{k}: {v}" for k, v in sorted(by_type.items()))
+            self.events.append({
+                "code": "IMPACT_SET_WITHOUT_VERDICTS",
+                "text": f"{len(rows)} affected entity(ies) ({held}) and not one verdict"
+                        + (f"; {len(self.excluded)} structurally excluded (DEC-AUP-0034)" if self.excluded else "")
+                        + (f"; the global fallback over {q['impact_set']['global_fallback'].get('files') or 'a global config'} "
+                           f"reached no deployable unit and no code unit"
+                           if q["impact_set"].get("global_fallback", {}).get("triggered") else "")
+                        + " — nothing was measured, so this admission records the ABSENCE of a "
+                          "measurement, not a measured pause (DEC-AUP-0008: not_measured is a third "
+                          "verdict, never a pass)"})
         # A2-277 defect 3. The admission verdict used to be computed with `exemptions: []` no matter
         # what, because the agent could only attach exemptions AFTER reading the receipt — and there
         # was no way to recompute it, so the field had to be hand-edited into agreement with a rule
@@ -2417,6 +2569,23 @@ class Verify:
                          *exemption_notes, *self.notes],
                "verify": {"events": self.events, "required_by_entity": {e: ent["required"] for e, ent in sorted(self.entities.items())},
                           "seconds": {"prepare": self.prep_seconds, "verifiers": round(sum(v.get("duration_s", 0) for v in self.verifiers), 2)}}}
+        rec["verifier_selection"] = self.verifier_selection()
+        # A2-418. A selected verifier that applied to nothing leaves the REQUEST unanswered, and the
+        # change holds for that reason — workflow-configuration.md: «missing selected checks retain
+        # not_measured». What holds is the ADMISSION, under a code that names the request. The entity
+        # verdicts are not touched: each keeps what its own verifiers earned (A2-275: a flag may add a
+        # measurement, never remove one). Before this the pause was produced by demoting every entity
+        # to not_measured, which conflated «the check was not measured» with «the entity was not».
+        # Computed from the selection itself, not read back from the receipt: the pause must not depend on
+        # the record being written (test_verifier_selection's producer mutant removes exactly that line).
+        sel = self.verifier_selection()
+        unanswered = sorted(v for v in sel["requested"] if not sel["applied"].get(v))
+        if unanswered:
+            self.events.append({"code": "SELECTED_VERIFIER_APPLIED_TO_NOTHING", "verifiers": unanswered,
+                                "reason": "a verifier was requested with --select and applied to no entity (see verifier_selection.not_applied); "
+                                          "the request went unanswered, so the change holds — no entity verdict is demoted for it"})
+            if adm != "refused":
+                rec["admission"]["verdict"] = "paused_safe"
         if "head_graph" in q:
             rec["head_graph"] = q["head_graph"]
             rec["revision_selection"] = q["revision_selection"]
@@ -3040,7 +3209,12 @@ def selftest(a) -> int:
     before = {v["entity"]: v["verdict"] for v in nrec["verdicts"]}
     after = {v["entity"]: v["verdict"] for v in srec["verdicts"]}
     demoted = sorted(e for e, v in before.items() if v == "verified" and after.get(e) != "verified")
-    check("selecting targeted_test never demotes a verdict the flagless run produced (A2-275)", not demoted,
+    # A2-418: renamed. For two weeks this row was called «selecting targeted_test never demotes …» while
+    # the demotion it would have caught was property_check's (A2-417 § 2) — a name pointing at the wrong
+    # cause steers the next reader away from the right one. It states the PROPERTY, of every selected
+    # verifier. It is still blind on a host without tsc (the entities it compares are not_measured on
+    # both sides there); the twins below state the MECHANISM and go red on any host.
+    check("no selected verifier demotes a verdict the flagless run produced (A2-275, A2-418)", not demoted,
           demoted=demoted[:5], verified_before=sum(1 for v in before.values() if v == "verified"),
           verified_after=sum(1 for v in after.values() if v == "verified"))
     # The check above states the PROPERTY, and on a host whose tsc is missing it cannot go red — the
@@ -3052,6 +3226,11 @@ def selftest(a) -> int:
                 if "targeted_test" in req and e not in ran]
     check("targeted_test is demanded only of entities a targeted test actually ran for (A2-275)", not demanded,
           demanded=demanded[:5], count=len(demanded), ran=len(ran))
+    # A2-418 — the same mechanism for property_check: demanded only where the profile declares a property.
+    declared = set(json.loads((VFIX / "profile.ts-mini.json").read_text(encoding="utf-8")).get("property_checks") or {})
+    pc_demanded = [e for e, req in srec["verify"]["required_by_entity"].items() if "property_check" in req and e not in declared]
+    check("property_check is demanded only of entities the profile declares a property for (A2-418)", not pc_demanded,
+          demanded=pc_demanded[:5], count=len(pc_demanded), declared=len(declared))
     check("selectable property_check: none declared ⇒ note, no verifier row", any("property_check selected" in n for n in srec["notes"]) and not any(v["kind"] == "property_check" for v in srec["verifiers"]))
 
     # AUP-GRAPH-006:gate3b (hole H7) — config_schema must not attribute a VENDORED bundle's config keys to the caller.

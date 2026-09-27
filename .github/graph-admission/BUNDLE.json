@@ -1,5 +1,5 @@
 {
- "bundle_digest": "sha256:b817a8c3085dbc4d5d825488c977cadcf9cc5cdbb3200bee0f35c261e67a382a",
+ "bundle_digest": "sha256:a2ec95425d0f984aa247db76d529f0dde53c277d52330cf00e3c190d4a0f7455",
  "files": [
   {
    "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
@@ -10,14 +10,14 @@
    "verified_by_the_job": false
   },
   {
-   "blob_oid": "7f2c92acc5e441ccb92353cda7e34d3ce4ce5bfe",
+   "blob_oid": "271bcf845c34b747f3ee9ef64d935b90e124e965",
    "path": "tools/graph/admit_change.py",
-   "sha256": "sha256:235a328fd7bce2c5564b5f1fab90468e4defcef1fa577c0900858ad8e9d04183"
+   "sha256": "sha256:4475cd0709f9d6da4d64ab0815331f31cba2abaf63af2b79f348962957a58639"
   },
   {
-   "blob_oid": "e0b0b71bec42fb4494eea5a27918808c309cc78c",
+   "blob_oid": "b093c18d1276addadca1b797cce3be5226fef16f",
    "path": "tools/graph/schema_check.py",
-   "sha256": "sha256:f62e2bdd52ef1a1a754127a1a995e864f38c2a0289b7bdc6c9e76944d7d4dd76"
+   "sha256": "sha256:31bcfe54dc59a51417c1041f0359802f21337b7d156bb2df81e0f92d2a9ef4b3"
   },
   {
    "blob_oid": "808e46aac0bb0609a34651a3c07476b4e20452f1",
@@ -25,9 +25,9 @@
    "sha256": "sha256:501cbc6df9910b3c05177dfff0012c1d95f1e3d2f05c469999d769d66d86ca52"
   },
   {
-   "blob_oid": "ea894d0bf911d8a71d3dfaafb32d8a10ad29141c",
+   "blob_oid": "a275bdb785a8f9fc3b36a55f77d69ca0d1208c30",
    "path": "tools/graph/workflow_config.py",
-   "sha256": "sha256:e9a9769ae9cfb5b1542a8084d971806468e82503bf7db03954430073c5068878"
+   "sha256": "sha256:687c921891291e7261174c25453673f024d065cfd9718a62dd28124180d0f85c"
   },
   {
    "blob_oid": "903cb52e25e73c240c62eace1348c027e57d5181",
@@ -35,14 +35,14 @@
    "sha256": "sha256:021e0d0d5be7e24a1f67f595b8823ef21aafc9190116612df107f748c14806f4"
   },
   {
-   "blob_oid": "420b8b5f85fbafc11b8cd6cad735930bf87cef7d",
+   "blob_oid": "249a7f83d3a815a6040dbfc952e84c2bda4764f9",
    "path": "tools/graph/impact_pair.py",
-   "sha256": "sha256:1aa2324a69c48675dd6576ed312a691cc4266217576045014544797faa8fce97"
+   "sha256": "sha256:9e02800ef4cd17ee559e98a38f161158328ca0c26f6bb6d7e92ac4c4132304c4"
   },
   {
-   "blob_oid": "1c023a9d47f59530d64d43f00a793f404f3617b5",
+   "blob_oid": "1f08f1fd5aaa8b963895c9dd9f96235d3fb382c5",
    "path": "tools/graph/verify.py",
-   "sha256": "sha256:b42e9e01d96fc942b6283eb16b39d55ba0574e1b0f003dcdf84051ccb16950ef"
+   "sha256": "sha256:e9121b908b81af1dd3c5f9224d663331919c0806c9f044699a8df038ba567fc8"
   },
   {
    "blob_oid": "8a7289bd6cdcee56b85dbbf2b2797ddf1ad96678",
@@ -50,14 +50,14 @@
    "sha256": "sha256:9ad12a9cbdd888cc533b77ebae3d5181672ec49f2f9cbd9bdb2bb437fd7f4ffb"
   },
   {
-   "blob_oid": "ce4c28ce626fbc52d4d624e5f95ed582b67b656d",
+   "blob_oid": "fbcafbfcab4f4b720e8db491d146ae24887198c1",
    "path": "tools/graph/canary_evidence.py",
-   "sha256": "sha256:12a9e13ee94f7b4fbb3d04115ed28742a618cf4740b32958ea3398dcd07ad79e"
+   "sha256": "sha256:293609d0a477deb4298e1e9851ac76c369cbb7c811a2897752500aa069687a69"
   },
   {
-   "blob_oid": "90a6e07052d103cc9b517c861532b73ed8a13050",
+   "blob_oid": "e0ca0605c43ea74652abce5e785e5ee169048384",
    "path": "tools/graph/process_observation.py",
-   "sha256": "sha256:7543a203be033d59011d90da3272778d0304a9183fd146c13adc3f03da5a7bc9"
+   "sha256": "sha256:860243805d9746716f45acab13097d33475ca705167c94517ec4960e6df66a9d"
   },
   {
    "blob_oid": "e9defbc9f662f6dd0f75e2bf1f0567b31f37119d",
@@ -75,9 +75,9 @@
    "sha256": "sha256:84426bede0b0d1da378834b1a936520cdb475e5632a92b647c28f62be987990a"
   },
   {
-   "blob_oid": "e7d83bf215582e113b80b25124b5a500e0d4f779",
+   "blob_oid": "f97c4273c635f3e3215c13a0e063930951d7b48d",
    "path": "contracts/graph-verified-change/admission-gate.v1.json",
-   "sha256": "sha256:221403358b196e9d993911b437ec9e1ed3236344c0b33fd918e74482ea459909"
+   "sha256": "sha256:7b233af4a3ef48361a92a7752c263b4fa395904cc4f4ec3b71e27609d7829f3d"
   },
   {
    "blob_oid": "0af90c8111f640ffe677babd4a81be7cbe57fb21",
@@ -85,9 +85,9 @@
    "sha256": "sha256:7d4d78242ac31b774fc3a45178a31b75805cf404be6b87fcd4378bd4fbf7df2b"
   },
   {
-   "blob_oid": "0c088ca934c7cbba6c06045a554d47ebe8617463",
+   "blob_oid": "63598b7bde8de59f7d11fbe13a738081a616e79e",
    "path": "contracts/graph-verified-change/change-admission-receipt.v1.json",
-   "sha256": "sha256:25459da481cc3666ca3e03113af3773b76e2515ded5b4b595c24ef91d681a12f"
+   "sha256": "sha256:b5cdb22558940ef2d3294151ec40447d7ab14ccf9fab4102df8bd4e6fff63e51"
   },
   {
    "blob_oid": "97a9593a86a163aab1e15b412ed7d1205587aea6",
@@ -106,7 +106,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "4860a7897c6da4690cd775e57486150597a8a3f7",
+ "program_ref": "868129212dc27f02d2277eef11d1f30ae3bdbc62",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",

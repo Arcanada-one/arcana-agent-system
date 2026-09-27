@@ -47,6 +47,8 @@ RECORD_NAMESPACES = ("receipts/", "governance/design/")
 # (`git ls-files receipts governance/design`) and excludes the one .py, the one .patch and the 27
 # .zip that live there.
 RECORD_DENIED_PREFIXES = ("receipts/graph/work-item-evidence/",)
+# `receipts/graph/work-item-evidence/<id>.json` has three slashes; anything deeper is not an entry.
+LEDGER_REL_DEPTH = RECORD_DENIED_PREFIXES[0].count("/")
 RECORD_SUFFIXES = (".json", ".jsonl", ".md", ".txt", ".log")
 RECORD_FILE_MODE = "100644"
 MAX_REPORTED_DELTA_PATHS = 8
@@ -285,6 +287,90 @@ def tree_entries(repo, commit):
     return entries
 
 
+LEDGER_ENTRY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json")
+
+
+def blob_at(repo, oid):
+    return subprocess.check_output(["git", "-C", str(repo), "cat-file", "blob", oid],
+                                   stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT_SECONDS)
+
+
+def ledger_append_errors(repo, candidate_commit, candidate_entries, path, before, after):
+    """DEC-AUP-0061. The ONE shape of ledger delta a measurement may skip over: an APPEND whose every
+    new attachment names a receipt that is in the candidate tree with exactly the bytes it claims.
+
+    Why this carve-out exists at all, measured on 2026-09-27 (A2-408): a change that needs a canary
+    AND must carry a work-item evidence attachment could not be admitted at any commit order. The
+    receipt has to bind the full range, so the canary commit cannot follow it (C06
+    CHANGE_SET_INCOMPLETE); the ledger was denied here unconditionally, so it could not follow the
+    canary either. Re-issuing the receipt moves the ledger; re-taking the canary moves the canary
+    files. Three iterations, the two refusals alternating, and no fixed point exists: the head sha
+    is inside the receipt bytes, the digest of those bytes is inside the ledger, and the ledger is
+    inside the head tree.
+
+    Why it is safe to skip over, which is a different question and the one that decides it: what the
+    subject relaxation protects is «the code at the candidate is byte-for-byte the code the canary
+    measured». A ledger entry is not code and the canary never reads it. The reason the whole
+    directory was denied is that the GATE reads it (C13) — so the danger is a record commit that
+    slips in evidence about something the change does not contain. That is exactly what the last
+    condition forbids: an appended attachment may only name a receipt standing in the candidate tree
+    whose bytes hash to the digest the attachment records. A digest that names nothing, or names
+    other bytes, is refused here and the whole delta with it.
+
+    Deny-by-default is preserved in every other direction: a rewrite, a withdrawal, a reordering, a
+    change to any other key, a nested path, a non-regular file — all still refused.
+    """
+    name = path.split("/")[-1]
+    if not LEDGER_ENTRY_NAME.fullmatch(name) or path.count("/") != LEDGER_REL_DEPTH:
+        return [f"{path} is evidence the gate itself reads and is not even a work-item ledger entry "
+                f"(<id>.json directly under {RECORD_DENIED_PREFIXES[0]})"]
+    if after is None:
+        return [f"{path} is evidence the gate itself reads: an entry may be appended to by a record "
+                f"commit, never withdrawn by one"]
+    if after[0] != RECORD_FILE_MODE or (before is not None and before[0] != RECORD_FILE_MODE):
+        return [f"{path}: a work-item ledger entry must be a regular non-executable file "
+                f"(mode {after[0]})"]
+    try:
+        new = json.loads(blob_at(repo, after[1]))
+        old = json.loads(blob_at(repo, before[1])) if before is not None else {"attachments": []}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return [f"{path} is evidence the gate itself reads and cannot be read as JSON at both revisions"]
+    if not isinstance(new, dict) or not isinstance(old, dict):
+        return [f"{path} is evidence the gate itself reads and is not an object at both revisions"]
+    new_atts, old_atts = new.get("attachments"), old.get("attachments")
+    if not isinstance(new_atts, list) or not isinstance(old_atts, list):
+        return [f"{path} is evidence the gate itself reads and carries no attachments list"]
+    if {k: v for k, v in new.items() if k != "attachments"} != {k: v for k, v in old.items() if k != "attachments"} and before is not None:
+        return [f"{path} is evidence the gate itself reads: a record commit may append an attachment "
+                f"and change nothing else about the entry"]
+    if len(new_atts) <= len(old_atts) or new_atts[:len(old_atts)] != old_atts:
+        return [f"{path} is evidence the gate itself reads: only an APPEND may be skipped over, and "
+                f"this delta rewrites, reorders or removes what was already recorded"]
+    errors = []
+    for att in new_atts[len(old_atts):]:
+        ref = (att or {}).get("evidence_ref") or {}
+        rel, digest = (att or {}).get("receipt_path"), ref.get("digest")
+        if not isinstance(rel, str) or not isinstance(digest, str) or not digest.startswith("sha256:"):
+            errors.append(f"{path}: an appended attachment without a receipt_path and a sha256 "
+                          f"evidence digest names nothing the candidate can be checked against")
+            continue
+        entry = candidate_entries.get(rel)
+        if entry is None or entry[0] != RECORD_FILE_MODE:
+            errors.append(f"{path}: the appended attachment names {rel}, which is not a regular file "
+                          f"in the candidate tree — a measurement may not skip over evidence about "
+                          f"bytes the change does not contain")
+            continue
+        try:
+            actual = "sha256:" + hashlib.sha256(blob_at(repo, entry[1])).hexdigest()
+        except (OSError, subprocess.SubprocessError):
+            errors.append(f"{path}: {rel} cannot be read out of the candidate tree")
+            continue
+        if actual != digest:
+            errors.append(f"{path}: the appended attachment records {digest[:19]}… for {rel}, but the "
+                          f"candidate tree holds {actual[:19]}… — the entry names other bytes")
+    return errors
+
+
 def record_delta_errors(repo, measured_commit, candidate_commit, executed=()):
     """DEC-AUP-0040 R1: every refusal is named, and a path is named with it.
 
@@ -317,8 +403,10 @@ def record_delta_errors(repo, measured_commit, candidate_commit, executed=()):
                           f"the candidate may only touch {', '.join(RECORD_NAMESPACES)}")
             continue
         if any(path.startswith(ns) for ns in RECORD_DENIED_PREFIXES):
-            errors.append(f"{path} is evidence the gate itself reads (admit_change.LEDGER_DIR), not a "
-                          f"record document a measurement may skip over")
+            # DEC-AUP-0061: still denied, with exactly one proved-from-git-objects exception.
+            ledger = ledger_append_errors(repo, candidate_commit, candidate, path, before, after)
+            if ledger:
+                errors.extend(ledger)
             continue
         if path.rsplit("/", 1)[-1].startswith(".") or not path.endswith(RECORD_SUFFIXES):
             errors.append(f"{path} is not a record document: a record document is a "

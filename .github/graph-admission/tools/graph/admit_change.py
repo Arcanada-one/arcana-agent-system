@@ -6,8 +6,8 @@ Subcommands
                  ChangeAdmissionReceipt/v1 documents that are bound to it (contract
                  contracts/graph-verified-change/admission-gate.v1.json).
   attach         build a WorkItemEvidenceAttachment/v1 for a receipt and append it to the program-side
-                 evidence ledger; with --post, deliver it to Muneral when a work-item evidence route
-                 exists (probe recorded, never a status write).
+                 evidence ledger; with --post, POST it to Muneral's work-item evidence route and record
+                 the outcome as the delivery (never a status write).
   charter-scan   scan the live charter surfaces of a host for TDD / test-first and classify every hit
                  (mandate_default | opt_in_reference | neutral_mention | historical).
   pr-coverage    measure which merges of a pilot repository carry a receipt (AM1 baseline / window).
@@ -3413,40 +3413,91 @@ def build_attachment(receipt_path: Path, doc: dict, work_item: str, label: str, 
         "producer": {"tool": TOOL, "version": VERSION},
         "model": MODEL,
         "provisional_until_fable_review": True,
+        # A2-336. Nothing has been attempted yet, so the reason says exactly that. This line used to
+        # read MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE — a finding about Muneral written without asking
+        # Muneral, which stayed in every ledger entry after the route shipped (A2-274; A2-332 got 201).
+        # `cmd_attach` replaces it with the outcome of a real POST when one is made.
         "delivery": {"target": "muneral", "status": "not_measured",
-                     "reason_code": "MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE",
+                     "reason_code": "MUNERAL_POST_NOT_REQUESTED",
                      "checked_at_utc": now_iso(), "probe": []},
     }
 
 
-MUNERAL_CANDIDATE_ROUTES = [
-    ("POST", "/tasks/{id}/evidence"),
-    ("POST", "/tasks/{id}/attachments"),
-    ("POST", "/tasks/{id}/receipts"),
-    ("POST", "/work-items/{id}/evidence"),
-]
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
-def muneral_probe(task_id: str, key: str, base_url: str, ua: str) -> list[dict]:
-    """Read-only discovery: does a work-item evidence route exist for an agent key?
+def _muneral_error_body(raw: bytes) -> tuple[dict | None, str]:
+    text = raw.decode("utf-8", "replace")
+    try:
+        body = json.loads(text)
+        return (body if isinstance(body, dict) else None), text
+    except json.JSONDecodeError:
+        return None, text
 
-    A 404 says the route does not exist; 401/403 says it exists but rejects an agent key.
-    Probes are GETs — this function never writes to Muneral and never touches a status route.
+
+def muneral_deliver(att: dict, task_id: str, key: str, base_url: str, ua: str, route: str,
+                    timeout: float = 20.0) -> dict:
+    """POST one ledger attachment to Muneral's work-item evidence route and say what happened.
+
+    A2-336. The delivery record is the OUTCOME of this call, never a default:
+      posted        201 (new) or 200 with `idempotent: true` (the same claim was already stored), and
+                    the answer names the digest that was sent;
+      failed        the server refused (its `code` when it gives one — EVIDENCE_DIGEST_CONFLICT,
+                    EVIDENCE_URI_MALFORMED … — else MUNERAL_HTTP_<n>), or nothing listened
+                    (MUNERAL_UNREACHABLE), or the answer did not describe what was sent;
+      not_measured  the route itself is missing (404 with the framework's «Cannot POST» page — the one
+                    case that earns MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE), or the request was sent and no
+                    answer came back (MUNERAL_NO_ANSWER: it may have landed; a retry is idempotent).
+    The key goes only into the Authorization header of this one request; it is never recorded.
+    The route is the one the policy declares; it writes evidence, never a status or a transition.
     """
-    out = []
-    for _method, tmpl in MUNERAL_CANDIDATE_ROUTES:
-        path = tmpl.format(id=task_id)
-        req = urllib.request.Request(base_url + path, method="GET",
-                                     headers={"Authorization": f"Bearer {key}", "User-Agent": ua})
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                code = r.status
-        except urllib.error.HTTPError as e:
-            code = e.code
-        except OSError as e:
-            code = f"error:{type(e).__name__}"
-        out.append({"probe": f"GET {path}", "status": code})
-    return out
+    method, tmpl = route.split(" ", 1)
+    path = tmpl.format(id=task_id)
+    ref = att["evidence_ref"]
+    sha_hex = ref["digest"].split(":", 1)[1] if ref["digest"].startswith("sha256:") else ref["digest"]
+    payload = {"uri": ref["uri"], "sha256": sha_hex, "contentType": ref["contentType"]}
+    req = urllib.request.Request(base_url.rstrip("/") + path, method=method,
+                                 data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Authorization": f"Bearer {key}", "User-Agent": ua,
+                                          "Content-Type": "application/json"})
+    probe = {"probe": f"{method} {tmpl.format(id='<task>')}", "task_id": task_id}
+    d = {"target": "muneral", "route": route, "muneral_task_id": task_id}
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            code, raw = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        code, raw = e.code, e.read()
+    except urllib.error.URLError as e:
+        reason = e.reason
+        probe["status"] = f"error:{type(reason).__name__}"
+        if isinstance(reason, TimeoutError):
+            return d | {"status": "not_measured", "reason_code": "MUNERAL_NO_ANSWER", "probe": [probe]}
+        return d | {"status": "failed", "reason_code": "MUNERAL_UNREACHABLE", "probe": [probe]}
+    except (TimeoutError, ConnectionError, OSError) as e:
+        probe["status"] = f"error:{type(e).__name__}"
+        if isinstance(e, TimeoutError):
+            return d | {"status": "not_measured", "reason_code": "MUNERAL_NO_ANSWER", "probe": [probe]}
+        return d | {"status": "failed", "reason_code": "MUNERAL_UNREACHABLE", "probe": [probe]}
+    probe["status"] = code
+    body, text = _muneral_error_body(raw)
+    d["http"] = code
+    if code in (200, 201):
+        ok = (body is not None and body.get("sha256") == sha_hex and body.get("evidence_id")
+              and (code == 201 or body.get("idempotent") is True))
+        if not ok:
+            return d | {"status": "failed", "reason_code": "MUNERAL_ANSWER_MISMATCH",
+                        "answer": text[:300], "probe": [probe]}
+        return d | {"status": "posted", "reason_code": "MUNERAL_EVIDENCE_CREATED" if code == 201
+                    else "MUNERAL_EVIDENCE_IDEMPOTENT",
+                    "evidence_id": body["evidence_id"], "idempotent": bool(body.get("idempotent")),
+                    "created_at": body.get("created_at"), "probe": [probe]}
+    server_code = (body or {}).get("code")
+    message = (body or {}).get("message") if body else text
+    if code == 404 and body is None and f"Cannot {method}" in text:
+        return d | {"status": "not_measured", "reason_code": "MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE",
+                    "probe": [probe]}
+    return d | {"status": "failed", "reason_code": server_code or f"MUNERAL_HTTP_{code}",
+                "server_code": server_code, "message": str(message)[:300], "probe": [probe]}
 
 
 def _repo_root_of(d: Path) -> Path | None:
@@ -3480,20 +3531,26 @@ def cmd_attach(a) -> int:
         return 2
 
     if a.post:
-        key = os.environ.get("MUNERAL_API_KEY")
+        # A2-336: the reason is what was tried. Missing inputs are named as missing inputs — not as
+        # a fact about Muneral that nobody measured.
         m = policy["work_item_evidence"]["muneral"]
-        if not key:
+        key = os.environ.get("MUNERAL_API_KEY")
+        task_id = a.muneral_task_id or (wi if UUID_RE.match(wi) else None)
+        route = m.get("evidence_route")
+        att["delivery"]["checked_at_utc"] = now_iso()
+        if not route:
+            att["delivery"]["reason_code"] = "NO_EVIDENCE_ROUTE_DECLARED"
+        elif not task_id:
+            att["delivery"]["reason_code"] = "NO_MUNERAL_TASK_ID"
+        elif not UUID_RE.match(task_id):
+            att["delivery"]["reason_code"] = "MUNERAL_TASK_ID_NOT_UUID"
+        elif not key:
             att["delivery"]["reason_code"] = "NO_MUNERAL_API_KEY"
         else:
-            att["delivery"]["probe"] = muneral_probe(a.muneral_task_id or wi, key, m["base_url"], m["user_agent"])
-            live = [p for p in att["delivery"]["probe"] if p["status"] not in (404,)]
-            att["delivery"]["checked_at_utc"] = now_iso()
-            if not live:
-                att["delivery"]["reason_code"] = "MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE"
-            else:
-                att["delivery"]["reason_code"] = "MUNERAL_EVIDENCE_ROUTE_PRESENT_NOT_POSTED"
-                att["delivery"]["note"] = ("a candidate route answered; posting is enabled only after the route "
-                                           "is declared in admission-gate.v1.json work_item_evidence.muneral.evidence_route")
+            base_url = os.environ.get("MUNERAL_BASE_URL") or m["base_url"]
+            att["delivery"] = muneral_deliver(att, task_id, key, base_url, m["user_agent"], route) | {
+                "checked_at_utc": now_iso()}
+            att["work_item"]["muneral_task_id"] = task_id
 
     ledger = {"schema": "WorkItemEvidenceLedger/v1", "work_item": wi, "system": "muneral", "attachments": []}
     if p.exists():
@@ -4338,10 +4395,15 @@ def selftest(receipt_out: Path | None, keep: bool = False) -> int:
         results.append({"case": "attachment-shape", "ok": ok})
         passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
 
-        # 7. no status/transition route is reachable from this tool
+        # 7. no status/transition route is reachable from this tool. A2-336: the tool now makes ONE
+        # write — the evidence POST of `attach --post` — so the invariant is stated as what it always
+        # meant: the only network call site is `muneral_deliver`, and the only route it can be given is
+        # the policy's evidence route, which is neither a status nor a transition.
         src = Path(__file__).read_text(encoding="utf-8")
         needles = ["/trans" + "itions", "/sta" + "tus", "method=" + "\"POST\""]
-        ok = not any(n in src for n in needles)
+        route = policy["work_item_evidence"]["muneral"].get("evidence_route")
+        ok = (not any(n in src for n in needles) and src.count("urlopen" + "(") == 1
+              and route == "POST /tasks/{id}/evidence")
         results.append({"case": "no-status-write-path", "ok": ok})
         passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
 
@@ -4444,7 +4506,18 @@ def cmd_gate(a) -> int:
                 event = {"_unparsable": str(e)}
     doc = gate(repo, base, head, paths, policy, description=desc, bypass_flag=a.skip_receipt,
                work_item_enforcement=a.enforcement, explicit_receipts=bool(a.receipt),
-               ledger_dir=Path(a.ledger_dir) if a.ledger_dir else LEDGER_DIR,
+               # A2-309b. NOT `LEDGER_DIR` (= PROGRAM_ROOT / LEDGER_REL). C13 asks whether the
+               # ledger of THE REPOSITORY UNDER TEST records the receipt this run binds, and that
+               # repository is `--repo`. `PROGRAM_ROOT` is where the TOOL lives, and in the program
+               # repository's own CI the tool lives in a bundle built into the runner temp — so the
+               # default pointed at a directory outside the checkout, `ledger_lookup` found nothing,
+               # and C13 answered WORK_ITEM_EVIDENCE_MISSING for every receipt no matter what the
+               # ledger said. Invisible until this card turned `enforcement: ledger` on, because
+               # until then the program repository called its own gate with `off`. This is the same
+               # defect #141 fixed for C06 clause (c) (see LEDGER_REL above); C13 was left on the
+               # old footing because nothing ran it. An explicit --ledger-dir still wins, which is
+               # what test_caller_enforcement_default.py exercises.
+               ledger_dir=Path(a.ledger_dir) if a.ledger_dir else (repo / LEDGER_REL),
                repo_name=a.repo_name, event=event, verifier_job=a.verifier_job,
                verifier_conclusion=a.verifier_conclusion, verifier_output_ref=a.verifier_output_ref,
                automated_workdir=Path(a.workdir) if a.workdir else None,
@@ -5129,7 +5202,10 @@ def main(argv=None) -> int:
     at.add_argument("--uri")
     at.add_argument("--ledger-dir")
     at.add_argument("--policy", type=Path)
-    at.add_argument("--post", action="store_true", help="probe Muneral for a work-item evidence route and record it")
+    at.add_argument("--post", action="store_true",
+                    help="POST the attachment to Muneral's evidence route (policy work_item_evidence.muneral."
+                         "evidence_route) for --muneral-task-id with $MUNERAL_API_KEY, and record the outcome "
+                         "(posted / failed / not_measured with its reason); $MUNERAL_BASE_URL overrides the base URL")
     at.add_argument("--base", help="the PR's base ref; decides whether an older entry for the same receipt_path is "
                                    "history (kept) or dead (superseded). Default: merge-base of HEAD and origin/main")
     at.set_defaults(fn=cmd_attach)
