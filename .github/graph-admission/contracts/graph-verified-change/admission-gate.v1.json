@@ -274,8 +274,8 @@
    "base_url": "https://api.muneral.com/api/v1",
    "user_agent": "aup-orchestrator/1.0",
    "auth": "agent key (mun_sk_) from the host's protected secrets — never in git, never printed",
-   "evidence_route": null,
-   "evidence_route_status": "NOT_AVAILABLE_2026-09-05",
+   "evidence_route": "POST /tasks/{id}/evidence",
+   "evidence_route_status": "AVAILABLE_2026-09-25 — shipped by A2-274 (Muneral apps/api/src/tasks/evidence/); measured by A2-332: POST /tasks/<uuid>/evidence with an agent key → 201 WorkItemEvidenceAttachment/v1 (runs/A2-332/ev/attach-post.txt); an unknown route answers 404 «Cannot POST …», a task outside the key's scope 403 (A2-336, 2026-09-25T13:14Z). `attach --post` records the outcome of that POST as the delivery (A2-336); enforcement stays 'ledger' until switched by its own change.",
    "probe_2026-09-05T12:20Z": {
     "GET /agents/tasks": 200,
     "GET /tasks/<id>": 401,
@@ -285,7 +285,7 @@
     "GET /tasks/<id>/git-refs": 404,
     "GET /projects/tasks/<id>/git-refs": 401
    },
-   "finding": "MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE — the deployed API has no work-item evidence-attachment surface reachable by an agent key. The routes that do accept evidenceRefs with an agent key are POST /migration/work-items/:taskId/transitions (a transition — excluded by this policy: evidence must not be written as a status) and POST /tasks/:taskId/attempts/:attemptId/solution-log-heads (digest-only, bound to an execution attempt). Recorded, not worked around: the ledger holds the attachment in the shape Muneral's EvidenceRef validator accepts, and delivery stays not_measured until the route exists.",
+   "finding": "SUPERSEDED 2026-09-25 (see evidence_route_status) — the 2026-09-05 finding, kept as the record of that probe: MUNERAL_NO_WORK_ITEM_EVIDENCE_ROUTE — the deployed API has no work-item evidence-attachment surface reachable by an agent key. The routes that do accept evidenceRefs with an agent key are POST /migration/work-items/:taskId/transitions (a transition — excluded by this policy: evidence must not be written as a status) and POST /tasks/:taskId/attempts/:attemptId/solution-log-heads (digest-only, bound to an execution attempt). Recorded, not worked around: the ledger holds the attachment in the shape Muneral's EvidenceRef validator accepts, and delivery stays not_measured until the route exists.",
    "follow_up": "MUN work item: POST /tasks/:taskId/evidence (ApiKeyGuard, EvidenceRef body, append-only, no status side effect) — proposed by AUP-GRAPH-006, owner Muneral (MUN); until then enforcement stays 'ledger'."
   }
  },
@@ -867,7 +867,8 @@
     "verifier": "v-canary",
     "reason_marker": "INFERRED_BOUNDARY_WITHOUT_CANARY",
     "live_contours": {
-     "Arcanada-one/muneral": "contracts/graph-verified-change/canary-plans/muneral-production.v1.json"
+     "Arcanada-one/muneral": "contracts/graph-verified-change/canary-plans/muneral-production.v1.json",
+     "Arcanada-one/auth-arcana": "contracts/graph-verified-change/canary-plans/auth-arcana-production.v1.json"
     },
     "why": "matrix P6 / observed-edges C1 wants a canary on a live contour; for a repository with no declared contour (the gate's own tools/graph/**, receipts/** scripts) no canary can exist. A repository listed in live_contours is NOT covered: run the canary."
    }
