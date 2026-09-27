@@ -5,10 +5,19 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-09-27T21:08:01Z",
+ "captured_at_utc": "2026-09-27T21:12:29Z",
  "change_set": {
   "base": "8f21758a66571128c94e9b77421b20ac6c86a7d0",
   "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
    {
     "kind": "other",
     "node_id": "code_unit:crates/cli/src/cli.rs",
@@ -71,9 +80,18 @@
     ],
     "path": "docs/how-to/work-item-status.md",
     "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-work-item-status.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-work-item-status.json"
+    ],
+    "path": "receipts/graph/change-admission-work-item-status.json",
+    "status": "A"
    }
   ],
-  "head": "29c32f29d729602e525d51839ce4bc7d7f5aa51e",
+  "head": "d49748e4871c6a4a70326f6091648c454d259657",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -82,18 +100,18 @@
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:0a84abaa7264e1e7369846d9cff279196f8b9df97b27b57d748f2479fe77115d",
-  "path": "/home/dev/aup/codex-astra/graph-committed/verifier-out/graph-8f21758a6657.json",
+  "path": "/home/dev/aup/codex-astra/graph-final/verifier-out/graph-8f21758a6657.json",
   "source_commit": "8f21758a66571128c94e9b77421b20ac6c86a7d0"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:68c6ce88dd0a31860384dab7c21559f9ca5699357b1c9dfb618e41d6d61ff3a9",
-  "path": "/home/dev/aup/codex-astra/graph-committed/verifier-out/graph-head-29c32f29d729.json",
-  "source_commit": "29c32f29d729602e525d51839ce4bc7d7f5aa51e",
+  "graph_digest": "sha256:91d548f10d72646d52fd276e9683f308d297072a20442c51de2b66b5dcde377d",
+  "path": "/home/dev/aup/codex-astra/graph-final/verifier-out/graph-head-d49748e4871c.json",
+  "source_commit": "d49748e4871c6a4a70326f6091648c454d259657",
   "staleness": {
-   "checked_at_utc": "2026-09-27T21:08:04Z",
-   "checked_nodes": 381,
+   "checked_at_utc": "2026-09-27T21:12:32Z",
+   "checked_nodes": 382,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -615,7 +633,8 @@
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20260927T210801Z-29c32f29",
+ "receipt_id": "car-verify-20260927T211229Z-d49748e4",
+ "receipt_path": "receipts/graph/change-admission-work-item-status.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
   "path": "/home/dev/aup/codex-astra/repos/arcana-agent-system"
@@ -633,7 +652,8 @@
    "code_unit:crates/connectors/tests/muneral_contract.rs",
    "code_unit:crates/connectors/tests/skill_store_cutover.rs",
    "deployable_unit:crates/cli",
-   "deployable_unit:crates/connectors"
+   "deployable_unit:crates/connectors",
+   "document:CHANGELOG.md"
   ],
   "head": [
    "code_unit:crates/cli/src/cli.rs",
@@ -650,21 +670,39 @@
    "code_unit:crates/connectors/tests/skill_store_cutover.rs",
    "deployable_unit:crates/cli",
    "deployable_unit:crates/connectors",
-   "document:docs/how-to/work-item-status.md"
+   "document:CHANGELOG.md",
+   "document:docs/how-to/work-item-status.md",
+   "receipt:receipts/graph/change-admission-work-item-status.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-27T21:08:04Z",
+  "checked_at_utc": "2026-09-27T21:12:32Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [],
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:e28cea886dc8759708e7590bc0f7cf4fda5b3cffd96f9b94e833a7a7eafc99cb"
+   },
+   "entity": "receipt:receipts/graph/change-admission-work-item-status.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-work-item-status.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-work-item-status.json for work item dc29125e-dcf8-44be-96cd-625e97fee2a0",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-work-item-status.json",
+    "work_item": "dc29125e-dcf8-44be-96cd-625e97fee2a0"
+   }
+  }
+ ],
  "tree": {
-  "commit": "29c32f29d729602e525d51839ce4bc7d7f5aa51e",
+  "commit": "d49748e4871c6a4a70326f6091648c454d259657",
   "dirty": false
  },
  "verdicts": [
@@ -781,6 +819,14 @@
    ]
   },
   {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 5 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
    "entity": "document:docs/how-to/work-item-status.md",
    "reason": "v-doc-reference: 0 reference(s) resolve at head",
    "verdict": "verified",
@@ -834,29 +880,43 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/codex-astra/graph-committed/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-09-27T21:08:06Z",
+   "output_ref": "/home/dev/aup/codex-astra/graph-final/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-27T21:12:34Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.0,
+   "duration_s": 0.01,
    "entities": [
+    "document:CHANGELOG.md",
     "document:docs/how-to/work-item-status.md"
    ],
    "entity_verdicts": {
+    "document:CHANGELOG.md": "verified",
     "document:docs/how-to/work-item-status.md": "verified"
    },
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/codex-astra/graph-committed/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-09-27T21:08:06Z",
-   "summary": "1 document(s), 0 failed"
+   "output_ref": "/home/dev/aup/codex-astra/graph-final/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-09-27T21:12:34Z",
+   "summary": "2 document(s), 0 failed"
   }
  ],
  "verify": {
-  "events": [],
+  "events": [
+   {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-work-item-status.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-work-item-status.json is the previous version of the one this run is writing, for the same work item dc29125e-dcf8-44be-96cd-625e97fee2a0 — superseded by construction, so it owes this change no verdict"
+   },
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "1 affected entity(ies) owe no verdict (receipt: 1): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
   "required_by_entity": {
    "code_unit:crates/cli/src/cli.rs": [
     "fitness_rules"
@@ -900,14 +960,18 @@
    "deployable_unit:crates/connectors": [
     "fitness_rules"
    ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
    "document:docs/how-to/work-item-status.md": [
     "doc_reference"
-   ]
+   ],
+   "receipt:receipts/graph/change-admission-work-item-status.json": []
   },
   "seconds": {
-   "prepare": 1.59,
-   "total": 5.52,
-   "verifiers": 0.0
+   "prepare": 1.49,
+   "total": 5.32,
+   "verifiers": 0.01
   }
  },
  "work_item": "dc29125e-dcf8-44be-96cd-625e97fee2a0"
