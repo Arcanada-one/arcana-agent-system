@@ -65,6 +65,12 @@ pub enum Cmd {
     McPing,
     /// Show who you are signed in as, and where the audit log is written.
     Whoami,
+    /// Read a work item's stored status and dependency readiness without inference.
+    Status {
+        /// Muneral work item visible to the agent key in `ARCANA_MUNERAL_KEY_FILE`.
+        #[arg(long, value_name = "ID")]
+        work_item: String,
+    },
     /// Run a short built-in task end to end, and show what the agent did.
     ///
     /// Offline and repeatable by default. `--live` runs it through the real

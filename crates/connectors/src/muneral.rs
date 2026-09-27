@@ -55,10 +55,24 @@ pub struct WorkItem {
     pub status: Option<String>,
     #[serde(default)]
     pub revision: Option<i64>,
+    /// Row modification time; not an execution heartbeat.
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// The KC2 contract this item is bound to. `None` is the refusal the plan
     /// names `CONTRACT_MISSING` — see `arcana_core::contract`.
     #[serde(default)]
     pub contract_digest: Option<String>,
+}
+
+/// Dependency readiness is served separately from the task row. Required
+/// fields deliberately have no defaults: missing evidence is not readiness.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkItemReadiness {
+    pub task_id: String,
+    pub dependency_count: u64,
+    pub ready: bool,
+    pub blocked_by: Vec<serde_json::Value>,
 }
 
 /// Everything that can go wrong reading a work item.
@@ -138,7 +152,23 @@ impl MuneralClient {
     /// # Errors
     /// [`MuneralError`] — each variant is the server's answer, classified.
     pub async fn work_item(&self, id: &str) -> Result<WorkItem, MuneralError> {
-        let url = self.endpoint(&["tasks", id])?;
+        self.get(id, &["tasks", id]).await
+    }
+
+    /// Read the server-computed dependency verdict; this is not permission to execute.
+    ///
+    /// # Errors
+    /// Returns the classified API or decoding failure without inventing a verdict.
+    pub async fn readiness(&self, id: &str) -> Result<WorkItemReadiness, MuneralError> {
+        self.get(id, &["tasks", id, "readiness"]).await
+    }
+
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        id: &str,
+        segments: &[&str],
+    ) -> Result<T, MuneralError> {
+        let url = self.endpoint(segments)?;
         let response = self
             .http
             .get(url)
