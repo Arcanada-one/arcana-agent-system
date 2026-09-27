@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `arcana status --work-item ID` reads the authorized task status and dependency
+  readiness without inference or task writes. Unavailable readiness stays
+  unknown; the output does not infer runtime progress or freshness.
 - **A line of printed output quoted in our documentation is now checked against
   the functions that print it.** `crates/cli/tests/printed_output.rs` takes every
   fenced line under `docs/` and in `README.md` that claims to be this program's
