@@ -11,7 +11,11 @@ status.
 - The `arcana` binary installed (see [`install.md`](install.md)).
 - `ARCANA_MC_TOKEN` set to a Model Connector API key.
 - `ARCANA_MUNERAL_KEY_FILE` set to a file holding the agent's `mun_sk_` key
-  (mode 0600, one line, the trailing newline is trimmed automatically).
+  (mode 0600, one line, the trailing newline is trimmed automatically). Unix
+  requires a regular non-symlink file owned by the effective user, without
+  group/other access, containing 1..4096 bytes of non-whitespace UTF-8 content.
+  Non-Unix file validation is unsupported. See the
+  [file refusal conditions](work-item-status.md) before changing a rejected file.
 - The work item ID you want to execute.
 
 Both environment variables are required and checked before the first model call.
@@ -85,10 +89,10 @@ at this point: the digest check is pure local arithmetic.
 ## Notes
 
 - **The agent key must be in a file.**  The value of `ARCANA_MUNERAL_KEY_FILE`
-  points at a file whose first line is the `mun_sk_` secret.  Passing the key
+  points at a file containing only the `mun_sk_` secret. Passing the key
   on the command line or through a plain environment variable is never
-  accepted: every error path is built from the response, not from the request,
-  so the key never appears in logs or error messages.
+  accepted. File-policy errors name the rejected condition without printing
+  the credential or path. Loading failure refuses before network/model access.
 
 - **Optional: pin a model.**  Pass `--model <id>` or set `ARCANA_MODEL`.
   The run prints which source answered before spending anything, and a

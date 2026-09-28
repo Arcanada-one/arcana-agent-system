@@ -7,6 +7,25 @@ key, then run:
 arcana status --work-item b1227e82-da2b-4fee-aff6-b4ba8c6b01e3
 ```
 
+On Unix the key must be a regular file owned by the effective user, with no
+group/other permissions (normally 0600 or 0400), 1..4096 bytes and non-whitespace
+UTF-8 content. Final-component symlinks, including `/proc/self/fd` paths, are
+refused. The loader checks the opened descriptor and rejects FIFOs without
+waiting for a writer. File validation is unsupported on non-Unix platforms.
+
+A missing path reports `CREDENTIAL_FILE_MISSING`. Unsafe files report
+`CREDENTIAL_FILE_UNSAFE_PERMISSIONS`, `CREDENTIAL_FILE_UNSAFE_OWNER`,
+`CREDENTIAL_FILE_UNSAFE_TYPE` or `CREDENTIAL_FILE_UNSAFE_SIZE`, with a message
+naming the failed condition. I/O/encoding errors report
+`CREDENTIAL_FILE_UNAVAILABLE`; unsupported platforms report
+`CREDENTIAL_FILE_UNSUPPORTED_PLATFORM`. These failures happen before an HTTP
+request. Single status exits 1; watch exits 3 with an indeterminate outcome and
+the same reason/message. Diagnose the named condition before changing a file;
+changing permissions does not fix a symlink, wrong owner or invalid size.
+
+These file checks do not separate principals sharing a UID or validate secret
+custody, ancestor-directory symlinks, token format, or rotation.
+
 The command reads the task row and its dependency readiness from Muneral and
 prints one `WorkItemStatusObservation/v1` JSON object. It makes no model calls
 and does not change the work item. You can call it from another terminal while

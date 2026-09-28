@@ -41,6 +41,11 @@ async fn sequence(server: &MockServer, suffix: &str, responses: Vec<ResponseTemp
 fn command(server: &MockServer, poison: &MockServer, dir: &TempDir) -> Command {
     let key = dir.path().join("key");
     std::fs::write(&key, "mun_sk_test\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_arcana"));
     cmd.env_clear()
         .env("ARCANA_MUNERAL_KEY_FILE", key)

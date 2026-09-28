@@ -14,6 +14,7 @@
 pub mod auth_arcana;
 pub mod contract_source;
 pub mod coworker;
+mod credential_file;
 pub mod model_connector;
 pub mod muneral;
 pub mod ops_bot;
