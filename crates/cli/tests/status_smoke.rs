@@ -12,6 +12,11 @@ const TASK: &str = "b1227e82-da2b-4fee-aff6-b4ba8c6b01e3";
 fn command(server: &MockServer, poison: &MockServer, dir: &TempDir) -> Command {
     let key = dir.path().join("key");
     std::fs::write(&key, "mun_sk_test\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let mut cmd = Command::cargo_bin("arcana").unwrap();
     cmd.env_clear()
         .env("ARCANA_MUNERAL_KEY_FILE", key)

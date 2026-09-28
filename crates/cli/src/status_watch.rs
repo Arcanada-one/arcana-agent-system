@@ -26,7 +26,7 @@ pub fn run_command(args: &crate::cli::StatusArgs) -> i32 {
 struct Outcome {
     state: &'static str,
     reason: &'static str,
-    message: &'static str,
+    message: String,
     code: i32,
 }
 
@@ -35,7 +35,7 @@ impl Outcome {
         Self {
             state: "indeterminate",
             reason,
-            message: "Could not determine stored task completion; see reason.",
+            message: "Could not determine stored task completion; see reason.".into(),
             code: 3,
         }
     }
@@ -85,7 +85,13 @@ async fn watch(id: &str, interval: Duration) -> Outcome {
         let (observation, code) =
             match tokio::time::timeout(Duration::from_secs(5), crate::status::observe(id)).await {
                 Ok(Ok(value)) => value,
-                Ok(Err(reason)) => return Outcome::unknown(reason),
+                Ok(Err(error)) => {
+                    let mut outcome = Outcome::unknown(error.code);
+                    if !error.message.is_empty() {
+                        outcome.message = error.message;
+                    }
+                    return outcome;
+                }
                 Err(_) => return Outcome::unknown("STATUS_OBSERVATION_TIMEOUT"),
             };
         if emit(&observation).is_err() {
@@ -99,7 +105,8 @@ async fn watch(id: &str, interval: Duration) -> Outcome {
                 return Outcome {
                     state: "ready",
                     reason: "TASK_DONE",
-                    message: "Ready: Muneral records the task as done; acceptance is not verified.",
+                    message: "Ready: Muneral records the task as done; acceptance is not verified."
+                        .into(),
                     code: 0,
                 };
             }
@@ -107,7 +114,7 @@ async fn watch(id: &str, interval: Duration) -> Outcome {
                 return Outcome {
                     state: "not_ready",
                     reason: "TASK_CANCELLED",
-                    message: "Not ready: Muneral records the task as cancelled.",
+                    message: "Not ready: Muneral records the task as cancelled.".into(),
                     code: 1,
                 };
             }

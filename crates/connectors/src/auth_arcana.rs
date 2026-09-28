@@ -6,8 +6,6 @@
 //! credential), mints short-lived Bearer JWTs, and serializes refreshes so a
 //! process never creates a token stampede.
 
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,12 +22,13 @@ pub const SCRUTATOR_LTM_SCOPE: &str = "kb:ltm.read";
 const DEFAULT_TOKEN_URL: &str = "https://auth.arcanada.ai/oidc/token";
 const DEFAULT_CREDENTIAL_NAME: &str = "arcana-agent-kb-reader-client-secret";
 const MAX_TOKEN_LIFETIME_SECONDS: u64 = 300;
-const MAX_SECRET_BYTES: u64 = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthTokenError {
     #[error("Auth token configuration is invalid: {0}")]
     Configuration(String),
+    #[error("client credential file is missing")]
+    SecretFileMissing,
     #[error("client credential file is unavailable")]
     SecretFileUnavailable(#[source] std::io::Error),
     #[error("client credential path must be a regular non-symlink file")]
@@ -190,63 +189,19 @@ impl ClientCredentialsTokenProvider {
     }
 
     fn read_secret(path: &Path) -> Result<SecretString, AuthTokenError> {
-        #[cfg(not(unix))]
-        {
-            let _ = path;
-            return Err(AuthTokenError::Configuration(
-                "systemd credential file validation is currently supported only on Unix".into(),
-            ));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
+        use crate::credential_file::CredentialFileError;
 
-            let descriptor = rustix::fs::open(
-                path,
-                rustix::fs::OFlags::RDONLY
-                    | rustix::fs::OFlags::CLOEXEC
-                    | rustix::fs::OFlags::NOFOLLOW,
-                rustix::fs::Mode::empty(),
-            )
-            .map_err(|err| {
-                if err == rustix::io::Errno::LOOP {
-                    AuthTokenError::SecretFileType
-                } else {
-                    AuthTokenError::SecretFileUnavailable(std::io::Error::from_raw_os_error(
-                        err.raw_os_error(),
-                    ))
-                }
-            })?;
-            let file = File::from(descriptor);
-            let metadata = file
-                .metadata()
-                .map_err(AuthTokenError::SecretFileUnavailable)?;
-            if !metadata.file_type().is_file() {
-                return Err(AuthTokenError::SecretFileType);
+        crate::credential_file::read(path).map_err(|error| match error {
+            CredentialFileError::Missing => AuthTokenError::SecretFileMissing,
+            CredentialFileError::Unavailable(error) => AuthTokenError::SecretFileUnavailable(error),
+            CredentialFileError::Type => AuthTokenError::SecretFileType,
+            CredentialFileError::Permissions { mode } => {
+                AuthTokenError::SecretFilePermissions { mode }
             }
-            if metadata.len() == 0 || metadata.len() > MAX_SECRET_BYTES {
-                return Err(AuthTokenError::SecretFileSize);
-            }
-            let mode = metadata.mode() & 0o777;
-            if mode & 0o077 != 0 {
-                return Err(AuthTokenError::SecretFilePermissions { mode });
-            }
-            if metadata.uid() != rustix::process::geteuid().as_raw() {
-                return Err(AuthTokenError::SecretFileOwner);
-            }
-            let mut raw = String::new();
-            file.take(MAX_SECRET_BYTES + 1)
-                .read_to_string(&mut raw)
-                .map_err(AuthTokenError::SecretFileUnavailable)?;
-            if raw.len() as u64 > MAX_SECRET_BYTES {
-                return Err(AuthTokenError::SecretFileSize);
-            }
-            let secret = raw.trim();
-            if secret.is_empty() {
-                return Err(AuthTokenError::SecretFileSize);
-            }
-            Ok(SecretString::from(secret.to_owned()))
-        }
+            CredentialFileError::Owner => AuthTokenError::SecretFileOwner,
+            CredentialFileError::Size => AuthTokenError::SecretFileSize,
+            CredentialFileError::Unsupported => AuthTokenError::Configuration(error.to_string()),
+        })
     }
 
     async fn mint(&self) -> Result<CachedToken, AuthTokenError> {

@@ -10,8 +10,9 @@
 //! The agent's key is a `mun_sk_` secret and is read from a FILE, never from a
 //! command line and never from an inherited plain environment variable holding
 //! the value itself. It is wrapped in [`SecretString`] from the moment it is
-//! read, so no `Debug`, log line or error message can carry it: every error
-//! this module returns is built from the response, not from the request.
+//! read. File-policy failures contain neither its value nor its path.
+
+pub use crate::credential_file::CredentialFileError;
 
 use std::path::Path;
 use std::time::Duration;
@@ -77,14 +78,16 @@ pub struct WorkItemReadiness {
 
 /// Everything that can go wrong reading a work item.
 ///
-/// Each variant is the SERVER's answer, classified. None of them can carry the
-/// key, because none of them is built from the request.
+/// Remote failures classify the server's answer. Local file-policy failures
+/// identify the rejected condition without including the key or its path.
 #[derive(Debug, thiserror::Error)]
 pub enum MuneralError {
     #[error("the Muneral API root is unusable: {0}")]
     BaseUrl(String),
     #[error("the agent key could not be read from the file named by {ENV_KEY_FILE}: {0}")]
     Key(String),
+    #[error("{0}")]
+    KeyFile(#[from] CredentialFileError),
     #[error("Muneral could not be reached: {0}")]
     Transport(String),
     #[error("Muneral refused the key (HTTP 401): the agent is not authenticated")]
@@ -236,13 +239,10 @@ fn excerpt(body: &str) -> String {
 /// leaves behind.
 ///
 /// # Errors
-/// When the file cannot be read or holds nothing.
+/// Returns a typed file-policy refusal for missing, unsafe, unavailable or
+/// unsupported paths. Unix requires a regular non-symlink file owned by the
+/// effective UID, no group/other permissions, and 1..4096 bytes with content
+/// remaining after trimming whitespace. Non-Unix validation is unsupported.
 pub fn read_key_file(path: &Path) -> Result<SecretString, MuneralError> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|err| MuneralError::Key(format!("{}: {err}", path.display())))?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(MuneralError::Key(format!("{} is empty", path.display())));
-    }
-    Ok(SecretString::from(trimmed.to_owned()))
+    crate::credential_file::read(path).map_err(MuneralError::KeyFile)
 }

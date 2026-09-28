@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   green and carries a real page (A2-297b).
 
 ### Fixed
+- Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
+  Missing files and unsafe owner/permissions/type/size have distinct reasons;
+  status/watch include the rejected condition. FIFOs cannot block file opening.
+  Non-Unix file loading explicitly refuses without an ACL verifier.
 - **A typed refusal printed its code twice.** `ContractRefusal`'s `Display`
   already opens with the code and every contract call site passes it to
   `refuse()` as the detail, so an operator read

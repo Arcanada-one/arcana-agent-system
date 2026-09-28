@@ -9,6 +9,34 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+pub(crate) struct ObservationError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl From<&'static str> for ObservationError {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            message: String::new(),
+        }
+    }
+}
+
+impl From<MuneralError> for ObservationError {
+    fn from(error: MuneralError) -> Self {
+        let code = error_code(&error);
+        if let MuneralError::KeyFile(error) = error {
+            Self {
+                code,
+                message: error.to_string(),
+            }
+        } else {
+            code.into()
+        }
+    }
+}
+
 /// Print one JSON observation. Exit 0 means both reads succeeded, 3 means
 /// dependency readiness is unknown, and 1 means no observation was emitted.
 #[must_use]
@@ -16,7 +44,7 @@ pub fn run(id: &str) -> i32 {
     let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|_| "STATUS_UNAVAILABLE")
+        .map_err(|_| ObservationError::from("STATUS_UNAVAILABLE"))
         .and_then(|runtime| {
             runtime.block_on(async {
                 tokio::time::timeout(Duration::from_secs(5), observe(id))
@@ -29,8 +57,12 @@ pub fn run(id: &str) -> i32 {
             println!("{observation}");
             code
         }
-        Err(code) => {
-            eprintln!("arcana status: {code}");
+        Err(error) => {
+            if error.message.is_empty() {
+                eprintln!("arcana status: {}", error.code);
+            } else {
+                eprintln!("arcana status: {}: {}", error.code, error.message);
+            }
             1
         }
     }
@@ -48,13 +80,14 @@ fn error_code(error: &MuneralError) -> &'static str {
             "STATUS_NOT_ACCESSIBLE"
         }
         MuneralError::Key(_) | MuneralError::BaseUrl(_) => "STATUS_CONFIGURATION_INVALID",
+        MuneralError::KeyFile(error) => error.code(),
         MuneralError::Decode(_) => "STATUS_INVALID_RESPONSE",
         MuneralError::Transport(_) | MuneralError::Status { .. } => "STATUS_UNAVAILABLE",
     }
 }
 
-pub(crate) async fn observe(id: &str) -> Result<(Value, i32), &'static str> {
-    let client = MuneralClient::try_from_env().map_err(|e| error_code(&e))?;
+pub(crate) async fn observe(id: &str) -> Result<(Value, i32), ObservationError> {
+    let client = MuneralClient::try_from_env().map_err(ObservationError::from)?;
     let task = client.work_item(id).await.map_err(|e| error_code(&e))?;
     let task_observed_at = now()?;
     let status = task.status.as_deref().ok_or("STATUS_INVALID_RESPONSE")?;
@@ -65,7 +98,7 @@ pub(crate) async fn observe(id: &str) -> Result<(Value, i32), &'static str> {
         )
         || task.revision.is_some_and(|revision| revision < 0)
     {
-        return Err("STATUS_INVALID_RESPONSE");
+        return Err("STATUS_INVALID_RESPONSE".into());
     }
     let (readiness, code) = match client.readiness(id).await {
         Ok(value)
@@ -82,7 +115,7 @@ pub(crate) async fn observe(id: &str) -> Result<(Value, i32), &'static str> {
         }
         Err(error) if error_code(&error) == "STATUS_NOT_ACCESSIBLE" => {
             // Access can be revoked between reads. Suppress the earlier row too.
-            return Err("STATUS_NOT_ACCESSIBLE");
+            return Err("STATUS_NOT_ACCESSIBLE".into());
         }
         Ok(_) | Err(_) => (json!({"state": "unknown", "ready": null}), 3),
     };

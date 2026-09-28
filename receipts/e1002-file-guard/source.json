@@ -1,0 +1,12 @@
+{
+  "schema": "MeasuredGitSource/v1",
+  "commit": "52a0201b2be351952a0932e5785eb6dee9a94b63",
+  "tree": "21b6a0ef9bde201f2f6ba3ba3453ca968006676d",
+  "dirty": false,
+  "producer": "Codex E10.02 clean-checkout cargo test --no-run, compiler-artifact executable captured",
+  "captured_at_utc": "2026-09-28T05:10:58.345514+00:00",
+  "build_command": "cargo test -p arcana-connectors --test auth_arcana_client_credentials --no-run --message-format=json",
+  "build_log_sha256": "adabeb9879d83114934d3b32e773e3597bb9876d6e16a11b7a450749ca3abaa1",
+  "executable_sha256": "a52391b6ee0a03c2d618c9df7e93ae1ea0c436ea8b0f6ba3d3a47eeaa51f718d",
+  "scope": "Local synthetic loopback Auth fixture; no production Auth probe, no real credential, no deployment, no native foreign-owner proof"
+}
