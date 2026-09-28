@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- Bounded, noninteractive `status --watch` with separate ready, not-ready and
+  indeterminate outcomes for stored task completion, reusing scoped Muneral reads.
 - `arcana status --work-item ID` reads the authorized task status and dependency
   readiness without inference or task writes. Unavailable readiness stays
   unknown; the output does not infer runtime progress or freshness.

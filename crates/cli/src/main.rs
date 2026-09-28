@@ -41,8 +41,8 @@ fn main() {
         Some(Cmd::Whoami) => {
             std::process::exit(run_whoami());
         }
-        Some(Cmd::Status { work_item }) => {
-            std::process::exit(arcana_cli::status::run(&work_item));
+        Some(Cmd::Status(args)) => {
+            std::process::exit(arcana_cli::status_watch::run_command(&args));
         }
         Some(Cmd::Demo {
             task,
