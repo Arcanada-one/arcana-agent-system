@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   green and carries a real page (A2-297b).
 
 ### Fixed
+- Cancelled turns cannot invoke a tool through an empty hook chain or after
+  cancellation during final validation or the durable admission audit. Refusals
+  retain a correlated audit result and report operator abort; already-admitted
+  effects are not promised rollback. This is local admission, not remote fencing.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
   Missing files and unsafe owner/permissions/type/size have distinct reasons;
   status/watch include the rejected condition. FIFOs cannot block file opening.

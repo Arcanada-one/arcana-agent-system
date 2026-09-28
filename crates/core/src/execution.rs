@@ -30,6 +30,8 @@ pub enum CapabilityError {
     Denied { layer: &'static str, reason: String },
     #[error("capability hook aborted execution")]
     HookAborted,
+    #[error("capability cancelled before tool admission")]
+    Cancelled,
     #[error(transparent)]
     Tool(#[from] ToolError),
     #[error("audit {phase:?} append failed: {source}")]
@@ -139,6 +141,9 @@ impl CapabilityExecutor {
             return Err(CapabilityError::AuditLatched);
         }
         let id = self.next_invocation_id.fetch_add(1, Ordering::Relaxed);
+        if ctx.cancel.is_cancelled() {
+            return self.cancel_attempt(id, tool_name, &raw_input);
+        }
         let Some(tool) = self.registry.get(tool_name) else {
             return self.deny(id, tool_name, &raw_input, "registry", "unknown tool");
         };
@@ -194,7 +199,11 @@ impl CapabilityExecutor {
         tool_name: &str,
         input: &Value,
     ) -> Result<(), CapabilityError> {
-        match self.hooks.pre_tool_gate(ctx, tool_name, input).await {
+        let gate = self.hooks.pre_tool_gate(ctx, tool_name, input).await;
+        if ctx.cancel.is_cancelled() {
+            return self.cancel_attempt(id, tool_name, input);
+        }
+        match gate {
             Ok(PreToolGate::Proceed) => Ok(()),
             Ok(PreToolGate::Stop { reason }) => self.abort_hook(id, tool_name, input, &reason),
             Err(_) => self.abort_hook(id, tool_name, input, "hook error"),
@@ -207,6 +216,11 @@ impl CapabilityExecutor {
         tool_name: &str,
         prepared: PreparedInvocation,
     ) -> Result<CapabilityOutput, CapabilityError> {
+        // Preparation includes awaits (hooks and validation). Their success
+        // is not permission to admit an operation after cancellation.
+        if ctx.cancel.is_cancelled() {
+            return self.cancel_attempt(prepared.id, tool_name, &prepared.input);
+        }
         self.audit_decision(
             prepared.id,
             tool_name,
@@ -215,6 +229,16 @@ impl CapabilityExecutor {
             "cascade",
             None,
         )?;
+        // A durable append may block while the independent signal listener
+        // cancels the turn. Close the already-written decision with a result;
+        // do not write a second decision or invoke the tool in that window.
+        if ctx.cancel.is_cancelled() {
+            self.audit_result(prepared.id, tool_name, "cancelled", None)?;
+            return Err(CapabilityError::Cancelled);
+        }
+        // Local admission point. Cancellation after this check does not
+        // promise rollback of an admitted effect. Remote durable cancellation
+        // and restart fencing require a separate producer/consumer contract.
         // Capture the cascade-authorized input before it is moved into the
         // sealed invocation; this is the value the tool actually executes on.
         let effective_input = prepared.input.clone();
@@ -252,6 +276,24 @@ impl CapabilityExecutor {
             injected,
             effective_input,
         })
+    }
+
+    fn cancel_attempt<T>(
+        &self,
+        invocation_id: u64,
+        tool: &str,
+        input: &Value,
+    ) -> Result<T, CapabilityError> {
+        self.audit_decision(
+            invocation_id,
+            tool,
+            input,
+            "Denied",
+            "cancellation",
+            Some("cancelled before tool admission"),
+        )?;
+        self.audit_result(invocation_id, tool, "cancelled", None)?;
+        Err(CapabilityError::Cancelled)
     }
 
     /// Refuse one attempt: audit the decision, audit the result, and hand the
