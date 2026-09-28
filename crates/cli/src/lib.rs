@@ -21,6 +21,7 @@ pub mod receipt;
 pub mod repl;
 pub mod run;
 pub mod status;
+pub mod status_watch;
 pub mod usage;
 pub mod work_item;
 pub mod workspace;

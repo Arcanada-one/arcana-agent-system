@@ -53,7 +53,7 @@ fn error_code(error: &MuneralError) -> &'static str {
     }
 }
 
-async fn observe(id: &str) -> Result<(Value, i32), &'static str> {
+pub(crate) async fn observe(id: &str) -> Result<(Value, i32), &'static str> {
     let client = MuneralClient::try_from_env().map_err(|e| error_code(&e))?;
     let task = client.work_item(id).await.map_err(|e| error_code(&e))?;
     let task_observed_at = now()?;

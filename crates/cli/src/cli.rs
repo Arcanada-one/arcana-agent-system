@@ -66,11 +66,7 @@ pub enum Cmd {
     /// Show who you are signed in as, and where the audit log is written.
     Whoami,
     /// Read a work item's stored status and dependency readiness without inference.
-    Status {
-        /// Muneral work item visible to the agent key in `ARCANA_MUNERAL_KEY_FILE`.
-        #[arg(long, value_name = "ID")]
-        work_item: String,
-    },
+    Status(StatusArgs),
     /// Run a short built-in task end to end, and show what the agent did.
     ///
     /// Offline and repeatable by default. `--live` runs it through the real
@@ -289,4 +285,21 @@ pub enum McpCmd {
         #[arg(long)]
         bind: Option<String>,
     },
+}
+
+/// Options for deterministic stored work-item observation.
+#[derive(Debug, clap::Args)]
+pub struct StatusArgs {
+    /// Muneral work item visible to the agent key in `ARCANA_MUNERAL_KEY_FILE`.
+    #[arg(long, value_name = "ID")]
+    pub work_item: String,
+    /// Watch stored task completion, without prompts or model calls.
+    #[arg(long, requires = "timeout_secs")]
+    pub watch: bool,
+    /// Required watch deadline in seconds, including network waits (1–3600).
+    #[arg(long, requires = "watch", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub timeout_secs: Option<u64>,
+    /// Delay after each observation in watch mode (1–60 seconds; default 5).
+    #[arg(long, requires = "watch", value_parser = clap::value_parser!(u64).range(1..=60))]
+    pub interval_secs: Option<u64>,
 }
