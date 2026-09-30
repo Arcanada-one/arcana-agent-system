@@ -3,7 +3,7 @@
   "rule": "admitted_with_exemptions requires every non-verified entity to carry a valid exemption (owner + expiry). The structural exemption issued here covers only the entities its code may cover; anything else that is not verified still pauses or refuses this change on its own.",
   "verdict": "admitted_with_exemptions"
  },
- "captured_at_utc": "2026-09-30T18:40:49Z",
+ "captured_at_utc": "2026-09-30T19:50:34Z",
  "change_set": {
   "base": "98355383ca9916dcd2f1997154da190b8a0f46ad",
   "files": [
@@ -36,9 +36,18 @@
     ],
     "path": ".github/workflows/graph-admission-call.yml",
     "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json"
+    ],
+    "path": "receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
+    "status": "A"
    }
   ],
-  "head": "0257582741608a4cac3f866bc70cf258782883ea",
+  "head": "e09463b8e972e43c4c28b223da52fedc7e8e024f",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -46,8 +55,8 @@
   {
    "change_binding": {
     "base": "98355383ca9916dcd2f1997154da190b8a0f46ad",
-    "digest": "sha256:fa7e9ac050a8e5d4131d0ae34fc814bce57ec8b9f3af3975b71051f042c4eb11",
-    "head": "0257582741608a4cac3f866bc70cf258782883ea"
+    "digest": "sha256:509f701e138f76783abb35de385da8cdb38e01d8980fdd991851035291baaeef",
+    "head": "e09463b8e972e43c4c28b223da52fedc7e8e024f"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/verify.py",
@@ -56,7 +65,7 @@
     "checks": [
      {
       "code": "SELF_UPDATE_SHAPE",
-      "detail": "all 4 changed path(s) are bundle-managed at base or head, except 1 caller workflow file(s) whose ONLY change is the program_ref pin, updated to the head bundle's own program_ref (db9784badb35) — the pin lives outside the bundle by design, so that the bundle cannot vouch for it",
+      "detail": "all 5 changed path(s) are bundle-managed at base or head, except 1 caller workflow file(s) whose ONLY change is the program_ref pin, updated to the head bundle's own program_ref (db9784badb35) — the pin lives outside the bundle by design, so that the bundle cannot vouch for it, and receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json, this refresh's OWN ChangeAdmissionReceipt/v1 for work item BUNDLE-DRIFT-db9784ba over this very range (DEC-AUP-0038: at most one, ADDED by the range, re-derived from Git — set aside as a CASE, then judged by every check below exactly as a receipt handed in from the pull-request body)",
       "id": "B1",
       "verdict": "verified"
      },
@@ -98,7 +107,7 @@
      },
      {
       "code": "SELF_UPDATE_WORKFLOW_INTEGRITY",
-      "detail": "all 1 vendored executing workflow(s) hash at head 025758274160 to the sha256 the signed head manifest records and to its recorded git blob OID — a workflow change is admissible, a workflow change the manifest does not attest is not",
+      "detail": "all 1 vendored executing workflow(s) hash at head e09463b8e972 to the sha256 the signed head manifest records and to its recorded git blob OID — a workflow change is admissible, a workflow change the manifest does not attest is not",
       "id": "B8",
       "verdict": "verified"
      }
@@ -130,7 +139,7 @@
      "verifier_from": "98355383ca99:.github/graph-admission/tools/graph/sshsig.py"
     }
    },
-   "expires_at_utc": "2026-10-01T18:41:47Z",
+   "expires_at_utc": "2026-10-01T19:52:01Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "arc2",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -139,13 +148,13 @@
   {
    "change_binding": {
     "base": "98355383ca9916dcd2f1997154da190b8a0f46ad",
-    "digest": "sha256:fa7e9ac050a8e5d4131d0ae34fc814bce57ec8b9f3af3975b71051f042c4eb11",
-    "head": "0257582741608a4cac3f866bc70cf258782883ea"
+    "digest": "sha256:509f701e138f76783abb35de385da8cdb38e01d8980fdd991851035291baaeef",
+    "head": "e09463b8e972e43c4c28b223da52fedc7e8e024f"
    },
    "code": "GATE_SELF_UPDATE",
-   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@025758274160",
+   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@e09463b8e972",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-01T18:41:47Z",
+   "expires_at_utc": "2026-10-01T19:52:01Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "arc2",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -156,24 +165,26 @@
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:35b608419fd69095a7fc1c35f9c7600427dcb4c5cd006634380088a4bd2ef03d",
-  "path": "/home/dev/aup/tmp/br2-arcana-agent-system/verifier-out/graph-98355383ca99.json",
+  "path": "/tmp/pub/vw-arcana-agent-system/verifier-out/graph-98355383ca99.json",
   "source_commit": "98355383ca9916dcd2f1997154da190b8a0f46ad"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:0e8059a17ca7de16afca9826ad8629be0615e60c7b703a59e5c429b5393f5539",
-  "path": "/home/dev/aup/tmp/br2-arcana-agent-system/verifier-out/graph-head-025758274160.json",
-  "source_commit": "0257582741608a4cac3f866bc70cf258782883ea",
+  "graph_digest": "sha256:ccdc7c6db875b18e6e861ce8fcfac5fd2fce3f17b2716bd5924bb95e31925697",
+  "path": "/tmp/pub/vw-arcana-agent-system/verifier-out/graph-head-e09463b8e972.json",
+  "source_commit": "e09463b8e972e43c4c28b223da52fedc7e8e024f",
   "staleness": {
-   "checked_at_utc": "2026-09-30T18:40:52Z",
-   "checked_nodes": 391,
+   "checked_at_utc": "2026-09-30T19:50:38Z",
+   "checked_nodes": 392,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
   }
  },
- "host": "arcana-devs",
+ "host": "public-ci-host",
+ "host_redacted": true,
+ "host_sha256": "bea2bcd26c9762df7325fa1f622ee9c97e6f370c541069e8d3df8f7bb8b33ef8",
  "impact_set": {
   "deterministic_core": [
    {
@@ -429,17 +440,17 @@
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.2.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
   "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none",
-  "AUP-GRAPH-006:gate4b — GATE_SELF_UPDATE issued by `tools/graph/admit_change.py exempt` over 2 entity(ies), bound to sha256:fa7e9ac050a8e5d4… (98355383ca99..025758274160); the digest, not the clock, is the expiry."
+  "AUP-GRAPH-006:gate4b — GATE_SELF_UPDATE issued by `tools/graph/admit_change.py exempt` over 2 entity(ies), bound to sha256:509f701e138f7678… (98355383ca99..e09463b8e972); the digest, not the clock, is the expiry."
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20260930T184049Z-02575827",
+ "receipt_id": "car-verify-20260930T195034Z-e09463b8",
  "receipt_path": "receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/aup/bundle-refresh-db9784ba/arcana-agent-system"
+  "path": "/tmp/pub/arcana-agent-system"
  },
  "revision_selection": {
   "base": [
@@ -464,6 +475,7 @@
    "receipt:receipts/graph/bundle-refresh-8681292.json",
    "receipt:receipts/graph/change-admission-A2-399-bundle-4860a78.json",
    "receipt:receipts/graph/change-admission-A2-DRIFT-5a1d666d-bundle-ce356591.json",
+   "receipt:receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
    "receipt:receipts/graph/change-admission-a2-234.json",
    "receipt:receipts/graph/change-admission-a2-238.json",
    "receipt:receipts/graph/change-admission-a2-256b.json",
@@ -479,7 +491,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-09-30T18:40:52Z",
+  "checked_at_utc": "2026-09-30T19:50:38Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -517,6 +529,21 @@
    "path": "receipts/graph/change-admission-A2-DRIFT-5a1d666d-bundle-ce356591.json",
    "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
    "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:ecbe8e7bc713b0ab99e9ad2ecb54918f507598771b0de9de282d9a237ddab1de"
+   },
+   "entity": "receipt:receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json for work item BUNDLE-DRIFT-db9784ba",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
+    "work_item": "BUNDLE-DRIFT-db9784ba"
+   }
   },
   {
    "content_hash": {
@@ -619,7 +646,7 @@
   }
  ],
  "tree": {
-  "commit": "0257582741608a4cac3f866bc70cf258782883ea",
+  "commit": "e09463b8e972e43c4c28b223da52fedc7e8e024f",
   "dirty": false
  },
  "verdicts": [
@@ -643,7 +670,7 @@
    ]
   },
   {
-   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@025758274160",
+   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@e09463b8e972",
    "reason": "the impact of this change is not computable by the graph: this change is the vendored admission-gate bundle itself, whose tools are the code that would do the measuring. Covered by the typed exemption GATE_SELF_UPDATE, whose evidence the gate re-measures on every evaluation (C16).",
    "verdict": "not_measured"
   }
@@ -667,13 +694,13 @@
    "exit_code": 0,
    "id": "v-workflow-config-60a4bd100e640545",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/tmp/br2-arcana-agent-system/verifier-out/v-workflow-config-60a4bd100e640545.txt",
-   "started_at_utc": "2026-09-30T18:40:54Z",
+   "output_ref": "/tmp/pub/vw-arcana-agent-system/verifier-out/v-workflow-config-60a4bd100e640545.txt",
+   "started_at_utc": "2026-09-30T19:50:42Z",
    "summary": "bounded workflow configuration shape valid; expressions, shell, actions and hosted execution NOT_MEASURED"
   },
   {
    "command": "verify.py config_schema: keys read at head ⊆ declared keys",
-   "duration_s": 0.65,
+   "duration_s": 1.47,
    "entities": [
     "code_unit:.github/graph-admission/tools/graph/verify.py"
    ],
@@ -683,13 +710,13 @@
    "exit_code": 0,
    "id": "v-config-schema",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/tmp/br2-arcana-agent-system/verifier-out/v-config-schema.json",
-   "started_at_utc": "2026-09-30T18:40:54Z",
+   "output_ref": "/tmp/pub/vw-arcana-agent-system/verifier-out/v-config-schema.json",
+   "started_at_utc": "2026-09-30T19:50:42Z",
    "summary": "1 source(s), 0 new / 0 frozen undeclared reads, 0 failed; 4 vendored file(s) not attributed to this repository (Arcanada-one/arcanada-universal-program)"
   },
   {
    "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
-   "duration_s": 0.0,
+   "duration_s": 0.01,
    "entities": [
     "code_unit:.github/graph-admission/tools/graph/verify.py",
     "code_unit:.github/workflows/graph-admission-call.yml"
@@ -701,8 +728,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/tmp/br2-arcana-agent-system/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-09-30T18:40:55Z",
+   "output_ref": "/tmp/pub/vw-arcana-agent-system/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-30T19:50:44Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -717,17 +744,23 @@
    "exit_code": 0,
    "id": "v-canary",
    "kind": "canary",
-   "output_ref": "/home/dev/aup/tmp/br2-arcana-agent-system/verifier-out/v-canary.json",
-   "started_at_utc": "2026-09-30T18:40:55Z",
+   "output_ref": "/tmp/pub/vw-arcana-agent-system/verifier-out/v-canary.json",
+   "started_at_utc": "2026-09-30T19:50:44Z",
    "summary": "0 canary result(s), 0 committed at head; 0 verified / 0 failed / 1 not_measured of 1 entities"
   }
  ],
  "verify": {
   "events": [
    {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json is the previous version of the one this run is writing, for the same work item BUNDLE-DRIFT-db9784ba — superseded by construction, so it owes this change no verdict"
+   },
+   {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "12 affected entity(ies) owe no verdict (receipt: 12): unchanged at both revisions and given no verifier by the matrix"
+    "text": "13 affected entity(ies) owe no verdict (receipt: 13): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -743,6 +776,7 @@
    "receipt:receipts/graph/bundle-refresh-8681292.json": [],
    "receipt:receipts/graph/change-admission-A2-399-bundle-4860a78.json": [],
    "receipt:receipts/graph/change-admission-A2-DRIFT-5a1d666d-bundle-ce356591.json": [],
+   "receipt:receipts/graph/change-admission-BUNDLE-DRIFT-db9784ba.json": [],
    "receipt:receipts/graph/change-admission-a2-234.json": [],
    "receipt:receipts/graph/change-admission-a2-238.json": [],
    "receipt:receipts/graph/change-admission-a2-256b.json": [],
@@ -754,9 +788,9 @@
    "receipt:receipts/graph/change-admission-bundle-a81a6d5.json": []
   },
   "seconds": {
-   "prepare": 1.61,
-   "total": 6.22,
-   "verifiers": 0.65
+   "prepare": 2.44,
+   "total": 10.16,
+   "verifiers": 1.48
   }
  },
  "work_item": "BUNDLE-DRIFT-db9784ba"
