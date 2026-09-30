@@ -911,6 +911,22 @@ def find_bin(name: str, explicit: str | None, exec_root: Path, repo_top: Path, d
     return shutil.which(name)
 
 
+def config_dirs(dep: str, cfg: str) -> list[str]:
+    """A2-446: the directories of a tsconfig's own project, nearest first, strictly below `dep`.
+
+    `contracts/http/tsconfig.json` under deployable `.` gives `["contracts/http", "contracts"]`; a
+    config at the deployable's root, or a synthetic one, gives `[]` (find_bin already searches `dep`).
+    """
+    if cfg.startswith("synthetic:"):
+        return []
+    stop = "" if dep in ("", ".") else dep.rstrip("/")
+    out, d = [], os.path.dirname(cfg)
+    while d and d != stop:
+        out.append(d)
+        d = os.path.dirname(d)
+    return out
+
+
 # ----------------------------------------------------------------------------------------------- the runner
 class Verify:
     def __init__(self, a, matrix: dict):
@@ -1407,7 +1423,14 @@ class Verify:
             else:
                 gen = self.generated_tsconfig(dep, cfg)
                 vid = "v-type-check-" + re.sub(r"[^a-z0-9]+", "-", (dep + "-" + os.path.basename(cfg).replace(".json", "")).lower()).strip("-")
-            tsc = find_bin("tsc", self.a.tsc, root, self.top, [dep])
+            # A2-446. The compiler belongs to the project the config lives in, which need not be the
+            # deployable's root: scrutator declares its only TypeScript project as
+            # `deployables["."].tsconfig = ["contracts/http/tsconfig.json"]`, with its own package.json
+            # and install there, and a search of `["", dep]` never looked in contracts/http — so the
+            # verdict was `tsc unavailable` whatever was installed. The config's own directories are
+            # searched AFTER the old ones, so every group that already found a compiler keeps exactly
+            # the compiler it had; only a group that found none can gain one.
+            tsc = find_bin("tsc", self.a.tsc, root, self.top, [dep] + config_dirs(dep, cfg))
             if not tsc:
                 self.record(vid, "type_check", f"tsc -p {gen} (tsc not found)", eids, 127, "tsc binary not found (node_modules/.bin/tsc, --tsc, PATH)",
                             started, 0.0, "not_measured: tsc unavailable", {e: ("not_measured", "tsc unavailable on this host") for e in eids})
@@ -1436,7 +1459,10 @@ class Verify:
             # the compiler actually emitted unresolved-module diagnostics. The second half is what the
             # first alone got wrong — the ts-mini fixture declares dependencies it never installs and
             # resolves them through generated `paths`, so it compiles clean and is measured as before.
-            uninstalled = self.dependency_install_missing(dep, root) if unresolved else None
+            # A2-446: the config's own package is asked too — a nested project declares its dependencies
+            # in its own manifest, which the deployable's (scrutator: none at the root) does not show.
+            uninstalled = (next((u for u in (self.dependency_install_missing(d, root) for d in [dep] + config_dirs(dep, cfg)) if u), None)
+                           if unresolved else None)
             if uninstalled:
                 why = (f"{unresolved} of {n_err} diagnostic(s) are unresolved modules and {uninstalled}; "
                        f"a type check over an unresolved module graph measures the absent install, not this change")
