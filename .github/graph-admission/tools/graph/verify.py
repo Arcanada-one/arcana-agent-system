@@ -44,6 +44,7 @@ profile, or discovery; an absent tool yields not_measured, never verified.
 from __future__ import annotations
 
 import workflow_config
+import nest_bootstrap
 import canary_evidence
 import argparse
 import ast
@@ -118,6 +119,7 @@ SPEC_JS_RE = re.compile(r"\.(spec|test)\.[cm]?[jt]sx?$")
 SPEC_PY_RE = re.compile(r"(^|/)(test_\w+|\w+_test)\.py$")
 PYTEST_VERBOSE_RE = re.compile(r"^(\S+?\.py)::\S+\s+(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)")
 PYTEST_SUMMARY_RE = re.compile(r"^(FAILED|ERROR)\s+(\S+?\.py)(?:::|\s|$)")
+POSTBUILD = "postbuild:"   # A2-444: group-key prefix of a config compiled against this run's own build
 VERDICT_RANK = {"verified": 0, "not_measured": 1, "failed": 2}
 PERSISTENCE_RE = re.compile(r"(^|/)prisma\.service\.[cm]?[jt]s$|\.repository\.[cm]?[jt]s$")
 PERSISTENCE_PKGS = {"@prisma/client", "typeorm"}
@@ -568,14 +570,7 @@ def pytest_file_status(outcomes: set[str]) -> str | None:
 
 
 def deployable_of(path: str, deployables: dict[str, dict]) -> str | None:
-    best = None
-    for d in deployables:
-        dd = d.rstrip("/")
-        rank = 0 if dd in ("", ".") else len(dd)
-        best_rank = 0 if best in ("", ".") else len(best or "")
-        if (dd in ("", ".") or path.startswith(dd + "/")) and (best is None or rank > best_rank):
-            best = dd
-    return best
+    return nest_bootstrap.deployable_of(path, [d.rstrip("/") for d in deployables])
 
 
 def module_of(path: str, dep: str | None) -> str | None:
@@ -586,10 +581,22 @@ def module_of(path: str, dep: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+# A2-452. A fixture is test DATA laid out as a tree, not a program anyone compiles: 430 of the 436
+# program entities that no tsconfig covers live under contracts/graph-verified-change/fixtures/**,
+# and the fixture that must compile (ts-mini) is compiled by the selftest under its own profile.
+# The discriminator is a DIRECTORY NAME in the path — something a file created tomorrow either sits
+# under or does not — never a list of today's files. The file name itself does not count, so
+# `src/fixtures.ts` stays live code.
+FIXTURE_DIR_NAMES = frozenset({"fixtures", "__fixtures__", "testdata"})
+
+
+def is_fixture_path(path: str) -> bool:
+    return any(part in FIXTURE_DIR_NAMES for part in (path or "").split("/")[:-1])
+
+
 def is_test_path(path: str) -> bool:
-    """The TypeScript/JavaScript test-file rule build_graph applies (TsFile.is_test), for a repo path."""
-    return bool(re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", path) or "/test/" in path or "/__tests__/" in path
-                or path.startswith(("test/", "__tests__/")))
+    """The TypeScript/JavaScript test-file rule build_graph applies (TsFile.is_test). Defined once in impact_pair."""
+    return impact_pair.is_test_path(path)
 
 
 def tsconfig_names(tree, cfg: str, rel: str) -> bool:
@@ -627,8 +634,9 @@ def tsconfig_names(tree, cfg: str, rel: str) -> bool:
 
 
 def canary_unreachable_test(ntype: str, path: str, inferred_boundary: bool | None) -> bool:
-    """A2-353: is this a test code_unit no canary can ever list (and no inferred boundary holds)?"""
-    return ntype == "code_unit" and not inferred_boundary and is_test_path(path or "")
+    """A2-353. Defined ONCE in impact_pair, which the gate's mandatory_by_entity also calls — two copies of this rule
+    are how the producer and the gate came to disagree (talomnia-site #211)."""
+    return impact_pair.canary_unreachable_test(ntype, path, inferred_boundary)
 
 
 def type_project_of(path: str, deployables: dict[str, dict], tree: build_graph.Tree) -> str | None:
@@ -636,9 +644,46 @@ def type_project_of(path: str, deployables: dict[str, dict], tree: build_graph.T
 
     This selects a compiler project, not a graph owner or a verified verdict:
     v_type_check still requires the compiler's actual --listFiles membership.
+
+    Muneral d2c3de8c. Graph deployables come only from a ROOT pnpm workspace, so a repository that holds
+    self-contained packages with no workspace file around them (the Arcanada workspace: Agent Dreamer,
+    backtest-db-api, the LTM harnesses — each with its own package.json and tsconfig.json) had every
+    one of their files answer «lies in no deployable with a TypeScript project»: 219 COVERAGE_GAP
+    verdicts, although `tsc -p <dir>/tsconfig.json` checks them. Outside every deployable, the NEAREST
+    directory holding a tsconfig.json is the compiler project, which is also what tsc itself would pick
+    up from that file's directory. The root tsconfig stays the last step, so a repository without
+    nested configs answers exactly as before.
     """
     dep = deployable_of(path, deployables)
-    return "." if dep is None and tree.exists("tsconfig.json") else dep
+    if dep is not None:
+        return dep
+    nested = nested_type_project(path, tree)
+    if nested is not None:
+        return nested
+    return "." if tree.exists("tsconfig.json") else None
+
+
+def nested_type_project(path: str, tree: build_graph.Tree) -> str | None:
+    """The nearest proper ancestor directory of `path` (not the root) that holds a tsconfig.json.
+
+    Three kinds of path never get one, each on purpose:
+      - a fixture (FIXTURE_DIR_NAMES): its tsconfig describes TEST DATA that a selftest compiles under its
+        own profile (ts-mini). Picking it up here would turn A2-452's discharge of uncovered fixtures into
+        a type check of a fixture tree with no install;
+      - the vendored gate bundle `.github/graph-admission/**`, which deployable_has_ts skips for the same
+        reason — a caller does not type-check someone else's shipped code;
+      - anything under node_modules/.
+    """
+    if (is_fixture_path(path) or path.startswith(".github/graph-admission/") or "node_modules/" in path
+            or "/" not in path):
+        return None
+    parts = path.split("/")[:-1]
+    while parts:
+        d = "/".join(parts)
+        if tree.exists(d + "/tsconfig.json"):
+            return d
+        parts.pop()
+    return None
 
 
 def tarjan_scc(nodes: list[str], adj: dict[str, list[str]]) -> list[list[str]]:
@@ -901,6 +946,7 @@ class Verify:
         self.canary_paths = list(getattr(a, "canary", None) or [])   # CanaryResult/v1 documents (AUP-GRAPH-008)
         self.canary_verified: set[str] = set()
         self.canary_discharged_tests: list[str] = []   # A2-353: test code_units whose `canary` was discharged
+        self.type_check_discharged_fixtures: list[str] = []   # A2-452: uncovered fixture files, type_check discharged
         self.prep_seconds = 0.0
         # DEC-AUP-0035. WHERE this run's receipt is going, expressed relative to the repository, and
         # for which work item. Both are needed to recognise the one entity a receipt can never
@@ -969,6 +1015,17 @@ class Verify:
                 self.exported = True
         self.tree_base = build_graph.load_tree_git(self.top, self.base, "") if self.mode == "diff" else \
             build_graph.load_tree_git(self.top, self.repo.head(), "")
+        # Bootstrap selection is revision-bound. A dirty/other-head local profile
+        # must not override the tracked profile of the head we are verifying.
+        if not getattr(self.a, 'profile', None):
+            if self.tree_head.exists('.arcana/verify.json'):
+                try:
+                    self.profile = json.loads(self.tree_head.text('.arcana/verify.json'))
+                except (ValueError, TypeError):
+                    self.profile = {'deployables': None, '_invalid_bootstrap_profile': True}
+                self.profile_ref = '.arcana/verify.json at verified head'
+            else:
+                self.profile = {"schema": "VerifyProfile/v1", "deployables": {}, "auto": True}
         self.graph_head = build_graph.build(self.top, worktree=True, built_at=build_graph.FIXED_BUILT_AT) if self.mode == "worktree" \
             else build_graph.build(self.top, rev=self.head, built_at=build_graph.FIXED_BUILT_AT)
         self.scan_head = TreeScan(self.tree_head)
@@ -1106,6 +1163,17 @@ class Verify:
                 req.discard("type_check")
             if ntype == "deployable_unit" and not self.deployable_has_ts(ent["node"].get("path", "")):
                 req.discard("type_check")
+            # A2-452. A TypeScript/JavaScript file that NO compiler project covers could only ever record
+            # not_measured, and two different facts produced it: a fixture (test data, not a program —
+            # the obligation is not owed) and live code that fell out of every tsconfig (a real coverage
+            # gap). Mixed together, the gap was invisible: every fixture edit paused the change, so the
+            # pause was cleared by exemption, and a live file would have been cleared with it. The
+            # fixture half is discharged here and RECORDED (notes); a covered fixture keeps its check,
+            # and uncovered live code keeps not_measured with a COVERAGE_GAP reason in v_type_check.
+            if ("type_check" in req and ntype in ("code_unit", "route")
+                    and is_fixture_path(ent["node"].get("path", "")) and not self.type_project_covers(ent["node"].get("path", ""))):
+                req.discard("type_check")
+                self.type_check_discharged_fixtures.append(ent["id"])
             # AUP-GRAPH-010 polyglot3. A SELECTED verifier used to be demanded of every entity of a
             # node type it applies to, whether or not anything could ever produce a verdict for that
             # entity — and a demanded verifier that produces no verdict is `not_measured` (:1989).
@@ -1148,6 +1216,11 @@ class Verify:
                               f"canary lists live-contour entities and can never name a test file; their other "
                               f"verifiers (config_schema, type_check, fitness) still apply: "
                               + ", ".join(sorted(self.canary_discharged_tests)[:10]))
+        if self.type_check_discharged_fixtures:
+            self.notes.append(f"A2-452: `type_check` discharged for {len(self.type_check_discharged_fixtures)} fixture file(s) no "
+                              f"tsconfig covers (a directory named {'/'.join(sorted(FIXTURE_DIR_NAMES))} in the path): test "
+                              f"data, not a compiled project; their other verifiers still apply: "
+                              + ", ".join(sorted(self.type_check_discharged_fixtures)[:10]))
         self.disabled_hits = sorted(v for v in self.disabled if any(v in e["required"] for e in self.entities.values()))
         if self.disabled_hits and "disabled_mandatory_event" in self.rules:
             self.events.append({"code": "MANDATORY_VERIFIER_DISABLED", "verifiers": self.disabled_hits,
@@ -1156,6 +1229,11 @@ class Verify:
     @staticmethod
     def is_ts(path: str) -> bool:
         return os.path.splitext(path)[1] in CODE_EXTS or path.endswith((".js", ".mjs", ".cjs", ".jsx"))
+
+    def type_project_covers(self, path: str) -> bool:
+        """Is some compiler project attributed to this file — the same two steps v_type_check takes?"""
+        dep = type_project_of(path, self.deployables, self.tree_head)
+        return dep is not None and bool(self.tsconfigs_for(dep, path))
 
     def deployable_has_ts(self, dep_path: str) -> bool:
         """Does this deployable actually contain TypeScript the compiler could check?
@@ -1287,29 +1365,56 @@ class Verify:
                 for cfg in self.tsconfigs_for(dep, None):
                     groups.setdefault((dep, cfg), []).append(eid)
                 if not self.tsconfigs_for(dep, None):
-                    unattributed[eid] = ("not_measured", f"no tsconfig for deployable {dep}")
+                    unattributed[eid] = ("not_measured", f"COVERAGE_GAP: no tsconfig for deployable {dep}")
                 continue
             dep = type_project_of(path, self.deployables, self.tree_head)
             if dep is None:
-                unattributed[eid] = ("not_measured", f"{path} lies in no deployable with a TypeScript project and no root tsconfig exists")
+                unattributed[eid] = ("not_measured", f"COVERAGE_GAP: {path} lies in no deployable with a TypeScript project and no tsconfig.json exists in its directory, any directory above it, or the root")
                 continue
-            cfgs = self.tsconfigs_for(dep, path)
+            cfgs = self.tsconfigs_for(dep, path) + [POSTBUILD + c for c in self.postbuild_tsconfigs_for(dep, path)]
             if not cfgs:
-                unattributed[eid] = ("not_measured", f"no tsconfig covers {path}")
+                unattributed[eid] = ("not_measured", f"COVERAGE_GAP: no tsconfig covers {path}")
                 continue
             for cfg in cfgs:
                 groups.setdefault((dep, cfg), []).append(eid)
+        # A2-452. These reasons were computed and then dropped: nothing recorded them, so the entity
+        # read «required verifier type_check produced no verdict» — 2 090 such verdicts on fixture and
+        # JS entities across the committed program receipts — and the WHY (no project covers it) was
+        # never visible to the reader who had to decide whether that was a gap or test data.
+        if unattributed:
+            self.record("v-type-check-uncovered", "type_check", "(none: no compiler project is attributed to these entities)",
+                        list(unattributed), 127, "\n".join(f"{e}: {r[1]}" for e, r in sorted(unattributed.items())),
+                        now_iso(), 0.0, f"not_measured: {len(unattributed)} entity(ies) no tsconfig covers", unattributed)
         ran = []   # compilations that completed, judged below once every config has been listed
         for (dep, cfg), eids in sorted(groups.items()):
             started = now_iso()
-            gen = self.generated_tsconfig(dep, cfg)
-            tsc = find_bin("tsc", self.a.tsc, self.exec_root, self.top, [dep])
-            vid = "v-type-check-" + re.sub(r"[^a-z0-9]+", "-", (dep + "-" + os.path.basename(cfg).replace(".json", "")).lower()).strip("-")
+            root = self.exec_root
+            if cfg.startswith(POSTBUILD):
+                # A2-444. A config that checks BUILD OUTPUT is compiled inside a tree this run built
+                # from the measured revision, never inside the repository: a `dist/` lying in the
+                # worktree came from whatever was built last, and checking against it would be a
+                # verdict about another revision. No build of our own → not_measured, never verified.
+                cfg = cfg[len(POSTBUILD):]
+                vid = "v-type-check-postbuild-" + re.sub(r"[^a-z0-9]+", "-", (dep + "-" + os.path.basename(cfg).replace(".json", "")).lower()).strip("-")
+                pb = self.postbuild(dep)
+                if pb["why"]:
+                    self.record(vid, "type_check", f"post-build {cfg}: {' '.join(pb['build'] or []) or '(no build)'} (not run to completion)",
+                                eids, 125, pb["log"], started, pb["seconds"], f"not_measured: {pb['why'][:160]}",
+                                {e: ("not_measured", f"{cfg} (post-build): {pb['why']}") for e in eids})
+                    continue
+                root = pb["root"]
+                gen = root / cfg
+            else:
+                gen = self.generated_tsconfig(dep, cfg)
+                vid = "v-type-check-" + re.sub(r"[^a-z0-9]+", "-", (dep + "-" + os.path.basename(cfg).replace(".json", "")).lower()).strip("-")
+            tsc = find_bin("tsc", self.a.tsc, root, self.top, [dep])
             if not tsc:
                 self.record(vid, "type_check", f"tsc -p {gen} (tsc not found)", eids, 127, "tsc binary not found (node_modules/.bin/tsc, --tsc, PATH)",
                             started, 0.0, "not_measured: tsc unavailable", {e: ("not_measured", "tsc unavailable on this host") for e in eids})
                 continue
-            rc, out, secs = run_cmd([tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "false", "--listFiles"], self.exec_root / dep)
+            rc, out, secs = run_cmd([tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "false", "--listFiles"], root / dep)
+            if root is not self.exec_root:
+                cfg = f"{cfg} (post-build of {pb['rev'][:12]}, build {pb['seconds']}s, output {pb['digest'][:19]})"
             listed, errors_by_file, n_err, global_errors = set(), {}, 0, []
             unresolved = 0
             for line in out.splitlines():
@@ -1317,12 +1422,12 @@ class Verify:
                 if m:
                     n_err += 1
                     unresolved += m.group(4) in UNRESOLVED_MODULE_CODES
-                    errors_by_file.setdefault(self.norm_tsc_path(m.group(1), dep), []).append(f"{m.group(4)} L{m.group(2)}: {m.group(5)[:160]}")
+                    errors_by_file.setdefault(self.norm_tsc_path(m.group(1), dep, root), []).append(f"{m.group(4)} L{m.group(2)}: {m.group(5)[:160]}")
                 elif re.match(r"^error TS\d+:", line.strip()):
                     n_err += 1
                     global_errors.append(line.strip()[:240])
                 elif line.startswith("/") and not line.strip().endswith(":"):
-                    listed.add(self.norm_tsc_path(line.strip(), dep))
+                    listed.add(self.norm_tsc_path(line.strip(), dep, root))
             # The compiler RAN and exited normally, so the run looks complete — which is exactly why
             # this has to be caught here. With no dependency install, every import answers TS2307 and
             # the flood is attributed to the changed files: 1320 errors on auth-arcana, not one of
@@ -1331,7 +1436,7 @@ class Verify:
             # the compiler actually emitted unresolved-module diagnostics. The second half is what the
             # first alone got wrong — the ts-mini fixture declares dependencies it never installs and
             # resolves them through generated `paths`, so it compiles clean and is measured as before.
-            uninstalled = self.dependency_install_missing(dep) if unresolved else None
+            uninstalled = self.dependency_install_missing(dep, root) if unresolved else None
             if uninstalled:
                 why = (f"{unresolved} of {n_err} diagnostic(s) are unresolved modules and {uninstalled}; "
                        f"a type check over an unresolved module graph measures the absent install, not this change")
@@ -1380,7 +1485,7 @@ class Verify:
             summary = f"{cfg}: exit {rc}, {n_err} error(s), {len(listed)} files listed"
             self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out, started, secs, summary, verdicts)
 
-    def dependency_install_missing(self, dep: str) -> str | None:
+    def dependency_install_missing(self, dep: str, root: Path | None = None) -> str | None:
         """Why module resolution cannot work in this tree — or None, meaning the compiler is believed.
 
         `tsc` in a tree whose dependencies were never installed answers TS2307 for every import, and
@@ -1419,7 +1524,7 @@ class Verify:
         if not declared:
             return None
         # node_modules is never in the Git tree: probe the filesystem the compiler will actually read.
-        root = self.exec_root.resolve()
+        root = (root or self.exec_root).resolve()
         probe = (root / dep).resolve() if dep not in ("", ".") else root
         while True:
             if (probe / "node_modules").is_dir():
@@ -1430,11 +1535,12 @@ class Verify:
                         f"absent install, not this change")
             probe = probe.parent
 
-    def norm_tsc_path(self, p: str, dep: str) -> str:
+    def norm_tsc_path(self, p: str, dep: str, root: Path | None = None) -> str:
         p = p.strip()
+        root = root or self.exec_root
         try:
-            rp = Path(p) if Path(p).is_absolute() else (self.exec_root / dep / p)
-            return rp.resolve().relative_to(self.exec_root.resolve()).as_posix()
+            rp = Path(p) if Path(p).is_absolute() else (root / dep / p)
+            return rp.resolve().relative_to(root.resolve()).as_posix()
         except ValueError:
             return p
 
@@ -1462,6 +1568,120 @@ class Verify:
         if prof.get("synthetic_tsconfig") is not None and not cfgs:
             cfgs.append(f"synthetic:{dep}")
         return cfgs
+
+    def postbuild_spec(self, dep: str) -> dict | None:
+        spec = ((self.profile.get("deployables") or {}).get(dep) or {}).get("tsconfig_postbuild")
+        return spec if isinstance(spec, dict) else None
+
+    def postbuild_tsconfigs_for(self, dep: str, path: str) -> list[str]:
+        """A2-444. The post-build configs of `dep` that NAME `path` (files / include, tsconfig_names).
+
+        Membership is decided statically so that a change which reaches no such file costs no build;
+        the compiler's --listFiles still decides the verdict. A config that inherits its include via
+        `extends` names nothing here — it keeps the entity with the other projects, never on a
+        verdict it did not earn."""
+        spec = self.postbuild_spec(dep)
+        if not spec:
+            return []
+        prefix = "" if dep in ("", ".") else dep.rstrip("/") + "/"
+        rel = path[len(prefix):] if path.startswith(prefix) else path
+        return [prefix + c for c in (spec.get("tsconfig") or []) if tsconfig_names(self.tree_head, prefix + c, rel)]
+
+    def postbuild(self, dep: str) -> dict:
+        """A2-444. Build `dep` from the MEASURED revision in a tree of its own; once per run.
+
+        Returns {root, rev, why, seconds, digest, build, log}. `why` set ⇒ nothing was built that a
+        type check may be charged to, and every entity of the group is not_measured with that reason.
+        The tree is a fresh `git archive` of the revision — never the worktree — with the declared
+        outputs removed BEFORE the build even when they are tracked, so the only `dist/` the compiler
+        can see is one this build wrote. After the build every output file must be a regular file
+        inside that tree whose inode changed after the build started (st_ctime cannot be carried over
+        by a copy); anything else is refused as «not produced by this build»."""
+        cache = self.__dict__.setdefault("_postbuilt", {})
+        if dep in cache:
+            return cache[dep]
+        spec = self.postbuild_spec(dep) or {}
+        build = spec.get("build")
+        outputs = [str(o).strip("/") for o in (spec.get("outputs") or ["dist"])]
+        res = {"root": None, "rev": None, "why": None, "seconds": 0.0, "digest": None,
+               "build": build if isinstance(build, list) else None, "log": ""}
+        cache[dep] = res
+        if not (isinstance(build, list) and build and all(isinstance(x, str) for x in build)):
+            res["why"] = "build not performed: the profile declares no `build` command (a list of strings)"
+            return res
+        if self.mode == "diff":
+            rev = self.head
+        elif self.repo.dirty():
+            res["why"] = ("build not performed: the working tree is dirty, and a post-build type check measures a build "
+                          "of a COMMIT — commit the change or run in --diff mode")
+            return res
+        else:
+            rev = self.repo.head()
+        res["rev"] = rev
+        prefix = "" if dep in ("", ".") else dep.rstrip("/") + "/"
+        dest = self.workdir / f"postbuild-{rev[:12]}-{re.sub(r'[^a-z0-9]+', '-', (dep or 'root').lower()).strip('-') or 'root'}"
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        tar = subprocess.run(["git", "archive", "--format=tar", rev], cwd=self.top, check=True, capture_output=True).stdout
+        subprocess.run(["tar", "-x", "-C", str(dest)], input=tar, check=True)
+        removed = []
+        for o in outputs:
+            tgt = dest / prefix / o
+            if tgt.is_symlink() or tgt.is_file():
+                tgt.unlink(); removed.append(o)
+            elif tgt.is_dir():
+                shutil.rmtree(tgt); removed.append(o)
+        # The install is hard-link COPIED, not symlinked as export_head does: a build that emits
+        # declarations through a symlinked node_modules resolves types to a path outside the tree and
+        # refuses with TS2742 «not portable» (measured on auth-arcana `nest build`: exit 1, every
+        # Prisma-typed method). `cp -al` keeps pnpm's relative links inside the copy (0.9s for 667M).
+        # Where hard links are impossible (another filesystem) it falls back to the symlink, and a
+        # build that then fails is `not_measured`, never a pass.
+        linked = []
+        for d in [""] + sorted(p[:-len("/package.json")] for p in self.tree_head.paths if p.endswith("/package.json") and p.count("/") <= 2):
+            src, tgt = self.top / d / "node_modules", dest / d / "node_modules"
+            if src.is_dir() and not tgt.exists():
+                if subprocess.run(["cp", "-al", str(src), str(tgt)], capture_output=True).returncode == 0:
+                    linked.append(f"{d or '.'} (hard-link copy)")
+                else:
+                    shutil.rmtree(tgt, ignore_errors=True)
+                    tgt.symlink_to(src, target_is_directory=True)
+                    linked.append(f"{d or '.'} (symlink)")
+        t_start = time.time()
+        rc, out, secs = run_cmd(list(build), dest / prefix, timeout=int(spec.get("timeout_s") or 900))
+        res["seconds"] = secs
+        res["log"] = (f"post-build of {rev} in {dest}\ncommand: {build}\nremoved before build (tracked outputs): {removed or 'none'}\n"
+                      f"node_modules linked from the repository: {linked or 'none'}\nexit: {rc} after {secs}s\n\n{out}")
+        if rc != 0:
+            res["why"] = f"build not performed: `{' '.join(build)}` exited {rc} at {rev[:12]} after {secs}s"
+            return res
+        h = hashlib.sha256()
+        for o in outputs:
+            base = dest / prefix / o
+            files = sorted(q for q in base.rglob("*") if not q.is_dir()) if base.is_dir() and not base.is_symlink() else []
+            if not files:
+                res["why"] = (f"build exited 0 but wrote no {prefix}{o}/: nothing built from {rev[:12]} to check against "
+                              f"(an output found elsewhere is not a build of this revision)")
+                return res
+            for q in files:
+                st = q.lstat()
+                inside = q.resolve().is_relative_to(dest.resolve())
+                if q.is_symlink() or not inside or st.st_ctime < t_start - 1:
+                    res["why"] = (f"{q.relative_to(dest).as_posix()} was not produced by this build of {rev[:12]} "
+                                  f"({'a symlink' if q.is_symlink() else 'outside the build tree' if not inside else 'older than the build'}); "
+                                  f"a check against it would measure another revision")
+                    return res
+                h.update(q.relative_to(dest).as_posix().encode() + b"\0" + q.read_bytes() + b"\0")
+        res["digest"] = "sha256:" + h.hexdigest()
+        res["root"] = dest
+        (dest / ".arcana-postbuild.json").write_text(json.dumps({"rev": rev, "build": build, "exit": rc, "seconds": secs,
+                                                                   "outputs": outputs, "digest": res["digest"],
+                                                                   "removed_before_build": removed}, indent=1))
+        self.notes.append(f"A2-444 post-build: {prefix or './'} built from {rev[:12]} with `{' '.join(build)}` in {secs}s "
+                          f"(outputs {outputs}, {res['digest'][:19]}; tracked outputs removed first: {removed or 'none'}; "
+                          f"node_modules linked: {linked or 'none'}); post-build configs are compiled there, never in the worktree")
+        return res
 
     def generated_tsconfig(self, dep: str, cfg: str) -> Path:
         # A relocated extending config changes implicit @types discovery. For the
@@ -1564,15 +1784,15 @@ class Verify:
             return
         started = now_iso()
         t0 = time.monotonic()
-        prefixes: dict[str, str | None] = {}
+        bootstraps: dict[str, nest_bootstrap.Bootstrap] = {}
         registered: dict[str, tuple[set[str], list[str]]] = {}
         log, verdicts = [], {}
         # A2-277 defect 2. RC-01/RC-02 are NestJS rules; RC-03 (is the served route still there, and
         # does anything consume it) is a statement about the graph and holds in any language. So the
         # applicability is per RULE, not per verifier: on a non-Nest tree the route keeps the verdict
         # RC-03 can honestly produce, and the reason says which rules ran and which never applied.
-        nest = self.repo_has_nest()
-        if not nest and ents:
+        repo_nest = self.repo_has_nest()
+        if not repo_nest and ents:
             log.append(f"INAPPLICABLE_FRAMEWORK: no package.json in this tree names an @nestjs/ package, so "
                        f"RC-01 (setGlobalPrefix) and RC-02 (@Module registration) state nothing about these "
                        f"{len(ents)} route(s). They are NOT measured and NOT counted against them; RC-03 still is.")
@@ -1584,6 +1804,11 @@ class Verify:
             n = self.entities[eid]["node"]
             path = n.get("path") or ""
             dep = deployable_of(path, self.deployables)
+            # Nest elsewhere in a polyglot tree is not evidence that a Python
+            # route has a Nest bootstrap. The route extractor/source determines
+            # applicability; RC-03 remains applicable to every served route.
+            framework = nest_bootstrap.route_framework(self.tree_head, dep, path, repo_nest=repo_nest)
+            nest = framework == 'nest'
             problems, notes = [], []
             if "rc03" in self.fr_rules:
                 if eid not in self.head_nodes:
@@ -1598,25 +1823,35 @@ class Verify:
             if dep is None:
                 verdicts[eid] = ("not_measured", f"controller {path} lies in no deployable")
                 continue
-            if dep not in prefixes:
-                pf = None
-                prof = (self.profile.get("deployables") or {}).get(dep, {})
-                prefix = "" if dep in ("", ".") else dep + "/"
-                candidates = [prefix + "src/main" + ext for ext in (".ts", ".mts")
-                              if self.tree_head.exists(prefix + "src/main" + ext)]
-                root_file = prof.get("root_module_file") or (candidates[0] if len(candidates) == 1 else None)
-                if root_file and deployable_of(root_file, self.deployables) == dep and self.tree_head.exists(root_file):
-                    m = re.search(r"""setGlobalPrefix\(\s*['"]([^'"]*)['"]""", build_graph.strip_comments(self.tree_head.text(root_file)))
-                    if m:
-                        pf = "/" + m.group(1).strip("/")
-                else:
-                    root_file = None
-                prefixes[dep] = pf
-                registered[dep] = nest_registered_files(self.scan_head, root_file) if root_file else (set(), ["no src/main.ts"])
+            if framework == 'unknown':
+                verdicts[eid] = ('not_measured', 'BOOTSTRAP_UNRESOLVED: route deployable framework metadata unreadable')
+                continue
+            owners = {deployable_of(p, self.deployables) for p in (n.get('attrs') or {}).get('nest_route_sources', [])}
+            if nest and len(owners) > 1:
+                verdicts[eid] = ('not_measured', 'BOOTSTRAP_UNRESOLVED: logical route has multiple deployable owners')
+                continue
+            if dep not in bootstraps:
+                bootstraps[dep] = nest_bootstrap.resolve(self.tree_head, dep, self.deployables, self.profile)
+                root_file = bootstraps[dep].root_file
+                registered[dep] = nest_registered_files(self.scan_head, root_file) if root_file else (set(), ["no resolved bootstrap"])
+            bootstrap = bootstraps[dep]
+            if nest and self.fr_rules & {"rc01", "rc02"} and not bootstrap.complete:
+                verdicts[eid] = ("not_measured", "BOOTSTRAP_UNRESOLVED: " + bootstrap.reason)
+                log.append(f"{eid}: not_measured {bootstrap.reason}")
+                continue
+            route_match = re.match(r"route:(\w+)\s+(.+)", eid)
+            # Legacy test/client IDs may use a colon instead of the canonical space.
+            if not route_match:
+                route_match = re.match(r"route:(\w+):(.+)", eid)
+            try:
+                effective = bootstrap.effective_prefix(*route_match.groups()) if route_match else bootstrap.prefix
+            except ValueError as exc:
+                verdicts[eid] = ('not_measured', 'BOOTSTRAP_UNRESOLVED: ' + str(exc))
+                continue
             want = (n.get("attrs") or {}).get("global_prefix")
             want = ("/" + want.strip("/")) if want else None
-            if nest and "rc01" in self.fr_rules and want is not None and want != prefixes[dep]:   # a route built without a prefix attr is excluded from it (e.g. health)
-                problems.append(f"PREFIX_MISMATCH: route built with prefix {want!r}, bootstrap at head sets {prefixes[dep]!r}")
+            if nest and "rc01" in self.fr_rules and want != effective:
+                problems.append(f"PREFIX_MISMATCH: route built with prefix {want!r}, selected bootstrap requires {effective!r}")
             reg, rnotes = registered[dep]
             if nest and "rc02" in self.fr_rules:
                 if not reg and rnotes and rnotes[0].startswith("no"):
@@ -1632,7 +1867,7 @@ class Verify:
                                              "INAPPLICABLE_FRAMEWORK — this tree declares no @nestjs/ package, so "
                                              "there is no bootstrap prefix and no @Module graph to check")
             else:
-                verdicts[eid] = ("verified", f"served at head, prefix {prefixes[dep]!r} consistent" + (" (route excluded from the prefix)" if want is None else "") + ", controller registered")
+                verdicts[eid] = ("verified", f"served at head, prefix {effective!r} consistent, selected bootstrap {bootstrap.root_file}, controller registered")
             log.append(f"{eid}: {verdicts[eid][0]} — {verdicts[eid][1]}")
         failed = sum(1 for v in verdicts.values() if v[0] == "failed")
         self.record("v-route-config", "config_schema", "verify.py route_config_consistency RC-01 prefix / RC-02 registration / RC-03 served", ents,
@@ -2552,7 +2787,10 @@ class Verify:
         exemptions, exemption_notes = self.load_exemptions(verdicts)
         adm = (admission_verdict(verdicts, exemptions) if "admission_rule" in self.rules else "admitted")
         rec = {"schema": "ChangeAdmissionReceipt/v1", "receipt_id": f"car-verify-{self.captured_at.replace('-', '').replace(':', '')}-{(self.head or self.repo.head())[:8]}",
-               "captured_at_utc": self.captured_at, "host": os.uname().nodename, "producer": {"tool": TOOL, "version": VERSION},
+               "captured_at_utc": self.captured_at,
+               **host_fields(getattr(self.a, "host_label", None),
+                             self.head or self.repo.head()),
+               "producer": {"tool": TOOL, "version": VERSION},
                "decision_ref": "DEC-AUP-0008", "repo": q["repo"],
                "graph": {k: q["graph"][k] for k in ("path", "source_commit", "graph_digest", "builder_version", "built_at_utc")},
                "tree": q["tree"], "staleness": {k: v for k, v in q["staleness"].items() if k != "checked_nodes"},
@@ -2600,6 +2838,8 @@ class Verify:
             # is checkable only against the path this document was actually written to, and
             # admit_change compares this field with where it FOUND the receipt.
             rec["receipt_path"] = self.self_receipt_rel
+        if rec.get("host_redacted"):
+            rec = redact_host_in_local_paths(rec, os.uname().nodename, rec["host"])
         return rec
 
     def load_exemptions(self, verdicts: list[dict]) -> tuple[list[dict], list[str]]:
@@ -3396,6 +3636,60 @@ def run_pilot(a, check, tsc, prisma) -> dict:
 
 
 # ----------------------------------------------------------------------------------------------- CLI
+HOST_LABEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+def host_fields(label: str | None, salt: str) -> dict:
+    """The receipt's `host` stamp, optionally replaced by a public label.
+
+    A receipt committed into a PUBLIC repository must not carry the producing machine's name (the
+    consumer repo's personal-id gate refuses it). With `--host-label` the receipt
+    says `host: <label>`, `host_redacted: true` and `host_sha256 = sha256(<salt> NUL <real host>)`,
+    the salt being the change's head commit: receipts of one change stay linkable to one machine,
+    while a dictionary of host names cannot be reused across changes. Without a label the stamp is
+    the real node name, exactly as before.
+    """
+    real = os.uname().nodename
+    if not label:
+        return {"host": real}
+    if not HOST_LABEL_RE.match(label):
+        raise ValueError(f"host label {label!r} must match {HOST_LABEL_RE.pattern}")
+    if real and real.lower() in label.lower():
+        raise ValueError("host label must not contain the real host name")
+    return {"host": label, "host_redacted": True,
+            "host_sha256": hashlib.sha256(f"{salt}\0{real}".encode()).hexdigest()}
+
+
+# An ABSOLUTE path token: a `/` at the start of the string or right after a delimiter. A `/` inside a
+# repository-relative path (`receipts/<x>/result.json`) is not a token start and is never touched.
+LOCAL_PATH_TOKEN = re.compile(r"(?<![^\s\"'`(=,])/[^\s\"'`,)]*")
+
+
+def redact_host_in_local_paths(value, real: str, label: str):
+    """With a host label, the machine name must not survive inside ABSOLUTE local paths either.
+
+    Measured on the program's own CI (#229 on main): a runner whose work tree lives under
+    /opt/arcanada-runners/<host>-general-2/ wrote that host name into repo.path, graph.path,
+    head_graph.path and every verifier output_ref, while `host` said the label. Only absolute
+    path tokens are rewritten (the real name inside them becomes the label); repository-relative
+    paths, entity ids and digests are left byte-for-byte, because the gate re-derives them from Git.
+    """
+    if not real:
+        return value
+    pattern = re.compile(re.escape(real), re.IGNORECASE)
+
+    def fix(text: str) -> str:
+        return LOCAL_PATH_TOKEN.sub(lambda m: pattern.sub(label, m.group(0)), text)
+
+    if isinstance(value, str):
+        return fix(value)
+    if isinstance(value, list):
+        return [redact_host_in_local_paths(v, real, label) for v in value]
+    if isinstance(value, dict):
+        return {k: redact_host_in_local_paths(v, real, label) for k, v in value.items()}
+    return value
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", type=Path)
@@ -3420,6 +3714,8 @@ def main(argv=None) -> int:
     ap.add_argument("--verifier-out", help="directory for captured verifier outputs (default <workdir>/verifier-out; never beside --out)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--work-item")
+    ap.add_argument("--host-label", help="public label stamped as the receipt's `host` instead of the machine name "
+                                         "; adds host_redacted and a head-salted host_sha256")
     ap.add_argument("--canary", action="append",
                     help="CanaryResult/v1 (tools/graph/deploy_gate.py canary): live-contour evidence for inferred/observed "
                          "boundary entities and canary_required edge types (AUP-GRAPH-008)")
@@ -3434,6 +3730,12 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-out", help="with --pilot: directory for the per-commit drafts")
     ap.add_argument("--pilot-commits", type=int, default=12)
     a = ap.parse_args(argv)
+    label = getattr(a, "host_label", None)
+    if label:
+        try:
+            host_fields(label, "")
+        except ValueError as exc:
+            ap.error(str(exc))
     if a.selftest:
         return selftest(a)
     if a.freeze_baseline:

@@ -1259,26 +1259,168 @@ def strip_flags(s: dict) -> dict:
 
 
 # ----------------------------------------------------------------------------------------------- consumer projection
-def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None = None) -> dict:
+def _executable_text(code, issues=None):
+    """Keep executable template expressions, masking only inert text at identical offsets."""
+    issues = issues if issues is not None else []
+    out = list(code)
+
+    def mask(start, end):
+        for i in range(start, end):
+            if out[i] != '\n':
+                out[i] = ' '
+
+    def quoted(start):
+        i = start + 1
+        while i < len(code):
+            if code[i] == '\\':
+                i += 2
+                continue
+            if code[i] == code[start]:
+                mask(start, i + 1)
+                return i + 1
+            i += 1
+        mask(start, len(code))
+        issues.append('unterminated quoted text')
+        return len(code)
+
+    def template(start, depth):
+        if depth > 16:
+            mask(start, len(code))
+            issues.append('template nesting exceeds bounded scan')
+            return len(code)
+        i, text = start + 1, start
+        while i < len(code):
+            if code[i] == '\\':
+                i += 2
+            elif code[i] == '`':
+                mask(text, i + 1)
+                return i + 1
+            elif code[i:i + 2] == '${':
+                mask(text, i + 2)
+                i = scan(i + 2, True, depth + 1)
+                text = i
+            else:
+                i += 1
+        mask(text, len(code))
+        issues.append('unterminated template literal')
+        return len(code)
+
+    def scan(start, interpolation=False, depth=0):
+        i, braces = start, []
+        closing = {'(': ')', '[': ']', '{': '}'}
+        while i < len(code):
+            if code[i] in "'\"":
+                i = quoted(i)
+            elif code[i] == '`':
+                i = template(i, depth)
+            elif code[i:i + 2] in ('//', '/*'):
+                marker = '\n' if code[i:i + 2] == '//' else '*/'
+                end = code.find(marker, i + 2)
+                end = len(code) if end < 0 else end + (0 if marker == '\n' else 2)
+                mask(i, end)
+                i = end
+            elif interpolation and code[i] == '/' and code[i:i + 2] not in ('//', '/*'):
+                # Division versus regexp requires grammar beyond this lexical proof.
+                issues.append('slash expression in template interpolation unresolved')
+                mask(i, len(code))
+                return len(code)
+            elif interpolation and code[i] in closing:
+                braces.append(closing[code[i]])
+                i += 1
+            elif interpolation and code[i] in ')]}':
+                if code[i] == '}' and not braces:
+                    mask(i, i + 1)
+                    return i + 1
+                if not braces or braces.pop() != code[i]:
+                    issues.append('unbalanced template interpolation')
+                    mask(i, len(code))
+                    return len(code)
+                i += 1
+            else:
+                i += 1
+        if interpolation:
+            issues.append('unterminated template interpolation')
+        return i
+
+    scan(0)
+    return ''.join(out)
+
+
+def _shadow_ranges(code, name):
+    ranges = []
+    for m in re.finditer(r"\b(?:const|let|var|class|function)\s+" + re.escape(name) + r"\b", code):
+        ranges.append(enclosing_block(code, m.start()))
+    for m in re.finditer(r"\(([^()]*)\)\s*(?::[^{};=]*)?(?:=>)?\s*\{", code):
+        if '=>' not in m.group(1) and any(re.match(r"\s*" + re.escape(name) + r"\s*(?:[?:=]|$)", p) for p in m.group(1).split(',')):
+            ranges.append((m.start(), match_close(code, m.end() - 1) + 1))
+    for m in re.finditer(r"\b" + re.escape(name) + r"\s*=>\s*", code):
+        start = m.end()
+        if start < len(code) and code[start] == '{':
+            end = match_close(code, start) + 1
+        else:
+            stack, end = [], start
+            closing = {'(': ')', '[': ']', '{': '}'}
+            while end < len(code):
+                c = code[end]
+                if not stack and c in ',;)]}':
+                    break
+                if c in closing:
+                    stack.append(closing[c])
+                elif c in ')]}':
+                    if not stack or stack.pop() != c:
+                        break
+                end += 1
+        ranges.append((m.start(), end))
+    return ranges
+
+
+def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None = None, *, known_zod=False, runtime_names=None) -> dict:
     """What the consumer file uses of the contract: keys read, keys sent (object literals), enum values used."""
     disabled = disabled or set()
     code = build_graph.strip_comments(code)
+    lexical_issues = []
+    executable = _executable_text(code, lexical_issues)
     keys_read: set[str] = set()
     keys_sent: set[str] = set()
     literals_sent = 0
     values: set = set()
-    incomplete: list[str] = []
+    incomplete: list[str] = list(lexical_issues)
     bindings: set[str] = set()
-    sym = re.escape(symbol)
+    sym = "(?:" + "|".join(re.escape(n) for n in (runtime_names or [symbol])) + ")"
     type_ref = r"(?:z\.(?:infer|input|output)\s*<\s*typeof\s+)?(?:Readonly<|Partial<|Omit<|Pick<)?\s*" + sym + r"\b(?:\s*>)*"
     literal_bindings: set[str] = set()
     scoped: list[tuple[str, int, int]] = []  # (name, scope_start, scope_end) — a binding is read only inside its own function body
+    wrappers: list[tuple[str, int, int]] = []
+    wrapper_unresolved = False
     for m in re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + type_ref + r"(?:\[\])?", code):
         bindings.add(m.group(1))
         scoped.append((m.group(1), *scope_of(code, m.start(), m.end())))
-    for m in re.finditer(r"\b(" + IDENT + r")\s*=\s*(?:new\s+" + sym + r"\(|plainToInstance\(\s*" + sym + r"\b|" + sym + r"\.(?:parse|safeParse|parseAsync)\(|[^;\n]*\bas\s+" + sym + r"\b)", code):
+    for m in re.finditer(r"\b(" + IDENT + r")\s*=\s*(?:new\s+" + sym + r"\(|plainToInstance\(\s*" + sym + r"\b|" + sym + r"\.(?:parse|parseAsync)\(|[^;\n]*\bas\s+" + sym + r"\b)", code):
         bindings.add(m.group(1))
         scoped.append((m.group(1), *enclosing_block(code, m.start())))
+    if known_zod:
+        # safeParse returns a discriminated result, NOT the contract payload.
+        # Only a declaration bound directly to the extracted runtime Zod schema
+        # establishes a wrapper; arbitrary `.safeParse` methods are not certified.
+        schema_shadows = [span for name in (runtime_names or [symbol]) for span in _shadow_ranges(executable, name)]
+        proven_calls = set()
+        for m in re.finditer(r"\b(?:const|let)\s+(" + IDENT + r")\s*=\s*" + sym + r"\s*\.\s*safeParse\s*\(", executable):
+            if any(a <= m.start() < z for a, z in schema_shadows):
+                wrapper_unresolved = True
+                incomplete.append("runtime Zod schema binding shadowed")
+                continue
+            b = m.group(1)
+            bindings.add(b)
+            proven_calls.add(m.end() - 1)
+            end = match_close(executable, m.end() - 1) + 1
+            wrappers.append((b, end, enclosing_block(executable, m.start())[1]))
+        for m in re.finditer(r"\b" + sym + r"\s*\.\s*safeParse(?:Async)?\s*\(", executable):
+            if m.end() - 1 not in proven_calls:
+                wrapper_unresolved = True
+                incomplete.append('safeParse result has no proven local binding')
+        if wrappers and schema.get('kind') != 'object':
+            wrapper_unresolved = True
+            incomplete.append('safeParse payload projection requires an object schema')
     if schema.get("kind") == "object":
         # destructured parameters typed with the symbol
         for m in re.finditer(r"\(\s*\{([^{}]*)\}\s*:\s*" + type_ref, code):
@@ -1300,7 +1442,7 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
                     keys_sent.add(km.group(1) or km.group(2))
             literals_sent += 1
         for b, s0, s1 in sorted(scoped):
-            seg = code[s0:s1]
+            seg = executable[s0:s1]
             for m in re.finditer(r"\b" + re.escape(b) + r"\s*\??\.\s*(" + IDENT + r")", seg):
                 keys_read.add(m.group(1))
             for m in re.finditer(r"\{([^{}]*)\}\s*=\s*" + re.escape(b) + r"\b", seg):
@@ -1314,6 +1456,35 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
                 incomplete.append(f"{b} forwarded to a call")
             if re.search(r"\bfor\s*\(\s*(?:const|let)\s+\w+\s+(?:in|of)\s+(?:Object\.\w+\()?" + re.escape(b) + r"\b", seg):
                 incomplete.append(f"iteration over {b}")
+        for b, s0, s1 in wrappers:
+            seg = executable[s0:s1]
+            # A nested declaration shadows this binding. Keep only uses in the
+            # proven lexical range, rather than treating same-name locals as Zod.
+            shadowed = []
+            for a, z in _shadow_ranges(executable, b):
+                if a >= s0 and z <= s1:
+                    shadowed.append((a - s0, z - s0))
+            seg = ''.join(' ' if any(a <= i < z for a, z in shadowed) else ch for i, ch in enumerate(seg))
+            reassignment = re.search(r"\b" + re.escape(b) + r"\s*=(?!=)", seg)
+            if reassignment:
+                incomplete.append(f"safeParse binding {b} reassigned")
+                wrapper_unresolved = True
+                seg = seg[:reassignment.start()]
+            for m in re.finditer(r"\b" + re.escape(b) + r"\b", seg):
+                tail = seg[m.end():]
+                member = re.match(r"\s*\??\.\s*(" + IDENT + r")", tail)
+                if member and member.group(1) in {"success", "error"}:
+                    continue  # result metadata is not a provider field
+                if member and member.group(1) == "data":
+                    payload = tail[member.end():]
+                    key = re.match(r"\s*\??\.\s*(" + IDENT + r")", payload)
+                    if key:
+                        keys_read.add(key.group(1))
+                        continue
+                # Whole result/payload forwarding, computed access and aliases
+                # require a downstream projection we have not proven locally.
+                incomplete.append(f"safeParse result/payload {b} usage unresolved")
+                wrapper_unresolved = True
         if not bindings and not keys_read and not keys_sent:
             incomplete.append("no binding of the contract type found in the consumer")
     elif schema.get("kind") == "enum":
@@ -1339,7 +1510,8 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
     if "consumer_incomplete" in disabled:
         incomplete = []
     return {"bindings": sorted(bindings), "keys_read": sorted(keys_read), "keys_sent": sorted(keys_sent), "literals_sent": literals_sent,
-            "values_used": sort_values(values), "complete": not incomplete, "incomplete_reasons": sorted(set(incomplete))}
+            "values_used": sort_values(values), "complete": not incomplete, "incomplete_reasons": sorted(set(incomplete)),
+            "safeparse_unresolved": wrapper_unresolved, "lexical_projection_unresolved": bool(lexical_issues)}
 
 
 def scope_of(code: str, start: int, end: int) -> tuple[int, int]:
@@ -1443,6 +1615,10 @@ def edge_verdict(proj: dict, head: dict | None, contract_diff: dict, provenance:
             reasons.append("contract removed")
     if failed:
         return "failed", reasons
+    if proj.get('lexical_projection_unresolved'):
+        return 'not_measured', ['executable consumer projection unresolved: ' + '; '.join(proj['incomplete_reasons'])]
+    if proj.get("safeparse_unresolved"):
+        return "not_measured", ["safeParse result/payload usage not proven: " + "; ".join(proj["incomplete_reasons"])]
     if not breaking:
         if provenance != "deterministic" and not proj["complete"]:
             return "not_measured", ["inferred edge and consumer usage not narrowable: " + "; ".join(proj["incomplete_reasons"])]
@@ -1540,7 +1716,13 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
         path = frm.split(":", 1)[1]
         headc = ch.get(cid)
         if path in head_tree.files:
-            proj = projection(head_tree.text(path), cd["symbol"], (headc or cb[cid])["schema"], disabled)
+            local_names = []
+            for local in ex_h.imports.get(path, {}):
+                declaration = ex_h.resolve(path, local)
+                if declaration and declaration.path == cd['path'] and declaration.symbol == cd['symbol']:
+                    local_names.append(local)
+            proj = projection(head_tree.text(path), cd["symbol"], (headc or cb[cid])["schema"], disabled,
+                              known_zod=(headc or cb[cid])["kind"] == "zod", runtime_names=local_names or None)
         else:
             proj = {"bindings": [], "keys_read": [], "keys_sent": [], "literals_sent": 0, "values_used": [], "complete": False,
                     "incomplete_reasons": ["consumer file absent at head"]}
