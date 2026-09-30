@@ -429,6 +429,10 @@ DEFAULT_BUNDLE_DIR = ".github/graph-admission"
 BUNDLE_MANIFEST_NAME = "BUNDLE.json"
 BUNDLE_SIG_NAME = "BUNDLE.json.sig"
 BUNDLE_PUBKEY_NAME = "SIGNING-KEY.pub"
+# A2-455 — must equal ci_gate.EXTRA_SIGNATURE_FMT / EXTRA_PUBKEY_FMT / MAX_BUNDLE_SIGNERS.
+BUNDLE_EXTRA_SIG_FMT = "BUNDLE.json.{n}.sig"
+BUNDLE_EXTRA_PUBKEY_FMT = "SIGNING-KEY.{n}.pub"
+BUNDLE_MAX_SIGNERS = 4
 BUNDLE_SIGNING_NAMESPACE = "graph-admission-bundle"
 STRUCTURAL_EXEMPTION_TTL_HOURS = 24
 STRUCTURAL_EXEMPTION_OWNER = "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)"
@@ -469,6 +473,10 @@ def bundle_paths_at(repo: Path, ref: str, bundle_rel: str) -> tuple[set[str], di
     except json.JSONDecodeError:
         return set(), None
     paths = {f"{rel}/{BUNDLE_MANIFEST_NAME}", f"{rel}/{BUNDLE_SIG_NAME}", f"{rel}/{BUNDLE_PUBKEY_NAME}"}
+    # A2-455 — the extra signature pairs of a dual-signed bundle (key rotation) are bundle-managed too.
+    signers = man.get("signing_keys") if isinstance(man, dict) else None
+    for n in range(2, (len(signers) if isinstance(signers, list) else 1) + 1):
+        paths |= {f"{rel}/{BUNDLE_EXTRA_SIG_FMT.format(n=n)}", f"{rel}/{BUNDLE_EXTRA_PUBKEY_FMT.format(n=n)}"}
     for f in man.get("files") or []:
         p = f.get("path") if isinstance(f, dict) else None
         if isinstance(p, str) and p:
@@ -1751,6 +1759,56 @@ print(json.dumps({"ok": bool(ok), "reason": reason, "detail": det}))
 """
 
 
+def _bundle_pairs(bundle: Path) -> list[tuple[Path, Path]]:
+    pairs = [(bundle / BUNDLE_SIG_NAME, bundle / BUNDLE_PUBKEY_NAME)]
+    for n in range(2, BUNDLE_MAX_SIGNERS + 1):
+        sp, kp = bundle / BUNDLE_EXTRA_SIG_FMT.format(n=n), bundle / BUNDLE_EXTRA_PUBKEY_FMT.format(n=n)
+        if sp.exists() or kp.exists():
+            pairs.append((sp, kp))
+    return pairs
+
+
+def key_continuity(base_bundle: Path, head_bundle: Path | None, wd: Path) -> tuple[bool | None, str, dict]:
+    """B2's measurement → (verdict, reason, record). A2-455 (DEC-AUP-0036 C4): the head manifest must
+    verify, with the BASE tree's sshsig.py, against AT LEAST ONE public key the BASE bundle carries
+    (primary or an extra pair of a dual-signed bundle). That is what lets a rotation proceed without a
+    moment of no trust: base {K1} → head {K1,K2} passes on K1, base {K1,K2} → head {K2} passes on K2, and
+    base {K1} → head {K2} (skipping the dual-signed step) is still refused, as is any key base never held."""
+    base_pubs = [kp for _, kp in _bundle_pairs(base_bundle) if kp.exists()]
+    man_p = head_bundle / BUNDLE_MANIFEST_NAME if head_bundle else None
+    head_sigs = [sp for sp, _ in _bundle_pairs(head_bundle) if sp.exists()] if head_bundle else []
+    missing = [n for n, e in (("a public key in the base bundle", bool(base_pubs)),
+                              (f"head {BUNDLE_MANIFEST_NAME}", bool(man_p) and man_p.exists()),
+                              ("a signature in the head bundle", bool(head_sigs))) if not e]
+    if missing:
+        return None, "missing " + ", ".join(missing), {}
+    drv = wd / "verify_with_base_sshsig.py"
+    wd.mkdir(parents=True, exist_ok=True)
+    drv.write_text(_SIG_DRIVER)
+    tried = []
+    for sp in head_sigs:
+        for kp in base_pubs:
+            r = subprocess.run([sys.executable, str(drv), str(base_bundle / "tools/graph"), str(man_p),
+                                str(sp), str(kp), BUNDLE_SIGNING_NAMESPACE],
+                               capture_output=True, text=True,
+                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+            try:
+                res = json.loads(r.stdout)
+            except json.JSONDecodeError:
+                res = {"ok": False, "reason": f"the base tree's sshsig.py could not be run: "
+                                              f"{(r.stderr or r.stdout).strip()[:200]}", "detail": {}}
+            fp = (res.get("detail") or {}).get("public_key_fingerprint")
+            tried.append({"head_signature": sp.name, "base_key": kp.name, "base_key_fingerprint": fp,
+                          "ok": bool(res.get("ok")), "reason": res.get("reason")})
+            if res.get("ok"):
+                return True, f"{sp.name} verifies against base {kp.name} ({fp})", {
+                    "verified": True, "reason": res.get("reason"), "key_from": kp.name,
+                    "key_fingerprint": fp, "tried": tried}
+    return False, "; ".join(f"{t['head_signature']} vs base {t['base_key']}: {t['reason']}" for t in tried), {
+        "verified": False, "reason": tried[-1]["reason"] if tried else None, "tried": tried,
+        "key_fingerprint": None}
+
+
 def _bundle_selftest(bundle_root: Path) -> tuple[int | None, int | None, str]:
     """→ (exit code, arm count, tail). `ci_gate.py --selftest` is the battery that runs from inside a
     vendored bundle; `admit_change.py --selftest` does NOT (its fixture set is not bundled — measured,
@@ -2187,36 +2245,16 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
                   f"has no signature code, so the only non-circular anchor cannot be evaluated. not_measured is "
                   f"not a pass: no exemption, the change pauses")
     else:
-        base_pub = base_bundle / BUNDLE_PUBKEY_NAME
-        man_p, sig_p = head_bundle and (head_bundle / BUNDLE_MANIFEST_NAME), head_bundle and (head_bundle / BUNDLE_SIG_NAME)
-        if not base_pub.exists() or not head_bundle or not man_p.exists() or not sig_p.exists():
-            b2 = _chk(ev, "B2", "SELF_UPDATE_KEY_CONTINUITY", None,
-                      f"missing " + ", ".join(n for n, e in ((f"{base}:{rel}/{BUNDLE_PUBKEY_NAME}", base_pub.exists()),
-                                                             (f"{head}:{rel}/{BUNDLE_MANIFEST_NAME}", bool(head_bundle) and man_p.exists()),
-                                                             (f"{head}:{rel}/{BUNDLE_SIG_NAME}", bool(head_bundle) and sig_p.exists())) if not e))
-        else:
-            drv = wd / "verify_with_base_sshsig.py"
-            drv.write_text(_SIG_DRIVER)
-            r = subprocess.run([sys.executable, str(drv), str(base_bundle / "tools/graph"), str(man_p),
-                                str(sig_p), str(base_pub), BUNDLE_SIGNING_NAMESPACE],
-                               capture_output=True, text=True,
-                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-            try:
-                res = json.loads(r.stdout)
-            except json.JSONDecodeError:
-                res = {"ok": False, "reason": f"the base tree's sshsig.py could not be run: "
-                                              f"{(r.stderr or r.stdout).strip()[:200]}", "detail": {}}
-            ev["signature"] = {"verified": bool(res.get("ok")), "reason": res.get("reason"),
-                               "verifier_from": f"{base[:12]}:{rel}/tools/graph/sshsig.py",
-                               "key_from": f"{base[:12]}:{rel}/{BUNDLE_PUBKEY_NAME}",
-                               "key_fingerprint": (res.get("detail") or {}).get("public_key_fingerprint")}
-            b2 = _chk(ev, "B2", "SELF_UPDATE_KEY_CONTINUITY", bool(res.get("ok")),
-                      (f"the head bundle's {BUNDLE_MANIFEST_NAME} verifies with the sshsig.py of base {base[:12]} "
-                       f"against the {BUNDLE_PUBKEY_NAME} of base {base[:12]} "
-                       f"({(res.get('detail') or {}).get('public_key_fingerprint')}) — the key the repository "
-                       f"already trusted, in a tree this pull request did not write"
-                       if res.get("ok") else
-                       f"the head bundle does NOT verify against the key of base {base[:12]}: {res.get('reason')}"))
+        ok2, why2, rec2 = key_continuity(base_bundle, head_bundle, wd)
+        if rec2:
+            ev["signature"] = {**rec2, "verifier_from": f"{base[:12]}:{rel}/tools/graph/sshsig.py",
+                               "key_from": f"{base[:12]}:{rel}/{rec2.get('key_from') or BUNDLE_PUBKEY_NAME}"}
+        b2 = _chk(ev, "B2", "SELF_UPDATE_KEY_CONTINUITY", ok2,
+                  (f"the head bundle's {BUNDLE_MANIFEST_NAME} verifies with the sshsig.py of base {base[:12]}: "
+                   f"{why2} — a key the repository already trusted, in a tree this pull request did not write"
+                   if ok2 else
+                   f"missing at {base[:12]}/{head[:12]}: {why2}" if ok2 is None else
+                   f"the head bundle does NOT verify against any key of base {base[:12]}: {why2}"))
 
     if not head_bundle:
         b3 = _chk(ev, "B3", "SELF_UPDATE_SELFTEST", None, f"no bundle directory at head {head[:12]}")

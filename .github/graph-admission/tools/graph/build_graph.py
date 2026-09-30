@@ -60,6 +60,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import workflow_config
+import nest_bootstrap
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
 
 VERSION = "1.0.1"
@@ -556,6 +557,7 @@ class Builder:
         self.tsconfigs: dict[str, dict] = {}      # dir → {"paths": {...}, "baseUrl": dir}
         self.packages: dict[str, str] = {}        # package name → dir
         self.package_dirs: list[str] = []
+        self.bootstraps: dict[str, nest_bootstrap.Bootstrap] = {}
         self.contracts: dict[str, dict[str, str]] = {}   # path → {symbol: kind}
         self.models: dict[str, str] = {}          # Model → block text
         self.routes: list[dict] = []              # {method, path, file, id}
@@ -635,11 +637,12 @@ class Builder:
             dirs.add(".")
         self.package_dirs = sorted(dirs)
         if self.on("routes"):
-            for f in self.ts.values():
-                m = re.search(r"setGlobalPrefix\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*\{[^}]*exclude\s*:\s*\[([^\]]*)\])?", f.code)
-                if m:
-                    self.global_prefix = "/" + m.group(1).strip("/")
-                    self.global_prefix_exclude = re.findall(r"['\"]([^'\"]+)['\"]", m.group(2) or "")
+            self.bootstraps = {d: nest_bootstrap.resolve(t, d, self.package_dirs) for d in self.package_dirs}
+            # Legacy summary fields are meaningful only for one resolved application.
+            resolved = [b for b in self.bootstraps.values() if b.complete]
+            if len(self.bootstraps) == 1 and len(resolved) == 1:
+                self.global_prefix = resolved[0].prefix
+                self.global_prefix_exclude = [p for p, method in resolved[0].exclusions if method is None]
 
     # ---- module resolution -----------------------------------------------------------------------------
     def _try_file(self, base: str) -> str | None:
@@ -826,11 +829,26 @@ class Builder:
                         self.dynamic_routes.append(f"{f.path}: {raw_arg.strip()[:60]}")
                         continue
                     method = HTTP_METHODS[m.group(1).lower()]
-                    rid = f"route:{method} {self._route_path(prefix, sub or '')}"
+                    route_path = self._route_path(prefix, sub or '')
+                    bootstrap = self.bootstraps.get(nest_bootstrap.deployable_of(f.path, self.package_dirs))
+                    route_complete = bool(bootstrap and bootstrap.complete)
+                    try:
+                        effective = bootstrap.effective_prefix(method, route_path) if route_complete else None
+                    except ValueError:
+                        effective, route_complete = None, False
+                    rid = f"route:{method} {route_path}"
                     self.g.node(rid, "route", h, path=f.path,
-                                attrs={"global_prefix": self.global_prefix} if self.global_prefix and prefix.strip("/") not in self.global_prefix_exclude else None)
+                                attrs={"global_prefix": effective} if effective else None)
+                    previous = [r for r in self.routes if r['id'] == rid and r['file'] != f.path]
+                    if previous:
+                        # Route IDs are logical (not deployment-qualified). Keep
+                        # all provider edges, but never certify the first root as
+                        # the sole owner of a colliding logical route.
+                        attrs = self.g.nodes[rid].setdefault('attrs', {})
+                        attrs['nest_route_sources'] = sorted({r['file'] for r in previous} | {f.path})
                     self.g.edge(f"code_unit:{f.path}", "provides_route", rid, "deterministic", via="nest-decorator", site=f"L{code.count(chr(10), 0, m.start()) + 1}")
-                    self.routes.append({"method": method, "path": self._route_path(prefix, sub or ""), "file": f.path, "id": rid})
+                    self.routes.append({"method": method, "path": route_path, "prefix": effective,
+                                        "bootstrap_complete": route_complete, "file": f.path, "id": rid})
                     # handler signature → DTO parameter types
                     sig_start = code.find("(", m.end())
                     depth, j = 0, sig_start
@@ -1198,7 +1216,17 @@ class Builder:
         served = {}
         for r in self.routes:
             if r["method"] != "WS":
-                served[self._route_key(r["method"], r["path"], None)] = r["id"]
+                # Match wire URLs against each route's own effective prefix; never strip
+                # another deployment's prefix from a client URL.
+                # Logical paths remain inferred candidates (clients may supply a
+                # baseURL). Retain those impact edges even when wire configuration
+                # is unresolved; route_config_consistency does not certify it.
+                paths = {r["path"]}
+                if r.get("bootstrap_complete", True):
+                    paths.add((r.get("prefix") or "") + r["path"])
+                for path in paths:
+                    key = self._route_key(r["method"], path, None)
+                    served.setdefault(key, []).append(r["id"])
         call_re = re.compile(r"\b(\w+)\.(get|post|put|patch|delete|head)\s*(?:<[^>(]*>)?\(\s*(`[^`]*`|'[^']*'|\"[^\"]*\")")
         fetch_re = re.compile(r"\bfetch\s*\(\s*(`[^`]*`|'[^']*'|\"[^\"]*\")\s*(?:,\s*\{[^}]*method\s*:\s*['\"](\w+)['\"])?")
         for f in self.ts.values():
@@ -1211,8 +1239,9 @@ class Builder:
                 url = re.sub(r"^https?://[^/]+", "", url)
                 if not url.startswith("/"):
                     continue
-                key = self._route_key(method, url, self.global_prefix)
-                rid = served.get(key)
+                key = self._route_key(method, url, None)
+                matches = served.get(key, [])
+                rid = matches[0] if len(set(matches)) == 1 else None
                 line = f"L{f.code.count(chr(10), 0, pos) + 1}"
                 if rid:
                     self.g.edge(f"code_unit:{f.path}", "consumes_contract", rid, "inferred", inferred_by="http-client-url-match",
@@ -1297,9 +1326,10 @@ class Builder:
                 if nid in self.g.nodes:
                     out.append((nid, "explicit-path"))
         for m in re.finditer(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(/[\w/:{}.$-]+)", text):
-            key = self._route_key(m.group(1), m.group(2), self.global_prefix)
+            key = self._route_key(m.group(1), m.group(2), None)
             for r in self.routes:
-                if r["method"] != "WS" and self._route_key(r["method"], r["path"], None) == key:
+                if r["method"] != "WS" and (self._route_key(r["method"], r["path"], None) == key or
+                        r.get("bootstrap_complete", True) and self._route_key(r["method"], (r.get("prefix") or "") + r["path"], None) == key):
                     out.append((r["id"], "explicit-route"))
         for m in re.finditer(r"\bdata_model:(\w+)|\bmodel\s+`?(\w+)`?", text):
             name = m.group(1) or m.group(2)
@@ -1442,6 +1472,7 @@ class Builder:
             "extractors": [x for x in EXTRACTORS if self.on(x)],
             "disabled_extractors": sorted(self.disabled),
             "parameters": {"global_prefix": self.global_prefix, "global_prefix_exclude": self.global_prefix_exclude,
+                           "nest_bootstraps": {d: b.evidence() for d, b in sorted(self.bootstraps.items())},
                            "work_item_pattern": self.work_item_pattern, "parser": "regex-ast-lite", "typescript_compiler": False},
             "node_count": len(nodes),
             "edge_count": len(edges),
