@@ -96,6 +96,30 @@ def _deployable_dir(entity: str) -> str:
     return "" if d in ("", ".") else d + "/"
 
 
+def traversal_entities(rows) -> set[str]:
+    """Normal paths remain obligations even when synthetic fallback rows coexist."""
+    return {e["entity"] for e in rows if isinstance(e, dict) and "entity" in e
+            if any(p.get("path") and not all(h.get("via") == "global-fallback" for h in p["path"])
+                   for p in e.get("revision_paths", [e]))}
+
+
+def fallback_evidence_problems(doc: dict, units: set[str]) -> list[str]:
+    """A targeted spec row cannot discharge the repository-wide fallback measurement."""
+    if (doc.get("admission") or {}).get("verdict") not in {"admitted", "admitted_with_exemptions"}:
+        return []
+    records = {v.get("entity"): v for v in doc.get("verdicts", [])}
+    rows = {v.get("id"): v for v in doc.get("verifiers", [])}
+    problems = []
+    for eid in sorted(units):
+        referenced = [rows.get(i, {}) for i in records.get(eid, {}).get("verifier_ids", [])]
+        if not any(v.get("scope") == "global_fallback_full_suite" and v.get("kind") == "targeted_test"
+                   and eid in v.get("entities", []) and v.get("exit_code") == 0
+                   and v.get("entity_verdicts", {}).get(eid) == "verified" and v.get("output_ref")
+                   for v in referenced):
+            problems.append("missing measured full fallback test evidence: " + eid)
+    return problems
+
+
 def fallback_units(rows) -> set[str]:
     """The entities a triggered global fallback collapses onto, from impact-set rows.
 
@@ -467,7 +491,15 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
         # the same silence A2-232 measured in the producer (talomnia-backend: core=14, verdicts=0).
         # Derive the demand from the rows instead — they are in the receipt, independent of it.
         seeds = imp.get("seeds")
-        fallback_selection = fallback_units(core + tail)
+        fallback_selection = fallback_units(core + tail) | traversal_entities(core + tail)
+        # Historical receipts remain readable under their producer's format; live admission
+        # always re-derives the full-suite obligation from Git in impact_pair.receipt_problems.
+        producer = doc.get("producer") or {}
+        modern = producer.get("tool") == "tools/graph/verify.py" and _version(producer.get("version")) >= (1, 3, 0)
+        scoped = any(v.get("scope") == "global_fallback_full_suite" for v in doc.get("verifiers", []))
+        if modern or scoped:
+            for problem in fallback_evidence_problems(doc, fallback_units(core + tail)):
+                c.add("FULL_FALLBACK_TEST_NOT_MEASURED", problem)
         if isinstance(seeds, list):
             fallback_selection |= {s for s in seeds if isinstance(s, str)}
         fallback_selection |= {n for f in ((doc.get("change_set") or {}).get("files") or [])
