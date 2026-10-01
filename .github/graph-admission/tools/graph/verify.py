@@ -53,6 +53,8 @@ import json
 import os
 import re
 import shutil
+import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -70,7 +72,7 @@ import impact  # noqa: E402
 import impact_pair  # noqa: E402
 import contract_diff  # noqa: E402
 
-VERSION = "1.2.0"   # 1.1.0 (A2-413): every receipt carries `verifier_selection`; 1.2.0 (A2-418): property_check only where declared
+VERSION = "1.3.0"   # global fallback preserves normal obligations and requires a measured full suite
 TOOL = "tools/graph/verify.py"
 MATRIX_PATH = ROOT / "contracts" / "graph-verified-change" / "verifier-matrix.v1.json"
 GATE_POLICY_PATH = ROOT / "contracts" / "graph-verified-change" / "admission-gate.v1.json"
@@ -168,11 +170,23 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict | None = None, timeout: int = 9
     if env:
         e.update(env)
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, text=True, timeout=timeout)
-        out = p.stdout + (("\n[stderr]\n" + p.stderr) if p.stderr.strip() else "")
+        p = subprocess.Popen(cmd, cwd=cwd, env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, start_new_session=True)
+        try:
+            stdout, stderr = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as ex:
+            # This process owns a fresh session/group. Kill its whole job, including
+            # grandchildren that keep pipes open, then drain output and reap the leader.
+            # Never signal the caller's (possibly shared server/worker) process group.
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = p.communicate()
+            out = stdout + (("\n[stderr]\n" + stderr) if stderr.strip() else "")
+            return 124, f"TIMEOUT after {timeout}s: {ex}\n{out}", round(time.monotonic() - t0, 2)
+        out = stdout + (("\n[stderr]\n" + stderr) if stderr.strip() else "")
         return p.returncode, out, round(time.monotonic() - t0, 2)
-    except subprocess.TimeoutExpired as ex:
-        return 124, f"TIMEOUT after {timeout}s: {ex}", round(time.monotonic() - t0, 2)
     except FileNotFoundError as ex:
         return 127, f"NOT FOUND: {ex}", round(time.monotonic() - t0, 2)
 
@@ -1091,24 +1105,8 @@ class Verify:
     def collect_entities(self, q: dict):
         imp = q["impact_set"]
         self.entities: dict[str, dict] = {}
-        # A global fallback (lockfile / global config) makes the impact the WHOLE REPOSITORY as ONE
-        # entity - the Bazel/Nx rule of DEC-AUP-0008 - and its verifier is the repository's own test
-        # job. impact.py still lists every node in deterministic_core so a reader can see the blast
-        # radius, and the receipt keeps that listing; but those rows ARE the radius, not N separate
-        # measurements. Enumerating them here creates one entity, and therefore one demanded
-        # verdict, per row - which is how the gate came to pause a receipt it had issued itself
-        # (measured on muneral #108: selected() 8 entities against 466 verdicts, 151 of them
-        # not_measured, PAUSED_SAFE). selected() and mandatory_by_entity() already honour the flag;
-        # this is the same disagreement at its source.
-        #
-        # This line used to read `q["seeds"]` directly - "exactly what impact_pair.selected()
-        # returns under a triggered fallback" - and that copy is how the rule came to disagree with
-        # itself a second time: a manifest carries no seed, so a lockfile-only change selected
-        # NOTHING and the receipt weighed nothing while printing paused_safe (A2-232,
-        # talomnia-backend: core=14, verdicts=0, verifiers=0). Call the one function instead. The
-        # repository's own deployable unit is the entity a fallback collapses onto, and it now
-        # comes back from selected() (A2-235).
-        selection = impact_pair.selected(q) if imp.get("global_fallback", {}).get("triggered") else None
+        self.fallback_entities = impact_pair.fallback_units(q) if imp.get("global_fallback", {}).get("triggered") else set()
+        selection = impact_pair.selected(q)
         for section in ("deterministic_core", "inferred_tail"):
             for e in imp[section]:
                 if selection is not None and e["entity"] not in selection:
@@ -1150,6 +1148,8 @@ class Verify:
                 for e in self.head_fwd.get(ent["id"], []) + [x for x in self.idx.doc["edges"] if x["from"] == ent["id"]]:
                     req |= set(m["edge_types"].get(e["type"], {}).get("mandatory", []))
             req = {v for v in req if ntype in m["verifiers"][v]["applies_to_nodes"]}
+            if ent["id"] in self.fallback_entities:
+                req.add("full_fallback_test")
             # A2-353. A canary lists entities of the LIVE contour (routes, config keys, deployables); a
             # test file is never on it, so no canary plan can ever name one and the obligation is
             # permanently unsatisfiable — the same trap polyglot2 removed from `type_check`. Measured on
@@ -2346,6 +2346,54 @@ class Verify:
                 status[m2.group(2)] = "PASS" if m2.group(1) == "\u2713" else "FAIL"
         return status
 
+    def full_fallback_test_runner(self, dep: str) -> list[str] | None:
+        """Use a declared full job; a targeted-test profile command is not that declaration."""
+        prof = (self.profile.get("deployables") or {}).get(dep, {})
+        full = prof.get("full_test")
+        if isinstance(full, list) and full and all(isinstance(arg, str) for arg in full):
+            return list(full)
+        return None  # scripts.test is not an explicit full-suite declaration
+
+    def full_fallback_test_timeout(self, dep: str) -> int | None:
+        """A bounded explicit budget supports measured long full jobs without omitting gates."""
+        prof = (self.profile.get("deployables") or {}).get(dep, {})
+        budget = prof.get("full_test_timeout_seconds", 900)
+        return budget if type(budget) is int and 1 <= budget <= 7200 else None
+
+    def v_global_fallback_test(self):
+        """Run the repository's complete suite, independently of targeted spec selection."""
+        groups = {}
+        for eid in self.fallback_entities:
+            node = self.entities[eid]["node"]
+            dep = node.get("path", ".") if node["type"] == "deployable_unit" else "."
+            groups.setdefault(dep or ".", []).append(eid)
+        for dep, entities in sorted(groups.items()):
+            cmd = self.full_fallback_test_runner(dep)
+            timeout = self.full_fallback_test_timeout(dep)
+            started = now_iso()
+            if timeout is None:
+                rc, out, secs = 125, "FULL_FALLBACK_TEST_NOT_MEASURED: full_test_timeout_seconds must be an integer in 1..7200", 0.0
+                verdict = "not_measured"
+            elif "full_fallback_test" in self.disabled or not cmd:
+                rc, out, secs = 127, "FULL_FALLBACK_TEST_NOT_MEASURED: explicit full_test declaration/runner absent or disabled", 0.0
+                verdict = "not_measured"
+            else:
+                rc, out, secs = run_cmd(cmd, self.exec_root / dep, env={"CI": "1", "PYTHONDONTWRITEBYTECODE": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"}, timeout=timeout)
+                # Exit zero alone (including an empty or wholly skipped suite) measures nothing.
+                passed = bool(re.search(r"(?:\b[1-9]\d* passed\b|\b[1-9]\d* passing\b|# pass [1-9]\d*|Ran [1-9]\d* tests?\b)", out))
+                unittest_count = re.search(r"Ran (\d+) tests?", out)
+                skipped = re.search(r"OK \(skipped=(\d+)\)", out)
+                if unittest_count and skipped and int(skipped[1]) >= int(unittest_count[1]):
+                    passed = False
+                verdict = "not_measured" if rc in (124, 127) else ("failed" if rc else ("verified" if passed else "not_measured"))
+            vid = "v-global-fallback-test-" + (re.sub(r"[^a-z0-9]+", "-", dep.lower()).strip("-") or "root")
+            logical_cmd = [Path(cmd[0]).name if Path(cmd[0]).is_absolute() else cmd[0], *cmd[1:]] if cmd else []
+            self.record(vid, "targeted_test", shlex.join(logical_cmd), entities, rc, out, started, secs,
+                        "complete fallback suite: " + verdict,
+                        {eid: (verdict, "complete fallback suite: " + verdict) for eid in entities})
+            self.verifiers[-1]["scope"] = "global_fallback_full_suite"
+            self.verifiers[-1]["timeout_seconds"] = timeout
+
     def v_targeted_test(self):
         if "targeted_test" not in self.selected or "targeted_test" in self.disabled:
             return
@@ -2929,6 +2977,8 @@ class Verify:
 
     def matrix_id_of(self, v: dict) -> str:
         vid = v["id"]
+        if v.get("scope") == "global_fallback_full_suite":
+            return "full_fallback_test"
         if vid.startswith("v-type-check"):
             return "type_check"
         if vid.startswith("v-route-config"):
@@ -2986,7 +3036,7 @@ class Verify:
                         ("route_config_consistency", self.v_route_config), ("schema_diff", self.v_schema_diff),
                         ("config_schema", self.v_config_schema), ("fitness_rules", self.v_fitness),
                         ("doc_reference", self.v_doc_reference), ("canary", self.v_canary),
-                        ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
+                        ("full_fallback_test", self.v_global_fallback_test), ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
             self.run_verifier(mid, fn)
         rec = self.aggregate(q)
         rec["verify"]["seconds"]["total"] = round(time.monotonic() - t_all, 2)
