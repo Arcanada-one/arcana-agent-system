@@ -39,26 +39,10 @@ def fallback_units(q: dict) -> set[str]:
 
 
 def selected(q: dict) -> set[str]:
-    # A global fallback (lockfile / global config) makes the impact the WHOLE REPOSITORY as ONE
-    # entity - the Bazel/Nx rule of DEC-AUP-0008 - and its verifier is the repository's own test
-    # job. impact.py still lists every node in deterministic_core so a reader can see the blast
-    # radius, but those rows ARE the radius, not N separate measurements: enumerating them here
-    # demands N verdicts for one measurement, which no receipt can honestly supply.
-    # MEASURED on the real subject: muneral #32/#55/#60, where the gate issued
-    # AUTOMATED_AUTHOR_RECEIPT_ISSUED - authoring a receipt carrying exactly two verdicts, the
-    # repository entity and the missing author - and then paused that same receipt with
-    # HEAD_IMPACT_NOT_COVERED over 464 nodes it had itself collapsed into one. Two halves of one
-    # gate disagreeing about how many entities a fallback carries.
-    #
-    # The seeds alone were NOT that one entity, and a manifest carries no seed: a change to
-    # package.json / pnpm-lock.yaml alone selected nothing at all, so the receipt printed
-    # `paused_safe` over an empty verdict list (A2-232, talomnia-backend: core=14, verdicts=0,
-    # verifiers=0, against core=4 / verdicts=6 for a .ts change in the same repository). The
-    # collapse was right; the entity it collapsed onto was missing. `fallback_units` supplies it.
+    rows = [e for section in ("deterministic_core", "inferred_tail") for e in q["impact_set"][section]]
     if q["impact_set"].get("global_fallback", {}).get("triggered"):
-        return set(q["seeds"]) | fallback_units(q)
-    return set(q["seeds"]) | {e["entity"] for section in ("deterministic_core", "inferred_tail")
-                             for e in q["impact_set"][section]}
+        return set(q["seeds"]) | fallback_units(q) | schema_check.traversal_entities(rows)
+    return set(q["seeds"]) | {e["entity"] for e in rows}
 
 
 def merge_revisions(versions: list[tuple[str, dict]]) -> dict:
@@ -183,10 +167,10 @@ A paired receipt must match both graph digests and the complete dual selection.
         for role, idx in (("base", before), ("head", after))
         for entity in selection[role]
     )
-    enforce_mandatory = paired or workflow_selected
+    enforce_mandatory = paired or workflow_selected or q["impact_set"].get("global_fallback", {}).get("triggered", False)
     if not enforce_mandatory and not new_required and not selection["unmeasured_head_files"]:
         return []
-    problems = []
+    problems = schema_check.fallback_evidence_problems(doc, fallback_units(q)) if q["impact_set"].get("global_fallback", {}).get("triggered") else []
     if not paired and (new_required or selection["unmeasured_head_files"]):
         problems.append("head graph binding missing for new head impact obligations")
     if paired:
@@ -228,7 +212,7 @@ A paired receipt must match both graph digests and the complete dual selection.
             if record.get("verdict") != "verified":
                 continue
             referenced = [verifiers.get(i, {}) for i in record.get("verifier_ids", [])]
-            covered_kinds = {v.get("kind") for v in referenced
+            covered_kinds = {("full_fallback_test" if v.get("scope") == "global_fallback_full_suite" else v.get("kind")) for v in referenced
                              if entity in v.get("entities", []) and row_measured_verified(v, entity)
                              and isinstance(v.get("output_ref"), str) and v["output_ref"].strip()}
             if uncovered_row_kinds(minimum, covered_kinds):
@@ -260,7 +244,8 @@ def uncovered_row_kinds(minimum, covered_kinds: set) -> set:
     itself, which is the old comparison.
     """
     declared = _matrix()["verifiers"]
-    return {m for m in minimum if declared.get(m, {}).get("kind", m) not in covered_kinds}
+    return {m for m in minimum if (m if m == "full_fallback_test" else
+                                  declared.get(m, {}).get("kind", m)) not in covered_kinds}
 
 
 def _matrix() -> dict:
@@ -439,6 +424,7 @@ def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: 
     matrix = json.loads((Path(__file__).resolve().parents[2] / "contracts/graph-verified-change/verifier-matrix.v1.json").read_text())
     affected = selected(q)
     changed = set(q["seeds"])
+    full_test_units = fallback_units(q) if q["impact_set"].get("global_fallback", {}).get("triggered") else set()
     hops = {e: set() for e in affected}
     for section in ("deterministic_core", "inferred_tail"):
         for e in q["impact_set"][section]:
@@ -477,6 +463,8 @@ def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: 
         # The A2-353 discharge, the SAME function verify.py calls (see canary_unreachable_test).
         if "canary" in required and canary_unreachable_test(node["type"], node.get("path", ""), boundary.get(eid, False)):
             required.discard("canary")
+        if eid in full_test_units:
+            required.add("full_fallback_test")  # separate full-suite row, never targeted spec coverage
         result[eid] = sorted(required)
     return result
 

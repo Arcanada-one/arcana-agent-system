@@ -1259,9 +1259,10 @@ def strip_flags(s: dict) -> dict:
 
 
 # ----------------------------------------------------------------------------------------------- consumer projection
-def _executable_text(code, issues=None):
+def _executable_text(code, issues=None, literals=None):
     """Keep executable template expressions, masking only inert text at identical offsets."""
     issues = issues if issues is not None else []
+    literals = literals if literals is not None else []
     out = list(code)
 
     def mask(start, end):
@@ -1276,8 +1277,11 @@ def _executable_text(code, issues=None):
                 i += 2
                 continue
             if code[i] == code[start]:
+                literals.append((start, i + 1))
                 mask(start, i + 1)
                 return i + 1
+            if code[i] in '\r\n':
+                break
             i += 1
         mask(start, len(code))
         issues.append('unterminated quoted text')
@@ -1288,14 +1292,17 @@ def _executable_text(code, issues=None):
             mask(start, len(code))
             issues.append('template nesting exceeds bounded scan')
             return len(code)
-        i, text = start + 1, start
+        i, text, interpolated = start + 1, start, False
         while i < len(code):
             if code[i] == '\\':
                 i += 2
             elif code[i] == '`':
+                if not interpolated:
+                    literals.append((start, i + 1))
                 mask(text, i + 1)
                 return i + 1
             elif code[i:i + 2] == '${':
+                interpolated = True
                 mask(text, i + 2)
                 i = scan(i + 2, True, depth + 1)
                 text = i
@@ -1305,38 +1312,149 @@ def _executable_text(code, issues=None):
         issues.append('unterminated template literal')
         return len(code)
 
+    def regexp(start):
+        i, character_class = start + 1, False
+        while i < len(code) and code[i] not in '\r\n':
+            if code[i] == '\\':
+                i += 2
+                continue
+            if code[i] == '[':
+                character_class = True
+            elif code[i] == ']':
+                character_class = False
+            elif code[i] == '/' and not character_class:
+                i += 1
+                flags = re.match(r'[A-Za-z]*', code[i:]).group()
+                if len(set(flags)) != len(flags) or set(flags) - set('dgimsuy'):
+                    issues.append('unsupported regexp flags')
+                i += len(flags)
+                mask(start, i)
+                return i
+            i += 1
+        issues.append('unterminated regexp literal')
+        mask(start, len(code))
+        return len(code)
+
+    def jsx(start, depth):
+        # Tags/text are inert; braces retain executable expressions at their
+        # original offsets. Unsupported TS assertions and malformed JSX stay NM.
+        def unknown(reason):
+            issues.append(reason)
+            mask(start, len(code))
+            return len(code)
+
+        if depth > 16:
+            return unknown('JSX nesting exceeds bounded scan')
+        opening = re.match(r'<([A-Za-z_$][\w$.:\-]*|)(?=[\s/>])', code[start:])
+        if not opening:
+            return unknown('unsupported JSX opening')
+        name = opening.group(1)
+        i = start + opening.end()
+        mask(start, i)
+        while i < len(code):
+            if code[i:i + 2] == '/>':
+                mask(i, i + 2)
+                return i + 2
+            if code[i] == '>':
+                mask(i, i + 1)
+                i += 1
+                break
+            if code[i] in "'\"":
+                count = len(literals)
+                i = quoted(i)
+                del literals[count:]  # JSX string attributes never become uses.
+            elif code[i] == '{':
+                mask(i, i + 1)
+                i = scan(i + 1, True, depth + 1)
+            elif code[i] == '<':
+                return unknown('unsupported JSX attribute')
+            else:
+                mask(i, i + 1)
+                i += 1
+        else:
+            return unknown('unterminated JSX opening')
+        while i < len(code):
+            if code[i:i + 2] == '</':
+                closing_tag = re.match(r'</' + re.escape(name) + r'\s*>', code[i:])
+                if not closing_tag:
+                    return unknown('mismatched JSX closing')
+                end = i + closing_tag.end()
+                mask(i, end)
+                return end
+            if code[i] == '<':
+                i = jsx(i, depth + 1)
+            elif code[i] == '{':
+                mask(i, i + 1)
+                i = scan(i + 1, True, depth + 1)
+            else:
+                mask(i, i + 1)
+                i += 1
+        return unknown('unterminated JSX element')
+
     def scan(start, interpolation=False, depth=0):
-        i, braces = start, []
+        i, braces, parens, previous, operand = start, [], [], None, True
         closing = {'(': ')', '[': ']', '{': '}'}
         while i < len(code):
             if code[i] in "'\"":
                 i = quoted(i)
+                operand, previous = False, 'literal'
             elif code[i] == '`':
                 i = template(i, depth)
+                operand, previous = False, 'literal'
             elif code[i:i + 2] in ('//', '/*'):
                 marker = '\n' if code[i:i + 2] == '//' else '*/'
                 end = code.find(marker, i + 2)
+                if end < 0 and marker == '*/':
+                    issues.append('unterminated block comment')
                 end = len(code) if end < 0 else end + (0 if marker == '\n' else 2)
                 mask(i, end)
                 i = end
-            elif interpolation and code[i] == '/' and code[i:i + 2] not in ('//', '/*'):
-                # Division versus regexp requires grammar beyond this lexical proof.
-                issues.append('slash expression in template interpolation unresolved')
-                mask(i, len(code))
-                return len(code)
-            elif interpolation and code[i] in closing:
-                braces.append(closing[code[i]])
+            elif code[i] == '<' and operand is True and re.match(r'<(?:[A-Za-z_$]|>)', code[i:]):
+                i = jsx(i, depth + 1)
+                operand, previous = False, 'literal'
+            elif code[i] == '/':
+                if operand is None:
+                    issues.append('ambiguous slash expression')
+                    mask(i, len(code))
+                    return len(code)
+                if operand:
+                    i = regexp(i)
+                    operand, previous = False, 'literal'
+                else:
+                    i += 2 if code[i:i + 2] == '/=' else 1
+                    operand, previous = True, '/'
+            elif code[i] in closing:
+                if interpolation:
+                    braces.append(closing[code[i]])
+                if code[i] == '(':
+                    parens.append(previous in ('if', 'while', 'for', 'with', 'switch', 'catch'))
+                operand, previous = True, code[i]
                 i += 1
-            elif interpolation and code[i] in ')]}':
-                if code[i] == '}' and not braces:
+            elif code[i] in ')]}':
+                if interpolation and code[i] == '}' and not braces:
                     mask(i, i + 1)
                     return i + 1
-                if not braces or braces.pop() != code[i]:
+                if interpolation and (not braces or braces.pop() != code[i]):
                     issues.append('unbalanced template interpolation')
                     mask(i, len(code))
                     return len(code)
+                control = parens.pop() if code[i] == ')' and parens else False
+                operand = None if control or code[i] == '}' else False
+                previous = code[i]
                 i += 1
+            elif code[i].isspace():
+                i += 1
+            elif re.match(r'[A-Za-z_$]', code[i]):
+                word = re.match(r'[A-Za-z_$][\w$]*', code[i:]).group()
+                operand = word in ('return', 'throw', 'case', 'delete', 'void', 'typeof', 'yield', 'await', 'in', 'of')
+                previous, i = word, i + len(word)
+            elif code[i].isdigit():
+                number = re.match(r'[\w.]+', code[i:]).group()
+                operand, previous, i = False, number, i + len(number)
+            elif code[i:i + 2] in ('++', '--'):
+                previous, i = code[i:i + 2], i + 2
             else:
+                operand, previous = True, code[i]
                 i += 1
         if interpolation:
             issues.append('unterminated template interpolation')
@@ -1351,6 +1469,9 @@ def _shadow_ranges(code, name):
     for m in re.finditer(r"\b(?:const|let|var|class|function)\s+" + re.escape(name) + r"\b", code):
         ranges.append(enclosing_block(code, m.start()))
     for m in re.finditer(r"\(([^()]*)\)\s*(?::[^{};=]*)?(?:=>)?\s*\{", code):
+        # A control expression has uses, never parameter declarations.
+        if re.search(r"\b(?:if|while|for|with|switch)\s*$", code[:m.start()]):
+            continue
         if '=>' not in m.group(1) and any(re.match(r"\s*" + re.escape(name) + r"\s*(?:[?:=]|$)", p) for p in m.group(1).split(',')):
             ranges.append((m.start(), match_close(code, m.end() - 1) + 1))
     for m in re.finditer(r"\b" + re.escape(name) + r"\s*=>\s*", code):
@@ -1374,12 +1495,20 @@ def _shadow_ranges(code, name):
     return ranges
 
 
-def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None = None, *, known_zod=False, runtime_names=None) -> dict:
+def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None = None, *, known_zod=False, runtime_names=None,
+               enum_literal_values=None) -> dict:
     """What the consumer file uses of the contract: keys read, keys sent (object literals), enum values used."""
     disabled = disabled or set()
-    code = build_graph.strip_comments(code)
     lexical_issues = []
-    executable = _executable_text(code, lexical_issues)
+    literals = []
+    executable = _executable_text(code, lexical_issues, literals)
+    # Keep literal keys/comparison operands but never regexp bodies, comments,
+    # or template text. All views preserve offsets for scope attribution.
+    literal_code = list(executable)
+    for start, end in literals:
+        if code[start] != '`':
+            literal_code[start:end] = code[start:end]
+    code = ''.join(literal_code)
     keys_read: set[str] = set()
     keys_sent: set[str] = set()
     literals_sent = 0
@@ -1392,12 +1521,14 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
     scoped: list[tuple[str, int, int]] = []  # (name, scope_start, scope_end) — a binding is read only inside its own function body
     wrappers: list[tuple[str, int, int]] = []
     wrapper_unresolved = False
-    for m in re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + type_ref + r"(?:\[\])?", code):
+    enum_runtime_unresolved = False
+    binding_code = executable if schema.get("kind") == "enum" else code
+    for m in re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + type_ref + r"(?:\[\])?", binding_code):
         bindings.add(m.group(1))
-        scoped.append((m.group(1), *scope_of(code, m.start(), m.end())))
-    for m in re.finditer(r"\b(" + IDENT + r")\s*=\s*(?:new\s+" + sym + r"\(|plainToInstance\(\s*" + sym + r"\b|" + sym + r"\.(?:parse|parseAsync)\(|[^;\n]*\bas\s+" + sym + r"\b)", code):
+        scoped.append((m.group(1), *scope_of(binding_code, m.start(), m.end())))
+    for m in re.finditer(r"\b(" + IDENT + r")\s*=\s*(?:new\s+" + sym + r"\(|plainToInstance\(\s*" + sym + r"\b|" + sym + r"\.(?:parse|parseAsync)\(|[^;\n]*\bas\s+" + sym + r"\b)", binding_code):
         bindings.add(m.group(1))
-        scoped.append((m.group(1), *enclosing_block(code, m.start())))
+        scoped.append((m.group(1), *enclosing_block(binding_code, m.start())))
     if known_zod:
         # safeParse returns a discriminated result, NOT the contract payload.
         # Only a declaration bound directly to the extracted runtime Zod schema
@@ -1488,21 +1619,82 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
         if not bindings and not keys_read and not keys_sent:
             incomplete.append("no binding of the contract type found in the consumer")
     elif schema.get("kind") == "enum":
-        vals = {canonical(v): v for v in schema.get("values", [])}
-        for m in re.finditer(r"(['\"`])([^'\"`\n]*)\1", code):
-            if canonical(m.group(2)) in vals:
-                values.add(m.group(2))
+        # A matching literal elsewhere in the file is not evidence about this
+        # contract. Attribute comparisons/initializers to its unshadowed bindings,
+        # and retain incomplete usage when the value escapes that bounded surface.
+        symbol_shadows = [enclosing_block(executable, m.start())
+                          for m in re.finditer(r"\b(?:type|interface|enum|class|const|let|var|function)\s+" + sym + r"\b", executable)]
+        if known_zod:
+            symbol_shadows += schema_shadows
+            imports = [(m.start(), m.end()) for m in re.finditer(r'\bimport\b[^;]*;', executable)]
+            # Passing the schema itself to a helper is a runtime boundary whose
+            # inputs/results are not projected here. Type-only references and
+            # imported names do not establish runtime use.
+            for m in re.finditer(r'[(,=]\s*(' + sym + r')\b(?!\s*\.)', executable):
+                pos = m.start(1)
+                if not any(a <= pos < z for a, z in imports + symbol_shadows):
+                    incomplete.append('enum runtime schema forwarding unresolved')
+                    enum_runtime_unresolved = True
+        declarations = list(re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + type_ref + r"(?:\[\])?", executable))
         for m in re.finditer(r"\b" + sym + r"\s*\.\s*(" + IDENT + r")", code):
-            values.add(m.group(1))
-        # values the consumer compares a typed binding against (also catches values the provider never declared)
+            if executable[m.start():m.start() + len(m.group(0))] == m.group(0) and not any(a <= m.start() < z for a, z in symbol_shadows):
+                if known_zod and m.group(1) in ('parse', 'parseAsync', 'safeParse', 'safeParseAsync'):
+                    incomplete.append('enum runtime parsing input/result unresolved')
+                    enum_runtime_unresolved = True
+                else:
+                    values.add(m.group(1))
+        for m in re.finditer(r"\b(?:const|let)\s+" + IDENT + r"\s*:\s*(?:Readonly<)?Record<\s*" + sym + r"\s*,", executable):
+            if any(a <= m.start() < z for a, z in symbol_shadows):
+                continue
+            # Only literal keys of an explicitly contract-keyed Record count.
+            # Computed keys/spreads or an initializer we cannot delimit stay NM.
+            tail = re.match(r"[^;=]*=\s*\{", code[m.end():])
+            if not tail:
+                incomplete.append("enum Record initializer unresolved")
+                continue
+            ob = m.end() + tail.end() - 1
+            cb = match_close(code, ob)
+            for item in split_top(code[ob + 1:cb], ","):
+                key = re.match(r"\s*(?:([\w$]+)|(['\"])([^'\"]+)\2)\s*:", item)
+                if key:
+                    values.add(key.group(1) or key.group(3))
+                elif item.strip():
+                    incomplete.append("enum Record key unresolved")
         for b, s0, s1 in sorted(scoped):
+            owned = [m for m in declarations if m.group(1) == b and scope_of(binding_code, m.start(), m.end()) == (s0, s1)]
+            if owned and all(any(a <= m.start() < z for a, z in symbol_shadows) for m in owned):
+                continue
             seg = code[s0:s1]
+            shadowed = [(a, z) for a, z in _shadow_ranges(executable, b)
+                        if s0 <= a and z <= s1 and (a, z) != (s0, s1)]
+            shadowed += symbol_shadows
+            attributed = []
+            for m in owned:
+                attributed.append((m.start(), m.end()))
+                init = re.match(r"\s*=\s*(['\"])([^'\"]+)\1", code[m.end():])
+                if init and not any(a <= m.start() < z for a, z in symbol_shadows):
+                    values.add(init.group(2))
+                    if not re.match(r"\s*(?:[;,]|$)", code[m.end() + init.end():]):
+                        incomplete.append(f"enum binding {b} initializer unresolved")
             for m in re.finditer(r"\b" + re.escape(b) + r"\s*[!=]==?\s*(['\"])([^'\"]+)\1|(['\"])([^'\"]+)\3\s*[!=]==?\s*" + re.escape(b) + r"\b", seg):
+                binding_start = s0 + (m.start() if m.group(1) else m.end() - len(b))
+                if executable[binding_start:binding_start + len(b)] != b or any(a <= binding_start < z for a, z in shadowed):
+                    continue
                 values.add(m.group(2) or m.group(4))
+                attributed.append((binding_start, binding_start + len(b)))
             for m in re.finditer(r"switch\s*\(\s*" + re.escape(b) + r"\s*\)\s*\{", seg):
+                binding_start = s0 + seg.index(b, m.start(), m.end())
+                if any(a <= binding_start < z for a, z in shadowed):
+                    continue
                 cb = match_close(seg, m.end() - 1)
                 for cm in re.finditer(r"\bcase\s+(['\"])([^'\"]+)\1", seg[m.end():cb]):
                     values.add(cm.group(2))
+                attributed.append((binding_start, binding_start + len(b)))
+            for m in re.finditer(r"\b" + re.escape(b) + r"\b", executable[s0:s1]):
+                pos = s0 + m.start()
+                if any(a <= pos < z for a, z in shadowed + attributed):
+                    continue
+                incomplete.append(f"enum binding {b} usage unresolved")
         if not values:
             incomplete.append("no literal of the enum used in the consumer (exhaustiveness unknown)")
     else:
@@ -1511,7 +1703,8 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
         incomplete = []
     return {"bindings": sorted(bindings), "keys_read": sorted(keys_read), "keys_sent": sorted(keys_sent), "literals_sent": literals_sent,
             "values_used": sort_values(values), "complete": not incomplete, "incomplete_reasons": sorted(set(incomplete)),
-            "safeparse_unresolved": wrapper_unresolved, "lexical_projection_unresolved": bool(lexical_issues)}
+            "safeparse_unresolved": wrapper_unresolved, "lexical_projection_unresolved": bool(lexical_issues),
+            "enum_runtime_unresolved": enum_runtime_unresolved}
 
 
 def scope_of(code: str, start: int, end: int) -> tuple[int, int]:
@@ -1619,6 +1812,8 @@ def edge_verdict(proj: dict, head: dict | None, contract_diff: dict, provenance:
         return 'not_measured', ['executable consumer projection unresolved: ' + '; '.join(proj['incomplete_reasons'])]
     if proj.get("safeparse_unresolved"):
         return "not_measured", ["safeParse result/payload usage not proven: " + "; ".join(proj["incomplete_reasons"])]
+    if proj.get("enum_runtime_unresolved"):
+        return "not_measured", ["enum runtime parsing usage not proven: " + "; ".join(proj["incomplete_reasons"])]
     if not breaking:
         if provenance != "deterministic" and not proj["complete"]:
             return "not_measured", ["inferred edge and consumer usage not narrowable: " + "; ".join(proj["incomplete_reasons"])]
@@ -1721,8 +1916,13 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
                 declaration = ex_h.resolve(path, local)
                 if declaration and declaration.path == cd['path'] and declaration.symbol == cd['symbol']:
                     local_names.append(local)
-            proj = projection(head_tree.text(path), cd["symbol"], (headc or cb[cid])["schema"], disabled,
-                              known_zod=(headc or cb[cid])["kind"] == "zod", runtime_names=local_names or None)
+            schema = (headc or cb[cid])["schema"]
+            # A removed literal remains a consumer obligation: head-only values
+            # must not erase its use before edge_verdict checks the head schema.
+            enum_literals = sort_values(schema.get('values', []) + cb.get(cid, {}).get('schema', {}).get('values', []))
+            proj = projection(head_tree.text(path), cd["symbol"], schema, disabled,
+                              known_zod=(headc or cb[cid])["kind"] == "zod", runtime_names=local_names or None,
+                              enum_literal_values=enum_literals)
         else:
             proj = {"bindings": [], "keys_read": [], "keys_sent": [], "literals_sent": 0, "values_used": [], "complete": False,
                     "incomplete_reasons": ["consumer file absent at head"]}

@@ -1177,6 +1177,19 @@ def selftest_gate2a() -> tuple[list[dict], int]:
     (repo / "src/b.ts").write_text("import { a } from './a';\nexport const b = a + 1;\n")
     (repo / "package.json").write_text('{\n "name": "fixture",\n "dependencies": {"left-pad": "1.0.0"}\n}\n')
     (repo / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\npackages:\n  left-pad@1.0.0: {}\n")
+    (repo / "tsconfig.json").write_text(json.dumps({"compilerOptions": {
+        "strict": True, "noEmit": True}, "include": ["src/**/*.ts"]}))
+    (repo / ".arcana").mkdir()
+    (repo / ".arcana/verify.json").write_text(json.dumps({"schema": "VerifyProfile/v1",
+        "deployables": {".": {"tsconfig": ["tsconfig.json"], "full_test":
+            [sys.executable, "-m", "unittest", "discover", "-s", "test", "-v"]}}}))
+    (repo / "test").mkdir()
+    (repo / "test/test_source.py").write_text(
+        "import pathlib, unittest\n"
+        "class Source(unittest.TestCase):\n"
+        " def test_export(self): self.assertEqual(pathlib.Path('src/a.ts').read_text(), 'export const a = 1;\\n')\n"
+        " def test_consumer(self): self.assertIn('export const b = a + 1;', pathlib.Path('src/b.ts').read_text())\n")
+
     g("add", "-A"); g("commit", "-q", "-m", "base")
     base = g("rev-parse", "HEAD").strip()
 
@@ -1308,15 +1321,16 @@ def _receipt_shape_ok(root: Path, receipt_path: str | None) -> bool:
     gf = r["impact_set"]["global_fallback"]
     verdict_of = {v["entity"]: v["verdict"] for v in r["verdicts"]}
     exempt = {x["entity"] for x in r["exemptions"]}
-    repo_ent = next((e for e in verdict_of if e.startswith("repository:")), None)
+    repo_ent = next((e for e in verdict_of if e.startswith("deployable_unit:")), None)
     auth_ent = next((e for e in verdict_of if e.startswith("receipt_authorship:")), None)
     return bool(
-        gf.get("triggered") is True and gf.get("scope") == "whole_repository" and gf.get("total_nodes")
-        and r["impact_set"]["scope"] == "whole_repository"
+        gf.get("triggered") is True and gf.get("files")
         and repo_ent and verdict_of[repo_ent] == "verified" and repo_ent not in exempt
         and auth_ent and verdict_of[auth_ent] == "not_measured" and auth_ent in exempt
         and r["exemptions"][0]["owner"] and r["exemptions"][0]["expires_at_utc"]
-        and r["verifiers"][0]["kind"] == "other"
+        and any(v.get("scope") == "global_fallback_full_suite" and repo_ent in v.get("entities", [])
+                and v.get("exit_code") == 0 for v in r["verifiers"])
+        and r.get("head_graph") and r.get("revision_selection") and r.get("verify", {}).get("required_by_entity")
         and r["admission"]["verdict"] == "admitted_with_exemptions"
         and r["authored_by"]["path"] == "automated_author"
     )
@@ -1655,6 +1669,9 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         (repo / "src").mkdir()
         (repo / "src/a.ts").write_text("export const a = 1;\n")
         (repo / "src/b.ts").write_text("import { a } from './a';\nexport const b = a + 1;\n")
+        (repo / "tsconfig.json").write_text(json.dumps({"compilerOptions": {
+            "strict": True, "noEmit": True}, "include": ["src/**/*.ts"]}))
+
         if with_bundle:
             (repo / ".github").mkdir(exist_ok=True)
             shutil.copytree(pristine, repo / ".github/graph-admission")
@@ -1664,7 +1681,7 @@ def selftest_gate4b() -> tuple[list[dict], int]:
             # change it is meant to constrain.
             (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
             (repo / ".github/workflows/ci.yml").write_text(
-                "jobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
+                "on: [push]\njobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
                 "    with:\n      program_ref: '" + "0" * 40 + "'\n"
                 "      signing_key_fingerprint: 'SHA256:fixture'\n")
             if extra_under_bundle:
@@ -1739,7 +1756,10 @@ def selftest_gate4b() -> tuple[list[dict], int]:
     # built at base, where the file does not exist, so it has no node to name.
     files_a = [{"path": p, "status": "A", "kind": "code", "node_id": None}
                for p in ("src/new1.ts", "src/new2.ts")]
-    rc_ex, exempted = issue(repo, base, head_a, draft_receipt("Arcanada-one/fixture", base, head_a, files_a, [], True))
+    actual = admit_change.measured_change_receipt(repo, base, head_a, root / "measured-a")
+    if actual is None:
+        raise RuntimeError("the all-new fixture producer returned no measured receipt")
+    rc_ex, exempted = issue(repo, base, head_a, actual)
     check("(a) CONTROL: an all-new-files change is issued NO_IMPACT_BY_CONSTRUCTION by the gate "
           "(A1 all-added, A2 no pre-existing node references them at head, A3 no global fallback)",
           rc_ex == 0 and exempted["admission"]["verdict"] == "admitted_with_exemptions"
@@ -1818,18 +1838,11 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         return repo_r, gr, base_r, gr("rev-parse", "HEAD").strip()
 
     def self_update_receipt(repo_r: Path, base_r: str, head_r: str) -> dict:
-        changed = [l.split("\t") for l in admit_change.git(repo_r, "diff", "--name-status", base_r, head_r).splitlines() if l]
-        files = [{"path": c[-1], "status": c[0][0], "kind": "config", "node_id": None} for c in changed]
-        tools_changed = [f["path"] for f in files if f["path"].endswith(".py")][:3]
-        verdicts = [{"entity": f"code_unit:{p}", "verdict": "not_measured",
-                     "reason": "vendored foreign code: this file is a byte-copy of the program repository at "
-                               "the bundle's program_ref, and it is the code that would do the measuring"}
-                    for p in tools_changed]
-        core = [{"entity": v["entity"], "depth": 1,
-                 "path": [{"from": v["entity"], "to": f"code_unit:{tools_changed[0]}",
-                           "edge_type": "imports", "provenance": "deterministic"}]}
-                for v in verdicts]
-        return draft_receipt("Arcanada-one/fixture", base_r, head_r, files, verdicts, False, core)
+        receipt = admit_change.measured_change_receipt(repo_r, base_r, head_r,
+                                                      root / f"measured-{head_r[:8]}")
+        if receipt is None:
+            raise RuntimeError("self-update fixture producer returned no measured receipt")
+        return receipt
 
     repo_c, gc, base_c, head_c = refresh("C-control")
     rc_su, su_receipt = issue(repo_c, base_c, head_c, self_update_receipt(repo_c, base_c, head_c))
@@ -2058,13 +2071,18 @@ def selftest_gate5b() -> tuple[list[dict], int]:
         (repo / "src").mkdir()
         (repo / "src/a.ts").write_text("export const a = 1;\n")
         (repo / "src/b.ts").write_text("import { a } from './a';\nexport const b = a + 1;\n")
+        (repo / "tsconfig.json").write_text(json.dumps({"compilerOptions": {
+            "strict": True, "noEmit": True}, "include": ["src/**/*.ts"]}))
+
         (repo / "tools").mkdir()
         (repo / "tools/verify_derived.py").write_text(VERIFY_DERIVED_SRC)
         (repo / ".github").mkdir(exist_ok=True)
         shutil.copytree(pristine, repo / ".github/graph-admission")
         (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
         (repo / ".github/workflows/ci.yml").write_text(
-            "jobs:\n  graph-admission:\n    needs: lint-and-test\n"
+            "on: [push]\njobs:\n  lint-and-test:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: python3 tools/verify_derived.py\n"
+            "  graph-admission:\n    needs: lint-and-test\n"
             "    uses: ./.github/workflows/graph-admission.yml\n"
             "    with:\n      program_ref: '" + "0" * 40 + "'\n"
             "      verifier_job: 'lint-and-test'\n"
@@ -2104,40 +2122,11 @@ def selftest_gate5b() -> tuple[list[dict], int]:
         return repo, g, base, g("rev-parse", "HEAD").strip()
 
     def receipt_for(repo: Path, base: str, head: str) -> dict:
-        changed = [l.split("\t") for l in admit_change.git(repo, "diff", "--name-status", base, head).splitlines() if l]
-        files = [{"path": c[-1], "status": c[0][0], "kind": "config", "node_id": None} for c in changed]
-        tools_changed = [f["path"] for f in files if f["path"].endswith(".py")][:2]
-        verdicts = [{"entity": f"code_unit:{p}", "verdict": "not_measured", "reason": "vendored foreign code"}
-                    for p in tools_changed]
-        # A receipt whose impact set is empty must EXPLAIN it (schema_check EMPTY_IMPACT_WITHOUT_EXPLANATION)
-        # — the rule that «an empty impact set is a prediction, never an approval». The fixture obeys it the
-        # same way a real receipt does, rather than being handed a core it did not measure.
-        core = [{"entity": v["entity"], "depth": 1,
-                 "path": [{"from": v["entity"], "to": f"code_unit:{tools_changed[0]}",
-                           "edge_type": "imports", "provenance": "deterministic"}]}
-                for v in verdicts]
-        empty_expl = {} if core else {"empty_impact_explanation": {
-            "reason": "every changed path is either a new file or a declared derived artefact whose bytes are a "
-                      "function of the rest of the tree; the graph in --diff mode is built at base, where the "
-                      "new files do not exist, so no seed and no dependent can exist",
-            "graph_metadata": {"extractors": ["imports"], "language_coverage": ["typescript"],
-                               "changed_node_known_to_graph": False, "reverse_edges_of_changed_nodes": 0}}}
-        return {**empty_expl, "schema": "ChangeAdmissionReceipt/v1", "receipt_id": f"car-gate5b-{head[:8]}",
-                "captured_at_utc": "2026-09-06T12:00:00Z",
-                "producer": {"tool": "tools/graph/verify.py", "version": "1.0.0"},
-                "decision_ref": "DEC-AUP-0008", "repo": {"name": "Arcanada-one/fixture"},
-                "graph": {"source_commit": base, "graph_digest": "sha256:" + "a" * 64,
-                          "builder_version": "1.0.0", "built_at_utc": "2026-09-06T11:00:00Z"},
-                "tree": {"commit": head, "dirty": False},
-                "staleness": {"method": "graph.source_commit == change_set.base; clean tree",
-                              "verdict": "fresh", "checked_at_utc": "2026-09-06T12:00:00Z"},
-                "change_set": {"mode": "diff", "base": base, "head": head, "files": files},
-                "impact_set": {"method": "reverse traversal (dependents; seeds excluded)", "max_depth": 3,
-                               "deterministic_core": core, "inferred_tail": [],
-                               "global_fallback": {"triggered": False}},
-                "verifiers": [], "verdicts": verdicts, "exemptions": [],
-                "admission": {"verdict": "paused_safe", "rule": "admitted requires every verdict = verified"},
-                "work_item": {"system": "muneral", "id": "AUP-GRAPH-006"}}
+        receipt = admit_change.measured_change_receipt(repo, base, head,
+                                                      root / f"measured-{head[:8]}")
+        if receipt is None:
+            raise RuntimeError("derived fixture producer returned no measured receipt")
+        return receipt
 
     def issue(repo: Path, base: str, head: str, *, job="lint-and-test", concl="success") -> tuple[int, dict]:
         d = root / f"issue-{repo.parent.name}-{head[:8]}"
@@ -2750,7 +2739,7 @@ def selftest_b8() -> tuple[list[dict], int]:
         (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(wf_src, repo / WF_REL)
         (repo / ".github/workflows/ci.yml").write_text(
-            "jobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
+            "on: [push]\njobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
             "    with:\n      program_ref: '" + "0" * 40 + "'\n"
             "      signing_key_fingerprint: 'SHA256:fixture'\n")
         if extra_under_bundle:

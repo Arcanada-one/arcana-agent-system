@@ -105,8 +105,22 @@ def _pairs(ts):
     return pairs
 
 
+def _default_options_parameter(items):
+    """One optional boolean-options object with an inert empty-object default.
+
+    An empty call binds this parameter without executing a default expression.
+    Destructuring, required fields, callbacks and computed defaults stay unknown.
+    """
+    if (len(items) < 10 or not re.fullmatch(r'[A-Za-z_$][\w$]*', items[0])
+            or items[1:3] != [':', '{'] or items[-4:] != ['}', '=', '{', '}']):
+        return False
+    fields = split(items[3:-4], ';')
+    return bool(fields) and all(len(f) == 4 and re.fullmatch(r'[A-Za-z_$][\w$]*', f[0])
+                               and f[1:] == ['?', ':', 'boolean'] for f in fields)
+
+
 def _functions(ts, pairs):
-    """Only declarations with literal names and empty parameters can be entries."""
+    """Literal names with empty or bounded inert-default parameters can be entries."""
     functions = []
     for i, token in enumerate(ts):
         if token == 'function':
@@ -118,7 +132,8 @@ def _functions(ts, pairs):
                 body += 1
             if body >= len(ts) or ts[body] != '{':
                 raise ValueError('bootstrap function body unresolved')
-            name = ts[i + 1] if p == i + 2 and pairs[p] == p + 1 else None
+            parameters = ts[p + 1:pairs[p]]
+            name = ts[i + 1] if p == i + 2 and (not parameters or _default_options_parameter(parameters)) else None
             functions.append((body, pairs[body], name, i))
         if ts[i:i + 2] == ['=', '>'] and i + 2 < len(ts) and ts[i + 2] == '{':
             functions.append((i + 2, pairs[i + 2], None, i))
