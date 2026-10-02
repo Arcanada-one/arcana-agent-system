@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-02T20:20:18Z",
+ "captured_at_utc": "2026-10-02T20:23:30Z",
  "change_set": {
   "base": "c342ae350a90cf59ab1268209a77df5292210c90",
   "files": [
@@ -82,7 +82,7 @@
     "status": "A"
    }
   ],
-  "head": "f5d312a60308c9e8d99ed35ed90821e56483cf54",
+  "head": "7fcdae820e5c1568e59c7da752b13c24f38fd350",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -91,17 +91,17 @@
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:c020828ce66f31d9bfa04c6beeecedcee08c809acf56c08f0a720cf9676f4a75",
-  "path": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/graph-c342ae350a90.json",
+  "path": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/graph-c342ae350a90.json",
   "source_commit": "c342ae350a90cf59ab1268209a77df5292210c90"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:14ff41f41590644b01599c83ec09127820891f353e8c78bb6bb9248429d26306",
-  "path": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/graph-head-f5d312a60308.json",
-  "source_commit": "f5d312a60308c9e8d99ed35ed90821e56483cf54",
+  "graph_digest": "sha256:4d87b493eee449a345b759318d5368c432ec48796b2c51fd7b2ae9c4d76c2808",
+  "path": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/graph-head-7fcdae820e5c.json",
+  "source_commit": "7fcdae820e5c1568e59c7da752b13c24f38fd350",
   "staleness": {
-   "checked_at_utc": "2026-10-02T20:20:22Z",
+   "checked_at_utc": "2026-10-02T20:23:34Z",
    "checked_nodes": 393,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -2814,7 +2814,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261002T202018Z-f5d312a6",
+ "receipt_id": "car-verify-20261002T202330Z-7fcdae82",
  "receipt_path": "receipts/graph/change-admission-empty-contract.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -3061,7 +3061,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-02T20:20:22Z",
+  "checked_at_utc": "2026-10-02T20:23:34Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -3114,7 +3114,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:2e4534757d4ee88dc99334350fccdbe318c8a2f92f9acb98421c278b1f254c68"
+    "head": "sha256:7e4c30688ab9c5518f8561b8fb9be2ae2d60522d5e8a6f8586f0d3d12add1630"
    },
    "entity": "receipt:receipts/graph/change-admission-empty-contract.json",
    "node_type": "receipt",
@@ -3128,7 +3128,7 @@
   }
  ],
  "tree": {
-  "commit": "f5d312a60308c9e8d99ed35ed90821e56483cf54",
+  "commit": "7fcdae820e5c1568e59c7da752b13c24f38fd350",
   "dirty": false
  },
  "verdicts": [
@@ -4376,8 +4376,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-02T20:20:25Z",
+   "output_ref": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-02T20:23:37Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -4394,13 +4394,13 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-10-02T20:20:25Z",
+   "output_ref": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-10-02T20:23:37Z",
    "summary": "2 document(s), 0 failed"
   },
   {
    "command": "cargo test --locked -p arcana-core a_minted_key_is_one_the_server_accepts",
-   "duration_s": 17.32,
+   "duration_s": 0.29,
    "entities": [
     "code_unit:crates/core/src/agent_loop.rs"
    ],
@@ -4410,13 +4410,13 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-core-src-agent-loop-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/v-property-code-unit-crates-core-src-agent-loop-rs.txt",
-   "started_at_utc": "2026-10-02T20:20:25Z",
+   "output_ref": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/v-property-code-unit-crates-core-src-agent-loop-rs.txt",
+   "started_at_utc": "2026-10-02T20:23:37Z",
    "summary": "exit 0"
   },
   {
    "command": "cargo test --locked -p arcana-core -p arcana-agent",
-   "duration_s": 44.13,
+   "duration_s": 25.96,
    "entities": [
     "code_unit:crates/core/src/contract.rs"
    ],
@@ -4426,13 +4426,13 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-core-src-contract-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/v-property-code-unit-crates-core-src-contract-rs.txt",
-   "started_at_utc": "2026-10-02T20:20:43Z",
+   "output_ref": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/v-property-code-unit-crates-core-src-contract-rs.txt",
+   "started_at_utc": "2026-10-02T20:23:37Z",
    "summary": "exit 0"
   },
   {
    "command": "cargo test --locked -p arcana-core kb::size_guard::tests",
-   "duration_s": 1.06,
+   "duration_s": 1.04,
    "entities": [
     "code_unit:crates/core/src/kb/size_guard.rs"
    ],
@@ -4442,8 +4442,8 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-core-src-kb-size-guard-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-reissue.G4UApQ/verifier-out/v-property-code-unit-crates-core-src-kb-size-guard-rs.txt",
-   "started_at_utc": "2026-10-02T20:21:27Z",
+   "output_ref": "/home/dev/aup/aras-kc2-delivery-remeasure.Mm9RZr/verifier-out/v-property-code-unit-crates-core-src-kb-size-guard-rs.txt",
+   "started_at_utc": "2026-10-02T20:24:03Z",
    "summary": "exit 0"
   }
  ],
@@ -4805,9 +4805,9 @@
    "receipt:receipts/graph/change-admission-empty-contract.json": []
   },
   "seconds": {
-   "prepare": 2.13,
-   "total": 69.69,
-   "verifiers": 62.52
+   "prepare": 1.9,
+   "total": 34.03,
+   "verifiers": 27.3
   }
  },
  "work_item": "ccda9aad-2dc6-422c-855c-8dab569a5f28"
