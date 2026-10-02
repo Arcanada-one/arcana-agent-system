@@ -849,7 +849,7 @@ mod tests {
     fn search_response_default_is_empty_results() {
         let empty: SearchResponse = serde_json::from_value(serde_json::json!({ "results": [] }))
             .expect("deserialize empty results");
-        assert!(empty.results.is_empty());
+        assert_eq!(empty.results.len(), 0);
     }
 
     #[test]

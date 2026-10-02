@@ -788,7 +788,7 @@ mod tests {
             Some("The documentation page `docs/how-to/run-work-item.md` has been created."),
         );
         assert_eq!(effect.tree_changed, Some(false));
-        assert!(effect.writes.is_empty());
+        assert_eq!(effect.writes.len(), 0);
         assert_eq!(effect.executed_tools["read"], 2);
         assert_eq!(effect.executed_tools["grep"], 2);
         assert_eq!(
@@ -830,7 +830,7 @@ mod tests {
             &["write".to_owned()],
             Some("I updated docs/how-to/x.md with the new section."),
         );
-        assert!(effect.claimed_but_absent.is_empty());
+        assert_eq!(effect.claimed_but_absent.len(), 0);
         assert_eq!(
             effect.claimed_but_unchanged,
             vec!["docs/how-to/x.md".to_owned()]

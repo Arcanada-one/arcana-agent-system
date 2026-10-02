@@ -1334,6 +1334,6 @@ mod tests {
             parsed["effect"]["tree_digest_after"]
         );
         assert_eq!(parsed["effect"]["executed_tools"]["read"], 9);
-        assert!(parsed["effect"]["writes"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["effect"]["writes"].as_array().unwrap().len(), 0);
     }
 }
