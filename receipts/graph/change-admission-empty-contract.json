@@ -1,0 +1,2950 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted"
+ },
+ "captured_at_utc": "2026-10-02T19:57:36Z",
+ "change_set": {
+  "base": "c342ae350a90cf59ab1268209a77df5292210c90",
+  "files": [
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/run_contract_allowlist.rs"
+    ],
+    "path": "crates/cli/tests/run_contract_allowlist.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/src/contract.rs",
+    "node_ids": [
+     "code_unit:crates/core/src/contract.rs"
+    ],
+    "path": "crates/core/src/contract.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/tests/contract_binding.rs",
+    "node_ids": [
+     "code_unit:crates/core/tests/contract_binding.rs"
+    ],
+    "path": "crates/core/tests/contract_binding.rs",
+    "status": "M"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+    "node_ids": [
+     "document:docs/how-to/run-work-item-under-kc2-contract.md"
+    ],
+    "path": "docs/how-to/run-work-item-under-kc2-contract.md",
+    "status": "M"
+   }
+  ],
+  "head": "8f3baba83ddc1f05d9f5a3d99629dd9d0a535804",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:c020828ce66f31d9bfa04c6beeecedcee08c809acf56c08f0a720cf9676f4a75",
+  "path": "/home/dev/aup/aras-kc2-tmp.ajzYGg/verifier-out/graph-c342ae350a90.json",
+  "source_commit": "c342ae350a90cf59ab1268209a77df5292210c90"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:dd456e1a1396f743aa98e088166b7bdb1fc30d444f57b92becd91281a518d256",
+  "path": "/home/dev/aup/aras-kc2-tmp.ajzYGg/verifier-out/graph-head-8f3baba83ddc.json",
+  "source_commit": "8f3baba83ddc1f05d9f5a3d99629dd9d0a535804",
+  "staleness": {
+   "checked_at_utc": "2026-10-02T19:57:40Z",
+   "checked_nodes": 392,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/src/bootstrap.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/bootstrap.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/src/demo.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/demo.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/ground_truth.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/ground_truth.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/src/kb_read.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/kb_read.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/learning_trace.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/learning_trace.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/cli/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/ground_truth.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/ground_truth.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/src/main.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/main.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/src/permission_prompt.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/permission_prompt.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/receipt.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/receipt.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/run.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/run.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/work_item.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/work_item.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/src/workspace.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/workspace.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/tests/printed_output.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/tests/printed_output.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/tests/run_work_item.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/tests/run_work_item.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/connectors/src/contract_source.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/connectors/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/contract_source.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/connectors/tests/contract_source_contract.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/contract_source_contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/contract_source.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/lib.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/contract_source.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/lib.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/contract_source.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/connectors/src/lib.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/src/execution.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/execution.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/src/permission/contract.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/core/src/permission/mod.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/capability_executor_security.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/capability_executor_security.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/common/mod.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/common/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/driver_operator_abort.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_operator_abort.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/driver_tool_dialects.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/driver_tool_dialects.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/hook_bridge_layer.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/hook_bridge_layer.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/hooks_audit.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/hooks_audit.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/interactive_layer.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/interactive_layer.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/permission_cascade.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/permission_cascade.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/rule_layer.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/rule_layer.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/core/tests/schema_layer.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/schema_layer.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/mcp/src/server.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/mcp/src/server.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/mcp/src/suspend.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/mcp/src/suspend.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/mcp/tests/loopback_contract.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/mcp/tests/loopback_contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/skills/tests/common/mod.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/skills/tests/common/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/src/bash.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/src/bash.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/src/webfetch.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/src/webfetch.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/bash_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/tests/common/mod.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/common/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/tests/model_call_capability.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/model_call_capability.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/schema_validation.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 3,
+    "entity": "code_unit:crates/tools/tests/webfetch_tool.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/contract.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/permission/mod.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/contract.rs",
+      "via": "rust-mod-decl"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/tools/tests/webfetch_tool.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "deployable_unit:crates/connectors",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/contract.rs",
+      "via": "rust-use-workspace-crate"
+     },
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/connectors/src/contract_source.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/connectors",
+      "via": "containment"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/core",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/core/src/contract.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/core",
+      "via": "containment"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "document:CHANGELOG.md",
+    "node_type": "document",
+    "path": [
+     {
+      "edge_type": "documents",
+      "from": "document:CHANGELOG.md",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "doc reference check (path/id still resolves)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-297c.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-297c.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-361.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-361.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-credential-file-guard.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-credential-file-guard.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 60
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.2.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: /home/dev/arcanada/_temp/aras-b4d90222/RUST-PROPERTY-PROFILE.json; baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: ['property_check']; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.2.0"
+ },
+ "receipt_id": "car-verify-20261002T195736Z-8f3baba8",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/orca/workspaces/arcana-agent-system/aras-kc2-b4d90222"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/bootstrap.rs",
+   "code_unit:crates/cli/src/demo.rs",
+   "code_unit:crates/cli/src/ground_truth.rs",
+   "code_unit:crates/cli/src/kb_read.rs",
+   "code_unit:crates/cli/src/learning_trace.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/permission_prompt.rs",
+   "code_unit:crates/cli/src/receipt.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/work_item.rs",
+   "code_unit:crates/cli/src/workspace.rs",
+   "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+   "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+   "code_unit:crates/cli/tests/printed_output.rs",
+   "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+   "code_unit:crates/cli/tests/run_work_item.rs",
+   "code_unit:crates/connectors/src/contract_source.rs",
+   "code_unit:crates/connectors/src/lib.rs",
+   "code_unit:crates/connectors/tests/contract_source_contract.rs",
+   "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+   "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+   "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+   "code_unit:crates/core/src/contract.rs",
+   "code_unit:crates/core/src/execution.rs",
+   "code_unit:crates/core/src/lib.rs",
+   "code_unit:crates/core/src/permission/contract.rs",
+   "code_unit:crates/core/src/permission/mod.rs",
+   "code_unit:crates/core/tests/capability_executor_security.rs",
+   "code_unit:crates/core/tests/common/mod.rs",
+   "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+   "code_unit:crates/core/tests/contract_binding.rs",
+   "code_unit:crates/core/tests/driver_cost_accounting.rs",
+   "code_unit:crates/core/tests/driver_operator_abort.rs",
+   "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+   "code_unit:crates/core/tests/driver_tool_dialects.rs",
+   "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+   "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+   "code_unit:crates/core/tests/hook_bridge_layer.rs",
+   "code_unit:crates/core/tests/hooks_audit.rs",
+   "code_unit:crates/core/tests/interactive_layer.rs",
+   "code_unit:crates/core/tests/permission_cascade.rs",
+   "code_unit:crates/core/tests/rule_layer.rs",
+   "code_unit:crates/core/tests/schema_layer.rs",
+   "code_unit:crates/mcp/src/server.rs",
+   "code_unit:crates/mcp/src/suspend.rs",
+   "code_unit:crates/mcp/tests/loopback_contract.rs",
+   "code_unit:crates/skills/tests/common/mod.rs",
+   "code_unit:crates/tools/src/bash.rs",
+   "code_unit:crates/tools/src/webfetch.rs",
+   "code_unit:crates/tools/tests/bash_tool.rs",
+   "code_unit:crates/tools/tests/common/mod.rs",
+   "code_unit:crates/tools/tests/model_call_capability.rs",
+   "code_unit:crates/tools/tests/schema_validation.rs",
+   "code_unit:crates/tools/tests/webfetch_tool.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/connectors",
+   "deployable_unit:crates/core",
+   "document:CHANGELOG.md",
+   "document:docs/how-to/run-work-item-under-kc2-contract.md",
+   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+   "receipt:receipts/graph/change-admission-a2-297c.json",
+   "receipt:receipts/graph/change-admission-a2-361.json",
+   "receipt:receipts/graph/change-admission-credential-file-guard.json"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/bootstrap.rs",
+   "code_unit:crates/cli/src/demo.rs",
+   "code_unit:crates/cli/src/ground_truth.rs",
+   "code_unit:crates/cli/src/kb_read.rs",
+   "code_unit:crates/cli/src/learning_trace.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/permission_prompt.rs",
+   "code_unit:crates/cli/src/receipt.rs",
+   "code_unit:crates/cli/src/run.rs",
+   "code_unit:crates/cli/src/work_item.rs",
+   "code_unit:crates/cli/src/workspace.rs",
+   "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+   "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+   "code_unit:crates/cli/tests/printed_output.rs",
+   "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+   "code_unit:crates/cli/tests/run_work_item.rs",
+   "code_unit:crates/connectors/src/contract_source.rs",
+   "code_unit:crates/connectors/src/lib.rs",
+   "code_unit:crates/connectors/tests/contract_source_contract.rs",
+   "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+   "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+   "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+   "code_unit:crates/core/src/contract.rs",
+   "code_unit:crates/core/src/execution.rs",
+   "code_unit:crates/core/src/lib.rs",
+   "code_unit:crates/core/src/permission/contract.rs",
+   "code_unit:crates/core/src/permission/mod.rs",
+   "code_unit:crates/core/tests/capability_executor_security.rs",
+   "code_unit:crates/core/tests/common/mod.rs",
+   "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+   "code_unit:crates/core/tests/contract_binding.rs",
+   "code_unit:crates/core/tests/driver_cost_accounting.rs",
+   "code_unit:crates/core/tests/driver_operator_abort.rs",
+   "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+   "code_unit:crates/core/tests/driver_tool_dialects.rs",
+   "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+   "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+   "code_unit:crates/core/tests/hook_bridge_layer.rs",
+   "code_unit:crates/core/tests/hooks_audit.rs",
+   "code_unit:crates/core/tests/interactive_layer.rs",
+   "code_unit:crates/core/tests/permission_cascade.rs",
+   "code_unit:crates/core/tests/rule_layer.rs",
+   "code_unit:crates/core/tests/schema_layer.rs",
+   "code_unit:crates/mcp/src/server.rs",
+   "code_unit:crates/mcp/src/suspend.rs",
+   "code_unit:crates/mcp/tests/loopback_contract.rs",
+   "code_unit:crates/skills/tests/common/mod.rs",
+   "code_unit:crates/tools/src/bash.rs",
+   "code_unit:crates/tools/src/webfetch.rs",
+   "code_unit:crates/tools/tests/bash_tool.rs",
+   "code_unit:crates/tools/tests/common/mod.rs",
+   "code_unit:crates/tools/tests/model_call_capability.rs",
+   "code_unit:crates/tools/tests/schema_validation.rs",
+   "code_unit:crates/tools/tests/webfetch_tool.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/connectors",
+   "deployable_unit:crates/core",
+   "document:CHANGELOG.md",
+   "document:docs/how-to/run-work-item-under-kc2-contract.md",
+   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+   "receipt:receipts/graph/change-admission-a2-297c.json",
+   "receipt:receipts/graph/change-admission-a2-361.json",
+   "receipt:receipts/graph/change-admission-credential-file-guard.json"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-10-02T19:57:40Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": "sha256:3cd203c8a16f8846be37bcaeab04d44758f8f60d6ae68825c8b9745c02916257",
+    "head": "sha256:3cd203c8a16f8846be37bcaeab04d44758f8f60d6ae68825c8b9745c02916257"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:eff47a49b18095b8cad022caab76e6441e3397ed0b22d5d63ed7c6d665445e16",
+    "head": "sha256:eff47a49b18095b8cad022caab76e6441e3397ed0b22d5d63ed7c6d665445e16"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-297c.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-297c.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:f97cb39820fc720301ff63fce5b1d9a960624021241284f79e4b4546eb3fd335",
+    "head": "sha256:f97cb39820fc720301ff63fce5b1d9a960624021241284f79e4b4546eb3fd335"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-361.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-361.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:dbbb101cad833f3dc7834ad657121dc22fa222f7d27d50c912c8470a55635ee8",
+    "head": "sha256:dbbb101cad833f3dc7834ad657121dc22fa222f7d27d50c912c8470a55635ee8"
+   },
+   "entity": "receipt:receipts/graph/change-admission-credential-file-guard.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-credential-file-guard.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  }
+ ],
+ "tree": {
+  "commit": "8f3baba83ddc1f05d9f5a3d99629dd9d0a535804",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/bootstrap.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/demo.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/ground_truth.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/kb_read.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/learning_trace.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/main.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/permission_prompt.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/receipt.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/run.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/work_item.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/workspace.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/printed_output.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/run_work_item.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/src/contract_source.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/contract_source_contract.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/contract.rs",
+   "reason": "v-fitness: no new fitness violation; v-property-code-unit-crates-core-src-contract-rs: property check exit 0",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness",
+    "v-property-code-unit-crates-core-src-contract-rs"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/execution.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/permission/contract.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/permission/mod.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/capability_executor_security.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/common/mod.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/contract_binding.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_cost_accounting.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_operator_abort.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/driver_tool_dialects.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/hook_bridge_layer.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/hooks_audit.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/interactive_layer.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/permission_cascade.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/rule_layer.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/schema_layer.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/mcp/src/server.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/mcp/src/suspend.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/mcp/tests/loopback_contract.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/skills/tests/common/mod.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/bash.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/src/webfetch.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/bash_tool.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/common/mod.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/model_call_capability.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/schema_validation.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/tools/tests/webfetch_tool.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/connectors",
+   "reason": "v-fitness: no new violation in crates/connectors",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/core",
+   "reason": "v-fitness: no new violation in crates/core",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 5 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifier_selection": {
+  "applied": {
+   "property_check": [
+    "code_unit:crates/core/src/contract.rs"
+   ]
+  },
+  "not_applied": [
+   {
+    "entities": [
+     "code_unit:crates/cli/src/bootstrap.rs",
+     "code_unit:crates/cli/src/demo.rs",
+     "code_unit:crates/cli/src/ground_truth.rs",
+     "code_unit:crates/cli/src/kb_read.rs",
+     "code_unit:crates/cli/src/learning_trace.rs",
+     "code_unit:crates/cli/src/lib.rs",
+     "code_unit:crates/cli/src/main.rs",
+     "code_unit:crates/cli/src/permission_prompt.rs",
+     "code_unit:crates/cli/src/receipt.rs",
+     "code_unit:crates/cli/src/run.rs",
+     "code_unit:crates/cli/src/work_item.rs",
+     "code_unit:crates/cli/src/workspace.rs",
+     "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+     "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+     "code_unit:crates/cli/tests/printed_output.rs",
+     "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+     "code_unit:crates/cli/tests/run_work_item.rs",
+     "code_unit:crates/connectors/src/contract_source.rs",
+     "code_unit:crates/connectors/src/lib.rs",
+     "code_unit:crates/connectors/tests/contract_source_contract.rs",
+     "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+     "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+     "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+     "code_unit:crates/core/src/execution.rs",
+     "code_unit:crates/core/src/lib.rs",
+     "code_unit:crates/core/src/permission/contract.rs",
+     "code_unit:crates/core/src/permission/mod.rs",
+     "code_unit:crates/core/tests/capability_executor_security.rs",
+     "code_unit:crates/core/tests/common/mod.rs",
+     "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+     "code_unit:crates/core/tests/contract_binding.rs",
+     "code_unit:crates/core/tests/driver_cost_accounting.rs",
+     "code_unit:crates/core/tests/driver_operator_abort.rs",
+     "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+     "code_unit:crates/core/tests/driver_tool_dialects.rs",
+     "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+     "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+     "code_unit:crates/core/tests/hook_bridge_layer.rs",
+     "code_unit:crates/core/tests/hooks_audit.rs",
+     "code_unit:crates/core/tests/interactive_layer.rs",
+     "code_unit:crates/core/tests/permission_cascade.rs",
+     "code_unit:crates/core/tests/rule_layer.rs",
+     "code_unit:crates/core/tests/schema_layer.rs",
+     "code_unit:crates/mcp/src/server.rs",
+     "code_unit:crates/mcp/src/suspend.rs",
+     "code_unit:crates/mcp/tests/loopback_contract.rs",
+     "code_unit:crates/skills/tests/common/mod.rs",
+     "code_unit:crates/tools/src/bash.rs",
+     "code_unit:crates/tools/src/webfetch.rs",
+     "code_unit:crates/tools/tests/bash_tool.rs",
+     "code_unit:crates/tools/tests/common/mod.rs",
+     "code_unit:crates/tools/tests/model_call_capability.rs",
+     "code_unit:crates/tools/tests/schema_validation.rs",
+     "code_unit:crates/tools/tests/webfetch_tool.rs"
+    ],
+    "reason": "NO_PROPERTY_DECLARED",
+    "verifier": "property_check"
+   }
+  ],
+  "requested": [
+   "property_check"
+  ],
+  "schema": "VerifierSelection/v1"
+ },
+ "verifiers": [
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.0,
+   "entities": [
+    "code_unit:crates/cli/src/bootstrap.rs",
+    "code_unit:crates/cli/src/demo.rs",
+    "code_unit:crates/cli/src/ground_truth.rs",
+    "code_unit:crates/cli/src/kb_read.rs",
+    "code_unit:crates/cli/src/learning_trace.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/permission_prompt.rs",
+    "code_unit:crates/cli/src/receipt.rs",
+    "code_unit:crates/cli/src/run.rs",
+    "code_unit:crates/cli/src/work_item.rs",
+    "code_unit:crates/cli/src/workspace.rs",
+    "code_unit:crates/cli/tests/model_choice_dispatch.rs",
+    "code_unit:crates/cli/tests/permission_prompt_smoke.rs",
+    "code_unit:crates/cli/tests/printed_output.rs",
+    "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+    "code_unit:crates/cli/tests/run_work_item.rs",
+    "code_unit:crates/connectors/src/contract_source.rs",
+    "code_unit:crates/connectors/src/lib.rs",
+    "code_unit:crates/connectors/tests/contract_source_contract.rs",
+    "code_unit:crates/connectors/tests/idempotent_turn_retry.rs",
+    "code_unit:crates/connectors/tests/model_connector_error_reporting.rs",
+    "code_unit:crates/connectors/tests/skill_store_cutover.rs",
+    "code_unit:crates/core/src/contract.rs",
+    "code_unit:crates/core/src/execution.rs",
+    "code_unit:crates/core/src/lib.rs",
+    "code_unit:crates/core/src/permission/contract.rs",
+    "code_unit:crates/core/src/permission/mod.rs",
+    "code_unit:crates/core/tests/capability_executor_security.rs",
+    "code_unit:crates/core/tests/common/mod.rs",
+    "code_unit:crates/core/tests/contract_allowlist_layer.rs",
+    "code_unit:crates/core/tests/contract_binding.rs",
+    "code_unit:crates/core/tests/driver_cost_accounting.rs",
+    "code_unit:crates/core/tests/driver_operator_abort.rs",
+    "code_unit:crates/core/tests/driver_terminal_mapping.rs",
+    "code_unit:crates/core/tests/driver_tool_dialects.rs",
+    "code_unit:crates/core/tests/execution_invariant_replaceinput.rs",
+    "code_unit:crates/core/tests/execution_invariant_single_audit.rs",
+    "code_unit:crates/core/tests/hook_bridge_layer.rs",
+    "code_unit:crates/core/tests/hooks_audit.rs",
+    "code_unit:crates/core/tests/interactive_layer.rs",
+    "code_unit:crates/core/tests/permission_cascade.rs",
+    "code_unit:crates/core/tests/rule_layer.rs",
+    "code_unit:crates/core/tests/schema_layer.rs",
+    "code_unit:crates/mcp/src/server.rs",
+    "code_unit:crates/mcp/src/suspend.rs",
+    "code_unit:crates/mcp/tests/loopback_contract.rs",
+    "code_unit:crates/skills/tests/common/mod.rs",
+    "code_unit:crates/tools/src/bash.rs",
+    "code_unit:crates/tools/src/webfetch.rs",
+    "code_unit:crates/tools/tests/bash_tool.rs",
+    "code_unit:crates/tools/tests/common/mod.rs",
+    "code_unit:crates/tools/tests/model_call_capability.rs",
+    "code_unit:crates/tools/tests/schema_validation.rs",
+    "code_unit:crates/tools/tests/webfetch_tool.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/connectors",
+    "deployable_unit:crates/core"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/bootstrap.rs": "verified",
+    "code_unit:crates/cli/src/demo.rs": "verified",
+    "code_unit:crates/cli/src/ground_truth.rs": "verified",
+    "code_unit:crates/cli/src/kb_read.rs": "verified",
+    "code_unit:crates/cli/src/learning_trace.rs": "verified",
+    "code_unit:crates/cli/src/lib.rs": "verified",
+    "code_unit:crates/cli/src/main.rs": "verified",
+    "code_unit:crates/cli/src/permission_prompt.rs": "verified",
+    "code_unit:crates/cli/src/receipt.rs": "verified",
+    "code_unit:crates/cli/src/run.rs": "verified",
+    "code_unit:crates/cli/src/work_item.rs": "verified",
+    "code_unit:crates/cli/src/workspace.rs": "verified",
+    "code_unit:crates/cli/tests/model_choice_dispatch.rs": "verified",
+    "code_unit:crates/cli/tests/permission_prompt_smoke.rs": "verified",
+    "code_unit:crates/cli/tests/printed_output.rs": "verified",
+    "code_unit:crates/cli/tests/run_contract_allowlist.rs": "verified",
+    "code_unit:crates/cli/tests/run_work_item.rs": "verified",
+    "code_unit:crates/connectors/src/contract_source.rs": "verified",
+    "code_unit:crates/connectors/src/lib.rs": "verified",
+    "code_unit:crates/connectors/tests/contract_source_contract.rs": "verified",
+    "code_unit:crates/connectors/tests/idempotent_turn_retry.rs": "verified",
+    "code_unit:crates/connectors/tests/model_connector_error_reporting.rs": "verified",
+    "code_unit:crates/connectors/tests/skill_store_cutover.rs": "verified",
+    "code_unit:crates/core/src/contract.rs": "verified",
+    "code_unit:crates/core/src/execution.rs": "verified",
+    "code_unit:crates/core/src/lib.rs": "verified",
+    "code_unit:crates/core/src/permission/contract.rs": "verified",
+    "code_unit:crates/core/src/permission/mod.rs": "verified",
+    "code_unit:crates/core/tests/capability_executor_security.rs": "verified",
+    "code_unit:crates/core/tests/common/mod.rs": "verified",
+    "code_unit:crates/core/tests/contract_allowlist_layer.rs": "verified",
+    "code_unit:crates/core/tests/contract_binding.rs": "verified",
+    "code_unit:crates/core/tests/driver_cost_accounting.rs": "verified",
+    "code_unit:crates/core/tests/driver_operator_abort.rs": "verified",
+    "code_unit:crates/core/tests/driver_terminal_mapping.rs": "verified",
+    "code_unit:crates/core/tests/driver_tool_dialects.rs": "verified",
+    "code_unit:crates/core/tests/execution_invariant_replaceinput.rs": "verified",
+    "code_unit:crates/core/tests/execution_invariant_single_audit.rs": "verified",
+    "code_unit:crates/core/tests/hook_bridge_layer.rs": "verified",
+    "code_unit:crates/core/tests/hooks_audit.rs": "verified",
+    "code_unit:crates/core/tests/interactive_layer.rs": "verified",
+    "code_unit:crates/core/tests/permission_cascade.rs": "verified",
+    "code_unit:crates/core/tests/rule_layer.rs": "verified",
+    "code_unit:crates/core/tests/schema_layer.rs": "verified",
+    "code_unit:crates/mcp/src/server.rs": "verified",
+    "code_unit:crates/mcp/src/suspend.rs": "verified",
+    "code_unit:crates/mcp/tests/loopback_contract.rs": "verified",
+    "code_unit:crates/skills/tests/common/mod.rs": "verified",
+    "code_unit:crates/tools/src/bash.rs": "verified",
+    "code_unit:crates/tools/src/webfetch.rs": "verified",
+    "code_unit:crates/tools/tests/bash_tool.rs": "verified",
+    "code_unit:crates/tools/tests/common/mod.rs": "verified",
+    "code_unit:crates/tools/tests/model_call_capability.rs": "verified",
+    "code_unit:crates/tools/tests/schema_validation.rs": "verified",
+    "code_unit:crates/tools/tests/webfetch_tool.rs": "verified",
+    "deployable_unit:crates/cli": "verified",
+    "deployable_unit:crates/connectors": "verified",
+    "deployable_unit:crates/core": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/home/dev/aup/aras-kc2-tmp.ajzYGg/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-02T19:57:43Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md",
+    "document:docs/how-to/run-work-item-under-kc2-contract.md"
+   ],
+   "entity_verdicts": {
+    "document:CHANGELOG.md": "verified",
+    "document:docs/how-to/run-work-item-under-kc2-contract.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/aup/aras-kc2-tmp.ajzYGg/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-10-02T19:57:43Z",
+   "summary": "2 document(s), 0 failed"
+  },
+  {
+   "command": "cargo test --locked -p arcana-core -p arcana-agent",
+   "duration_s": 23.01,
+   "entities": [
+    "code_unit:crates/core/src/contract.rs"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/core/src/contract.rs": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-property-code-unit-crates-core-src-contract-rs",
+   "kind": "property_check",
+   "output_ref": "/home/dev/aup/aras-kc2-tmp.ajzYGg/verifier-out/v-property-code-unit-crates-core-src-contract-rs.txt",
+   "started_at_utc": "2026-10-02T19:57:43Z",
+   "summary": "exit 0"
+  }
+ ],
+ "verify": {
+  "events": [
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "4 affected entity(ies) owe no verdict (receipt: 4): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/bootstrap.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/demo.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/ground_truth.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/kb_read.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/learning_trace.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/main.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/permission_prompt.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/receipt.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/run.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/work_item.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/workspace.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/model_choice_dispatch.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/permission_prompt_smoke.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/printed_output.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/run_contract_allowlist.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/run_work_item.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/src/contract_source.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/contract_source_contract.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/idempotent_turn_retry.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/model_connector_error_reporting.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/connectors/tests/skill_store_cutover.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/contract.rs": [
+    "fitness_rules",
+    "property_check"
+   ],
+   "code_unit:crates/core/src/execution.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/permission/contract.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/permission/mod.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/capability_executor_security.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/common/mod.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/contract_allowlist_layer.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/contract_binding.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_cost_accounting.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_operator_abort.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_terminal_mapping.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/driver_tool_dialects.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/execution_invariant_replaceinput.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/execution_invariant_single_audit.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/hook_bridge_layer.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/hooks_audit.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/interactive_layer.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/permission_cascade.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/rule_layer.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/schema_layer.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/mcp/src/server.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/mcp/src/suspend.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/mcp/tests/loopback_contract.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/skills/tests/common/mod.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/bash.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/src/webfetch.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/bash_tool.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/common/mod.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/model_call_capability.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/schema_validation.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/tools/tests/webfetch_tool.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/connectors": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/core": [
+    "fitness_rules"
+   ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
+   "document:docs/how-to/run-work-item-under-kc2-contract.md": [
+    "doc_reference"
+   ],
+   "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json": [],
+   "receipt:receipts/graph/change-admission-a2-297c.json": [],
+   "receipt:receipts/graph/change-admission-a2-361.json": [],
+   "receipt:receipts/graph/change-admission-credential-file-guard.json": []
+  },
+  "seconds": {
+   "prepare": 1.91,
+   "total": 29.81,
+   "verifiers": 23.02
+  }
+ },
+ "work_item": "ccda9aad-2dc6-422c-855c-8dab569a5f28"
+}
