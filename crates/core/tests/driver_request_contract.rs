@@ -196,5 +196,5 @@ async fn an_oversized_system_prompt_is_refused_before_any_request_is_sent() {
 
     assert_eq!(out.reason, TerminalReason::RequestTooLarge);
     assert_eq!(out.turns, 0);
-    assert!(connector.prompt_units().is_empty());
+    assert_eq!(connector.prompt_units().len(), 0);
 }
