@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   green and carries a real page (A2-297b).
 
 ### Fixed
+- Explicit empty contract tool allowlists now refuse every tool effect instead
+  of inheriting the default read, grep, write, and edit capabilities.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
   Missing files and unsafe owner/permissions/type/size have distinct reasons;
   status/watch include the rejected condition. FIFOs cannot block file opening.
