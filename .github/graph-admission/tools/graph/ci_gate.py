@@ -69,6 +69,8 @@ BUNDLE_FILES = [
     "tools/graph/impact_pair.py",
     "tools/graph/verify.py",
     "tools/graph/contract_diff.py",
+    "tools/graph/metadata_contract_proof.py",
+    "tools/graph/metadata_contract_observer.cjs",
     # verify.py's own chain: canary_evidence at module scope, process_observation from there.
     # Found by importing every bundled module from a directory that contains nothing else — a
     # static import scan missed it, and so did testing one entry point by hand.
