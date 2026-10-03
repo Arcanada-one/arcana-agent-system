@@ -105,8 +105,22 @@ def _pairs(ts):
     return pairs
 
 
+def _default_options_parameter(items):
+    """One optional boolean-options object with an inert empty-object default.
+
+    An empty call binds this parameter without executing a default expression.
+    Destructuring, required fields, callbacks and computed defaults stay unknown.
+    """
+    if (len(items) < 10 or not re.fullmatch(r'[A-Za-z_$][\w$]*', items[0])
+            or items[1:3] != [':', '{'] or items[-4:] != ['}', '=', '{', '}']):
+        return False
+    fields = split(items[3:-4], ';')
+    return bool(fields) and all(len(f) == 4 and re.fullmatch(r'[A-Za-z_$][\w$]*', f[0])
+                               and f[1:] == ['?', ':', 'boolean'] for f in fields)
+
+
 def _functions(ts, pairs):
-    """Only declarations with literal names and empty parameters can be entries."""
+    """Literal names with empty or bounded inert-default parameters can be entries."""
     functions = []
     for i, token in enumerate(ts):
         if token == 'function':
@@ -118,7 +132,8 @@ def _functions(ts, pairs):
                 body += 1
             if body >= len(ts) or ts[body] != '{':
                 raise ValueError('bootstrap function body unresolved')
-            name = ts[i + 1] if p == i + 2 and pairs[p] == p + 1 else None
+            parameters = ts[p + 1:pairs[p]]
+            name = ts[i + 1] if p == i + 2 and (not parameters or _default_options_parameter(parameters)) else None
             functions.append((body, pairs[body], name, i))
         if ts[i:i + 2] == ['=', '>'] and i + 2 < len(ts) and ts[i + 2] == '{':
             functions.append((i + 2, pairs[i + 2], None, i))
@@ -343,11 +358,77 @@ def _static_register(ts, pairs, receiver):
         raise ValueError('static register callback/options unresolved')
 
 
+def _literal_boolean_options(items, keys):
+    if items[:1] != ['{'] or items[-1:] != ['}']:
+        return False
+    fields = split(items[1:-1])
+    if any(not f for f in fields):
+        return False
+    return (bool(fields) and len({f[0] for f in fields}) == len(fields)
+            and all(len(f) == 3 and f[0] in keys and f[1] == ':'
+                    and f[2] in ('true', 'false') for f in fields))
+
+
+def _literal_cors_options(items):
+    if items[:1] != ['{'] or items[-1:] != ['}']:
+        return False
+    fields = split(items[1:-1])
+    if any(not f for f in fields):
+        return False
+    names = [f[0] for f in fields]
+    if len(names) != len(set(names)):
+        return False
+    for f in fields:
+        if len(f) < 3 or f[1] != ':':
+            return False
+        value = f[2:]
+        if f[0] == 'credentials' and value in (['true'], ['false']):
+            continue
+        if f[0] == 'origin':
+            if len(value) == 1:
+                literal(value[0])
+                continue
+            if len(value) == 8 and value[:5] == ['process', '.', 'env', '.', value[4]] and value[5:7] == ['?', '?']:
+                literal(value[7])
+                continue
+        if f[0] in ('methods', 'allowedHeaders') and value[:1] == ['['] and value[-1:] == [']']:
+            for item in split(value[1:-1]):
+                if len(item) != 1:
+                    return False
+                text = literal(item[0])
+                if f[0] == 'methods' and text not in ('GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'):
+                    return False
+            continue
+        return False
+    return bool(fields)
+
+
+def _route_neutral_configuration(ts, pairs, receiver):
+    """Bounded Nest/Express method-effect contracts, never runtime/canary proof."""
+    method = ts[receiver + 2]
+    if method == 'getHttpAdapter':
+        expected = ['.', 'getHttpAdapter', '(', ')', '.', 'getInstance', '(', ')', '.', 'set',
+                    '(', "'query parser'", ',', "'extended'", ')', ';']
+        return ts[receiver + 1:receiver + 17] == expected
+    args = call_args(ts, receiver + 3)
+    if method == 'use':
+        return args == [['helmet', '(', ')']] and _trusted_binding(ts, 'helmet', 'helmet')
+    if method == 'useGlobalPipes':
+        return (len(args) == 1 and args[0][:3] == ['new', 'ValidationPipe', '(']
+                and args[0][-1:] == [')']
+                and _trusted_binding(ts, 'ValidationPipe', '@nestjs/common')
+                and _literal_boolean_options(args[0][3:-1], {'whitelist', 'forbidNonWhitelisted', 'transform'}))
+    if method == 'enableCors':
+        return len(args) == 1 and not _name_shadowed(ts, 'process') and _literal_cors_options(args[0])
+    return False
+
+
 def _app_uses(ts, pairs, functions, app, declaration, scope, flow=None):
     """Only direct recognized receiver calls preserve the local application's identity."""
     limit = scope[1] if scope else len(ts)
     proven = flow['scopes'] if flow else ()
     listen = []
+    neutral = []
     for i in range(declaration + 2, limit):
         if ts[i] != app:
             continue
@@ -370,6 +451,14 @@ def _app_uses(ts, pairs, functions, app, declaration, scope, flow=None):
                 raise ValueError('server observation not proven post-listen address()')
             continue
         if member not in (['.', 'setGlobalPrefix', '('], ['.', 'listen', '(']):
+            if (len(member) == 3 and member[0] == '.' and member[2] == '('
+                    and member[1] in ('getHttpAdapter', 'use', 'useGlobalPipes', 'enableCors')
+                    and _route_neutral_configuration(ts, pairs, i)):
+                _execution_scope(ts, pairs, functions, i, proven)
+                if _statement_lead(ts, i):
+                    raise ValueError('conditional application configuration')
+                neutral.append('Nest/Express route-neutral method-effect assumption: ' + member[1])
+                continue
             raise ValueError('application escaped, aliased, or unknown receiver use')
         _execution_scope(ts, pairs, functions, i, proven)
         if _statement_lead(ts, i) not in ([], ['await']):
@@ -380,6 +469,7 @@ def _app_uses(ts, pairs, functions, app, declaration, scope, flow=None):
             listen.append(i)
     if flow and scope == flow['caller_scope'] and len(listen) != 1:
         raise ValueError('one unconditional bootstrap listen not proven')
+    return neutral
 
 
 @dataclass
@@ -437,6 +527,193 @@ def _exclusions(options):
     return out
 
 
+def _primitive_module(provider, pairs):
+    """No startup execution: literal constants and lazy function definitions only."""
+    i = 0
+    while i < len(provider):
+        if provider[i] == 'export':
+            i += 1
+        if provider[i:i + 1] == ['const']:
+            if (provider[i + 2:i + 3] != ['='] or provider[i + 4:i + 5] != [';']
+                    or not re.fullmatch(r'[A-Za-z_$][\w$]*', provider[i + 1])):
+                raise ValueError('diagnostic provider initializer unresolved')
+            value = provider[i + 3]
+            if not re.fullmatch(r'\d+', value):
+                literal(value)
+            i += 5
+            continue
+        if provider[i:i + 1] == ['function']:
+            if provider[i + 2:i + 3] != ['('] or i + 2 not in pairs:
+                raise ValueError('diagnostic provider function unresolved')
+            close = pairs[i + 2]
+            start = close + 3
+            if (provider[close + 1:close + 2] != [':']
+                    or provider[start:start + 1] != ['{'] or start not in pairs):
+                raise ValueError('diagnostic provider function signature unresolved')
+            i = pairs[start] + 1
+            continue
+        raise ValueError('diagnostic provider startup effects unresolved')
+
+
+def _primitive_import(tree, root, ts, name, kind):
+    """Resolve a literal relative named import and prove its entire small body."""
+    imports = []
+    for i, token in enumerate(ts):
+        if token != 'import':
+            continue
+        end = next((j for j in range(i + 1, len(ts)) if ts[j] == ';'), len(ts))
+        part = ts[i + 1:end]
+        if name not in part:
+            continue
+        if ('as' in part or part[:1] != ['{'] or 'from' not in part
+                or _name_shadowed(ts, name)):
+            raise ValueError('diagnostic import binding unresolved')
+        imports.append(literal(part[part.index('from') + 1]))
+    if len(imports) != 1 or not imports[0].startswith('.'):
+        raise ValueError('diagnostic primitive provider unresolved')
+    path = posixpath.normpath(posixpath.join(posixpath.dirname(root), imports[0]))
+    candidates = [path, path[:-3] + '.ts'] if path.endswith('.js') else [path, path + '.ts']
+    paths = [p for p in candidates if tree.exists(p)]
+    if len(paths) != 1:
+        raise ValueError('diagnostic primitive provider missing/ambiguous')
+    provider = tokens(tree.text(paths[0]))
+    if (any(t in ('eval', 'Function', 'Reflect', 'Proxy', 'globalThis', 'global', 'Object') for t in provider)
+            or sum(t == 'process' for t in provider) != 1):
+        raise ValueError('diagnostic primitive provider dynamic')
+    pairs = _pairs(provider)
+    _primitive_module(provider, pairs)
+    definitions = [i for i in range(len(provider)) if provider[i:i + 3] == ['function', name, '(']]
+    if len(definitions) != 1 or sum(t == name for t in provider) != 1:
+        raise ValueError('diagnostic primitive provider binding replaced')
+    i = definitions[0]
+    close = pairs[i + 2]
+    signature = provider[i + 3:close]
+    start = close + 3
+    if provider[close + 1:close + 3] != [':', kind] or provider[start:start + 1] != ['{']:
+        raise ValueError('diagnostic primitive signature unsupported')
+    body = provider[start + 1:pairs[start]]
+    if kind == 'string':
+        env = signature[0] if signature else ''
+        if signature != [env, ':', 'NodeJS', '.', 'ProcessEnv', '=', 'process', '.', 'env']:
+            raise ValueError('diagnostic string input unsupported')
+        if len(body) != 27:
+            raise ValueError('diagnostic string body unsupported')
+        local, key = body[1], body[6]
+        expected = ['const', local, '=', '(', env, '.', key, '?', '?', body[9], ')', '.', 'trim', '(', ')', ';',
+                    'return', local, '.', 'length', '>', '0', '?', local, ':', body[25], ';']
+        # Token counts are checked by exact whole-body comparison, never partial matching.
+        if body != expected:
+            raise ValueError('diagnostic string body unsupported')
+        literal(body[9]); literal(body[25])
+    elif kind == 'boolean':
+        if len(signature) != 3 or signature[1:] != [':', 'string']:
+            raise ValueError('diagnostic boolean input unsupported')
+        parameter = signature[0]
+        if (len(body) != 14 or body[:5] != ['return', parameter, '=', '=', '=']
+                or body[6:11] != ['|', '|', parameter, '=', '=']
+                or body[11] != '=' or body[-1] != ';'):
+            raise ValueError('diagnostic boolean body unsupported')
+        for constant in (body[5], body[12]):
+            declarations = [j for j in range(len(provider)) if provider[j:j + 3] == ['const', constant, '=']]
+            assignments = [j for j, t in enumerate(provider) if t == constant and provider[j + 1:j + 2] == ['=']]
+            if len(declarations) != 1 or assignments != [declarations[0] + 1]:
+                raise ValueError('diagnostic boolean constant replaced')
+            j = declarations[0]
+            if provider[j + 4:j + 5] != [';']:
+                raise ValueError('diagnostic boolean constant nonliteral')
+            literal(provider[j + 3])
+    else:
+        raise ValueError('diagnostic primitive kind unsupported')
+
+
+def _diagnostic_value(tree, root, ts, expression):
+    if len(expression) == 1:
+        if not re.fullmatch(r'\d+', expression[0]):
+            literal(expression[0])
+        return
+    if (len(expression) == 3 and expression[1:] == ['(', ')']
+            and re.fullmatch(r'[A-Za-z_$][\w$]*', expression[0])):
+        _primitive_import(tree, root, ts, expression[0], 'string')
+        return
+    if (len(expression) == 13 and expression[:6] == ['parseInt', '(', 'process', '.', 'env', '.']
+            and expression[7:9] == ['?', '?'] and expression[10:] == [',', '10', ')']):
+        literal(expression[9])
+        if _name_shadowed(ts, 'parseInt') or _name_shadowed(ts, 'process'):
+            raise ValueError('diagnostic numeric builtin replaced')
+        return
+    raise ValueError('diagnostic value not proven primitive')
+
+
+def _diagnostic_templates(tree, root, ts, pairs, functions, declarations):
+    """Only post-listen console output of proven primitive locals is inert.
+
+    Identifier coercion can execute user code for objects. Unproven imported functions,
+    object/getter values, aliases, eval and nested templates remain unknown.
+    This proves prefix syntax only, not successful bootstrap or runtime fitness.
+    """
+    if any(t in ('eval', 'Function', 'Reflect', 'Proxy', 'globalThis', 'global', 'Object') for t in ts):
+        raise ValueError('dynamic bootstrap reflection not proven')
+    for i, t in enumerate(ts):
+        if t == 'process' and (ts[i + 1:i + 4] != ['.', 'env', '.']
+                               or ts[i + 5:i + 6] == ['=']):
+            raise ValueError('bootstrap environment binding not read-only')
+        if t == 'parseInt' and ts[i + 1:i + 2] != ['(']:
+            raise ValueError('bootstrap numeric builtin binding replaced')
+    for i, token in enumerate(ts):
+        if not (token.startswith('`') and '${' in token):
+            continue
+        names = re.findall(r'\$\{([A-Za-z_$][\w$]*)\}', token)
+        residue = re.sub(r'\$\{([A-Za-z_$][\w$]*)\}', '', token)
+        if not names or '${' in residue or '\\' in token:
+            raise ValueError('bootstrap template interpolation not proven')
+        calls = [j for j in range(i) if ts[j:j + 4] == ['console', '.', 'log', '(']
+                 and pairs.get(j + 3, -1) > i]
+        console_uses = [j for j, t in enumerate(ts) if t == 'console']
+        if (len(calls) != 1 or _name_shadowed(ts, 'console')
+                or any(ts[j:j + 4] != ['console', '.', 'log', '('] for j in console_uses)):
+            raise ValueError('diagnostic receiver not proven')
+        call = calls[0]
+        arguments = ts[call + 4:pairs[call + 3]]
+        if arguments[-1:] == [',']:
+            arguments = arguments[:-1]
+        tail = arguments[1:]
+        if tail:
+            if (len(tail) != 11 or tail[:2] != ['+', '('] or tail[3:4] != ['(']
+                    or tail[5:8] != [')', '?', tail[7]] or tail[8:9] != [':'] or tail[-1:] != [')']):
+                raise ValueError('diagnostic expression not proven inert')
+            if tail[4] not in names:
+                raise ValueError('diagnostic boolean argument not proven scalar')
+            _primitive_import(tree, root, ts, tail[2], 'boolean')
+            literal(tail[7]); literal(tail[9])
+        if _statement_lead(ts, call):
+            raise ValueError('diagnostic expression not proven inert')
+        scope = _owner(functions, call)
+        starts = [d for d, _ in declarations if _owner(functions, d) == scope]
+        if len(starts) != 1:
+            raise ValueError('diagnostic application scope not proven')
+        app = ts[starts[0] + 1]
+        listens = [j for j in range(starts[0], call) if ts[j:j + 4] == [app, '.', 'listen', '(']
+                   and _statement_lead(ts, j) == ['await'] and _owner(functions, j) == scope]
+        if len(listens) != 1:
+            raise ValueError('diagnostic not proven post-listen')
+        for name in names:
+            bindings = [j for j in range(starts[0], call) if ts[j:j + 3] == ['const', name, '=']
+                        and _owner(functions, j) == scope]
+            if len(bindings) != 1:
+                raise ValueError('diagnostic scalar binding not proven')
+            j = bindings[0]
+            end = next((k for k in range(j + 3, call) if ts[k] == ';'), call)
+            if _statement_lead(ts, j):
+                raise ValueError('diagnostic binding conditional')
+            _diagnostic_value(tree, root, ts, ts[j + 3:end])
+            # Other declarations/assignments of this name may replace a binding.
+            uses = [k for k, t in enumerate(ts) if t == name and
+                    (ts[k - 1:k] in (['const'], ['let'], ['var'], ['function'], ['class'])
+                     or ts[k + 1:k + 2] == ['='])]
+            if uses != [j + 1]:
+                raise ValueError('diagnostic scalar binding replaced')
+
+
 def resolve(tree, deployable, deployables, profile=None):
     """Resolve an explicit root or one unique default, with exact deployable containment."""
     result = Bootstrap()
@@ -462,11 +739,10 @@ def resolve(tree, deployable, deployables, profile=None):
             raise ValueError("explicit bootstrap missing or outside deployable")
         result.root_file = root
         ts = tokens(tree.text(root))
-        if any(t.startswith('`') and '${' in t for t in ts):
-            raise ValueError('bootstrap template interpolation not proven')
         pairs = _pairs(ts)
         functions = _functions(ts, pairs)
         declarations = _factory_declarations(ts, pairs)
+        _diagnostic_templates(tree, root, ts, pairs, functions, declarations)
         app_declarations = [i for i, _ in declarations]
         flow = _return_flow(ts, pairs, functions, declarations) if declarations else None
         if flow:
@@ -478,7 +754,11 @@ def resolve(tree, deployable, deployables, profile=None):
             scope = _execution_scope(ts, pairs, functions, declaration, proven)
             if _statement_lead(ts, declaration):
                 raise ValueError('conditional application creation')
-            _app_uses(ts, pairs, functions, ts[declaration + 1], declaration, scope, flow)
+            assumptions = _app_uses(ts, pairs, functions, ts[declaration + 1], declaration, scope, flow)
+            if assumptions:
+                if result.proof is None:
+                    result.proof = {'scope': 'static prefix/exclusions only', 'assumptions': []}
+                result.proof.setdefault('assumptions', []).extend(assumptions)
         calls = [i for i in range(len(ts) - 1) if ts[i:i + 2] == ["setGlobalPrefix", "("]]
         if len(calls) > 1:
             raise ValueError("multiple prefix calls in selected bootstrap")
