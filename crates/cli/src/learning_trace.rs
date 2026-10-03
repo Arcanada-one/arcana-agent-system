@@ -643,7 +643,7 @@ mod tests {
             trace.outcome.negative_reason.as_deref(),
             Some("run_did_not_complete")
         );
-        assert!(trace.capability_set.is_empty());
+        assert_eq!(trace.capability_set.len(), 0);
         let path = write(dir.path(), &trace).unwrap();
         assert!(path.exists());
     }
@@ -672,7 +672,7 @@ mod tests {
         // The point of the test: the step is in the trace, and it is not a
         // capability. A set derived from attempts would hold `read` here.
         assert_eq!(trace.steps[0].tool, "read");
-        assert!(trace.capability_set.is_empty());
+        assert_eq!(trace.capability_set.len(), 0);
         assert!(trace.capability_witness.agrees);
         assert!(trace.outcome.negative);
         assert_eq!(
@@ -733,7 +733,7 @@ mod tests {
         let trace = build(&src, &out(TerminalReason::Completed, &["read"]), dir.path());
 
         assert_eq!(trace.verification.state, NOT_MEASURED);
-        assert!(trace.verification.verdicts.is_empty());
+        assert_eq!(trace.verification.verdicts.len(), 0);
     }
 
     #[test]
@@ -899,7 +899,7 @@ mod tests {
             dir.path(),
         );
 
-        assert!(trace.capability_set.is_empty());
+        assert_eq!(trace.capability_set.len(), 0);
         assert_eq!(trace.capability_witness.driver_set, vec!["grep", "read"]);
         assert!(!trace.capability_witness.agrees);
         assert!(trace.outcome.negative);
