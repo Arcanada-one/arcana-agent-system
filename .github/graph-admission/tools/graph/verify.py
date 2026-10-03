@@ -32,7 +32,7 @@ Semantics (the graph SELECTS verification, it never replaces it — consilium 20
   admission   admitted only when every verdict is verified; a failed verdict ⇒ refused; not_measured ⇒ paused_safe;
               exemptions are attached by the admitting agent (GRAPH-006), never invented here — the output is a DRAFT
   head tree   worktree mode runs the tool-chain verifiers in the repository itself (nothing is emitted: --noEmit,
-              --incremental false); diff mode with head ≠ HEAD exports the head tree with `git archive` into --workdir,
+              scratch buildinfo removed after each check); diff mode with head ≠ HEAD exports the head tree with `git archive` into --workdir,
               links the repository's node_modules into it and builds workspace packages there — the repository is
               never written (the pilot clone stays untouched)
 Exit codes: 0 draft admitted · 1 draft paused_safe / refused · 2 refusal (impact refusal, STALE_GRAPH, …) · 3 draft
@@ -58,6 +58,7 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
 from types import SimpleNamespace
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -915,13 +916,23 @@ def load_profile(a, repo_top: Path) -> tuple[dict, str]:
 
 
 def find_bin(name: str, explicit: str | None, exec_root: Path, repo_top: Path, deployable_dirs: list[str]) -> str | None:
+    # A project compiler is part of its locked dependency graph. --tsc is only
+    # a fallback; preserve explicit-first behavior for every other tool.
+    if explicit and name != "tsc":
+        return explicit if Path(explicit).is_file() else None
+    # Compare project depth across both trees before falling back to ancestors;
+    # an export may link root dependencies without linking a deeper project.
+    if name == "tsc":
+        candidates = ((base, d) for d in dict.fromkeys(deployable_dirs + [""])
+                      for base in (exec_root, repo_top))
+    else:
+        candidates = ((base, d) for base in (exec_root, repo_top) for d in [""] + deployable_dirs)
+    for base, d in candidates:
+        p = base / d / "node_modules" / ".bin" / name
+        if p.is_file():
+            return str(p)
     if explicit:
         return explicit if Path(explicit).is_file() else None
-    for base in (exec_root, repo_top):
-        for d in [""] + deployable_dirs:
-            p = base / d / "node_modules" / ".bin" / name
-            if p.is_file():
-                return str(p)
     return shutil.which(name)
 
 
@@ -1423,19 +1434,19 @@ class Verify:
             else:
                 gen = self.generated_tsconfig(dep, cfg)
                 vid = "v-type-check-" + re.sub(r"[^a-z0-9]+", "-", (dep + "-" + os.path.basename(cfg).replace(".json", "")).lower()).strip("-")
-            # A2-446. The compiler belongs to the project the config lives in, which need not be the
-            # deployable's root: scrutator declares its only TypeScript project as
-            # `deployables["."].tsconfig = ["contracts/http/tsconfig.json"]`, with its own package.json
-            # and install there, and a search of `["", dep]` never looked in contracts/http — so the
-            # verdict was `tsc unavailable` whatever was installed. The config's own directories are
-            # searched AFTER the old ones, so every group that already found a compiler keeps exactly
-            # the compiler it had; only a group that found none can gain one.
-            tsc = find_bin("tsc", self.a.tsc, root, self.top, [dep] + config_dirs(dep, cfg))
+            # The nearest config project owns its compiler before ancestors and fallback.
+            tsc = find_bin("tsc", self.a.tsc, root, self.top, config_dirs(dep, cfg) + [dep])
             if not tsc:
                 self.record(vid, "type_check", f"tsc -p {gen} (tsc not found)", eids, 127, "tsc binary not found (node_modules/.bin/tsc, --tsc, PATH)",
                             started, 0.0, "not_measured: tsc unavailable", {e: ("not_measured", "tsc unavailable on this host") for e in eids})
                 continue
-            rc, out, secs = run_cmd([tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "false", "--listFiles"], root / dep)
+            # Composite forbids --incremental false (TS6379). Keep incremental checking,
+            # but isolate its cache from the source tree and discard it even on failure.
+            with tempfile.TemporaryDirectory(prefix="type-check-", dir=self.out_dir) as cache:
+                command = [tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "true",
+                           "--tsBuildInfoFile", str((Path(cache) / "check.tsbuildinfo").resolve()), "--listFiles"]
+                rc, out, secs = run_cmd(command, root / dep)
+            command_text = shlex.join(command)
             if root is not self.exec_root:
                 cfg = f"{cfg} (post-build of {pb['rev'][:12]}, build {pb['seconds']}s, output {pb['digest'][:19]})"
             listed, errors_by_file, n_err, global_errors = set(), {}, 0, []
@@ -1466,12 +1477,12 @@ class Verify:
             if uninstalled:
                 why = (f"{unresolved} of {n_err} diagnostic(s) are unresolved modules and {uninstalled}; "
                        f"a type check over an unresolved module graph measures the absent install, not this change")
-                self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out,
+                self.record(vid, "type_check", command_text, eids, rc, out,
                             started, secs, f"{cfg}: exit {rc}, {n_err} error(s), {unresolved} unresolved-module — "
                                            f"not_measured: dependencies not installed",
                             {e: ("not_measured", why) for e in eids})
                 continue
-            ran.append((cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors))
+            ran.append((cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors, command_text))
         # A2-334. A deployable can carry several projects that partition its files — auth-arcana
         # checks `src/` under `tsconfig.json` (commonjs) and `scripts/` under `tsconfig.scripts.json`
         # (ESM, `import.meta`). Aggregation lets a `not_measured` from one verifier beat a `verified`
@@ -1479,7 +1490,7 @@ class Verify:
         # erase the verdict of the project that did compile it. Non-membership is a verdict only
         # when NO project of the run listed the file; otherwise the owning project speaks.
         listed_anywhere = set().union(*(r[9] for r in ran)) if ran else set()
-        for cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors in ran:
+        for cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors, command_text in ran:
             verdicts = {}
             for eid in eids:
                 n = self.entities[eid]["node"]
@@ -1509,7 +1520,7 @@ class Verify:
                 else:
                     verdicts[eid] = ("not_measured", f"{cfg}: {n_err} error(s) in other files ({', '.join(sorted(errors_by_file)[:3])}); not attributable to {path}")
             summary = f"{cfg}: exit {rc}, {n_err} error(s), {len(listed)} files listed"
-            self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out, started, secs, summary, verdicts)
+            self.record(vid, "type_check", command_text, eids, rc, out, started, secs, summary, verdicts)
 
     def dependency_install_missing(self, dep: str, root: Path | None = None) -> str | None:
         """Why module resolution cannot work in this tree — or None, meaning the compiler is believed.
@@ -1577,6 +1588,13 @@ class Verify:
         if "tsconfig" not in prof:
             if self.tree_head.exists(prefix + "tsconfig.json"):
                 cfgs.append(prefix + "tsconfig.json")
+            # Check genuine sibling projects as well: build-only configs commonly exclude
+            # tests and checkJs tooling. A declared profile remains authoritative.
+            siblings = sorted(p for p in getattr(self.tree_head, "paths", [])
+                              if os.path.dirname(p) == prefix.rstrip("/")
+                              and re.fullmatch(r"tsconfig\.[^.]+\.json", os.path.basename(p))
+                              and os.path.basename(p) != "tsconfig.base.json")
+            cfgs.extend(c for c in siblings if c not in cfgs)
         if path is not None:
             test_cfg = prof.get("tsconfig_test") or (prefix + "tsconfig.test.json" if self.tree_head.exists(prefix + "tsconfig.test.json") else None)
             rel = path[len(prefix):]
@@ -1591,6 +1609,13 @@ class Verify:
             elif (test_cfg and cfgs and test_cfg not in cfgs
                   and not any(tsconfig_names(self.tree_head, c, rel) for c in cfgs) and tsconfig_names(self.tree_head, test_cfg, rel)):
                 cfgs = [test_cfg]
+            elif "tsconfig" not in prof:
+                covering = [c for c in cfgs if tsconfig_names(self.tree_head, c,
+                            os.path.relpath(path, os.path.dirname(c) or "."))]
+                if covering:
+                    cfgs = [covering[0]]
+                elif prefix + "tsconfig.json" in cfgs:
+                    cfgs = [prefix + "tsconfig.json"]
         if prof.get("synthetic_tsconfig") is not None and not cfgs:
             cfgs.append(f"synthetic:{dep}")
         return cfgs
@@ -1719,7 +1744,7 @@ class Verify:
         name = re.sub(r"[^a-z0-9]+", "-", f"{dep}-{cfg}".lower()).strip("-") + ".json"
         gen = gen_dir / name
         overlay = self.profile.get("tsconfig_overlay") or {}
-        co = {"noEmit": True, "incremental": False}
+        co = {"noEmit": True}
         doc = {"compilerOptions": co}
         if cfg.startswith("synthetic:"):
             syn = (self.profile["deployables"][dep].get("synthetic_tsconfig") or {})
@@ -1761,7 +1786,8 @@ class Verify:
         t0 = time.monotonic()
         cmd = f"{contract_diff.TOOL}.run_diff(base={self.tree_base.meta.get('source_commit', '?')[:12]}, head={'worktree' if self.mode == 'worktree' else self.head[:12]}, graph=head graph)"
         try:
-            res = contract_diff.run_diff(self.tree_base, self.tree_head, graph=self.graph_head, repo_name=self.repo.name)
+            res = contract_diff.run_diff(self.tree_base, self.tree_head, graph=self.graph_head, repo_name=self.repo.name,
+                                         metadata_root=self.exec_root, metadata_git_repo=self.top)
         except contract_diff.Refusal as r:
             self.record("v-contract-diff", "contract_diff", cmd, ents, 2, f"REFUSAL {r.code}: {r.detail}", started, round(time.monotonic() - t0, 2),
                         f"refusal {r.code}", {e: ("not_measured", f"contract_diff refused: {r.code}") for e in ents}, "txt")

@@ -63,7 +63,7 @@ import workflow_config
 import nest_bootstrap
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
 
-VERSION = "1.0.2"  # 1.0.2: .mts/.cts code units, .d.ts/.d.mts/.d.cts kind=type_declaration, NodeNext .mjs/.cjs/.js → TS resolution
+VERSION = "1.0.3"  # 1.0.3: conservative scalar-only post-listen diagnostics; graph evidence must use matching pinned sources. Previous: 1.0.2: .mts/.cts code units, .d.ts/.d.mts/.d.cts kind=type_declaration, NodeNext .mjs/.cjs/.js → TS resolution
 BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
