@@ -334,7 +334,7 @@ async fn every_dispatch_of_a_run_carries_a_key() {
 
     assert_eq!(out.reason, TerminalReason::Completed);
     let keys = connector.keys();
-    assert!(!keys.is_empty());
+    assert_ne!(keys.len(), 0);
     assert!(keys.iter().all(Option::is_some), "{keys:?}");
 }
 

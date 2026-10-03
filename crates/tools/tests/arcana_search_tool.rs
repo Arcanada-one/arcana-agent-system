@@ -151,5 +151,5 @@ async fn arcana_search_schema_rejects_out_of_range_limit() {
     let err = tool
         .validate_input(&json!({ "query": "q", "limit": 999 }))
         .expect_err("schema must reject limit > 50");
-    assert!(!err.to_string().is_empty());
+    assert_ne!(err.to_string().len(), 0);
 }

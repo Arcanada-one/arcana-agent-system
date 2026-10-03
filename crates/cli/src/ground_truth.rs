@@ -185,6 +185,6 @@ mod tests {
 
     #[test]
     fn no_grounding_adds_nothing_to_the_brief() {
-        assert!(render(&[]).is_empty());
+        assert_eq!(render(&[]).len(), 0);
     }
 }
