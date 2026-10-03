@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-02T20:58:27Z",
+ "captured_at_utc": "2026-10-03T17:42:50Z",
  "change_set": {
   "base": "c342ae350a90cf59ab1268209a77df5292210c90",
   "files": [
@@ -65,6 +65,15 @@
    },
    {
     "kind": "other",
+    "node_id": "code_unit:crates/cli/src/repl.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/repl.rs"
+    ],
+    "path": "crates/cli/src/repl.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
     "node_id": "code_unit:crates/cli/src/run.rs",
     "node_ids": [
      "code_unit:crates/cli/src/run.rs"
@@ -97,6 +106,15 @@
      "code_unit:crates/cli/tests/run_contract_allowlist.rs"
     ],
     "path": "crates/cli/tests/run_contract_allowlist.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/sigint_prompt_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/sigint_prompt_smoke.rs"
+    ],
+    "path": "crates/cli/tests/sigint_prompt_smoke.rs",
     "status": "M"
    },
    {
@@ -227,6 +245,15 @@
    },
    {
     "kind": "doc",
+    "node_id": "document:docs/explanation/sigint-readiness.md",
+    "node_ids": [
+     "document:docs/explanation/sigint-readiness.md"
+    ],
+    "path": "docs/explanation/sigint-readiness.md",
+    "status": "A"
+   },
+   {
+    "kind": "doc",
     "node_id": "document:docs/how-to/run-work-item-under-kc2-contract.md",
     "node_ids": [
      "document:docs/how-to/run-work-item-under-kc2-contract.md"
@@ -254,6 +281,24 @@
    },
    {
     "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/aras-sigint-local-canary/canary-plan-frozen.json",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/aras-sigint-local-canary/canary-result-measured.json",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/aras-sigint-local-canary/measured-source.json",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
     "node_id": "receipt:receipts/graph/change-admission-empty-contract.json",
     "node_ids": [
      "receipt:receipts/graph/change-admission-empty-contract.json"
@@ -262,27 +307,27 @@
     "status": "A"
    }
   ],
-  "head": "3f49893c442c57155b4961ecef7a4d4d74078f1a",
+  "head": "4ef9f8aef05182a53ba89299bec71976a60fafc1",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
  "exemptions": [],
  "graph": {
-  "builder_version": "1.0.1",
+  "builder_version": "1.0.3",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:c020828ce66f31d9bfa04c6beeecedcee08c809acf56c08f0a720cf9676f4a75",
-  "path": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/graph-c342ae350a90.json",
+  "graph_digest": "sha256:bbe9b7c4ca6c720c7b429afbb94b9fcaa41f551b7e1b163ce461762b61f9e34a",
+  "path": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/graph-c342ae350a90.json",
   "source_commit": "c342ae350a90cf59ab1268209a77df5292210c90"
  },
  "head_graph": {
-  "builder_version": "1.0.1",
+  "builder_version": "1.0.3",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:1fd7fd7e00f962fadba2962de5ee80213d86cf37a734f30a8c2f44bfecbaadc8",
-  "path": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/graph-head-3f49893c442c.json",
-  "source_commit": "3f49893c442c57155b4961ecef7a4d4d74078f1a",
+  "graph_digest": "sha256:818b5375e3d297a93d1cbaa77376b4c27e6cc2c0bc869f6741156725fcb2aed5",
+  "path": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/graph-head-4ef9f8aef051.json",
+  "source_commit": "4ef9f8aef05182a53ba89299bec71976a60fafc1",
   "staleness": {
-   "checked_at_utc": "2026-10-02T20:58:31Z",
-   "checked_nodes": 393,
+   "checked_at_utc": "2026-10-03T17:42:54Z",
+   "checked_nodes": 394,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -430,26 +475,6 @@
       "from": "code_unit:crates/cli/src/receipt.rs",
       "provenance": "deterministic",
       "to": "code_unit:crates/cli/src/effect.rs",
-      "via": "rust-use-crate-path"
-     }
-    ],
-    "revisions": [
-     "base",
-     "head"
-    ],
-    "verifier_hint": "type-check / compile of the importer"
-   },
-   {
-    "boundary": "intra_unit",
-    "depth": 1,
-    "entity": "code_unit:crates/cli/src/repl.rs",
-    "node_type": "code_unit",
-    "path": [
-     {
-      "edge_type": "imports",
-      "from": "code_unit:crates/cli/src/repl.rs",
-      "provenance": "deterministic",
-      "to": "code_unit:crates/cli/src/usage.rs",
       "via": "rust-use-crate-path"
      }
     ],
@@ -2793,21 +2818,21 @@
   "inferred_tail": [],
   "max_depth": 3,
   "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
-  "total": 103
+  "total": 102
  },
  "notes": [
-  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.2.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
-  "profile: /home/dev/arcanada/_temp/aras-b4d90222/RUST-PROPERTY-PROFILE-FINAL.json; baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: ['property_check']; disabled: none"
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.3.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: /home/dev/arcanada/_temp/kc-closure/aras-sigint-repair-20261003T1710Z/CURRENT-SIGINT-RUST-PROFILE.json; baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: ['property_check']; disabled: none"
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
-  "version": "1.2.0"
+  "version": "1.3.0"
  },
- "receipt_id": "car-verify-20261002T205827Z-3f49893c",
+ "receipt_id": "car-verify-20261003T174250Z-4ef9f8ae",
  "receipt_path": "receipts/graph/change-admission-empty-contract.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/orca/workspaces/arcana-agent-system/aras-kc2-b4d90222"
+  "path": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current-canary-isolation"
  },
  "revision_selection": {
   "base": [
@@ -2835,6 +2860,7 @@
    "code_unit:crates/cli/tests/run_destructive_floor_prompt.rs",
    "code_unit:crates/cli/tests/run_tool_execution.rs",
    "code_unit:crates/cli/tests/run_work_item.rs",
+   "code_unit:crates/cli/tests/sigint_prompt_smoke.rs",
    "code_unit:crates/cli/tests/status_smoke.rs",
    "code_unit:crates/connectors/src/contract_source.rs",
    "code_unit:crates/connectors/src/lib.rs",
@@ -2965,6 +2991,7 @@
    "code_unit:crates/cli/tests/run_destructive_floor_prompt.rs",
    "code_unit:crates/cli/tests/run_tool_execution.rs",
    "code_unit:crates/cli/tests/run_work_item.rs",
+   "code_unit:crates/cli/tests/sigint_prompt_smoke.rs",
    "code_unit:crates/cli/tests/status_smoke.rs",
    "code_unit:crates/connectors/src/contract_source.rs",
    "code_unit:crates/connectors/src/lib.rs",
@@ -3064,6 +3091,7 @@
    "deployable_unit:crates/skills",
    "deployable_unit:crates/tools",
    "document:CHANGELOG.md",
+   "document:docs/explanation/sigint-readiness.md",
    "document:docs/how-to/run-work-item-under-kc2-contract.md",
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
    "receipt:receipts/graph/change-admission-a2-297c.json",
@@ -3076,7 +3104,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-02T20:58:31Z",
+  "checked_at_utc": "2026-10-03T17:42:54Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -3129,7 +3157,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:2a03c375372c9f6ac95a896aeff3af8cc35a29a846b523119b26c4f98c709f51"
+    "head": "sha256:f3c5ad7b971f7a8264a40bfc8d298915229671a5160722bbe8d2006987bed88f"
    },
    "entity": "receipt:receipts/graph/change-admission-empty-contract.json",
    "node_type": "receipt",
@@ -3143,13 +3171,13 @@
   }
  ],
  "tree": {
-  "commit": "3f49893c442c57155b4961ecef7a4d4d74078f1a",
+  "commit": "4ef9f8aef05182a53ba89299bec71976a60fafc1",
   "dirty": false
  },
  "verdicts": [
   {
    "entity": "code_unit:crates/cli/src/bootstrap.rs",
-   "reason": "v-config-schema: every key read is declared; v-fitness: no new fitness violation; v-canary-1: canary aras-b4d90222-local-cli-boundaries-frozen-execution (pre) on owned scratch filesystem; no network/credentials/provider/production: Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
+   "reason": "v-config-schema: every key read is declared; v-fitness: no new fitness violation; v-canary-1: canary aras-sigint-readiness-current-cebc-local-cli-boundaries (pre) on owned scratch filesystem; no network/credentials/provider/production: Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
    "verdict": "verified",
    "verifier_ids": [
     "v-canary-1",
@@ -3239,10 +3267,11 @@
   },
   {
    "entity": "code_unit:crates/cli/src/repl.rs",
-   "reason": "v-fitness: no new fitness violation",
+   "reason": "v-fitness: no new fitness violation; v-property-code-unit-crates-cli-src-repl-rs: property check exit 0",
    "verdict": "verified",
    "verifier_ids": [
-    "v-fitness"
+    "v-fitness",
+    "v-property-code-unit-crates-cli-src-repl-rs"
    ]
   },
   {
@@ -3255,7 +3284,7 @@
   },
   {
    "entity": "code_unit:crates/cli/src/usage.rs",
-   "reason": "v-config-schema: every key read is declared; v-fitness: no new fitness violation; v-canary-1: canary aras-b4d90222-local-cli-boundaries-frozen-execution (pre) on owned scratch filesystem; no network/credentials/provider/production: Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
+   "reason": "v-config-schema: every key read is declared; v-fitness: no new fitness violation; v-canary-1: canary aras-sigint-readiness-current-cebc-local-cli-boundaries (pre) on owned scratch filesystem; no network/credentials/provider/production: Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
    "verdict": "verified",
    "verifier_ids": [
     "v-canary-1",
@@ -3337,6 +3366,14 @@
   },
   {
    "entity": "code_unit:crates/cli/tests/run_work_item.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/sigint_prompt_smoke.rs",
    "reason": "v-fitness: no new fitness violation",
    "verdict": "verified",
    "verifier_ids": [
@@ -4141,6 +4178,14 @@
    ]
   },
   {
+   "entity": "document:docs/explanation/sigint-readiness.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
    "entity": "document:docs/how-to/run-work-item-under-kc2-contract.md",
    "reason": "v-doc-reference: 0 reference(s) resolve at head",
    "verdict": "verified",
@@ -4152,6 +4197,7 @@
  "verifier_selection": {
   "applied": {
    "property_check": [
+    "code_unit:crates/cli/src/repl.rs",
     "code_unit:crates/connectors/src/scrutator.rs",
     "code_unit:crates/core/src/agent_loop.rs",
     "code_unit:crates/core/src/contract.rs",
@@ -4173,7 +4219,6 @@
      "code_unit:crates/cli/src/main.rs",
      "code_unit:crates/cli/src/permission_prompt.rs",
      "code_unit:crates/cli/src/receipt.rs",
-     "code_unit:crates/cli/src/repl.rs",
      "code_unit:crates/cli/src/run.rs",
      "code_unit:crates/cli/src/usage.rs",
      "code_unit:crates/cli/src/work_item.rs",
@@ -4186,6 +4231,7 @@
      "code_unit:crates/cli/tests/run_destructive_floor_prompt.rs",
      "code_unit:crates/cli/tests/run_tool_execution.rs",
      "code_unit:crates/cli/tests/run_work_item.rs",
+     "code_unit:crates/cli/tests/sigint_prompt_smoke.rs",
      "code_unit:crates/cli/tests/status_smoke.rs",
      "code_unit:crates/connectors/src/contract_source.rs",
      "code_unit:crates/connectors/src/lib.rs",
@@ -4287,7 +4333,7 @@
  "verifiers": [
   {
    "command": "verify.py config_schema: keys read at head ⊆ declared keys",
-   "duration_s": 0.92,
+   "duration_s": 0.83,
    "entities": [
     "code_unit:crates/cli/src/bootstrap.rs",
     "code_unit:crates/cli/src/usage.rs"
@@ -4299,8 +4345,8 @@
    "exit_code": 0,
    "id": "v-config-schema",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-config-schema.json",
-   "started_at_utc": "2026-10-02T20:58:35Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-config-schema.json",
+   "started_at_utc": "2026-10-03T17:42:57Z",
    "summary": "1 source(s), 0 new / 0 frozen undeclared reads, 0 failed; 4 vendored file(s) not attributed to this repository (Arcanada-one/arcanada-universal-program)"
   },
   {
@@ -4331,6 +4377,7 @@
     "code_unit:crates/cli/tests/run_destructive_floor_prompt.rs",
     "code_unit:crates/cli/tests/run_tool_execution.rs",
     "code_unit:crates/cli/tests/run_work_item.rs",
+    "code_unit:crates/cli/tests/sigint_prompt_smoke.rs",
     "code_unit:crates/cli/tests/status_smoke.rs",
     "code_unit:crates/connectors/src/contract_source.rs",
     "code_unit:crates/connectors/src/lib.rs",
@@ -4455,6 +4502,7 @@
     "code_unit:crates/cli/tests/run_destructive_floor_prompt.rs": "verified",
     "code_unit:crates/cli/tests/run_tool_execution.rs": "verified",
     "code_unit:crates/cli/tests/run_work_item.rs": "verified",
+    "code_unit:crates/cli/tests/sigint_prompt_smoke.rs": "verified",
     "code_unit:crates/cli/tests/status_smoke.rs": "verified",
     "code_unit:crates/connectors/src/contract_source.rs": "verified",
     "code_unit:crates/connectors/src/lib.rs": "verified",
@@ -4557,8 +4605,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-02T20:58:36Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-03T17:42:58Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -4566,22 +4614,24 @@
    "duration_s": 0.01,
    "entities": [
     "document:CHANGELOG.md",
+    "document:docs/explanation/sigint-readiness.md",
     "document:docs/how-to/run-work-item-under-kc2-contract.md"
    ],
    "entity_verdicts": {
     "document:CHANGELOG.md": "verified",
+    "document:docs/explanation/sigint-readiness.md": "verified",
     "document:docs/how-to/run-work-item-under-kc2-contract.md": "verified"
    },
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-10-02T20:58:36Z",
-   "summary": "2 document(s), 0 failed"
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-10-03T17:42:58Z",
+   "summary": "3 document(s), 0 failed"
   },
   {
    "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
-   "duration_s": 4.51,
+   "duration_s": 4.29,
    "entities": [
     "code_unit:crates/cli/src/bootstrap.rs",
     "code_unit:crates/cli/src/usage.rs"
@@ -4593,24 +4643,40 @@
    "exit_code": 0,
    "id": "v-canary-1",
    "kind": "canary",
-   "output_ref": "receipts/graph/aras-kc2-local-canary/canary-result-frozen.json",
-   "started_at_utc": "2026-10-02T20:58:36Z",
-   "summary": "receipts/graph/aras-kc2-local-canary/canary-result-frozen.json: 2 verified / 0 failed / 0 not_measured"
+   "output_ref": "receipts/graph/aras-sigint-local-canary/canary-result-measured.json",
+   "started_at_utc": "2026-10-03T17:42:58Z",
+   "summary": "receipts/graph/aras-sigint-local-canary/canary-result-measured.json: 2 verified / 0 failed / 0 not_measured"
   },
   {
    "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
-   "duration_s": 4.51,
+   "duration_s": 4.29,
    "entities": [],
    "exit_code": 0,
    "id": "v-canary",
    "kind": "canary",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-canary.json",
-   "started_at_utc": "2026-10-02T20:58:36Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-canary.json",
+   "started_at_utc": "2026-10-03T17:42:58Z",
    "summary": "1 canary result(s), 1 committed at head; 2 verified / 0 failed / 0 not_measured of 2 entities"
   },
   {
+   "command": "cargo +1.99.0 test --locked -p arcana-agent --test sigint_prompt_smoke",
+   "duration_s": 11.22,
+   "entities": [
+    "code_unit:crates/cli/src/repl.rs"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/repl.rs": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-property-code-unit-crates-cli-src-repl-rs",
+   "kind": "property_check",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-property-code-unit-crates-cli-src-repl-rs.txt",
+   "started_at_utc": "2026-10-03T17:43:03Z",
+   "summary": "exit 0"
+  },
+  {
    "command": "cargo +1.99.0 test --locked -p arcana-connectors --lib --test scrutator_contract",
-   "duration_s": 0.8,
+   "duration_s": 7.1,
    "entities": [
     "code_unit:crates/connectors/src/scrutator.rs"
    ],
@@ -4620,13 +4686,13 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-connectors-src-scrutator-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-property-code-unit-crates-connectors-src-scrutator-rs.txt",
-   "started_at_utc": "2026-10-02T20:58:40Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-property-code-unit-crates-connectors-src-scrutator-rs.txt",
+   "started_at_utc": "2026-10-03T17:43:14Z",
    "summary": "exit 0"
   },
   {
    "command": "cargo +1.99.0 test --locked -p arcana-core a_minted_key_is_one_the_server_accepts",
-   "duration_s": 0.21,
+   "duration_s": 11.58,
    "entities": [
     "code_unit:crates/core/src/agent_loop.rs"
    ],
@@ -4636,13 +4702,13 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-core-src-agent-loop-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-property-code-unit-crates-core-src-agent-loop-rs.txt",
-   "started_at_utc": "2026-10-02T20:58:41Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-property-code-unit-crates-core-src-agent-loop-rs.txt",
+   "started_at_utc": "2026-10-03T17:43:21Z",
    "summary": "exit 0"
   },
   {
    "command": "cargo +1.99.0 test --locked -p arcana-core -p arcana-agent",
-   "duration_s": 25.26,
+   "duration_s": 46.67,
    "entities": [
     "code_unit:crates/core/src/contract.rs"
    ],
@@ -4652,13 +4718,13 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-core-src-contract-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-property-code-unit-crates-core-src-contract-rs.txt",
-   "started_at_utc": "2026-10-02T20:58:41Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-property-code-unit-crates-core-src-contract-rs.txt",
+   "started_at_utc": "2026-10-03T17:43:33Z",
    "summary": "exit 0"
   },
   {
    "command": "cargo +1.99.0 test --locked -p arcana-core kb::size_guard::tests",
-   "duration_s": 0.98,
+   "duration_s": 1.1,
    "entities": [
     "code_unit:crates/core/src/kb/size_guard.rs"
    ],
@@ -4668,13 +4734,13 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-core-src-kb-size-guard-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-property-code-unit-crates-core-src-kb-size-guard-rs.txt",
-   "started_at_utc": "2026-10-02T20:59:07Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-property-code-unit-crates-core-src-kb-size-guard-rs.txt",
+   "started_at_utc": "2026-10-03T17:44:19Z",
    "summary": "exit 0"
   },
   {
    "command": "cargo +1.99.0 test --locked -p arcana-tools --lib --test arcana_search_tool --test grep_tool",
-   "duration_s": 0.34,
+   "duration_s": 9.59,
    "entities": [
     "code_unit:crates/tools/src/model_call.rs"
    ],
@@ -4684,8 +4750,8 @@
    "exit_code": 0,
    "id": "v-property-code-unit-crates-tools-src-model-call-rs",
    "kind": "property_check",
-   "output_ref": "/home/dev/aup/aras-kc2-canary-record.9LYbIf/verifier-out/v-property-code-unit-crates-tools-src-model-call-rs.txt",
-   "started_at_utc": "2026-10-02T20:59:08Z",
+   "output_ref": "/home/dev/.producer-ctx41/post1616-current-admission/aras-4ef9-current9984/workdir/verifier-out/v-property-code-unit-crates-tools-src-model-call-rs.txt",
+   "started_at_utc": "2026-10-03T17:44:20Z",
    "summary": "exit 0"
   }
  ],
@@ -4740,7 +4806,8 @@
     "fitness_rules"
    ],
    "code_unit:crates/cli/src/repl.rs": [
-    "fitness_rules"
+    "fitness_rules",
+    "property_check"
    ],
    "code_unit:crates/cli/src/run.rs": [
     "fitness_rules"
@@ -4778,6 +4845,9 @@
     "fitness_rules"
    ],
    "code_unit:crates/cli/tests/run_work_item.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/sigint_prompt_smoke.rs": [
     "fitness_rules"
    ],
    "code_unit:crates/cli/tests/status_smoke.rs": [
@@ -5082,6 +5152,9 @@
    "document:CHANGELOG.md": [
     "doc_reference"
    ],
+   "document:docs/explanation/sigint-readiness.md": [
+    "doc_reference"
+   ],
    "document:docs/how-to/run-work-item-under-kc2-contract.md": [
     "doc_reference"
    ],
@@ -5092,9 +5165,9 @@
    "receipt:receipts/graph/change-admission-empty-contract.json": []
   },
   "seconds": {
-   "prepare": 2.29,
-   "total": 40.73,
-   "verifiers": 37.54
+   "prepare": 2.09,
+   "total": 99.58,
+   "verifiers": 96.68
   }
  },
  "work_item": "ccda9aad-2dc6-422c-855c-8dab569a5f28"
