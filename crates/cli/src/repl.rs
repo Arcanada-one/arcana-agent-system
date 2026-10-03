@@ -183,17 +183,25 @@ pub fn run_repl(live: bool) -> i32 {
         return 1;
     };
 
-    println!(
-        "arcana {} — interactive session. `exit` or Ctrl-D to leave.",
-        env!("CARGO_PKG_VERSION")
-    );
-    println!("audit log: {}", session.audit_log_path().display());
-
     // A session runs many billable turns, so it is the surface where an
     // unhandled Ctrl-C costs the most: today it kills the process mid-turn and
     // the operator loses the session, the spend line, and the audit record of
     // the dispatch they are about to be charged for.
     let interrupt = crate::interrupt::Interrupt::install();
+
+    // The normal session banner is a readiness boundary: publish it only once
+    // the listener has confirmed registration. Earlier version output is not
+    // proof that SIGINT has stopped using the kernel's default disposition.
+    let session_label = if interrupt.is_some() {
+        "interactive session"
+    } else {
+        "interactive session (Ctrl-C listener unavailable)"
+    };
+    println!(
+        "arcana {} — {session_label}. `exit` or Ctrl-D to leave.",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!("audit log: {}", session.audit_log_path().display());
 
     if std::io::stdin().is_terminal() {
         run_terminal(&runtime, &session, interrupt.as_ref())

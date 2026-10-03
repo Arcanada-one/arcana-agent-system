@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   green and carries a real page (A2-297b).
 
 ### Fixed
+
+- Publish the interactive session banner only after SIGINT registration has
+  completed. The real-signal smoke test waits for the full readiness banner,
+  bounds missing readiness, and reaps its child on failure. An unavailable
+  listener retains the existing fallback with a distinct unarmed banner.
 - Explicit empty contract tool allowlists now refuse every tool effect instead
   of inheriting the default read, grep, write, and edit capabilities.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
