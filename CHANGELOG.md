@@ -35,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Retain the nonempty idempotency-key and guarded-text test assertions using
-  Rust 1.99-compatible comparison macros under strict Clippy warnings.
+- Retain the empty and nonempty test assertions using Rust 1.99-compatible
+  comparison macros under strict Clippy warnings.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
   Missing files and unsafe owner/permissions/type/size have distinct reasons;
   status/watch include the rejected condition. FIFOs cannot block file opening.
