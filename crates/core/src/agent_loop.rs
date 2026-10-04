@@ -4223,7 +4223,7 @@ mod connector_retry_tests {
         for (run, turn) in [(0_u128, 0_u64), (u128::MAX, u64::MAX), (1, 7)] {
             let key = IdempotencyKey::for_turn(run, turn);
             let raw = key.as_str();
-            assert!(!raw.is_empty());
+            assert_ne!(raw, "");
             assert!(
                 raw.len() <= crate::connector::MAX_IDEMPOTENCY_KEY_BYTES,
                 "{raw}"

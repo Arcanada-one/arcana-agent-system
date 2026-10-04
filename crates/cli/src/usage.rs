@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn folding_nothing_yields_no_days_and_zero_totals() {
         let report = fold_by_day(&[]);
-        assert!(report.days.is_empty());
+        assert_eq!(report.days.len(), 0);
         assert_eq!(report.total.requests, 0);
         assert_eq!(report.total.total_tokens, 0);
         assert!(report.total.cost_usd.abs() < f64::EPSILON);
