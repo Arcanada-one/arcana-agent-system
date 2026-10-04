@@ -175,7 +175,8 @@ def _execution_scope(ts, pairs, functions, pos, proven=()):
 
 def _no_prior_exit(ts, functions, pos, scope):
     start = scope[0] + 1 if scope else 0
-    if any(ts[i] in ('return', 'throw', 'break', 'continue') and _owner(functions, i) == scope
+    if any((ts[i] in ('return', 'throw', 'break', 'continue') or _literal_process_exit(ts, i))
+           and _owner(functions, i) == scope
            for i in range(start, pos)):
         raise ValueError('bootstrap execution may terminate before configuration')
 
@@ -644,6 +645,89 @@ def _diagnostic_value(tree, root, ts, expression):
     raise ValueError('diagnostic value not proven primitive')
 
 
+def _literal_process_exit(ts, pos):
+    """One unshadowed native termination statement; never a runtime success proof."""
+    return (ts[pos:pos + 4] == ['process', '.', 'exit', '(']
+            and len(ts) > pos + 5 and re.fullmatch(r'\d+', ts[pos + 4]) is not None
+            and 0 <= int(ts[pos + 4]) <= 255 and ts[pos + 5] == ')'
+            and ts[pos + 6:pos + 7] in ([], [';'], ['}'])
+            and not _statement_lead(ts, pos) and not _name_shadowed(ts, 'process'))
+
+
+def _promise_builtin_untouched(ts, pairs, functions):
+    """Permit bounded erased return types, never Promise values or prototype aliases."""
+    for i, token in enumerate(ts):
+        previous = ts[i - 1] if i else ''
+        if (previous == '.' and token in ('constructor', 'prototype', '__proto__')
+                or token == '[' and (previous in (')', ']')
+                    or re.fullmatch(r'[A-Za-z_$][\w$]*', previous)
+                    and previous not in ('return', 'throw', 'await', 'void', 'typeof', 'new')
+                    or ts[max(0, i - 2):i] == ['?', '.'])):
+            return False
+    type_positions = set()
+    for body, _, _, declaration in functions:
+        if ts[declaration] != 'function':
+            continue
+        parameters = declaration + (2 if ts[declaration + 2:declaration + 3] == ['('] else 1)
+        close = pairs.get(parameters)
+        if close is None:
+            continue
+        annotation = ts[close + 1:body]
+        if (len(annotation) == 5 and annotation[:3] == [':', 'Promise', '<']
+                and re.fullmatch(r'[A-Za-z_$][\w$]*', annotation[3])
+                and annotation[4] == '>'):
+            type_positions.add(close + 2)
+    return all(token != 'Promise' or i in type_positions for i, token in enumerate(ts))
+
+
+def _failure_handler_exit(ts, pos, pairs, functions, declarations):
+    """Bounded async entry rejection handler only; do not infer helper call reachability."""
+    scope = _owner(functions, pos)
+    if (not scope or scope[2] or ts[scope[3]:scope[3] + 2] != ['=', '>']
+            or not _promise_builtin_untouched(ts, pairs, functions)):
+        return False
+    for call in range(scope[3]):
+        if (ts[call + 1:call + 6] != ['(', ')', '.', 'catch', '(']
+                or pairs.get(call + 5) != scope[1] + 1
+                or ts[scope[1] + 2:scope[1] + 3] not in ([], [';'])
+                or _statement_lead(ts, call) or _owner(functions, call)):
+            continue
+        entries = [f for f in functions if f[2] == ts[call] and not _owner(functions, f[3])
+                   and ts[f[3] - 1:f[3]] == ['async']]
+        if len(entries) != 1 or [i for i, t in enumerate(ts) if t == 'catch'] != [call + 4]:
+            continue
+        parameters = ts[call + 6:scope[3]]
+        if (parameters[:1] == ['('] and parameters[-1:] == [')']):
+            parameters = parameters[1:-1]
+        if (len(parameters) != 1 or not re.fullmatch(r'[A-Za-z_$][\w$]*', parameters[0])
+                or not declarations
+                or any(_owner(functions, d) != entries[0] for d, _ in declarations)):
+            continue
+        try:
+            _local_function_binding(ts, entries[0], call)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _readonly_process_env(ts, pos, pairs):
+    """Exact member reads only; mutation, deletion, whole-object aliases stay unknown."""
+    lead = _statement_lead(ts, pos)
+    # Assignment can target a parenthesized member or any position in a destructuring
+    # pattern. Check the operator after EACH containing delimiter, not only the field.
+    ends = [pos + 5] + [close + 1 for start, close in pairs.items() if start < pos < close]
+    for end in ends:
+        suffix = ts[end:end + 4]
+        if (suffix[:1] in (['='], ['of'], ['in']) or suffix[:2] in (['+', '+'], ['-', '-'])
+                or suffix and suffix[0] in '+-*/%&|^<>?' and '=' in suffix):
+            return False
+    return (ts[pos + 1:pos + 4] == ['.', 'env', '.']
+            and len(ts) > pos + 4 and re.fullmatch(r'[A-Za-z_$][\w$]*', ts[pos + 4]) is not None
+            and not _name_shadowed(ts, 'process') and 'delete' not in lead
+            and not any(lead[i:i + 2] in (['+', '+'], ['-', '-']) for i in range(len(lead))))
+
+
 def _diagnostic_templates(tree, root, ts, pairs, functions, declarations):
     """Only post-listen console output of proven primitive locals is inert.
 
@@ -654,9 +738,12 @@ def _diagnostic_templates(tree, root, ts, pairs, functions, declarations):
     if any(t in ('eval', 'Function', 'Reflect', 'Proxy', 'globalThis', 'global', 'Object') for t in ts):
         raise ValueError('dynamic bootstrap reflection not proven')
     for i, t in enumerate(ts):
-        if t == 'process' and (ts[i + 1:i + 4] != ['.', 'env', '.']
-                               or ts[i + 5:i + 6] == ['=']):
-            raise ValueError('bootstrap environment binding not read-only')
+        if t == 'process':
+            if _literal_process_exit(ts, i):
+                if not _failure_handler_exit(ts, i, pairs, functions, declarations):
+                    raise ValueError('bootstrap termination outside proven failure handler')
+            elif not _readonly_process_env(ts, i, pairs):
+                raise ValueError('bootstrap environment binding not read-only')
         if t == 'parseInt' and ts[i + 1:i + 2] != ['(']:
             raise ValueError('bootstrap numeric builtin binding replaced')
     for i, token in enumerate(ts):

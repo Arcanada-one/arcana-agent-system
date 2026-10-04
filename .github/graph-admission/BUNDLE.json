@@ -1,5 +1,5 @@
 {
- "bundle_digest": "sha256:e17c095ac185640c08d9f58cc5c441147bab0935e450ad570bd76b73e93ac017",
+ "bundle_digest": "sha256:97af469eee23be8f7458f971242ebcb9e5fff7ce2dbf05063bfcd6b1f1a3dabd",
  "files": [
   {
    "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
@@ -25,9 +25,9 @@
    "sha256": "sha256:3bffbd7904cdfb8e737ad8dc7b9f426f160f48e8972009619affc61187ca5faf"
   },
   {
-   "blob_oid": "871490bfc4c46a0da555fb5b72b26eb367136f02",
+   "blob_oid": "2283c4b395ee1f1ce65cd007c358f2bf7a2d5303",
    "path": "tools/graph/nest_bootstrap.py",
-   "sha256": "sha256:55af101508225ca4c0e72be340807f7c0b87abc4b470a498afdb890dd3413971"
+   "sha256": "sha256:d287037fb727efb536093efe61cd4e3cc17b347771d69b2b71af67a0fb50c45c"
   },
   {
    "blob_oid": "3d69790a9a52944af5d57742f36b02e7841c3c41",
@@ -40,14 +40,14 @@
    "sha256": "sha256:f396ffbf748d47946817e6c80e9276ec811e15c2b97671456a64e7ac5d17e235"
   },
   {
-   "blob_oid": "632bf1fdf3cbee81e997d4f00a1460a5ae3946a4",
+   "blob_oid": "d2528a7ef4283115de4b9fa153b329d95816f928",
    "path": "tools/graph/impact_pair.py",
-   "sha256": "sha256:e5cc9be249c3be5ec78c6dea861d59014a434bfda8a99f78b0d5c0ea18d43c54"
+   "sha256": "sha256:3a58961a024d8d381f5760d636f6db4739ce40c672d68d73278ef017b7895bcd"
   },
   {
-   "blob_oid": "f8e8fa02b541b4c3ac41892a0f1816184bf8e442",
+   "blob_oid": "3069505de3fe2552953af6058c4661851ea8a341",
    "path": "tools/graph/verify.py",
-   "sha256": "sha256:c0ecd1a23a8b5b01691221dae5b8911a023cc8abf615bba7be6c0866f95dfa00"
+   "sha256": "sha256:55a7b089cf00684bb2373ae4581a985ad61368bfcde034692198b3ba83daa3d4"
   },
   {
    "blob_oid": "0bbe15ee438f633a60788c333ed67eb3fd5d92c3",
@@ -85,9 +85,9 @@
    "sha256": "sha256:bcc2b9c986588c689a9ef015e04dcaf2e69971cf64c69e761138de70c19258a7"
   },
   {
-   "blob_oid": "6a2e11435216d5c54a5b138253d523a0324407c2",
+   "blob_oid": "d86a247fc90f6ce52f4691279e7bc98272f5a343",
    "path": "tools/graph/ci_gate.py",
-   "sha256": "sha256:bdf2e777dcffe478a11d5b886ded90fcef4d23eb8ca785f30cd424a24e9e5c43"
+   "sha256": "sha256:acdd428506c1eb13780e53f6522383cc8a32cd5a12a117facab90850724dc1e5"
   },
   {
    "blob_oid": "f97c4273c635f3e3215c13a0e063930951d7b48d",
@@ -100,14 +100,19 @@
    "sha256": "sha256:ee3bd7e179763900c8912dcf56c9847b17c2c12cb52fadbb1bb21e7b2c412185"
   },
   {
-   "blob_oid": "63598b7bde8de59f7d11fbe13a738081a616e79e",
+   "blob_oid": "458e290ea72c251a8e5ebb6ec0f11ec6fe1bd4f9",
    "path": "contracts/graph-verified-change/change-admission-receipt.v1.json",
-   "sha256": "sha256:b5cdb22558940ef2d3294151ec40447d7ab14ccf9fab4102df8bd4e6fff63e51"
+   "sha256": "sha256:26f5dcee97ec62a6553f7a3ca9e055cbe0b1f05bf7eedbc99863adb05fb02d73"
   },
   {
    "blob_oid": "51ba39e4287ca27757ebe82e45d8e16ac0c0aa1f",
    "path": "contracts/graph-verified-change/verifier-matrix.v1.json",
    "sha256": "sha256:46a5e0770d85a978bc359c8ba38fd8fbdc8437f271247ba8c248a6c1600e89c0"
+  },
+  {
+   "blob_oid": "3deb84411b7a5580d20a679211f94efb4ccee6ba",
+   "path": "contracts/graph-verified-change/bundle-signing-key.pub",
+   "sha256": "sha256:c288311cfcb97939fd4af0b075f2cc239632862a20f08a2cfeb8f0644a770f8c"
   },
   {
    "blob_oid": "cd9be3dcf7c457d8db597825bbb93ad8282b6e31",
@@ -121,7 +126,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "788c72a0b9c7eceaceb0c447e6856a9e62715a1e",
+ "program_ref": "8c1b6ac4ff36358f49fff2d64201c0fece8a1cba",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",

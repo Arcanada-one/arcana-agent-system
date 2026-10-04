@@ -90,6 +90,9 @@ BUNDLE_FILES = [
     "contracts/graph-verified-change/relationship-graph.v1.json",
     "contracts/graph-verified-change/change-admission-receipt.v1.json",
     "contracts/graph-verified-change/verifier-matrix.v1.json",
+    # Caller graph compatibility trusts the current producer's committed public
+    # key, never a key supplied by an author receipt or the legacy bundle itself.
+    "contracts/graph-verified-change/bundle-signing-key.pub",
     "contracts/readiness-receipt-v1.schema.json",
 ]
 DEFAULT_RECEIPT_GLOBS = ["receipts/graph/**/*.json", "receipts/**/change-admission-*.json"]
@@ -470,6 +473,27 @@ def verify_bundle(tools: Path, program_ref: str | None,
         problems.append(f"BUNDLE_REF_MISMATCH: caller pinned program_ref {program_ref[:12]}, "
                         f"bundle carries {str(man.get('program_ref'))[:12]}")
     return man, problems, sigrec
+
+
+def rebuild_compatible_receipt_graph(repo: Path, receipt: dict) -> dict:
+    """Rebuild the receipt's measured range, including a record-only descendant.
+
+    The ordinary gate binds the receipt to the requested PR range first (C06).
+    The PR record head can differ from the measured source head; rebuilding at
+    the record head would contradict the genuine source graph in its receipt.
+    This check reproduces the measured proof, never edits either graph digest.
+    """
+    import impact
+    import impact_pair
+    cs = receipt.get("change_set") or {}
+    compatibility = receipt.get("caller_graph_compatibility")
+    if cs.get("mode") != "diff" or not isinstance(compatibility, dict):
+        raise impact.Refusal("CALLER_GRAPH_BINDING", "compatibility requires a paired diff receipt")
+    before, _, proof = impact_pair.caller_graph_pair(impact.Repo(repo), cs.get("base"), cs.get("head"),
+                                                   compatibility.get("bundle_path"))
+    if proof != compatibility or (receipt.get("graph") or {}).get("source_commit") != before.manifest["source_commit"]:
+        raise impact.Refusal("CALLER_GRAPH_BINDING", "independently rebuilt measured proof differs")
+    return before.doc
 
 
 # --------------------------------------------------------------------------------------- run
@@ -875,13 +899,24 @@ def cmd_run(a) -> int:
                                                    "source_commit/digest to rebuild against"})
                 continue
             gp = work / f"graph-{g['source_commit'][:12]}.json"
-            b = subprocess.run([sys.executable, str(tools / "tools/graph/build_graph.py"), str(repo),
-                                "--rev", g["source_commit"], "--out", str(gp)], capture_output=True, text=True,
-                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-            if b.returncode != 0:
-                result["checks"].append({"code": "GRAPH_BUILD_FAILED", "verdict": "not_measured",
-                                         "detail": (b.stderr or b.stdout).strip()[:300]})
-                continue
+            compatibility = (src or {}).get("caller_graph_compatibility")
+            if compatibility is not None:
+                import impact
+                try:
+                    gp.write_bytes(impact.dump(rebuild_compatible_receipt_graph(repo, src)))
+                except (impact.Refusal, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+                    result["checks"].append({"code": "CALLER_GRAPH_COMPATIBILITY_REFUSED", "verdict": "refuse",
+                                             "detail": str(exc)})
+                    result["reason_codes"] = sorted(set(result["reason_codes"] + ["CALLER_GRAPH_COMPATIBILITY_REFUSED"]))
+                    continue
+            else:
+                b = subprocess.run([sys.executable, str(tools / "tools/graph/build_graph.py"), str(repo),
+                                    "--rev", g["source_commit"], "--out", str(gp)], capture_output=True, text=True,
+                                   env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                if b.returncode != 0:
+                    result["checks"].append({"code": "GRAPH_BUILD_FAILED", "verdict": "not_measured",
+                                             "detail": (b.stderr or b.stdout).strip()[:300]})
+                    continue
             built = json.loads(gp.read_text())["manifest"]["graph_digest"]
             same = built == g["graph_digest"]
             result["checks"].append({"code": "GRAPH_REBUILT_MATCHES" if same else "GRAPH_DIGEST_MISMATCH",

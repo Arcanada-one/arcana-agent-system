@@ -8,8 +8,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import build_graph
@@ -17,6 +20,148 @@ import impact
 import schema_check
 
 SOURCE_EXTS = impact.CODE_EXTS | {".prisma", ".py", ".rs", ".go", ".java", ".kt", ".cs", ".c", ".cpp", ".h"}
+
+
+def graph_parity(installed: dict, current: dict) -> dict:
+    """Bind two genuine outputs only when their entire semantic documents agree.
+
+    Version/timestamp/digest are producer metadata, not evidence of equivalence.
+    Every other manifest field, every node/edge/attribute and every extra field
+    remains in the comparison. Neither input nor its digest is rewritten.
+    """
+    bodies = []
+    for doc in (installed, current):
+        manifest = doc.get("manifest", {})
+        if manifest.get("graph_digest") != schema_check.graph_digest(doc):
+            raise impact.Refusal("CALLER_GRAPH_INVALID", "producer graph digest is invalid")
+        body = copy.deepcopy(doc)
+        for key in ("builder_version", "built_at_utc", "graph_digest"):
+            body["manifest"].pop(key, None)
+        bodies.append(body)
+    if bodies[0] != bodies[1]:
+        raise impact.Refusal("CALLER_GRAPH_SEMANTIC_DRIFT", "installed and current graph bodies differ")
+    return {"source_commit": current["manifest"]["source_commit"],
+            "installed_graph_digest": installed["manifest"]["graph_digest"],
+            "current_graph_digest": current["manifest"]["graph_digest"],
+            "installed_builder_version": installed["manifest"]["builder_version"],
+            "current_builder_version": current["manifest"]["builder_version"],
+            "body_sha256": "sha256:" + hashlib.sha256(impact.dump(bodies[0])).hexdigest()}
+
+
+def _canonical_bundle_key() -> str:
+    return (Path(__file__).resolve().parents[2] /
+            "contracts/graph-verified-change/bundle-signing-key.pub").read_text()
+
+
+def caller_graph_pair(repo: impact.Repo, base: str, head: str, bundle_path: str):
+    try:
+        return _caller_graph_pair(repo, base, head, bundle_path)
+    except impact.Refusal:
+        raise
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+        raise impact.Refusal("CALLER_GRAPH_COMPATIBILITY_REFUSED", "trusted paired build could not be completed",
+                             {"error_type": type(exc).__name__}) from exc
+
+
+def _caller_graph_pair(repo: impact.Repo, base: str, head: str, bundle_path: str):
+    """Execute only an unchanged, trusted signed BASE bundle in owned quarantine.
+
+    Independently rebuild current graphs at both revisions before returning the
+    installed graphs and their exact paired proof. No author executable is used.
+    """
+    import ci_gate
+    import sshsig
+
+    if repo.path != repo.top or bundle_path not in {".github/graph-admission", ".arcana/graph-gate"}:
+        raise impact.Refusal("CALLER_BUNDLE_PATH", "compatibility requires a repository-root canonical bundle path")
+    base, head = repo.rev(base), repo.rev(head)
+    def tree(rev):
+        rows = impact.git(["ls-tree", "-r", "-z", rev, "--", bundle_path], repo.top)
+        out = {}
+        for row in filter(None, rows.split("\0")):
+            meta, path = row.split("\t", 1)
+            mode, kind, oid = meta.split()
+            if mode not in {"100644", "100755"} or kind != "blob":
+                raise impact.Refusal("CALLER_BUNDLE_FILE_TYPE", "bundle contains a non-regular Git object")
+            out[path] = (mode, oid)
+        return out
+    files = tree(base)
+    if not files or files != tree(head):
+        raise impact.Refusal("CALLER_BUNDLE_CHANGED", "BASE and HEAD signed bundle objects must be identical")
+    key = _canonical_bundle_key()
+    fingerprint = sshsig.fingerprint(*sshsig.parse_public_key(key))
+    with tempfile.TemporaryDirectory(prefix="caller-graph-compat-") as directory:
+        root = Path(directory)
+        for path, (_, oid) in files.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(subprocess.run(["git", "cat-file", "blob", oid], cwd=repo.top,
+                                              capture_output=True, check=True).stdout)
+        tools = root / bundle_path
+        ok, _, _ = sshsig.verify_detached((tools / "BUNDLE.json").read_bytes(),
+                                         (tools / "BUNDLE.json.sig").read_text(), key,
+                                         ci_gate.SIGNING_NAMESPACE)
+        if not ok:
+            raise impact.Refusal("CALLER_BUNDLE_UNTRUSTED", "BASE manifest lacks the canonical trusted signature")
+        signed_manifest = json.loads((tools / "BUNDLE.json").read_text())
+        for entry in signed_manifest.get("files", []):
+            path = entry.get("path", "")
+            if not path or Path(path).is_absolute() or ".." in Path(path).parts:
+                raise impact.Refusal("CALLER_BUNDLE_PATH", "signed manifest path escapes quarantine")
+        # Signature and all executable files are checked before reading workflow paths
+        # or running any code. The second check binds the actual unchanged workflow.
+        man, problems, _ = ci_gate.verify_bundle(tools, None, fingerprint)
+        if problems:
+            raise impact.Refusal("CALLER_BUNDLE_UNTRUSTED", "signed BASE bundle refused", {"problems": problems})
+        for entry in man.get("files", []):
+            path = entry.get("path", "")
+            if Path(path).is_absolute() or ".." in Path(path).parts:
+                raise impact.Refusal("CALLER_BUNDLE_PATH", "signed manifest path escapes quarantine")
+            if entry.get("verified_by_the_job") is False:
+                rows = []
+                for rev in (base, head):
+                    row = impact.git(["ls-tree", rev, "--", path], repo.top).strip()
+                    if not row or row.split()[0] not in {"100644", "100755"}:
+                        raise impact.Refusal("CALLER_WORKFLOW_UNBOUND", "signed workflow is not a regular committed file")
+                    rows.append(row)
+                if rows[0] != rows[1]:
+                    raise impact.Refusal("CALLER_WORKFLOW_CHANGED", "signed workflow changed in caller range")
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(subprocess.run(["git", "show", f"{base}:{path}"], cwd=repo.top,
+                                                  capture_output=True, check=True).stdout)
+        man, problems, signature = ci_gate.verify_bundle(tools, None, fingerprint, repo=root)
+        if problems or signature.get("workflow", {}).get("verdict") != "verified":
+            raise impact.Refusal("CALLER_BUNDLE_UNTRUSTED", "signed workflow/bundle refused", {"problems": problems})
+        env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        indices, proofs = [], {}
+        for role, rev in (("base", base), ("head", head)):
+            output = root / (role + ".json")
+            runner = ("import runpy,sys;sys.path.insert(0,sys.argv[1]);"
+                      "sys.argv=sys.argv[2:];runpy.run_path(sys.argv[0],run_name='__main__')")
+            proc = subprocess.run([sys.executable, "-I", "-B", "-c", runner, str(tools / "tools/graph"),
+                                   str(tools / "tools/graph/build_graph.py"),
+                                   str(repo.top), "--rev", rev, "--built-at", build_graph.FIXED_BUILT_AT,
+                                   "--out", str(output)], cwd=root, env=env, capture_output=True, timeout=120)
+            if proc.returncode:
+                raise impact.Refusal("CALLER_GRAPH_BUILD_FAILED", "trusted installed builder failed",
+                                     {"revision": rev, "exit_code": proc.returncode})
+            doc = json.loads(output.read_text())
+            errors = schema_check.check_graph(doc, schema_check.load_schema(schema_check.GRAPH_SCHEMA_PATH))
+            if errors:
+                raise impact.Refusal("CALLER_GRAPH_INVALID", "installed graph is invalid", {"violations": errors})
+            current = index_at(repo, rev)
+            proofs[role] = graph_parity(doc, current.doc)
+            indices.append(impact.GraphIndex(doc))
+    binding = {"schema": "CallerGraphCompatibility/v1", "bundle_path": bundle_path,
+               "program_ref": man["program_ref"], "bundle_digest": man["bundle_digest"],
+               "trusted_key_fingerprint": fingerprint, "base": base, "head": head, "graphs": proofs}
+    source_root = Path(__file__).resolve().parents[2]
+    source_files = {path: hashlib.sha256((source_root / path).read_bytes()).hexdigest()
+                    for path in ci_gate.BUNDLE_FILES}
+    binding["current_producer_files_sha256"] = "sha256:" + hashlib.sha256(impact.dump(source_files)).hexdigest()
+    return indices[0], indices[1], binding
 
 
 def index_at(repo: impact.Repo, revision: str) -> impact.GraphIndex:
@@ -148,7 +293,19 @@ A paired receipt must match both graph digests and the complete dual selection.
     files = [f for f in actual if f["path"] in paths]
     if not files:
         return []  # ordinary file/range binding checks reject unrelated receipts
-    before, after = index_at(repo, base), index_at(repo, head)
+    compatibility = doc.get("caller_graph_compatibility")
+    if compatibility is not None:
+        if not isinstance(compatibility, dict):
+            return ["caller graph compatibility is not an object"]
+        try:
+            before, after, rebuilt = caller_graph_pair(repo, base, head,
+                                                       compatibility.get("bundle_path"))
+        except (impact.Refusal, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+            return ["caller graph compatibility refused: " + str(exc)]
+        if compatibility != rebuilt:
+            return ["caller graph compatibility differs from independently rebuilt trusted BASE proof"]
+    else:
+        before, after = index_at(repo, base), index_at(repo, head)
     selection_config = doc.get("impact_set") or {}
     depth = selection_config.get("max_depth", impact.DEFAULT_MAX_DEPTH)
     edge_types = selection_config.get("edge_types", "all")
