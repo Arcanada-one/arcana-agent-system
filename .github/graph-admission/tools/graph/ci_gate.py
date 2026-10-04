@@ -775,7 +775,8 @@ def cmd_run(a) -> int:
             # carrying a GATE_SELF_UPDATE exemption whose B1-B5 battery the gate itself re-measures.
             import admit_change as admit_mod  # sibling tool, reused as a library (bundled)
             files_status = [{"path": f, "status": status.get(f, "M")} for f in files]
-            su_case, su_ev = admit_mod.structural_case(repo, base, head, files_status, bundle_rel)
+            su_case, su_ev = admit_mod.structural_case(
+                repo, base, head, files_status, bundle_rel, getattr(a, "base_branch", None))
             if su_case != "gate_self_update":
                 return fail("BUNDLE_MODIFIED_BY_PR",
                             f"this pull request edits or removes {len(edited)} file(s) under the vendored gate bundle "
@@ -832,6 +833,10 @@ def cmd_run(a) -> int:
            "--repo-name", result["repo"]]
     if bundle_rel:
         cmd += ["--bundle-dir", bundle_rel]
+    # A hosted PR checkout can have named remote refs without origin/HEAD.
+    # Preserve the supplied PR target; the maintained gate validates/resolves it.
+    if getattr(a, "base_branch", None):
+        cmd += ["--base-branch", a.base_branch]
     # AUP-GRAPH-006:gate2a — the automated-author path. The event payload is the ONLY source of author
     # identity; the head branch name is attacker-controllable and is never consulted.
     if getattr(a, "event_file", None) and Path(a.event_file).exists():
@@ -1782,7 +1787,7 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         return rc, (json.loads(out.read_text()) if out.exists() else receipt)
 
     def run_ci(repo: Path, base: str, head: str, receipt: dict | None, *, pin: str | None = BASE_FP,
-               program_ref: str = "0" * 40, tag: str = "run") -> dict:
+               program_ref: str = "0" * 40, tag: str = "run", base_branch: str | None = None) -> dict:
         d = root / f"ci-{tag}-{head[:8]}"
         d.mkdir(parents=True, exist_ok=True)
         body = "" if receipt is None else "```json\n" + json.dumps(receipt, indent=1, sort_keys=True) + "\n```\n"
@@ -1792,7 +1797,8 @@ def selftest_gate4b() -> tuple[list[dict], int]:
             repo=str(repo), repo_name="Arcanada-one/fixture", tools=str(repo / ".github/graph-admission"),
             program_ref=program_ref, base=base, head=head, pr_body_file=str(d / "body.txt"),
             receipt_glob=["receipts/graph/*.json"], enforcement="off", build_graph=False,
-            workdir=str(d / "work"), out=str(out), summary=None, signing_key_fingerprint=pin))
+            workdir=str(d / "work"), out=str(out), summary=None, signing_key_fingerprint=pin,
+            base_branch=base_branch))
         doc = json.loads(out.read_text())
         doc["_rc"] = rc
         return doc
@@ -1909,6 +1915,43 @@ def selftest_gate4b() -> tuple[list[dict], int]:
           and "BUNDLE_MODIFIED_BY_PR" not in ci_c["reason_codes"]
           and any(c["code"] == "SELF_UPDATE_CANDIDATE" for c in ci_c["checks"]),
           rc=ci_c["_rc"], verdict=ci_c["verdict"], codes=ci_c["reason_codes"])
+
+    # A hosted checkout fetches named remote refs but need not create origin/HEAD.
+    # Build the real Update-branch shape, issue through the maintained producer,
+    # then remove only the metadata the old wrapper mistakenly depended on.
+    gc("checkout", "-q", "-b", "refresh-hosted")
+    gc("checkout", "-q", "main")
+    (repo_c / "main-only.md").write_text("ordinary change brought in from the PR target\n")
+    gc("add", "-A"); gc("commit", "-q", "-m", "target moves")
+    gc("update-ref", "refs/remotes/origin/release", gc("rev-parse", "HEAD").strip())
+    gc("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release")
+    gc("checkout", "-q", "refresh-hosted")
+    gc("merge", "--no-edit", "--no-ff", "-q", "main")
+    hosted_head = gc("rev-parse", "HEAD").strip()
+    hosted_rc, hosted_receipt = issue(repo_c, base_c, hosted_head,
+                                     self_update_receipt(repo_c, base_c, hosted_head))
+    gc("symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+    old_hosted = run_ci(repo_c, base_c, hosted_head, hosted_receipt,
+                        program_ref="1" * 40, tag="hosted-missing")
+    check("(hosted) CONTROL: without origin/HEAD or an explicit PR target, B1M remains refused",
+          hosted_rc == 0 and old_hosted["_rc"] != 0
+          and {"BUNDLE_MODIFIED_BY_PR", "STRUCTURAL_EXEMPTION_UNSOUND"}
+          & set(old_hosted["reason_codes"]),
+          rc=old_hosted["_rc"], codes=old_hosted["reason_codes"])
+    named_hosted = run_ci(repo_c, base_c, hosted_head, hosted_receipt,
+                          program_ref="1" * 40, tag="hosted-named",
+                          base_branch="refs/remotes/origin/release")
+    check("(hosted) CONTROL: forwarding the fetched named PR target admits the genuine refresh",
+          named_hosted["_rc"] == 0 and named_hosted["verdict"] == "admitted_with_exemptions",
+          rc=named_hosted["_rc"], codes=named_hosted["reason_codes"])
+    missing_hosted = run_ci(repo_c, base_c, hosted_head, hosted_receipt,
+                            program_ref="1" * 40, tag="hosted-unknown",
+                            base_branch="refs/remotes/origin/unknown")
+    check("(hosted) MUTANT: an unknown explicit PR target stays refused; no guessed branch fallback",
+          missing_hosted["_rc"] != 0
+          and {"BUNDLE_MODIFIED_BY_PR", "STRUCTURAL_EXEMPTION_UNSOUND"}
+          & set(missing_hosted["reason_codes"]),
+          rc=missing_hosted["_rc"], codes=missing_hosted["reason_codes"])
 
     # ---- mutant (c): the refreshed bundle's own selftest FAILS
     def break_selftest(b: Path):
@@ -3336,6 +3379,8 @@ def main(argv=None) -> int:
     r.add_argument("--program-ref")
     r.add_argument("--base", required=True)
     r.add_argument("--head", required=True)
+    r.add_argument("--base-branch", help="named PR target ref for the maintained B1M merge-base check; "
+                                        "missing or unknown refs remain not_measured")
     r.add_argument("--pr-body-file")
     r.add_argument("--receipt-glob", action="append")
     r.add_argument("--enforcement", default="off", choices=["off", "ledger", "muneral"])
