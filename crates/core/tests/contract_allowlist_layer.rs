@@ -5,7 +5,7 @@ use arcana_core::contract::{digest_of, verify, ContractDocument, ContractTools};
 use arcana_core::permission::{ContractAllowlistLayer, LayerDecision, PermissionLayer};
 use serde_json::json;
 
-fn binding_admitting(tools: &[&str]) -> arcana_core::contract::ContractBinding {
+fn binding_claiming(tools: &[&str]) -> arcana_core::contract::ContractBinding {
     let projection = "Role: reviewer.";
     let doc = ContractDocument {
         digest: digest_of(projection.as_bytes()),
@@ -20,7 +20,7 @@ fn binding_admitting(tools: &[&str]) -> arcana_core::contract::ContractBinding {
 
 #[tokio::test]
 async fn a_tool_outside_the_allowlist_is_denied_with_the_digest_named() {
-    let layer = ContractAllowlistLayer::new(binding_admitting(&["read", "grep"]));
+    let layer = ContractAllowlistLayer::new(binding_claiming(&["read", "grep"]));
 
     let decision = layer.evaluate("bash", &json!({"command": "ls"})).await;
 
@@ -29,8 +29,8 @@ async fn a_tool_outside_the_allowlist_is_denied_with_the_digest_named() {
             assert!(reason.contains("`bash`"), "names the tool: {reason}");
             assert!(reason.contains("sha256:"), "names the contract: {reason}");
             assert!(
-                reason.contains("grep, read"),
-                "names what IS admitted (sorted): {reason}"
+                reason.contains("sha256:"),
+                "no outer claim becomes authority: {reason}"
             );
         }
         other => panic!("an out-of-contract tool must be denied, got {other:?}"),
@@ -39,14 +39,12 @@ async fn a_tool_outside_the_allowlist_is_denied_with_the_digest_named() {
 }
 
 #[tokio::test]
-async fn an_admitted_tool_defers_so_the_rest_of_the_cascade_still_decides() {
-    let layer = ContractAllowlistLayer::new(binding_admitting(&["read"]));
+async fn an_outer_claimed_tool_is_refused_before_later_layers() {
+    let layer = ContractAllowlistLayer::new(binding_claiming(&["read"]));
 
-    // Defer, never Allow: a contract admits a tool, it does not license a
-    // particular call of it. The workspace boundary and the destructive floor
-    // must still see this.
+    // A matching content hash cannot authenticate mutable outer tool claims.
     match layer.evaluate("read", &json!({"path": "README.md"})).await {
-        LayerDecision::Defer => {}
-        other => panic!("an admitted tool must defer, got {other:?}"),
+        LayerDecision::Deny(_) => {}
+        other => panic!("an unauthenticated claim must be denied, got {other:?}"),
     }
 }

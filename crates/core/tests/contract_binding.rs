@@ -98,34 +98,51 @@ fn canonical_bytes_are_preferred_over_the_projection() {
 }
 
 #[test]
-fn a_contract_that_names_no_tools_grants_no_shell() {
+fn omitted_tools_do_not_grant_default_capabilities() {
     let doc = document("Role: reviewer.");
-    let binding = verify(&doc.digest.clone(), &doc).expect("binds");
-
-    assert_eq!(binding.allowlist_source(), AllowlistSource::DefaultNoShell);
-    for tool in DEFAULT_ALLOWLIST {
-        assert!(binding.admits(tool), "{tool} should be admitted");
-    }
-    assert!(
-        !binding.admits("bash"),
-        "a contract that says nothing must not grant a shell"
+    let binding = verify(&doc.digest, &doc).expect("content binds");
+    assert_eq!(
+        binding.allowlist_source(),
+        AllowlistSource::AuthorityNotBound
     );
+    for tool in DEFAULT_ALLOWLIST.into_iter().chain(["bash"]) {
+        assert!(!binding.admits(tool), "no authenticated grant for {tool}");
+    }
 }
 
 #[test]
-fn a_contract_that_names_tools_is_the_allowlist() {
-    let mut doc = document("Role: reviewer.");
-    doc.tools = Some(ContractTools {
-        allow: vec!["read".to_owned(), "grep".to_owned()],
-    });
-    doc.digest = digest_of(doc.projection_text().as_bytes());
-    let binding = verify(&doc.digest.clone(), &doc).expect("binds");
-
-    assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
-    assert!(binding.admits("read"));
-    assert!(
-        !binding.admits("write"),
-        "the contract did not name `write`"
+fn same_digest_outer_tools_substitution_cannot_broaden_authority() {
+    use base64::Engine as _;
+    let canonical = br#"{"body_marker":"source-only"}{"closure_marker":"source-only"}"#;
+    let expected = digest_of(canonical);
+    let mut doc = ContractDocument {
+        digest: expected.clone(),
+        canonical: Some(CanonicalBlock {
+            bytes_b64: Some(base64::engine::general_purpose::STANDARD.encode(canonical)),
+            ..CanonicalBlock::default()
+        }),
+        ..ContractDocument::default()
+    };
+    for tools in [Some(vec![]), Some(vec!["write"]), Some(vec!["bash"]), None] {
+        doc.tools = tools.map(|allow| ContractTools {
+            allow: allow.into_iter().map(str::to_owned).collect(),
+        });
+        let binding = verify(&expected, &doc).expect("unchanged bytes still bind");
+        assert_eq!(binding.digest(), expected);
+        assert_eq!(binding.preimage(), DigestPreimage::CanonicalBytesB64);
+        assert_eq!(
+            binding.allowlist_source(),
+            AllowlistSource::AuthorityNotBound
+        );
+        assert!(binding.allowlist().is_empty());
+        assert!(!binding.admits("write"));
+        assert!(!binding.admits("bash"));
+    }
+    doc.canonical.as_mut().unwrap().bytes_b64 =
+        Some(base64::engine::general_purpose::STANDARD.encode(b"changed preimage"));
+    assert_eq!(
+        verify(&expected, &doc).unwrap_err().code(),
+        "CONTRACT_DIGEST_MISMATCH"
     );
 }
 
@@ -219,7 +236,10 @@ fn an_explicit_empty_allowlist_admits_no_tools() {
     let mut doc = document("Role: reviewer.");
     doc.tools = Some(ContractTools { allow: vec![] });
     let binding = verify(&doc.digest, &doc).expect("the fixture binds");
-    assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
+    assert_eq!(
+        binding.allowlist_source(),
+        AllowlistSource::AuthorityNotBound
+    );
     assert!(binding.allowlist().is_empty());
     for tool in DEFAULT_ALLOWLIST.into_iter().chain(["bash"]) {
         assert!(!binding.admits(tool), "explicit empty must refuse {tool}");

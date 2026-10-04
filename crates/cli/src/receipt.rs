@@ -92,7 +92,7 @@ pub struct ContractSection {
     pub kc2_revision: Option<String>,
     pub kc2_snapshot: Option<String>,
     pub allowlist: Vec<String>,
-    /// `contract` or `default-no-shell`.
+    /// `authority-not-bound` for unauthenticated outer claims; legacy values retained.
     pub allowlist_source: String,
 }
 

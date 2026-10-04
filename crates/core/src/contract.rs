@@ -1,8 +1,9 @@
 //! The KC2 contract a work item is bound to, and the rule that binds it.
 //!
 //! A work item in Muneral carries a `contractDigest`. That digest is the whole
-//! of the binding: it names one immutable KC2 contract, and everything the run
-//! is allowed to do is read out of the document that digest addresses. Two
+//! of the content binding: it names one immutable KC2 contract. Digest integrity
+//! alone does not authenticate effect authority. Unbound outer tool claims are
+//! quarantined to an empty allowlist until an authenticated producer seam exists. Two
 //! failures this module exists to make impossible:
 //!
 //! * **A work item with no digest.** Nothing says what the run may do, so
@@ -49,13 +50,8 @@ pub const DIGEST_ALGO_PREFIX: &str = "sha256:";
 /// Length of the hex half of a well-formed digest.
 pub const DIGEST_HEX_LEN: usize = 64;
 
-/// What a contract-bound run may call when the contract names no tools.
-///
-/// Not a silent default: it is narrower than the run's tool set, it is recorded
-/// on the binding as [`AllowlistSource::DefaultNoShell`], and it appears in the
-/// receipt. `bash` is absent deliberately — a shell is the one capability a
-/// contract has to grant in words, because it is the only tool whose blast
-/// radius is not bounded by its own arguments.
+/// Historical fallback, retained for API compatibility only.
+/// [`verify`] never grants these tools from an omitted or unauthenticated claim.
 pub const DEFAULT_ALLOWLIST: [&str; 4] = ["read", "grep", "write", "edit"];
 
 /// True when `value` is `sha256:` followed by 64 lowercase hex digits.
@@ -163,7 +159,8 @@ pub struct ContractDocument {
     /// The KC2 snapshot, flat spelling.
     #[serde(default)]
     pub kc2_snapshot: Option<String>,
-    /// Tools the contract admits.
+    /// Unauthenticated outer tool claims; retained for decoding compatibility.
+    /// These fields are outside the verified preimage and cannot grant effects.
     #[serde(default)]
     pub tools: Option<ContractTools>,
 }
@@ -206,9 +203,11 @@ impl ContractDocument {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AllowlistSource {
-    /// The contract named its tools.
+    /// No authenticated binding connects tool claims to this contract. Deny all.
+    AuthorityNotBound,
+    /// Legacy diagnostic value; unauthenticated outer tools cannot select it.
     Contract,
-    /// The contract named none, so [`DEFAULT_ALLOWLIST`] applies.
+    /// Legacy diagnostic value; omitted tools cannot select it.
     DefaultNoShell,
 }
 
@@ -216,6 +215,7 @@ impl AllowlistSource {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::AuthorityNotBound => "authority-not-bound",
             Self::Contract => "contract",
             Self::DefaultNoShell => "default-no-shell",
         }
@@ -403,19 +403,13 @@ pub fn verify(
         });
     }
 
-    let (allowlist, allowlist_source) = match document.tools.as_ref() {
-        Some(tools) => (
-            tools.allow.iter().cloned().collect::<BTreeSet<_>>(),
-            AllowlistSource::Contract,
-        ),
-        None => (
-            DEFAULT_ALLOWLIST
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect::<BTreeSet<_>>(),
-            AllowlistSource::DefaultNoShell,
-        ),
-    };
+    // The source preimage authenticates content integrity, not the outer response.
+    // In particular, `tools` and its omission can change while these bytes and
+    // the requested digest stay identical. Never turn either into an effect
+    // grant. Re-enabling nonempty authority requires a separately reviewed,
+    // authenticated producer binding; parsing a guessed body schema is not one.
+    let allowlist = BTreeSet::new();
+    let allowlist_source = AllowlistSource::AuthorityNotBound;
 
     Ok(ContractBinding {
         digest: expected.to_owned(),

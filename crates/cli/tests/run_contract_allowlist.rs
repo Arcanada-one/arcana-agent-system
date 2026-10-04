@@ -1,4 +1,4 @@
-//! A contract-bound run cannot call a tool its contract did not admit — and
+//! An unauthenticated outer tool claim cannot grant a contract-bound effect — and
 //! the refusal is on disk afterwards.
 //!
 //! The paired-negative discipline of `run_tool_execution.rs` applies: each case
@@ -176,7 +176,7 @@ async fn a_tool_outside_the_contract_is_denied_and_the_refusal_is_on_disk() {
 }
 
 #[tokio::test]
-async fn the_paired_negative_the_same_call_under_a_contract_that_admits_it_runs() {
+async fn the_gate_removal_control_the_same_call_without_a_contract_layer_runs() {
     // Without this, the test above would pass just as well if `bash` were
     // broken, or if the workspace boundary were refusing everything.
     let work = TempDir::new().unwrap();
@@ -185,7 +185,7 @@ async fn the_paired_negative_the_same_call_under_a_contract_that_admits_it_runs(
     let out = drive(
         work.path(),
         audit.path(),
-        Some(binding(&["bash"])),
+        None,
         &[
             &tool_call("bash", serde_json::json!({ "command": WRITE_PROOF })),
             "wrote proof.txt",
@@ -194,7 +194,7 @@ async fn the_paired_negative_the_same_call_under_a_contract_that_admits_it_runs(
     .await;
 
     let contents = std::fs::read_to_string(work.path().join("proof.txt"))
-        .expect("an admitted tool really runs");
+        .expect("the unchanged executor really runs");
     assert!(contents.contains("HELLO"), "got {contents:?}");
     assert_eq!(out.tool_calls, 1);
     assert_eq!(out.tool_calls_denied, 0);
@@ -257,11 +257,8 @@ fn the_prompt_offers_only_the_tools_the_contract_admits() {
     let prompt = driver_config(&bound, &workspace.tools, work.path())
         .system_prompt
         .expect("a headless run always has a system prompt");
-    assert!(
-        prompt.contains("- `read`"),
-        "the admitted tools are offered"
-    );
-    assert!(prompt.contains("- `grep`"));
+    assert!(!prompt.contains("- `read`"));
+    assert!(!prompt.contains("- `grep`"));
     assert!(
         !prompt.contains("- `bash`"),
         "a tool the contract denies must not be in the catalogue"
@@ -313,7 +310,7 @@ async fn an_explicit_empty_contract_refuses_the_actual_write_effect() {
 }
 
 #[tokio::test]
-async fn an_explicit_write_contract_performs_the_paired_effect() {
+async fn an_outer_write_claim_cannot_perform_the_effect() {
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     let call = tool_call(
@@ -327,10 +324,7 @@ async fn an_explicit_write_contract_performs_the_paired_effect() {
         &[&call, "done"],
     )
     .await;
-    assert_eq!(
-        std::fs::read_to_string(work.path().join("proof.txt")).unwrap(),
-        "HELLO"
-    );
-    assert_eq!(out.tool_calls, 1);
-    assert_eq!(out.tool_calls_denied, 0);
+    assert!(!work.path().join("proof.txt").exists());
+    assert_eq!(out.tool_calls, 0);
+    assert_eq!(out.tool_calls_denied, 1);
 }
