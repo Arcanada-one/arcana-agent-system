@@ -92,7 +92,7 @@ jobs:
         run: bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
 
   security-audit:
-    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@b6719c336d8e777d4ca1f9f272fcd4ef694742bb
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@5800861ad1e1a75f7e3ad986212a0faeaa1bfc98
     with:
       stack: rust_cargo
       # Public pull-request code must not execute on a persistent self-hosted
