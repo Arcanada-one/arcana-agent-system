@@ -2534,7 +2534,7 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                              declaration_rel=declaration_rel, verifier_job=verifier_job,
                              verifier_conclusion=verifier_conclusion,
                              candidate_range=b7meta.get("candidate_range"), authority_id=b7meta.get("authority_id"),
-                             second_opinion=b7meta.get("second_opinion"))
+                             second_opinion=b7meta.get("second_opinion"), base_branch=base_branch)
     # The binding evidence was computed above and then overwritten by the battery's own dictionary, so no
     # receipt ever carried it. It is the one place a reader can see WHICH range the exemption bound.
     ev["binding"] = binding_ev
