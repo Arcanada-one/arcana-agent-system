@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "paused_safe"
  },
- "captured_at_utc": "2026-10-04T01:32:29Z",
+ "captured_at_utc": "2026-10-04T03:49:26Z",
  "change_set": {
   "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
   "files": [
@@ -172,7 +172,7 @@
     "status": "A"
    }
   ],
-  "head": "5baaf3b7d3659e852eb8f444602dc023bf16f602",
+  "head": "3fa04eb1dbb6ae6c66709a1901c71c728fbcce77",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -181,17 +181,17 @@
   "builder_version": "1.0.3",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:60710091f61c44b8ba2f2c4d8523b2084554af39aae6f5900d46b0cd82ac378b",
-  "path": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/graph-62149eabbc72.json",
+  "path": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/graph-62149eabbc72.json",
   "source_commit": "62149eabbc7224f65c66c91dc07eae1d02c11e02"
  },
  "head_graph": {
   "builder_version": "1.0.3",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:b59bd93d9905b3985b1fe0bfaf211ad1a6cb4883eb030e9d39e07bf606ccc2c5",
-  "path": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/graph-head-5baaf3b7d365.json",
-  "source_commit": "5baaf3b7d3659e852eb8f444602dc023bf16f602",
+  "graph_digest": "sha256:6e54a50a7cd237f4f4a924a5142a330fa15a76e664aa54e4349f3581eed46d84",
+  "path": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/graph-head-3fa04eb1dbb6.json",
+  "source_commit": "3fa04eb1dbb6ae6c66709a1901c71c728fbcce77",
   "staleness": {
-   "checked_at_utc": "2026-10-04T01:32:34Z",
+   "checked_at_utc": "2026-10-04T03:49:32Z",
    "checked_nodes": 396,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -499,11 +499,11 @@
   "tool": "tools/graph/verify.py",
   "version": "1.3.0"
  },
- "receipt_id": "car-verify-20261004T013229Z-5baaf3b7",
+ "receipt_id": "car-verify-20261004T034926Z-3fa04eb1",
  "receipt_path": "receipts/graph/change-admission-bundle-72ea-20261001.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/arcanada/_temp/aras243-current97af-ctx41-20261004"
+  "path": "/home/dev/arcanada/_temp/aras243-current67ac-ctx41"
  },
  "revision_selection": {
   "base": [
@@ -568,7 +568,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-04T01:32:34Z",
+  "checked_at_utc": "2026-10-04T03:49:32Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -709,7 +709,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:0ad1b8ddeb1664816b3d595b68d9626b08e49c30e1ea43a9f817f90ecd57a5b5"
+    "head": "sha256:7f65662564f2bec1be978661890faa8496c7a63e00a804a2805d185e31598963"
    },
    "entity": "receipt:receipts/graph/change-admission-bundle-72ea-20261001.json",
    "node_type": "receipt",
@@ -745,7 +745,7 @@
   }
  ],
  "tree": {
-  "commit": "5baaf3b7d3659e852eb8f444602dc023bf16f602",
+  "commit": "3fa04eb1dbb6ae6c66709a1901c71c728fbcce77",
   "dirty": false
  },
  "verdicts": [
@@ -883,8 +883,8 @@
    "exit_code": 127,
    "id": "v-type-check-uncovered",
    "kind": "type_check",
-   "output_ref": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/v-type-check-uncovered.txt",
-   "started_at_utc": "2026-10-04T01:32:39Z",
+   "output_ref": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/v-type-check-uncovered.txt",
+   "started_at_utc": "2026-10-04T03:49:37Z",
    "summary": "not_measured: 1 entity(ies) no tsconfig covers"
   },
   {
@@ -899,13 +899,13 @@
    "exit_code": 0,
    "id": "v-workflow-config-60a4bd100e640545",
    "kind": "config_schema",
-   "output_ref": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/v-workflow-config-60a4bd100e640545.txt",
-   "started_at_utc": "2026-10-04T01:32:39Z",
+   "output_ref": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/v-workflow-config-60a4bd100e640545.txt",
+   "started_at_utc": "2026-10-04T03:49:37Z",
    "summary": "bounded workflow configuration shape valid; expressions, shell, actions, callee interface compatibility and hosted execution NOT_MEASURED"
   },
   {
    "command": "verify.py config_schema: keys read at head ⊆ declared keys",
-   "duration_s": 1.55,
+   "duration_s": 1.63,
    "entities": [
     "code_unit:.github/graph-admission/tools/graph/admit_change.py",
     "code_unit:.github/graph-admission/tools/graph/ci_gate.py",
@@ -921,8 +921,8 @@
    "exit_code": 0,
    "id": "v-config-schema",
    "kind": "config_schema",
-   "output_ref": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/v-config-schema.json",
-   "started_at_utc": "2026-10-04T01:32:39Z",
+   "output_ref": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/v-config-schema.json",
+   "started_at_utc": "2026-10-04T03:49:37Z",
    "summary": "1 source(s), 0 new / 0 frozen undeclared reads, 0 failed; 4 vendored file(s) not attributed to this repository (Arcanada-one/arcanada-universal-program)"
   },
   {
@@ -961,8 +961,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-04T01:32:40Z",
+   "output_ref": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-04T03:49:39Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -983,8 +983,8 @@
    "exit_code": 0,
    "id": "v-canary",
    "kind": "canary",
-   "output_ref": "/home/dev/.producer-ctx41/aras243-current97af-20261004/complete-source-verify-workdir/verifier-out/v-canary.json",
-   "started_at_utc": "2026-10-04T01:32:40Z",
+   "output_ref": "/home/dev/.producer-ctx41/aras243-current67ac-20261004/current-source-verify-workdir/verifier-out/v-canary.json",
+   "started_at_utc": "2026-10-04T03:49:39Z",
    "summary": "0 canary result(s), 0 committed at head; 0 verified / 0 failed / 4 not_measured of 4 entities"
   }
  ],
@@ -1069,9 +1069,9 @@
    "receipt:receipts/graph/change-admission-bundle-a81a6d5.json": []
   },
   "seconds": {
-   "prepare": 2.91,
-   "total": 11.66,
-   "verifiers": 1.56
+   "prepare": 3.79,
+   "total": 12.7,
+   "verifiers": 1.64
   }
  },
  "work_item": "f8f83b34-7494-4fd0-8299-14ca444714dc"
