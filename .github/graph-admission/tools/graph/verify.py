@@ -1040,10 +1040,19 @@ class Verify:
                 self.pair_head_idx = impact_pair.index_at(self.repo, head)
             hp = self.out_dir / f"graph-head-{head[:12]}.json"
             hp.write_bytes(build_graph.dump_graph(self.pair_head_idx.doc))
-            return impact_pair.query(self.idx, self.pair_head_idx, files, repo=self.repo, base=base, head=head,
+            q = impact_pair.query(self.idx, self.pair_head_idx, files, repo=self.repo, base=base, head=head,
                                      tree_commit=tree_commit, tree_dirty=tree_dirty, graph_path=self.graph_path,
                                      head_graph_path=rel_ref(hp),
                                      max_depth=None if a.max_depth is not None and a.max_depth < 0 else (a.max_depth if a.max_depth is not None else impact.DEFAULT_MAX_DEPTH))
+            if getattr(a, "empty_impact_explanation", None):
+                try:
+                    claim = json.loads(Path(a.empty_impact_explanation).read_text())
+                except (OSError, ValueError):
+                    raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INVALID", "explanation input cannot be read") from None
+                q["empty_impact_explanation"] = impact_pair.bind_empty_explanation(q, claim)
+            return q
+        if getattr(a, "empty_impact_explanation", None):
+            raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INAPPLICABLE", "explanation requires a committed paired diff")
         q = impact.query(self.idx, files, mode=mode, base=base, head=head, tree_commit=tree_commit, tree_dirty=tree_dirty,
                          repo=self.repo, max_depth=None if a.max_depth is not None and a.max_depth < 0 else (a.max_depth if a.max_depth is not None else impact.DEFAULT_MAX_DEPTH),
                          rules=set(impact.RULES), graph_path=self.graph_path)
@@ -3080,7 +3089,7 @@ class Verify:
         rec["verify"]["seconds"]["total"] = round(time.monotonic() - t_all, 2)
         rec["verify"]["events"] = self.events + [{"code": e} for e in q.get("events", [])]
         code = 0 if rec["admission"]["verdict"] == "admitted" else 1
-        if q.get("events"):
+        if impact_pair.blocking_query_events(q):
             code = 3
         return rec, code
 
@@ -3811,6 +3820,7 @@ def main(argv=None) -> int:
     ap.add_argument("--worktree", action="store_true")
     ap.add_argument("--files", nargs="*")
     ap.add_argument("--graph", default="auto", help="RelationshipGraph/v1 at base/HEAD, or 'auto' to build it from git objects")
+    ap.add_argument("--empty-impact-explanation", help="EmptyImpactExplanation/v1 JSON bound to the exact paired revisions and graph digests; retains raw events and all verifier obligations")
     ap.add_argument("--caller-graph-bundle", help="unchanged canonical signed BASE bundle; both installed/current graphs must fully agree")
     ap.add_argument("--exemptions", help="a JSON list (or {\"exemptions\": [...]}) of NON-structural exemptions "
                                          "to attach BEFORE the admission verdict is computed. Each needs entity, "

@@ -1,5 +1,5 @@
 {
- "bundle_digest": "sha256:97af469eee23be8f7458f971242ebcb9e5fff7ce2dbf05063bfcd6b1f1a3dabd",
+ "bundle_digest": "sha256:67ac34919f725601c43fd8f1e80375ea79a47e5f12c28a087000ab81b39c2510",
  "files": [
   {
    "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
@@ -15,9 +15,9 @@
    "sha256": "sha256:f0bacc3b3e56027881dab6c7eae1799135260eacc46f72ab18ceebcb676857df"
   },
   {
-   "blob_oid": "2c9eb5095b8eb8142155da7c9d438195d2ad2bcb",
+   "blob_oid": "9ad259a32d98e545789a06b14850750c547d5998",
    "path": "tools/graph/schema_check.py",
-   "sha256": "sha256:8149d504d83132727e7d9069c00ae49369a6e8f39c80d8efd5467d3e0ac3d744"
+   "sha256": "sha256:1fa6df10761407aa49e2bdc63f4cd052c55a2c0c892132482da97d55c2e46d5b"
   },
   {
    "blob_oid": "94d234339490d54d949de9c42d8a91a2593625eb",
@@ -40,19 +40,19 @@
    "sha256": "sha256:f396ffbf748d47946817e6c80e9276ec811e15c2b97671456a64e7ac5d17e235"
   },
   {
-   "blob_oid": "d2528a7ef4283115de4b9fa153b329d95816f928",
+   "blob_oid": "aa33c64829e71998aa5e636aa4621e27204c08cc",
    "path": "tools/graph/impact_pair.py",
-   "sha256": "sha256:3a58961a024d8d381f5760d636f6db4739ce40c672d68d73278ef017b7895bcd"
+   "sha256": "sha256:63a8984ed364d1fafb4fd94c533efbd41970c6f4ff4292e9ad7e41af02523912"
   },
   {
-   "blob_oid": "3069505de3fe2552953af6058c4661851ea8a341",
+   "blob_oid": "527761b67c5e2223486528f3f2e02c3da38d2a16",
    "path": "tools/graph/verify.py",
-   "sha256": "sha256:55a7b089cf00684bb2373ae4581a985ad61368bfcde034692198b3ba83daa3d4"
+   "sha256": "sha256:f528a6a30dda39a41d6ca700453f0b438b75f191057c52bdefaadc776bb001bb"
   },
   {
-   "blob_oid": "0bbe15ee438f633a60788c333ed67eb3fd5d92c3",
+   "blob_oid": "7f3da8c328f191b311964d5cd35871d67b2d367a",
    "path": "tools/graph/contract_diff.py",
-   "sha256": "sha256:9b77964491c9890fda6f2ee8fe6d1e4e40028260726e2837c728fc111a1192d9"
+   "sha256": "sha256:1b0d73df86fc8e9946068fec5eeea683f6d17940306d9256fa35833e40181524"
   },
   {
    "blob_oid": "c466a387df8ee3fa5c847cbbe8f767cf420371a0",
@@ -85,9 +85,9 @@
    "sha256": "sha256:bcc2b9c986588c689a9ef015e04dcaf2e69971cf64c69e761138de70c19258a7"
   },
   {
-   "blob_oid": "d86a247fc90f6ce52f4691279e7bc98272f5a343",
+   "blob_oid": "601c1f65d9834eacbcf26f4b8a216e0701c5ed08",
    "path": "tools/graph/ci_gate.py",
-   "sha256": "sha256:acdd428506c1eb13780e53f6522383cc8a32cd5a12a117facab90850724dc1e5"
+   "sha256": "sha256:921d4ab6d8740f1279a5e5230697efac70873f78108a56be01a267ac24981114"
   },
   {
    "blob_oid": "f97c4273c635f3e3215c13a0e063930951d7b48d",
@@ -100,9 +100,9 @@
    "sha256": "sha256:ee3bd7e179763900c8912dcf56c9847b17c2c12cb52fadbb1bb21e7b2c412185"
   },
   {
-   "blob_oid": "458e290ea72c251a8e5ebb6ec0f11ec6fe1bd4f9",
+   "blob_oid": "b0aee3bcebb6564fb1cc3bb5985646bf52dd6866",
    "path": "contracts/graph-verified-change/change-admission-receipt.v1.json",
-   "sha256": "sha256:26f5dcee97ec62a6553f7a3ca9e055cbe0b1f05bf7eedbc99863adb05fb02d73"
+   "sha256": "sha256:c488ccfbbefabf625867f3eff2ce8bbcef322d7c847925790a1d25a22a959aaa"
   },
   {
    "blob_oid": "51ba39e4287ca27757ebe82e45d8e16ac0c0aa1f",
@@ -126,7 +126,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "8c1b6ac4ff36358f49fff2d64201c0fece8a1cba",
+ "program_ref": "8921c41886e381331f2f1428fd3a1728999633f8",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",

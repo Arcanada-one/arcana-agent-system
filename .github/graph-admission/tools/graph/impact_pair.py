@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hashlib
 import json
 import os
 import re
@@ -273,7 +274,50 @@ def query(base_idx: impact.GraphIndex, head_idx: impact.GraphIndex, files: list[
                         new_files=missing)
     out["revision_selection"] = {"schema": "RevisionImpactSelection/v1", "base": sorted(selected(before)),
                                  "head": sorted(selected(after)) if after else [], "unmeasured_head_files": missing}
+    if "empty_impact_explanation" in out:
+        out["empty_impact_explanation"]["graph_metadata"] = {
+            "scope": "graph_non_seed_dependents",
+            "revisions": {role: empty_revision_metadata(idx, q) for role, idx, q in
+                          [("base", base_idx, before)] + ([("head", head_idx, after)] if after else [])}}
     return out
+
+
+def empty_revision_metadata(idx, q):
+    seeds = set(q["seeds"])
+    edges = [e for seed in sorted(seeds) for e in idx.rev.get(seed, []) if e["type"] != "deploys_to"]
+    return {"source_commit": idx.manifest["source_commit"], "graph_digest": idx.manifest["graph_digest"],
+            "extractors": idx.manifest.get("extractors"), "language_coverage": idx.manifest.get("language_coverage"),
+            "seeds": sorted(seeds), "changed_node_known_to_graph": bool(seeds),
+            "internal_reverse_edges": sum(e["from"] in seeds for e in edges),
+            "external_reverse_edges": sum(e["from"] not in seeds for e in edges),
+            "files": copy.deepcopy(q["change_set"]["files"]),
+            "max_depth": q["impact_set"]["max_depth"], "edge_types": q["impact_set"]["edge_types"]}
+
+
+def bind_empty_explanation(q, claim):
+    """Bind an author's explanation to actual paired graphs; never alter raw events."""
+    fields = {"schema", "base", "head", "base_graph_digest", "head_graph_digest", "scope", "reason"}
+    reason = claim.get("reason") if isinstance(claim, dict) else None
+    if not isinstance(claim, dict) or set(claim) != fields or claim.get("schema") != "EmptyImpactExplanation/v1":
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INVALID", "exact explanation fields are required")
+    if not isinstance(reason, str) or len(reason.strip()) < 40 or reason.strip().lower().startswith(("generated", "todo", "placeholder", "not_measured")):
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INVALID", "a substantive author explanation is required")
+    cs = q["change_set"]
+    if claim["scope"] != "graph_non_seed_dependents" or any(claim[k] != cs[k] for k in ("base", "head")) or claim["base_graph_digest"] != q["graph"]["graph_digest"] or claim["head_graph_digest"] != q.get("head_graph", {}).get("graph_digest"):
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_STALE", "explanation does not bind this exact paired measurement")
+    imp = q["impact_set"]
+    metadata = q.get("empty_impact_explanation", {}).get("graph_metadata", {})
+    revisions = metadata.get("revisions", {})
+    if cs.get("mode") != "diff" or imp["total"] or imp["global_fallback"]["triggered"] or q.get("revision_selection", {}).get("unmeasured_head_files") or set(revisions) != {"base", "head"} or any(m["external_reverse_edges"] for m in revisions.values()) or not any(e.get("code") == "EMPTY_IMPACT_REQUIRES_EXPLANATION" for e in q["events"]):
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INAPPLICABLE", "only a complete empty non-seed dependent prediction may be explained")
+    return {"schema": "BoundEmptyImpactExplanation/v1", "reason": reason.strip(), "graph_metadata": copy.deepcopy(metadata),
+            "binding": {"schema": "BoundEmptyImpactExplanation/v1", "input": copy.deepcopy(claim),
+                        "input_sha256": "sha256:" + hashlib.sha256(impact.dump(claim)).hexdigest()}}
+
+
+def blocking_query_events(q):
+    bound = q.get("empty_impact_explanation", {}).get("binding")
+    return [e for e in q.get("events", []) if not (bound and e.get("code") == "EMPTY_IMPACT_REQUIRES_EXPLANATION")]
 
 
 def receipt_problems(repo_path: Path, doc: dict) -> list[str]:
@@ -324,10 +368,24 @@ A paired receipt must match both graph digests and the complete dual selection.
         for role, idx in (("base", before), ("head", after))
         for entity in selection[role]
     )
-    enforce_mandatory = paired or workflow_selected or q["impact_set"].get("global_fallback", {}).get("triggered", False)
+    enforce_mandatory = paired or workflow_selected or q["impact_set"].get("global_fallback", {}).get("triggered", False) or "binding" in (doc.get("empty_impact_explanation") or {})
     if not enforce_mandatory and not new_required and not selection["unmeasured_head_files"]:
         return []
     problems = schema_check.fallback_evidence_problems(doc, fallback_units(q)) if q["impact_set"].get("global_fallback", {}).get("triggered") else []
+    explanation = doc.get("empty_impact_explanation") or {}
+    if "binding" in explanation:
+        try:
+            expected_explanation = bind_empty_explanation(q, explanation["binding"].get("input"))
+            if expected_explanation != explanation:
+                problems.append("empty impact explanation differs from independent paired graph binding")
+            if any(e.get("code") != "EMPTY_IMPACT_REQUIRES_EXPLANATION" for e in q["events"]):
+                problems.append("empty impact explanation cannot satisfy other query diagnostics")
+            if not paired:
+                problems.append("empty impact explanation requires both revision graph bindings")
+        except (impact.Refusal, AttributeError, TypeError, KeyError):
+            problems.append("empty impact explanation binding invalid or inapplicable")
+    elif explanation.get("schema") == "BoundEmptyImpactExplanation/v1":
+        problems.append("empty impact prediction has no bound author explanation")
     if not paired and (new_required or selection["unmeasured_head_files"]):
         problems.append("head graph binding missing for new head impact obligations")
     if paired:

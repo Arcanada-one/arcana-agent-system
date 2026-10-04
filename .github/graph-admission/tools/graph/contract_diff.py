@@ -2031,7 +2031,9 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
             schema = (headc or cb[cid])["schema"]
             # A removed literal remains a consumer obligation: head-only values
             # must not erase its use before edge_verdict checks the head schema.
-            enum_literals = sort_values(schema.get('values', []) + cb.get(cid, {}).get('schema', {}).get('values', []))
+            enum_literals = sort_values(
+                value for candidate in (schema, cb.get(cid, {}).get('schema', {}))
+                if candidate.get('kind') == 'enum' for value in candidate.get('values', []))
             proj = projection(head_tree.text(path), cd["symbol"], schema, disabled,
                               known_zod=(headc or cb[cid])["kind"] == "zod", runtime_names=local_names or None,
                               enum_literal_values=enum_literals)

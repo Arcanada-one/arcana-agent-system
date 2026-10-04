@@ -534,6 +534,28 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
         exp = doc.get("empty_impact_explanation")
         if not (isinstance(exp, dict) and exp.get("reason") and isinstance(exp.get("graph_metadata"), dict) and exp["graph_metadata"]):
             c.add("EMPTY_IMPACT_WITHOUT_EXPLANATION", "non-doc change, empty impact set, no explanation with graph_metadata")
+    exp = doc.get("empty_impact_explanation")
+    if isinstance(exp, dict) and ("binding" in exp or exp.get("schema") == "BoundEmptyImpactExplanation/v1"):
+        binding = exp.get("binding")
+        claim = binding.get("input") if isinstance(binding, dict) else None
+        keys = {"schema", "base", "head", "base_graph_digest", "head_graph_digest", "scope", "reason"}
+        valid = isinstance(binding, dict) and set(binding) == {"schema", "input", "input_sha256"} and binding.get("schema") == "BoundEmptyImpactExplanation/v1" and isinstance(claim, dict) and set(claim) == keys
+        if valid:
+            encoded = (json.dumps(claim, indent=1, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+            valid = (exp.get("schema") == "BoundEmptyImpactExplanation/v1" and claim["schema"] == "EmptyImpactExplanation/v1" and claim["scope"] == "graph_non_seed_dependents"
+                     and binding["input_sha256"] == "sha256:" + hashlib.sha256(encoded).hexdigest()
+                     and isinstance(claim["reason"], str) and len(claim["reason"].strip()) >= 40
+                     and exp.get("reason") == claim["reason"].strip()
+                     and all(claim[k] == (doc.get("change_set") or {}).get(k) for k in ("base", "head"))
+                     and claim["base_graph_digest"] == (doc.get("graph") or {}).get("graph_digest")
+                     and claim["head_graph_digest"] == (doc.get("head_graph") or {}).get("graph_digest")
+                     and isinstance(exp.get("graph_metadata"), dict)
+                     and exp["graph_metadata"].get("scope") == "graph_non_seed_dependents"
+                     and isinstance(exp["graph_metadata"].get("revisions"), dict)
+                     and set(exp["graph_metadata"].get("revisions", {})) == {"base", "head"}
+                     and not core and not tail and gf.get("triggered") is not True)
+        if not valid:
+            c.add("EMPTY_IMPACT_WITHOUT_EXPLANATION", "invalid exact paired author explanation binding")
     # verifiers
     vers = doc.get("verifiers") if isinstance(doc.get("verifiers"), list) else []
     vspec = F["verifier"]

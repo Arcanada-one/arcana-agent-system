@@ -1548,6 +1548,19 @@ def selftest_key_rotation() -> tuple[list[dict], int]:
                                 "-f", str(kd / name)], capture_output=True, text=True)
             keys.append(str(kd / name))
         prog_root, ref = fixture_program_repo(root / "fixture-program-real")
+
+        def commit_primary_key(key: str) -> str:
+            # This public key is itself bundled. Prepare genuine fixture source
+            # before capturing the ref, just as the production drift guard requires.
+            shutil.copyfile(Path(key + ".pub"), prog_root / PROGRAM_PUBKEY_PATH)
+            env = {**os.environ, **FIXTURE_GIT_ENV}
+            for args in (["add", "--", PROGRAM_PUBKEY_PATH],
+                         ["commit", "-q", "-m", "fixture primary public key"]):
+                subprocess.run(["git", "-C", str(prog_root), *args], env=env,
+                               capture_output=True, text=True, check=True)
+            return git(prog_root, "rev-parse", "HEAD").strip()
+
+        ref = commit_primary_key(keys[0])
         out = root / "real-dual"
         rc = cmd_bundle(argparse.Namespace(out=str(out), program_ref=ref, program_root=str(prog_root),
                                            workflow_out=None, sign_key=keys))
@@ -1558,6 +1571,7 @@ def selftest_key_rotation() -> tuple[list[dict], int]:
               rc == 0 and not problems and rec.get("key_fingerprints") == fps
               and json.loads((out / "BUNDLE.json").read_text()).get("signing_keys") == fps,
               rc=rc, problems=problems)
+        ref = commit_primary_key(keys[1])
         rc2 = cmd_bundle(argparse.Namespace(out=str(out), program_ref=ref, program_root=str(prog_root),
                                             workflow_out=None, sign_key=keys[1:]))
         _, problems2, rec2 = verify_bundle(out, ref, fps[1])
