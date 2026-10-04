@@ -178,8 +178,8 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/admit_change.py",
@@ -230,7 +230,7 @@
      },
      {
       "code": "SELF_UPDATE_WORKFLOW_INTEGRITY",
-      "detail": "all 1 vendored executing workflow(s) hash at head a4cd4d1c84a6 to the sha256 the signed head manifest records and to its recorded git blob OID — a workflow change is admissible, a workflow change the manifest does not attest is not",
+      "detail": "all 1 vendored executing workflow(s) hash at head 7c4899cf355d to the sha256 the signed head manifest records and to its recorded git blob OID — a workflow change is admissible, a workflow change the manifest does not attest is not",
       "id": "B8",
       "verdict": "verified"
      }
@@ -262,7 +262,7 @@
      "verifier_from": "62149eabbc72:.github/graph-admission/tools/graph/sshsig.py"
     }
    },
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -271,13 +271,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/build_graph.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -286,13 +286,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/ci_gate.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -301,13 +301,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/contract_diff.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -316,13 +316,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/impact.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -331,13 +331,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/impact_pair.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -346,13 +346,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -361,13 +361,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/metadata_contract_proof.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -376,13 +376,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/nest_bootstrap.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -391,13 +391,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/schema_check.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -406,13 +406,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/verify.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -421,13 +421,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
    "entity": "code_unit:.github/graph-admission/tools/graph/workflow_config.py",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -436,13 +436,13 @@
   {
    "change_binding": {
     "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
-    "digest": "sha256:0aecab24dfe72b6470a435b389657105d982382410e308bdbfc9b8d83c43aef8",
-    "head": "a4cd4d1c84a622a09712e9620bcf6744e0c09a06"
+    "digest": "sha256:31a77214199de92b50b1aa627810b3dcb3ad05c0ed3d4262ccecc41d4f847154",
+    "head": "7c4899cf355dac157e4f39c56bf470c0f470d178"
    },
    "code": "GATE_SELF_UPDATE",
-   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@a4cd4d1c84a6",
+   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@7c4899cf355d",
    "evidence_ref": "exemptions[0].evidence — one battery per change, measured once",
-   "expires_at_utc": "2026-10-05T04:18:42Z",
+   "expires_at_utc": "2026-10-05T04:46:12Z",
    "expiry_rule": "the DIGEST is the expiry, not the clock: this exemption is void for any other diff. expires_at_utc is a 24 h backstop because C10 requires an expiry, and removing that requirement would weaken a check",
    "owner": "AUP-E29/AUP-GRAPH-006 — issued by tools/graph/admit_change.py exempt, re-measured by the gate (C16)",
    "reason": "the claim that the vendored bundle at head is the pinned program-repo code the repository already trusted the key of, and that its own battery passes and has not shrunk",
@@ -766,7 +766,7 @@
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.3.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
   "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none",
-  "AUP-GRAPH-006:gate4b — GATE_SELF_UPDATE issued by `tools/graph/admit_change.py exempt` over 13 entity(ies), bound to sha256:0aecab24dfe72b64… (62149eabbc72..a4cd4d1c84a6); the digest, not the clock, is the expiry."
+  "AUP-GRAPH-006:gate4b — GATE_SELF_UPDATE issued by `tools/graph/admit_change.py exempt` over 13 entity(ies), bound to sha256:31a77214199de92b… (62149eabbc72..7c4899cf355d); the digest, not the clock, is the expiry."
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
@@ -1137,7 +1137,7 @@
    ]
   },
   {
-   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@a4cd4d1c84a6",
+   "entity": "gate_self_update:Arcanada-one/arcana-agent-system@7c4899cf355d",
    "reason": "the impact of this change is not computable by the graph: this change is the vendored admission-gate bundle itself, whose tools are the code that would do the measuring. Covered by the typed exemption GATE_SELF_UPDATE, whose evidence the gate re-measures on every evaluation (C16).",
    "verdict": "not_measured"
   }
