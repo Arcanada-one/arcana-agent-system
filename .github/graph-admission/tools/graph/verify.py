@@ -1016,7 +1016,16 @@ class Verify:
         else:
             files = self.repo.worktree_files()
         self.mode, self.base, self.head = mode, base, head
-        if not build_graph.graph_is_auto(a.graph):   # one definition of the word, shared with contract_diff
+        compatibility = getattr(a, "caller_graph_bundle", None)
+        if compatibility:
+            if mode != "diff" or not build_graph.graph_is_auto(a.graph):
+                raise impact.Refusal("CALLER_GRAPH_MODE", "caller compatibility requires --diff and --graph auto")
+            self.idx, self.pair_head_idx, self.caller_graph_compatibility = impact_pair.caller_graph_pair(
+                self.repo, base, head, compatibility)
+            gp = self.out_dir / f"graph-{base[:12]}.json"
+            gp.write_bytes(build_graph.dump_graph(self.idx.doc))
+            self.graph_path = rel_ref(gp)
+        elif not build_graph.graph_is_auto(a.graph):   # one definition of the word, shared with contract_diff
             self.graph_path = str(a.graph)
             self.idx = impact.load_graph(Path(a.graph), set(impact.RULES))
         else:
@@ -1027,7 +1036,8 @@ class Verify:
             self.graph_path = rel_ref(gp)
             self.idx = impact.load_graph(gp, set(impact.RULES))
         if mode == "diff":
-            self.pair_head_idx = impact_pair.index_at(self.repo, head)
+            if not compatibility:
+                self.pair_head_idx = impact_pair.index_at(self.repo, head)
             hp = self.out_dir / f"graph-head-{head[:12]}.json"
             hp.write_bytes(build_graph.dump_graph(self.pair_head_idx.doc))
             return impact_pair.query(self.idx, self.pair_head_idx, files, repo=self.repo, base=base, head=head,
@@ -2931,6 +2941,8 @@ class Verify:
                 rec["admission"]["verdict"] = "paused_safe"
         if "empty_impact_explanation" in q:
             rec["empty_impact_explanation"] = q["empty_impact_explanation"]
+        if getattr(self, "caller_graph_compatibility", None):
+            rec["caller_graph_compatibility"] = self.caller_graph_compatibility
         if self.a.work_item:
             rec["work_item"] = self.a.work_item
         if self.self_receipt_rel:
@@ -3799,6 +3811,7 @@ def main(argv=None) -> int:
     ap.add_argument("--worktree", action="store_true")
     ap.add_argument("--files", nargs="*")
     ap.add_argument("--graph", default="auto", help="RelationshipGraph/v1 at base/HEAD, or 'auto' to build it from git objects")
+    ap.add_argument("--caller-graph-bundle", help="unchanged canonical signed BASE bundle; both installed/current graphs must fully agree")
     ap.add_argument("--exemptions", help="a JSON list (or {\"exemptions\": [...]}) of NON-structural exemptions "
                                          "to attach BEFORE the admission verdict is computed. Each needs entity, "
                                          "code, owner, expires_at_utc, reason. Run once to see the verdicts, write "
