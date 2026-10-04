@@ -35,12 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Quarantine unauthenticated outer contract tool claims and omitted defaults to
+  an empty allowlist. Content integrity alone cannot grant effect authority.
 - Publish the interactive session banner only after SIGINT registration has
   completed. The real-signal smoke test waits for the full readiness banner,
   bounds missing readiness, and reaps its child on failure. An unavailable
   listener retains the existing fallback with a distinct unarmed banner.
 - Explicit empty contract tool allowlists now refuse every tool effect instead
   of inheriting the default read, grep, write, and edit capabilities.
+- Retain the empty and nonempty test assertions using Rust 1.99-compatible
+  comparison macros under strict Clippy warnings.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
   Missing files and unsafe owner/permissions/type/size have distinct reasons;
   status/watch include the rejected condition. FIFOs cannot block file opening.
