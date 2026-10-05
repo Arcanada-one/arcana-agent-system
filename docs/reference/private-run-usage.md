@@ -54,3 +54,16 @@ and concurrency ceilings intersect real owner limits; this library invents none.
 The private consumer owns persistence and immutable corrections. This export does
 not claim durable reservations, concurrency safety, restart reconciliation,
 complete provider billing, runtime installation or knowledge admission.
+
+## CLI HTTP boundary qualification
+
+The private adapter does not call HTTP. Its containing `usage` module also has
+the existing read-only `GET /stats/requests/daily` reporting route. The bounded
+`usage_canary_*` integration controls in `crates/cli/tests/usage_smoke.rs` run
+the real CLI against a loopback fixture: exact stats credential and date window,
+one GET without inference bearer credentials, malformed HTTP-200 refusal, and
+missing-stats-token refusal with no HTTP request. These measurements establish
+local CLI request/response behavior only. They do not authenticate the fixture as
+a production connector, prove billing, grant reservation or caps, or measure
+installed/live delivery. Canonical source qualification consumes separately
+pinned executable, source and observer evidence.
