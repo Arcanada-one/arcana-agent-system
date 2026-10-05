@@ -73,8 +73,10 @@ import impact  # noqa: E402
 import impact_pair  # noqa: E402
 import contract_diff  # noqa: E402
 import native_projection  # noqa: E402
+import full_suite_ci
+import shell_source
 
-VERSION = "1.3.0"   # global fallback preserves normal obligations and requires a measured full suite
+VERSION = "1.4.1"   # workflow shell unknown cannot discharge mandatory caller closure
 TOOL = "tools/graph/verify.py"
 MATRIX_PATH = ROOT / "contracts" / "graph-verified-change" / "verifier-matrix.v1.json"
 GATE_POLICY_PATH = ROOT / "contracts" / "graph-verified-change" / "admission-gate.v1.json"
@@ -137,7 +139,7 @@ TS_ERR_RE = re.compile(r"^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$")
 UNRESOLVED_MODULE_CODES = {"TS2307", "TS2688", "TS7016"}
 SHARED_KINDS = {"library", "shared_package"}
 MANDATORY_IDS = ["type_check", "contract_diff", "route_config_consistency", "schema_diff", "config_schema", "fitness_rules", "doc_reference",
-                 "canary"]
+                 "canary", "shell_syntax", "shell_behavior"]
 SELECTABLE_IDS = ["targeted_test", "property_check"]
 # internal rules the mutation battery disables one at a time
 RULES = ["aggregate_failed_wins", "missing_required_not_measured", "disabled_mandatory_event", "inferred_boundary_hold",
@@ -954,6 +956,21 @@ def config_dirs(dep: str, cfg: str) -> list[str]:
 
 
 # ----------------------------------------------------------------------------------------------- the runner
+def type_check_incremental_args(config: Path, cache: Path) -> list[str]:
+    """Honor explicit standalone nonincremental projects; retain isolated composite/unknown caches."""
+    try:
+        declared = build_graph.load_jsonc(config.read_text(encoding="utf-8"))
+        options = declared.get("compilerOptions", {})
+        standalone_false = (not declared.get("extends") and isinstance(options, dict)
+                            and options.get("incremental") is False
+                            and options.get("composite") is not True)
+    except (OSError, ValueError, TypeError, AttributeError):
+        standalone_false = False
+    if standalone_false:
+        return []
+    return ["--incremental", "true", "--tsBuildInfoFile", str((cache / "check.tsbuildinfo").resolve())]
+
+
 class Verify:
     def __init__(self, a, matrix: dict):
         self.a = a
@@ -1090,8 +1107,18 @@ class Verify:
             else:
                 self.profile = {"schema": "VerifyProfile/v1", "deployables": {}, "auto": True}
         with impact_pair.trace_phase("prepare-head-graph-build"):
-            self.graph_head = build_graph.build(self.top, worktree=True, built_at=build_graph.FIXED_BUILT_AT) if self.mode == "worktree" \
-                else build_graph.build(self.top, rev=self.head, built_at=build_graph.FIXED_BUILT_AT)
+            # Auto diff already built and checked this exact current head graph
+            # in impact_query. Reuse only that in-process graph, never a supplied
+            # graph, installed caller graph, verdict, or cross-invocation cache.
+            if (self.mode == "diff" and build_graph.graph_is_auto(self.a.graph)
+                    and not getattr(self.a, "caller_graph_bundle", None)):
+                manifest = self.pair_head_idx.doc["manifest"]
+                if manifest.get("source_commit") != self.head or manifest.get("dirty") is not False:
+                    raise impact.Refusal("STALE_GRAPH", "prepared head graph is not bound to the verified head")
+                self.graph_head = json.loads(json.dumps(self.pair_head_idx.doc))
+            else:
+                self.graph_head = build_graph.build(self.top, worktree=True, built_at=build_graph.FIXED_BUILT_AT) if self.mode == "worktree" \
+                    else build_graph.build(self.top, rev=self.head, built_at=build_graph.FIXED_BUILT_AT)
         self.scan_head = TreeScan(self.tree_head)
         self.head_nodes = {n["id"]: n for n in self.graph_head["nodes"]}
         self.head_rev: dict[str, list[dict]] = {}
@@ -1463,11 +1490,11 @@ class Verify:
                 self.record(vid, "type_check", f"tsc -p {gen} (tsc not found)", eids, 127, "tsc binary not found (node_modules/.bin/tsc, --tsc, PATH)",
                             started, 0.0, "not_measured: tsc unavailable", {e: ("not_measured", "tsc unavailable on this host") for e in eids})
                 continue
-            # Composite forbids --incremental false (TS6379). Keep incremental checking,
-            # but isolate its cache from the source tree and discard it even on failure.
+            # Explicit nonincremental standalone projects retain their declared mode.
+            # Composite/extended/unknown projects keep the existing isolated cache.
             with tempfile.TemporaryDirectory(prefix="type-check-", dir=self.out_dir) as cache:
-                command = [tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "true",
-                           "--tsBuildInfoFile", str((Path(cache) / "check.tsbuildinfo").resolve()), "--listFiles"]
+                command = [tsc, "-p", str(gen.resolve()), "--noEmit",
+                           *type_check_incremental_args(gen, Path(cache)), "--listFiles"]
                 rc, out, secs = run_cmd(command, root / dep)
             command_text = shlex.join(command)
             if root is not self.exec_root:
@@ -2030,6 +2057,9 @@ class Verify:
                 verdict = ("not_measured", "workflow source hash differs from selected graph node")
             else:
                 verdict = workflow_config.validate(raw)
+                unknown = self.entities[eid]["node"].get("attrs", {}).get("shell_unknown", [])
+                if unknown and verdict[0] == "verified":
+                    verdict = ("not_measured", "workflow shell caller closure not measured: " + "; ".join(unknown))
             vid = "v-workflow-config-" + hashlib.sha256(path.encode()).hexdigest()[:16]
             self.record(vid, "config_schema", "workflow_config.validate exact head bytes", [eid],
                         0 if verdict[0] == "verified" else 1, verdict[1], now_iso(), 0.0,
@@ -2452,6 +2482,35 @@ class Verify:
                 rc, out, secs = 127, "FULL_FALLBACK_TEST_NOT_MEASURED: explicit full_test declaration/runner absent or disabled", 0.0
                 verdict = "not_measured"
             else:
+                supplied = list(getattr(self.a, "full_test_ci", None) or [])
+                candidates = []
+                for path in supplied:
+                    try:
+                        raw = full_suite_ci._blob(self.top, self.head, path)
+                        if json.loads(raw).get("deployable") == dep:
+                            candidates.append(path)
+                    except (ValueError, OSError, TypeError, subprocess.SubprocessError):
+                        candidates.append(path)  # malformed supplied evidence must refuse, never replay FULL
+                if supplied:
+                    proof = (full_suite_ci.consume(self.top, self.head, self.repo.name, dep, cmd, candidates[0])
+                             if len(candidates) == 1 and self.mode == "diff" else
+                             {"verdict": "not_measured", "errors": ["one committed exact-deployable CI record required in diff mode"]})
+                    verdict = proof["verdict"]
+                    if proof.get("duration_s", 0) > timeout:
+                        verdict = "not_measured"
+                        proof.setdefault("errors", []).append("CI FULL duration exceeds the unchanged declared timeout")
+                        proof["verdict"] = verdict
+                    rc = 0 if verdict == "verified" else (1 if verdict == "failed" else 125)
+                    out = json.dumps(proof, indent=1)
+                    secs = proof.get("duration_s", 0.0)
+                    vid = "v-global-fallback-test-" + (re.sub(r"[^a-z0-9]+", "-", dep.lower()).strip("-") or "root")
+                    self.record(vid, "targeted_test", "authenticated committed CI: " + shlex.join(cmd), entities,
+                                rc, out, started, secs, "complete fallback suite CI: " + verdict,
+                                {eid: (verdict, "complete fallback suite CI: " + verdict) for eid in entities})
+                    self.verifiers[-1].update(scope="global_fallback_full_suite", timeout_seconds=timeout,
+                                             measurement_origin="authenticated_github_ci",
+                                             ci_evidence=candidates, ci_source_commit=proof.get("source_commit"))
+                    continue
                 rc, out, secs = run_cmd(cmd, self.exec_root / dep, env={"CI": "1", "PYTHONDONTWRITEBYTECODE": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"}, timeout=timeout)
                 # Exit zero alone (including an empty or wholly skipped suite) measures nothing.
                 passed = bool(re.search(r"(?:\b[1-9]\d* passed\b|\b[1-9]\d* passing\b|# pass [1-9]\d*|Ran [1-9]\d* tests?\b)", out))
@@ -2467,6 +2526,75 @@ class Verify:
                         {eid: (verdict, "complete fallback suite: " + verdict) for eid in entities})
             self.verifiers[-1]["scope"] = "global_fallback_full_suite"
             self.verifiers[-1]["timeout_seconds"] = timeout
+
+    def v_shell_syntax(self):
+        for eid in self.needing("shell_syntax"):
+            path = self.entity_file(eid)
+            raw = self.tree_head.files.get(path)
+            if "shell_syntax" in self.disabled or raw is None:
+                verdict, proof = "not_measured", {"reason": "shell source missing/removed or mandatory syntax disabled"}
+            else:
+                verdict, proof = shell_source.syntax(path, raw, self.tree_head.paths)
+                if sha_bytes(raw) != self.entities[eid]["node"].get("content_hash"):
+                    verdict = "not_measured"
+                    proof["reason"] = "shell head bytes differ from selected graph node"
+            self.record("v-shell-syntax-" + hashlib.sha256(eid.encode()).hexdigest()[:16], "config_schema",
+                        "bash --noprofile --norc -n <exact bytes; Bats declarations translated, never executed>",
+                        [eid], proof.get("exit_code", 125), json.dumps(proof), now_iso(), 0.0,
+                        "shell syntax/closure: " + verdict, {eid: (verdict, "shell syntax/closure: " + verdict)})
+            self.verifiers[-1]["scope"] = "shell_source_validation"
+
+    def v_shell_behavior(self):
+        """Consume native process fixture evidence only; never execute caller shell/Bats here."""
+        for eid in self.needing("shell_behavior"):
+            path = self.entity_file(eid)
+            unknown = self.entities[eid]["node"].get("attrs", {}).get("shell_unknown", [])
+            choices = []
+            for supplied in self.canary_paths:
+                try:
+                    rel = Path(supplied).resolve().relative_to(self.top.resolve()).as_posix()
+                    rows, errors, doc = canary_evidence.consume(supplied, self.top, self.head, at_head=rel)
+                    row = rows.get(eid)
+                    probes = [p for p in doc.get("probes", []) if p.get("id") in (row or {}).get("probe_ids", [])]
+                    if (not errors and doc.get("schema") == "CanaryResult/v2" and row
+                            and probes and all(p.get("kind") == "process" and p.get("executed")
+                                               and p.get("capture_complete") for p in probes)):
+                        checks = [c for p in probes for c in p.get("output_checks", [])]
+                        measured = any(c.get("matched") and re.search(
+                            r"\b[1-9]\d* (?:passed|passing|tests?)\b|Ran [1-9]\d* tests?|1\.\.[1-9]\d*",
+                            c.get("expected", "")) for c in checks)
+                        if measured and all(c.get("matched") for c in checks):
+                            choices.append((rel, row, probes))
+                except (ValueError, OSError, TypeError, subprocess.SubprocessError):
+                    pass  # no measurement from invalid/uncommitted documents
+            verdict, reason, evidence = "not_measured", "SHELL_BEHAVIOR_NOT_MEASURED: no exact committed native process fixture row", None
+            if unknown:
+                reason = "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: " + "; ".join(unknown)
+            elif "shell_behavior" in self.disabled:
+                reason = "mandatory shell behavior disabled"
+            elif len(choices) == 1:
+                evidence, row, probes = choices[0]
+                verdict, reason = row["verdict"], "exact source-bound native process fixture"
+                if path.endswith(".bats"):
+                    # Pinning a .bats file as an input is NOT proof its test bodies executed.
+                    # Native producer must retain the complete TAP inventory, not only an exit code.
+                    inventory = self.entities[eid]["node"].get("attrs", {}).get("shell_test_inventory", [])
+                    tap_path = (self.profile.get("shell_fixture_tap") or {}).get(eid)
+                    try:
+                        tap = full_suite_ci._blob(self.top, self.head, tap_path) if isinstance(tap_path, str) else b""
+                        streams = [p.get("streams", {}).get("stdout", {}) for p in probes]
+                        tap_verified = (len(streams) == 1 and streams[0].get("sha256") == full_suite_ci._digest(tap)
+                                        and streams[0].get("captured_bytes") == len(tap)
+                                        and not streams[0].get("truncated") and shell_source.tap_membership(tap, inventory))
+                    except (ValueError, OSError, TypeError, subprocess.SubprocessError):
+                        tap_verified = False
+                    if not tap_verified:
+                        verdict, reason = "not_measured", "BATS_EXECUTION_MEMBERSHIP_NOT_MEASURED: full non-skipped TAP inventory required"
+            self.record("v-shell-behavior-" + hashlib.sha256(eid.encode()).hexdigest()[:16], "canary",
+                        "consume source-bound native process fixture; no local execution", [eid],
+                        1 if verdict == "failed" else 0, reason, now_iso(), 0.0, reason,
+                        {eid: (verdict, reason)}, evidence_ref=evidence if evidence and verdict == "verified" else None)
+            self.verifiers[-1]["scope"] = "shell_fixture_behavior"
 
     def v_targeted_test(self):
         if "targeted_test" not in self.selected or "targeted_test" in self.disabled:
@@ -3116,6 +3244,7 @@ class Verify:
                         ("route_config_consistency", self.v_route_config), ("schema_diff", self.v_schema_diff),
                         ("config_schema", self.v_config_schema), ("fitness_rules", self.v_fitness),
                         ("doc_reference", self.v_doc_reference), ("canary", self.v_canary),
+                        ("shell_syntax", self.v_shell_syntax), ("shell_behavior", self.v_shell_behavior),
                         ("full_fallback_test", self.v_global_fallback_test), ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
             with impact_pair.trace_phase("verifier-" + mid):
                 self.run_verifier(mid, fn)
@@ -3500,6 +3629,16 @@ def selftest(a) -> int:
                                   "survived_when_disabled": survived, "other_verifiers_failed_when_disabled": others_failed})
     # per-verifier summary: every mandatory verifier is load-bearing
     for vid in MANDATORY_IDS:
+        if vid in {"shell_syntax", "shell_behavior"}:
+            # The historical ts-mini fault catalog contains no Bash/Bats nodes. Exercise
+            # these additive mandatory verifiers against actual shell/native-process
+            # fixtures instead of asserting on an empty set (or dropping the obligation).
+            result = subprocess.run([sys.executable, "-m", "unittest",
+                                     "test_shell_source.ShellVerifierCalibration.test_" + vid],
+                                    cwd=Path(__file__).parent, capture_output=True, text=True)
+            check(f"mandatory verifier {vid}: actual fault and disabled-verifier controls",
+                  result.returncode == 0, output=(result.stdout + result.stderr)[-2000:])
+            continue
         if vid == "canary":
             result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", str(Path(__file__).parent),
                                      "-p", "test_canary_evidence.py"], capture_output=True, text=True)
@@ -3880,6 +4019,8 @@ def main(argv=None) -> int:
     ap.add_argument("--canary", action="append",
                     help="CanaryResult/v1 (tools/graph/deploy_gate.py canary): live-contour evidence for inferred/observed "
                          "boundary entities and canary_required edge types (AUP-GRAPH-008)")
+    ap.add_argument("--full-test-ci", action="append", metavar="COMMITTED_PATH",
+                    help="committed GitHubFullSuiteEvidence/v1 for explicit full_test; authenticate exact run/job/log/tree, never replay on refusal")
     ap.add_argument("--freeze-baseline", help="write a FitnessBaseline/v1 of the findings at --rev and exit")
     ap.add_argument("--rev", default="HEAD")
     ap.add_argument("--owner", default="")

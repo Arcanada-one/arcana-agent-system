@@ -292,7 +292,7 @@ def classify_file(path: str, idx: GraphIndex | None) -> str:
         return "receipt"
     if ext == ".prisma" or re.search(r"(^|/)prisma/migrations/.*\.sql$", path):
         return "data_model"
-    if TEST_RE.search(path) and (ext in CODE_EXTS or ext == ".json"):
+    if ext == ".bats" or TEST_RE.search(path) and (ext in CODE_EXTS or ext in (".json", ".py", ".sh", ".bash")):
         return "test"
     if idx is not None:
         types = {idx.nodes[i]["type"] for i in idx.by_path.get(path, [])}
@@ -302,7 +302,8 @@ def classify_file(path: str, idx: GraphIndex | None) -> str:
             return "route"
     if ext in DOC_EXTS or path.startswith("docs/") or "/docs/" in path:
         return "doc"
-    if ext in CODE_EXTS:
+    if ext in CODE_EXTS or ext in (".sh", ".bash") or (idx is not None and any(
+            idx.nodes[i].get("kind") == "bash_source" for i in idx.by_path.get(path, []))):
         return "code"
     if ext in CONFIG_EXTS or base.startswith(".env") or base == "Dockerfile" or path.startswith(".github/"):
         return "config"

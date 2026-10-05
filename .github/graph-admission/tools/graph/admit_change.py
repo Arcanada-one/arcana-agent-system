@@ -21,6 +21,7 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import full_suite_ci
 import os
 import re
 import shutil
@@ -1759,27 +1760,127 @@ def key_continuity(base_bundle: Path, head_bundle: Path | None, wd: Path) -> tup
         "key_fingerprint": None}
 
 
-def _bundle_selftest(bundle_root: Path) -> tuple[int | None, int | None, str]:
-    """→ (exit code, arm count, tail). `ci_gate.py --selftest` is the battery that runs from inside a
-    vendored bundle; `admit_change.py --selftest` does NOT (its fixture set is not bundled — measured,
-    `fixture-drift`), which is recorded as non-coverage rather than silently skipped."""
+def _selftest_output(raw: bytes) -> dict:
+    """Keep the complete captured stream, including undecodable bytes, in structural evidence."""
+    out = {"text": raw.decode("utf-8", errors="replace"), "bytes": len(raw),
+           "sha256": sha256_bytes(raw)}
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        import base64
+        out["raw_base64"] = base64.b64encode(raw).decode("ascii")
+    return out
+
+
+def _bundle_selftest(bundle_root: Path, *, evidence: dict | None = None) -> tuple[int | None, int | None, str]:
+    """→ (exit code, measured arm count, tail); retain full stdout/stderr in `evidence`.
+
+    A FAIL summary measures a count, not a success. Missing, ambiguous, malformed or unfinished
+    summaries do not measure a count. `admit_change.py --selftest` is not runnable in a bundle
+    (its fixture set is not bundled); this remains explicit non-coverage.
+    """
+    report = evidence if evidence is not None else {}
+    report.update({"exit_code": None, "arms": None, "complete": False, "summary": None})
     script = bundle_root / "tools/graph/ci_gate.py"
     if not script.exists():
-        return None, None, "no tools/graph/ci_gate.py in this bundle"
-    # HOST SAFETY (retrofit4's incident, recorded in REPORT-GRAPH-RETROFIT4 §"Honest accounting"): this is
-    # the call that recursed without bound before the AUP_GATE4B_NESTED marker existed, and the harness
-    # killing the parent did NOT stop the children — they were reparented to init and kept spawning. The
-    # marker is the primary guard; this timeout is the second one, so an unguarded future battery cannot
-    # spawn for longer than a bounded time under one parent.
+        report["reason"] = "no tools/graph/ci_gate.py in this bundle"
+        return None, None, report["reason"]
+    # Preserve the existing recursion guard and time bound. No new signer, environment authority,
+    # retry, or alternate battery is introduced by retaining the output.
     try:
-        r = subprocess.run([sys.executable, str(script), "--selftest"], capture_output=True, text=True,
+        r = subprocess.run([sys.executable, str(script), "--selftest"], capture_output=True,
                            timeout=1800,
                            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "AUP_GATE4B_NESTED": "1"})
-    except subprocess.TimeoutExpired:
-        return None, None, "the bundle's ci_gate.py --selftest did not finish within 1800 s"
-    m = re.search(r"TOTAL PASS: (\d+)/(\d+)", r.stdout)
-    arms = int(m.group(2)) if m else None
-    return r.returncode, arms, ((r.stdout or "") + (r.stderr or ""))[-400:]
+        stdout, stderr = r.stdout or b"", r.stderr or b""
+        report.update({"exit_code": r.returncode, "complete": True})
+    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = exc.stdout or b"", exc.stderr or b""
+        report["reason"] = "the bundle's ci_gate.py --selftest did not finish within 1800 s"
+    except OSError as exc:
+        report["reason"] = f"the bundle's ci_gate.py --selftest could not start: {exc}"
+        stdout, stderr = b"", b""
+    report["stdout"] = _selftest_output(stdout)
+    report["stderr"] = _selftest_output(stderr)
+    text = report["stdout"]["text"]
+    # Only the single final aggregate is comparable. Per-battery totals, a duplicate aggregate,
+    # zero measured arms, truncated output and contradictory totals cannot prove monotonicity.
+    summaries = re.findall(r"^TOTAL (PASS|FAIL): (\d+)/(\d+) checks across eight batteries "
+                           r"\((\d+) not_measured\)$", text, re.M)
+    if report["complete"] and len(summaries) == 1:
+        status, passed, total, nm = summaries[0]
+        passed, total, nm = int(passed), int(total), int(nm)
+        if (total > 0 and 0 <= passed <= total
+                and ((status == "PASS" and passed == total) or (status == "FAIL" and passed < total))
+                and re.fullmatch(r"TOTAL (PASS|FAIL): (\d+)/(\d+) checks across eight batteries "
+                                 r"\((\d+) not_measured\)", text.rstrip().splitlines()[-1])):
+            report["summary"] = {"status": status, "passed": passed, "measured": total,
+                                 "not_measured": nm}
+            report["arms"] = total
+    # Legacy signed batteries may supply a genuine aggregate without names.
+    # Keep that absence explicit. If the current root supplies structured
+    # checks, contradictory/malformed/duplicate records cannot measure a count.
+    report["arm_identities"] = None
+    records = [line.removeprefix("SELFTEST_ARMS_JSON: ") for line in text.splitlines()
+               if line.startswith("SELFTEST_ARMS_JSON: ")]
+    if records:
+        try:
+            if len(records) != 1 or report["summary"] is None:
+                raise ValueError("one complete root aggregate and one arm record required")
+            doc = json.loads(records[0])
+            rows = doc["checks"]
+            if doc.get("schema") != "GraphGateSelftestArms/v1" or not isinstance(rows, list):
+                raise ValueError("unknown root arm record schema")
+            if any(not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                   or not row["name"].strip() or (row.get("ok") is not None
+                                                and type(row["ok"]) is not bool)
+                   or "ok" not in row for row in rows):
+                raise ValueError("each actual check needs a name and boolean/None outcome")
+            summary = report["summary"]
+            if (sum(row["ok"] is not None for row in rows) != summary["measured"]
+                    or sum(row["ok"] is True for row in rows) != summary["passed"]
+                    or sum(row["ok"] is None for row in rows) != summary["not_measured"]):
+                raise ValueError("root arm record contradicts actual final aggregate")
+            report["arm_identities"] = rows
+        except (ValueError, TypeError, KeyError) as exc:
+            report.update(summary=None, arms=None,
+                          reason="unmeasured root arm identities/count: " + str(exc))
+    tail = (text + report["stderr"]["text"])[-400:]
+    return report["exit_code"], report["arms"], report.get("reason", tail)
+
+
+def _self_update_selftest(ev: dict, report: dict, tail: str) -> bool:
+    rc, summary = report["exit_code"], report["summary"]
+    ok = (False if rc is not None and rc != 0 else
+          None if rc is None or summary is None else summary["status"] == "PASS")
+    return _chk(ev, "B3", "SELF_UPDATE_SELFTEST", ok,
+                (f"the head bundle's ci_gate.py --selftest passes, {report['arms']} measured arm(s), "
+                 f"{summary['not_measured']} not_measured. Self-consistency anchored only by B2; "
+                 "admit_change.py --selftest remains unbundled fixture non-coverage"
+                 if ok else
+                 f"the head bundle's ci_gate.py --selftest exits {rc}; "
+                 f"summary={summary}; complete stdout/stderr retained in selftest.head: {tail.strip()[-200:]}"))
+
+
+def _self_update_monotonic(ev: dict, ids_b: list[str] | None, ids_h: list[str] | None,
+                           arms_b: int | None, arms_h: int | None) -> bool:
+    if ids_b is None or ids_h is None:
+        return _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", None,
+                    "one of the two bundles carries no readable admission-gate.v1.json — "
+                    "monotonicity cannot be measured")
+    dropped = sorted(set(ids_b) - set(ids_h))
+    shrank = arms_b is not None and arms_h is not None and arms_h < arms_b
+    if dropped or shrank:
+        return _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", False,
+                    "; ".join(([f"the update DROPS check(s) {', '.join(dropped)}"] if dropped else []) +
+                              ([f"the battery SHRINKS from {arms_b} to {arms_h} arm(s)"] if shrank else [])))
+    if arms_b is None or arms_h is None:
+        return _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", None,
+                    f"no policy check id is dropped ({len(ids_b)} → {len(ids_h)}), but measured "
+                    f"battery counts are unavailable ({arms_b} → {arms_h}); monotonicity is not measured")
+    return _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", True,
+                f"no policy check id is dropped ({len(ids_b)} → {len(ids_h)}) and the measured battery "
+                f"does not shrink ({arms_b} → {arms_h} arm(s)); a FAIL summary counts arms but never "
+                "passes B3. This is a numeric proxy, never a comparison of semantics")
 
 
 def _bundle_policy_check_ids(bundle_root: Path) -> list[str] | None:
@@ -2210,32 +2311,22 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
         b3 = _chk(ev, "B3", "SELF_UPDATE_SELFTEST", None, f"no bundle directory at head {head[:12]}")
         b4 = _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", None, "no head bundle to compare against")
     else:
-        rc_h, arms_h, tail_h = _bundle_selftest(head_bundle)
-        ev["selftest"] = {"head": {"exit_code": rc_h, "arms": arms_h}}
-        b3 = _chk(ev, "B3", "SELF_UPDATE_SELFTEST", rc_h == 0,
-                  (f"the head bundle's ci_gate.py --selftest passes, {arms_h} arm(s). Self-consistency, made "
-                   f"meaningful only by B2 — admit_change.py --selftest is NOT runnable from a vendored bundle "
-                   f"(its fixture set is not bundled: `fixture-drift`), which is non-coverage, not a pass"
-                   if rc_h == 0 else
-                   f"the head bundle's ci_gate.py --selftest exits {rc_h}: {tail_h.strip()[-200:]}"))
+        head_test: dict = {}
+        rc_h, arms_h, tail_h = _bundle_selftest(head_bundle, evidence=head_test)
+        ev["selftest"] = {"head": head_test}
+        b3 = _self_update_selftest(ev, head_test, tail_h)
         ids_h = _bundle_policy_check_ids(head_bundle)
         ids_b = _bundle_policy_check_ids(base_bundle) if base_bundle else None
-        rc_b, arms_b, _ = _bundle_selftest(base_bundle) if base_bundle else (None, None, "")
-        ev["selftest"]["base"] = {"exit_code": rc_b, "arms": arms_b}
-        ev["policy_check_ids"] = {"base": ids_b, "head": ids_h}
-        if ids_b is None or ids_h is None:
-            b4 = _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", None,
-                      "one of the two bundles carries no readable admission-gate.v1.json — monotonicity cannot be measured")
+        base_test: dict = {}
+        if base_bundle:
+            rc_b, arms_b, _ = _bundle_selftest(base_bundle, evidence=base_test)
         else:
-            dropped = sorted(set(ids_b) - set(ids_h))
-            shrank = (arms_b is not None and arms_h is not None and arms_h < arms_b)
-            b4 = _chk(ev, "B4", "SELF_UPDATE_MONOTONIC", not dropped and not shrank,
-                      (f"the update DROPS check(s) {', '.join(dropped)}" if dropped else "") +
-                      ("; " if dropped and shrank else "") +
-                      (f"the battery SHRINKS from {arms_b} to {arms_h} arm(s)" if shrank else "") or
-                      (f"no policy check id is dropped ({len(ids_b)} → {len(ids_h)}) and the battery does not "
-                       f"shrink ({arms_b} → {arms_h} arm(s)) — a proxy for «the update does not weaken the gate», "
-                       f"never a comparison of semantics"))
+            rc_b, arms_b = None, None
+            base_test = {"exit_code": None, "arms": None, "complete": False, "summary": None,
+                         "reason": "no base bundle to measure"}
+        ev["selftest"]["base"] = base_test
+        ev["policy_check_ids"] = {"base": ids_b, "head": ids_h}
+        b4 = _self_update_monotonic(ev, ids_b, ids_h, arms_b, arms_h)
     _chk(ev, "B5", "SELF_UPDATE_PROVENANCE", None,
          f"program_ref {str((man_b or {}).get('program_ref'))[:12]} → {str((man_h or {}).get('program_ref'))[:12]}; "
          f"a caller's CI cannot read the private program repository, so this is the pointer an auditor follows, "
@@ -2608,6 +2699,38 @@ def _names(repo: Path, *args: str) -> set[str]:
     return {p for p in git(repo, *args, "-z", check=False).split("\0") if p}
 
 
+def _covered_ledger_anchor(repo: Path, base: str, head: str, path: str,
+                           bound: list[dict]) -> str:
+    """The already-covered content version of this ledger, never a union of old facts.
+
+    Clause (c) judges a TRAILING delta. When a current receipt has covered an older
+    ledger attachment as content, comparing that delta to the overall base would
+    demand that this run bind the older receipt again. Use a unique latest covered
+    ancestor; missing coverage or divergent heads retain the strict base comparison.
+    Other checks still judge the content range and the receipt's actual verdicts.
+    """
+    wanted = Path(path).stem
+    candidates = set()
+    for r in bound:
+        doc = r["_doc"]
+        cs = doc.get("change_set") or {}
+        h = _receipt_head(doc)
+        files = cs.get("files") or []
+        if (cs.get("mode") != "diff" or cs.get("base") != base or not h
+                or work_item_id(doc.get("work_item")) != wanted
+                or not any(isinstance(f, dict) and f.get("path") == path for f in files)
+                or not git_ok(repo, "merge-base", "--is-ancestor", base, h)
+                or not git_ok(repo, "merge-base", "--is-ancestor", h, head)
+                or blob_mode(repo, h, path) not in REGULAR_MODES
+                or path not in _names(repo, "diff", "--name-only", "--no-renames", base, h)):
+            continue
+        candidates.add(h)
+    latest = [h for h in candidates
+              if all(git_ok(repo, "merge-base", "--is-ancestor", other, h)
+                     for other in candidates)]
+    return latest[0] if len(latest) == 1 else base
+
+
 def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict], changed: set[str],
                             workdir: Path, ledger_rel: str | None = None) -> dict:
     """GATEORDER-0 — the commits after every bound receipt's head, and which of their paths are record paths.
@@ -2620,7 +2743,7 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
     out = {"rule": "contracts/graph-verified-change/trailing-record-commits.v1.md", "receipt_heads": heads,
            "trailing_commits": [], "admitted_paths": {"receipts": [], "derived": [], "work_item_evidence": []},
            "edited_after_receipt_head": [], "derived_verification": {"verdict": None, "why": "no declared path"},
-           "work_item_evidence_ledger": {"dir": ledger_rel, "paths": []}}
+           "work_item_evidence_ledger": {"dir": ledger_rel, "paths": [], "comparison_anchors": {}}}
     if not heads:
         return out
     trailing = [c for c in git(repo, "rev-list", head, f"^{base}", *[f"^{h}" for h in heads]).split() if c]
@@ -2670,7 +2793,9 @@ def trailing_record_commits(repo: Path, base: str, head: str, bound: list[dict],
     for p in trailing_paths:
         if p in receipt_paths or not ledger_rel or not p.startswith(ledger_rel.rstrip("/") + "/"):
             continue
-        why = ledger_record_path_refusal(repo, base, head, p, bound, ledger_rel)
+        anchor = _covered_ledger_anchor(repo, base, head, p, bound)
+        out["work_item_evidence_ledger"]["comparison_anchors"][p] = anchor
+        why = ledger_record_path_refusal(repo, anchor, head, p, bound, ledger_rel)
         (ledger_refused.update({p: why}) if why else ledger_paths.append(p))
     out["work_item_evidence_ledger"]["paths"] = sorted(ledger_paths)
 
@@ -3060,6 +3185,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                                                        rec["digest"], enforcement)
             with impact_pair.trace_phase("admission-C18-paired-coverage"):
                 coverage_problems = impact_pair.receipt_problems(repo, doc, origin_binding=origin_binding)
+                coverage_problems += full_suite_ci.receipt_errors(
+                    repo, head, impact_pair.build_graph.source_repo_name(repo), doc.get("verifiers", []))
             if origin_binding is not None and "proof" in origin_binding:
                 rec["origin_association_proof"] = origin_binding["proof"]
         except Exception as exc:

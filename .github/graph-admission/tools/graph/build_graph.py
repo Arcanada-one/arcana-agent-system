@@ -62,9 +62,10 @@ sys.path.insert(0, str(HERE))
 import workflow_config
 import nest_bootstrap
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
+import shell_source
 import native_projection  # noqa: E402
 
-VERSION = "1.0.3"  # 1.0.3: conservative scalar-only post-listen diagnostics; graph evidence must use matching pinned sources. Previous: 1.0.2: .mts/.cts code units, .d.ts/.d.mts/.d.cts kind=type_declaration, NodeNext .mjs/.cjs/.js → TS resolution
+VERSION = "1.0.5"  # Literal workflow cwd contexts and conservative unknown reverse callers.
 BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
@@ -431,6 +432,9 @@ def load_tree_git(repo: Path, rev: str, subdir: str) -> Tree:
         pos += size + 1
     meta = {"source_repo": source_repo_name(repo), "source_commit": commit, "source_tree": "git-objects", "dirty": False,
             "subdir": prefix.rstrip("/") or None, "rev": rev}
+    modes = git(["ls-tree", "-r", "-z", commit], repo)
+    meta["file_modes"] = {p[len(prefix):]: info.split()[0] for entry in modes.split("\0") if "\t" in entry
+                          for info, p in [entry.split("\t", 1)] if p.startswith(prefix)}
     return Tree(files, meta)
 
 
@@ -450,6 +454,8 @@ def load_tree_worktree(root: Path) -> Tree:
     dirty = bool(git(["status", "--porcelain", "--", "."], root).strip())
     meta = {"source_repo": source_repo_name(top), "source_commit": commit, "source_tree": "worktree", "dirty": dirty,
             "subdir": rel or None, "rev": "HEAD"}
+    meta["file_modes"] = {p: "100755" if (root / p).stat().st_mode & 0o111 else "100644"
+                          for p in files if not (root / p).is_symlink()}
     return Tree(files, meta)
 
 
@@ -610,6 +616,11 @@ class Builder:
                     self.g.edge(f"code_unit:{path}", "imports", f"code_unit:{payload}",
                                 "deterministic", via="BenchNativePatchset/v1-physical-sibling")
         for p in t.paths:
+            shell_kind = shell_source.kind(p, t.files[p], t.meta.get("file_modes", {}).get(p))
+            if shell_kind:
+                analysis = shell_source.analyse(p, t.files[p], t.paths)
+                self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p, kind=shell_kind,
+                            attrs={"shell_unknown": analysis["unknown"], "shell_test_inventory": analysis["tests"]})
             if workflow_config.is_workflow(p):
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]),
                             path=p, kind="workflow_configuration")
@@ -619,6 +630,43 @@ class Builder:
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p)
             if p.endswith(CODE_EXT):
                 self.ts[p] = TsFile(p, t.text(p))
+        # Literal source/load/call edges exist in each revision, including reverse CI callers.
+        # Dynamic references are named at the source node, never guessed into deterministic edges.
+        for p in t.paths:
+            is_shell = shell_source.kind(p, t.files[p], t.meta.get("file_modes", {}).get(p))
+            if not is_shell and not workflow_config.is_workflow(p):
+                continue
+            if workflow_config.is_workflow(p):
+                analysis = shell_source.workflow(p, t.files[p], t.paths)
+                self.g.nodes[f"code_unit:{p}"]["attrs"] = {"shell_unknown": analysis["unknown"]}
+                if analysis["unknown"]:
+                    # An unresolved cwd/dynamic command may target any Bash/Bats
+                    # file. Retain callers as inferred, never silently omit them.
+                    for target in t.paths:
+                        if shell_source.kind(target, t.files[target], t.meta.get("file_modes", {}).get(target)):
+                            self.g.edge(f"code_unit:{p}", "calls", f"code_unit:{target}",
+                                        "inferred", via="unresolved-workflow-shell-closure",
+                                        inferred_by="bounded-workflow-unknown-shell-candidate")
+            else:
+                analysis = shell_source.analyse(p, t.files[p], t.paths)
+            for ref in analysis["references"]:
+                target = ref["path"]
+                if f"code_unit:{target}" not in self.g.nodes and ref["type"] == "imports":
+                    loaded = shell_source.analyse(target, t.files[target], t.paths)
+                    self.g.node(f"code_unit:{target}", "code_unit", sha_bytes(t.files[target]), path=target,
+                                kind="bash_source", attrs={"shell_unknown": loaded["unknown"] +
+                                    ["loaded helper dialect/recursive closure requires explicit source attribution"],
+                                    "shell_test_inventory": loaded["tests"]})
+                self.g.edge(f"code_unit:{p}", ref["type"], f"code_unit:{ref['path']}", ref["provenance"],
+                            via="literal-shell-reference", symbol=str(ref["line"]),
+                            **({"inferred_by": "bounded-shell-unknown-cwd-candidate"}
+                               if ref["provenance"] == "inferred" else {}))
+            if workflow_config.is_workflow(p):
+                for line in t.text(p).splitlines():
+                    m = re.fullmatch(r"\s*(?:-\s*)?uses:\s*['\"]?(\./\.github/workflows/[^'\" #]+)['\"]?\s*(?:#.*)?", line)
+                    if m and m[1][2:] in t.files:
+                        self.g.edge(f"code_unit:{p}", "calls", f"code_unit:{m[1][2:]}",
+                                    "deterministic", via="literal-local-workflow")
         for p in t.paths:
             if p.endswith("tsconfig.json") or re.search(r"(^|/)tsconfig\.[\w.-]+\.json$", p):
                 try:
@@ -1509,6 +1557,7 @@ class Builder:
         for p in self.tree.paths:
             ext = os.path.splitext(p)[1] or "(none)"
             if not (p.endswith(CODE_EXT) or p.endswith(RUST_EXT) or p.endswith(PY_EXT)
+                    or shell_source.kind(p, self.tree.files[p], self.tree.meta.get("file_modes", {}).get(p))
                     or p.endswith((".prisma", ".md", ".markdown", ".json", ".yaml", ".yml", ".toml"))):
                 uncovered[ext] = uncovered.get(ext, 0) + 1
         limitations = sorted(set(self.limitations))
@@ -1542,7 +1591,7 @@ class Builder:
                            "work_item_pattern": self.work_item_pattern, "parser": "regex-ast-lite", "typescript_compiler": False},
             "node_count": len(nodes),
             "edge_count": len(edges),
-            "language_coverage": ["typescript", "javascript", "prisma", "markdown", "json-receipts", "rust", "python"],
+            "language_coverage": ["typescript", "javascript", "prisma", "markdown", "json-receipts", "rust", "python", "bash", "bats"],
             "limitations": limitations,
             "stats": {"files": len(self.tree.paths), "ts_files": len(self.ts), "nodes_by_type": by_node, "edges_by_type_provenance": by_edge,
                       "dropped_dangling_edges": len(self.g.dropped_dangling), "unresolved_relative_imports": self.unresolved_imports,

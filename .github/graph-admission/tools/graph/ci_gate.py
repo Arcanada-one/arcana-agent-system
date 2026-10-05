@@ -48,6 +48,8 @@ VERSION = "1.0.0"
 MODEL = "claude-opus-5"
 PROGRAM_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE_FILES = [
+    "tools/graph/full_suite_ci.py",
+    "tools/graph/shell_source.py",
     "tools/graph/admit_change.py",
     "tools/graph/schema_check.py",
     "tools/graph/build_graph.py",
@@ -68,6 +70,10 @@ BUNDLE_FILES = [
     # verification path: absent, they do not fail at import time, they fail when the gate reaches
     # the work they do, which is worse — a bundle that starts and then cannot finish.
     "tools/graph/impact_pair.py",
+    # The executable CI handoff consumes the same paired graph and mandatory
+    # matrix. Ship it in the canonical bundle rather than asking private-repo
+    # callers to copy a second producer or fetch with a new credential.
+    "tools/graph/ci_selection.py",
     "tools/graph/origin_association.py",
     "tools/graph/verify.py",
     "tools/graph/contract_diff.py",
@@ -959,6 +965,14 @@ def cmd_run(a) -> int:
 
 
 # --------------------------------------------------------------------------------------- selftest
+def _selftest_arm_record(checks: list[dict]) -> str:
+    """Lossless diagnostic identity/outcome projection of collected root checks."""
+    return "SELFTEST_ARMS_JSON: " + json.dumps({
+        "schema": "GraphGateSelftestArms/v1",
+        "checks": [{"name": c.get("name"), "ok": c.get("ok")} for c in checks],
+    }, sort_keys=True)
+
+
 def selftest() -> int:
     """The mutation battery of the CI job: every mutant must FLIP the verdict of the conformant control.
 
@@ -1176,6 +1190,11 @@ def selftest() -> int:
     red += rot_red
     checks += rot_checks
     measured = [c for c in checks if c.get("ok") is not None]
+    # Preserve the actual root check identities before the final aggregate.
+    # A historical count/tail cannot reconstruct which eight checks failed;
+    # this machine record comes from the real collected checks, never that
+    # arithmetic difference. None remains unmeasured rather than false/pass.
+    print(_selftest_arm_record(checks))
     print(f"\nTOTAL {'PASS' if not red else 'FAIL'}: {len(measured) - red}/{len(measured)} checks across "
           f"eight batteries ({len(checks) - len(measured)} not_measured)")
     return 0 if not red else 1
