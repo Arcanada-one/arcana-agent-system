@@ -16,7 +16,7 @@ use crate::agent_loop::{RunOutput, TerminalReason};
 ///
 /// Construction validates syntax only. It does not verify the request digest,
 /// source generation, receipt, ownership, rights or current authority.
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunUsageBinding {
     run_id: String,
@@ -164,6 +164,26 @@ pub struct PrivateRunUsage {
 }
 
 impl PrivateRunUsage {
+    /// Export only after all correlation fields match the expected consumer binding.
+    ///
+    /// Expected values must come from the consumer's pinned request/source context.
+    /// Equality is a local correlation check, not authentication or a cursor/lease
+    /// decision. No run counters are allocated across targets or attempts.
+    ///
+    /// # Errors
+    /// Returns [`InvalidUsageBinding`] without private values on any mismatch,
+    /// including receipt presence. Matching caller metadata remains unverified.
+    pub fn from_bound_run(
+        binding: RunUsageBinding,
+        expected: &RunUsageBinding,
+        run: &RunOutput,
+    ) -> Result<Self, InvalidUsageBinding> {
+        if &binding != expected {
+            return Err(InvalidUsageBinding);
+        }
+        Ok(Self::from_run(binding, run))
+    }
+
     /// Project actual local accounting without I/O, effects or new authority.
     ///
     /// All caller metadata remains unverified. Termination details, model text,

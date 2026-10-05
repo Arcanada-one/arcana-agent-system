@@ -208,3 +208,85 @@ fn source_revision_and_receipt_digest_require_explicit_valid_syntax_but_remain_u
     assert_eq!(doc["capabilities"]["attemptUsageExport"], false);
     assert_eq!(doc["capabilities"]["runtimeMountingState"], "NOT_MEASURED");
 }
+
+#[test]
+fn bound_observation_matches_existing_wire_without_capability_or_cost_lift() {
+    let tracker = CostTracker::new();
+    tracker.record_llm_call("model", 5, 3, 0.004);
+    let output = run(TerminalReason::ConnectorFatal, tracker.snapshot());
+    let expected = binding();
+    let actual = PrivateRunUsage::from_bound_run(binding(), &expected, &output).unwrap();
+    let ordinary = PrivateRunUsage::from_run(binding(), &output);
+    assert_eq!(
+        serde_json::to_value(&actual).unwrap(),
+        serde_json::to_value(ordinary).unwrap()
+    );
+    let doc = serde_json::to_value(&actual).unwrap();
+    assert_eq!(doc["schema"], "ArasPrivateRunUsage/v1");
+    assert_eq!(doc["bindingStatus"], "CALLER_SUPPLIED_UNVERIFIED");
+    assert_eq!(doc["localCounters"]["scope"], "RUN_CUMULATIVE");
+    assert_eq!(doc["outcome"], "OUTCOME_UNKNOWN");
+    assert_eq!(doc["billedCost"]["amount"], Value::Null);
+    assert_eq!(doc["capabilities"]["paidExecution"], "DENIED");
+    assert!(!actual.paid_execution_allowed());
+}
+
+#[test]
+fn bound_observation_refuses_each_correlation_mismatch_without_echo() {
+    let expected = binding();
+    let output = run(TerminalReason::Completed, empty());
+    for changed in 0..6 {
+        let candidate = RunUsageBinding::new(
+            if changed == 0 {
+                "other-run"
+            } else {
+                "owned-run"
+            }
+            .into(),
+            if changed == 1 {
+                "other-generation"
+            } else {
+                "source-generation"
+            }
+            .into(),
+            if changed == 2 { "d" } else { "a" }.repeat(64),
+            if changed == 3 { "e" } else { "b" }.repeat(40),
+            if changed == 4 { "f" } else { "c" }.repeat(64),
+            Some(
+                if changed == 5 {
+                    "private:other-receipt"
+                } else {
+                    "private:executor-correlation"
+                }
+                .into(),
+            ),
+        )
+        .unwrap();
+        let error = match PrivateRunUsage::from_bound_run(candidate, &expected, &output) {
+            Err(error) => error,
+            Ok(_) => panic!("cross-bound observation was exported"),
+        };
+        assert_eq!(error.to_string(), "invalid private run usage binding");
+    }
+}
+
+#[test]
+fn receipt_presence_is_bound_and_zero_local_cost_never_grants_authority() {
+    let output = run(TerminalReason::Completed, empty());
+    let without_receipt = new_binding(
+        "owned-run".into(),
+        "source-generation".into(),
+        "a".repeat(64),
+        None,
+    )
+    .unwrap();
+    assert!(PrivateRunUsage::from_bound_run(binding(), &without_receipt, &output).is_err());
+    assert!(PrivateRunUsage::from_bound_run(without_receipt, &binding(), &output).is_err());
+    let doc = PrivateRunUsage::from_bound_run(binding(), &binding(), &output).unwrap();
+    let json = serde_json::to_value(&doc).unwrap();
+    assert_eq!(json["consumedCostState"], "UNKNOWN");
+    assert_eq!(json["capabilities"]["atomicReservation"], false);
+    assert_eq!(json["capabilities"]["physicalHardCaps"], Value::Null);
+    assert_eq!(json["acceptedArtifactCount"], Value::Null);
+    assert!(!doc.paid_execution_allowed());
+}

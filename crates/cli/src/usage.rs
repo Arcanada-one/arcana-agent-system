@@ -17,7 +17,7 @@
 use std::fmt::Write as _;
 
 use arcana_core::cost::CostSnapshot;
-use arcana_core::usage_export::{PrivateRunUsage, RunUsageBinding};
+use arcana_core::usage_export::{InvalidUsageBinding, PrivateRunUsage, RunUsageBinding};
 
 /// Export existing run accounting for a private consumer without activating it.
 ///
@@ -29,6 +29,21 @@ pub fn private_run_usage(
     binding: RunUsageBinding,
 ) -> PrivateRunUsage {
     PrivateRunUsage::from_run(binding, &summary.out)
+}
+
+/// Bind the private observation to the consumer's exact expected correlation.
+///
+/// No request, cursor, allocation or authenticated authority is manufactured here.
+/// The wire v1 record and its denied/unsupported capabilities remain unchanged.
+///
+/// # Errors
+/// Returns [`InvalidUsageBinding`] on any expected run/source/request mismatch.
+pub fn bound_private_run_usage(
+    summary: &crate::run::RunSummary,
+    binding: RunUsageBinding,
+    expected: &RunUsageBinding,
+) -> Result<PrivateRunUsage, InvalidUsageBinding> {
+    PrivateRunUsage::from_bound_run(binding, expected, &summary.out)
 }
 
 /// Convert integer micros to USD for display.

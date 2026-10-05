@@ -67,3 +67,32 @@ local CLI request/response behavior only. They do not authenticate the fixture a
 a production connector, prove billing, grant reservation or caps, or measure
 installed/live delivery. Canonical source qualification consumes separately
 pinned executable, source and observer evidence.
+
+## Bound consumer observation and allocation boundary
+
+Use `PrivateRunUsage::from_bound_run(binding, &expected_binding, &run_output)`
+or `arcana_cli::usage::bound_private_run_usage(&summary, binding, &expected_binding)`
+when attaching an observation to an existing consumer plan. Every one of the six
+fields, including receipt presence, must match before export. Errors disclose no
+private field values. The successful record remains `ArasPrivateRunUsage/v1` and
+`CALLER_SUPPLIED_UNVERIFIED`: equality does not authenticate a principal, task,
+request, executor, source receipt, rights or revocation fence.
+
+The existing consumer owns the allocation policy, persisted stratum-list digest,
+`nextStratumIndex` and separate per-item completion cursor. It must pin them in
+its versioned plan/request context and retain that context when constructing the
+expected binding. A list revision requires a new explicit allocation plan; an old
+numeric index cannot be applied to a reordered list. Missing allocation policy
+means `PLAN_ONLY/NO_ALLOCATION`. This producer provides no allocation algorithm,
+cursor persistence or authenticated plan digest. It neither computes a request
+digest from a legacy plan nor resumes v1 plans as v2. Consumer policy limits the
+combined occupation/competency cohort to at most 20 targets; related competencies
+use only explicitly delegated unconsumed slots after the root cohort.
+
+Run-cumulative observations must never be divided among items or attempts, treated
+as bills, release reserved liability, or make an unknown cost free after a timeout.
+The consumer's authenticated task/principal/request/source/operation fence and
+writer profile remain with its original authority owner; reserve/settle/reconcile,
+billed identity and attempt usage remain with the genuine budget/connector owner.
+Physical enforcement remains with the existing executor/Infra owner. These are
+upstream requirements, not permissions implemented by this correlation adapter.
