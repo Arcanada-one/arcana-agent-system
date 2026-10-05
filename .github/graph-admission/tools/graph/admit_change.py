@@ -280,6 +280,20 @@ def build_graph_at(repo: Path, rev: str, out: Path) -> dict | None:
         return None
 
 
+def measured_change_receipt(repo: Path, base: str, head: str, workdir: Path) -> dict | None:
+    """Execute canonical verification; no synthetic verdicts or narrowed impact set."""
+    import verify as verify_mod
+    args = argparse.Namespace(repo=repo, diff=f"{base}..{head}", worktree=False,
+        files=None, graph="auto", max_depth=None, profile=None, baseline=None,
+        tsc=None, prisma=None, workdir=str(workdir), verifier_out=None, out=None,
+        work_item=None, host_label=None)
+    try:
+        receipt, _ = verify_mod.Verify(args, verify_mod.load_matrix()).run()
+    except (Exception, SystemExit):
+        return None
+    return receipt if receipt.get("schema") == "ChangeAdmissionReceipt/v1" else None
+
+
 def synthesize_automated_receipt(repo: Path, base: str, head: str, files: list[dict], author: dict,
                                  policy: dict, *, repo_name: str, verifier_job: str | None,
                                  verifier_conclusion: str | None, verifier_output_ref: str | None,
@@ -291,123 +305,59 @@ def synthesize_automated_receipt(repo: Path, base: str, head: str, files: list[d
     graph = build_graph_at(repo, base, gp)
     if graph is None:
         return None, f"the graph could not be built at {base[:12]} — nothing to compute an impact set from"
-    man = graph["manifest"]
-
-    cs_files, fallback_files = [], []
+    fallback_files = []
     for f in files:
         kind = impact_mod.classify_file(f["path"], None)
-        cs_files.append({"path": f["path"], "status": f["status"], "kind": kind, "node_id": None})
         if kind in impact_mod.FALLBACK_KINDS:
             fallback_files.append(f["path"])
     if not fallback_files:
         return None, ("no changed path classifies as a lockfile or a global config, so the whole-repository "
                       "fallback does not apply and this path has no impact set to stand on")
 
-    total_nodes = len(graph.get("nodes") or [])
-    captured = datetime.now(timezone.utc)
-    ttl = int(author.get("exemption_ttl_days") or 30)
-    expires = (captured + timedelta(days=ttl)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    repo_entity = f"repository:{repo_name}"
-    authorship_entity = f"receipt_authorship:{repo_name}@{head[:12]}"
+    # Author identity cannot replace any source measurement. Use the same paired
+    # producer as agent changes: global fallback adds a full-suite obligation and
+    # preserves ordinary base/head verifier obligations.
+    receipt = measured_change_receipt(repo, base, head, workdir / "canonical-verification")
+    if receipt is None:
+        return None, "canonical source verification did not produce a measured receipt"
 
-    concl = (verifier_conclusion or "").strip().lower()
-    repo_verdict = CONCLUSION_TO_VERDICT.get(concl, "not_measured")
-    exit_code = 0 if repo_verdict == "verified" else (1 if repo_verdict == "failed" else None)
-    verifier = {
-        "id": "repo-own-test-job",
-        "kind": "other",
-        "command": (f"GitHub Actions job {verifier_job!r} on {head[:12]} — the repository's OWN suite"
-                    if verifier_job else "the repository's own test job — NOT NAMED by the caller"),
-        "entities": [repo_entity],
-        "exit_code": exit_code if exit_code is not None else 125,
-        "output_ref": verifier_output_ref or f"github-actions:{repo_name}@{head[:12]}:{verifier_job or 'unnamed'}",
-        "conclusion": concl or None,
-        "note": ("verifier-matrix.v1.json defines `targeted_test` as tests covering the affected node, «never the "
-                 "whole suite» — this is the whole suite, so it is recorded as kind `other`, which is what it is. "
-                 "It is the verifier DEC-AUP-0008 prescribes for a global fallback (the Bazel/Nx rule): the "
-                 "blast radius is the repository, so the repository's own suite is what must be green."),
-    }
-    verdicts = [
-        {"entity": repo_entity, "verdict": repo_verdict,
-         **({"verifier_ids": ["repo-own-test-job"]} if repo_verdict == "verified" else {}),
-         "reason": (f"the repository's own test job {verifier_job!r} concluded {concl!r}"
-                    if concl else
-                    "the caller named no required verifier job, or its conclusion was not reported to the gate — "
-                    "an unreported job is not a green one (DEC-AUP-0008 I4)")},
-        {"entity": authorship_entity, "verdict": "not_measured",
-         "reason": ("no agent-authored ChangeAdmissionReceipt/v1 exists for this change: it was opened by a "
-                    f"registered automated author ({author.get('login')}), which cannot run the graph tooling. "
-                    "This entity is the MISSING AUTHOR, not a missing measurement of the code.")},
-    ]
-    exemptions = [{
-        "entity": authorship_entity,
+    captured = datetime.now(timezone.utc)
+    authorship_entity = f"receipt_authorship:{repo_name}@{head[:12]}"
+    receipt["authored_by"] = {"path": "automated_author", **event_evidence}
+    receipt["verdicts"].append({"entity": authorship_entity, "verdict": "not_measured",
+        "reason": "registered automated author; canonical source verification is measured separately"})
+    receipt["exemptions"].append({"entity": authorship_entity,
         "code": author.get("exemption_code") or "AUTOMATED_DEPENDENCY_UPDATE",
-        "owner": (policy.get("automated_authors") or {}).get("authors", [{}])[0].get("exemption_owner")
-                 or author.get("exemption_owner") or "",
-        "expires_at_utc": expires,
-        "reason": ((policy.get("automated_authors") or {}).get("what_the_exemption_is_about") or "")
-                  or "the receipt author is typed; verification is not exempted",
-        "scope": ("receipt AUTHORSHIP only. It does not carry, and must never be extended to carry, "
-                  f"{repo_entity} — if the repository's own test job is not green that entity is failed or "
-                  "not_measured on its own and the change is refused or paused."),
-        "evidence": event_evidence,
-    }]
-    adm = "admitted_with_exemptions" if repo_verdict == "verified" else (
-        "refused" if repo_verdict == "failed" else "paused_safe")
-    receipt = {
-        "schema": "ChangeAdmissionReceipt/v1",
-        "receipt_id": f"car-automated-{head[:12]}-{captured.strftime('%Y%m%dT%H%M%SZ')}",
-        "captured_at_utc": captured.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "producer": {"tool": TOOL, "version": VERSION, "path": "automated_author"},
-        "model": MODEL,
-        "provisional_until_fable_review": True,
-        "decision_ref": "DEC-AUP-0008",
-        "portion_id": "AUP-GRAPH-006:gate2a",
-        "work_item": None,
-        "authored_by": {
-            "path": "automated_author",
-            "rule": (policy.get("automated_authors") or {}).get("identity_rule", ""),
-            **event_evidence,
-        },
-        "repo": {"name": repo_name, "path": str(repo)},
-        "graph": {"source_commit": base, "graph_digest": man["graph_digest"],
-                  "builder_version": man.get("builder_version") or man.get("version") or "unknown",
-                  "built_at_utc": man.get("built_at_utc") or captured.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                  "nodes": total_nodes, "edges": len(graph.get("edges") or [])},
-        "tree": {"commit": head, "dirty": False},
-        "staleness": {"method": "the graph is built here, from git objects, at change_set.base",
-                      "verdict": "fresh", "mismatched_nodes": []},
-        "change_set": {"mode": "diff", "base": base, "head": head, "files": cs_files},
-        "impact_set": {
-            "method": ("global fallback: a lockfile / global-config change makes every node of the graph affected "
-                       "(DEC-AUP-0008, the Bazel/Nx rule). The entities are NOT enumerated here: the verifier for "
-                       "this impact is the repository's own test job, which makes one statement about the whole "
-                       "repository, not one statement per node — enumerating would dress a single measurement up "
-                       f"as {total_nodes} of them."),
-            "scope": "whole_repository",
-            "enumerated": False,
-            "deterministic_core": [],
-            "inferred_tail": [],
-            "global_fallback": {"triggered": True, "files": fallback_files, "scope": "whole_repository",
-                                "total_nodes": total_nodes,
-                                "reason": (f"{', '.join(fallback_files)} changed ⇒ every node affected "
-                                           f"(lockfile / global config: safe fallback, Bazel/Nx practice); "
-                                           f"{total_nodes} nodes in the graph at {base[:12]}")},
-            "total": total_nodes,
-        },
-        "verifiers": [verifier],
-        "verdicts": verdicts,
-        "exemptions": exemptions,
-        "admission": {
-            "verdict": adm,
-            "rule": ("admitted_with_exemptions requires every non-verified entity to carry a valid exemption "
-                     "(owner + expiry). Here exactly one entity is exempted — the missing agent-authored receipt. "
-                     "The repository entity is never exempted: it is verified by the repository's own test job, "
-                     "or it is failed / not_measured and this receipt refuses or pauses the change itself."),
-        },
-    }
-    return receipt, (f"authored for {author.get('login')}: {len(cs_files)} allowlisted path(s), "
-                     f"global fallback over {total_nodes} nodes, repository entity {repo_verdict}")
+        "owner": author.get("exemption_owner") or "",
+        "expires_at_utc": (captured + timedelta(days=int(author.get("exemption_ttl_days") or 30))).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "reason": "typed receipt authorship only; no source or verifier obligation is exempted",
+        "scope": "receipt AUTHORSHIP only", "evidence": event_evidence})
+
+    # The required CI job remains an additional gate. A successful arbitrary job
+    # does not become the declared full suite, nor does it verify source entities.
+    conclusion = (verifier_conclusion or "").strip().lower()
+    job_verdict = CONCLUSION_TO_VERDICT.get(conclusion, "not_measured")
+    units = sorted(impact_pair.fallback_units(receipt))
+    if not verifier_job:
+        job_verdict = "not_measured"
+    receipt["verifiers"].append({"id": "repo-own-test-job", "kind": "other",
+        "command": f"GitHub Actions job {verifier_job!r} on {head[:12]}",
+        "entities": units, "exit_code": 0 if job_verdict == "verified" else 1 if job_verdict == "failed" else 125,
+        "output_ref": verifier_output_ref or f"github-actions:{repo_name}@{head[:12]}:{verifier_job or 'unnamed'}",
+        "entity_verdicts": {e: job_verdict for e in units}})
+    for row in receipt["verdicts"]:
+        if row["entity"] in units:
+            row.setdefault("verifier_ids", []).append("repo-own-test-job")
+    if job_verdict != "verified":
+        for row in receipt["verdicts"]:
+            if row["entity"] in units and row["verdict"] != "failed":
+                row["verdict"] = job_verdict
+                row["reason"] = "required repository CI job is " + job_verdict
+    ordinary = [v["verdict"] for v in receipt["verdicts"] if v["entity"] != authorship_entity]
+    receipt["admission"] = {"verdict": "refused" if "failed" in ordinary else
+        "paused_safe" if not ordinary or "not_measured" in ordinary else "admitted_with_exemptions",
+        "rule": "canonical source obligations and required CI job must be measured; authorship alone is typed"}
+    return receipt, f"authored for {author.get('login')}: canonical source verification + required CI job"
 
 
 # ------------------------------------------------------------------ AUP-GRAPH-006:gate4b
@@ -2584,7 +2534,7 @@ def recheck_structural(repo: Path, base: str, head: str, files: list[dict], poli
                              declaration_rel=declaration_rel, verifier_job=verifier_job,
                              verifier_conclusion=verifier_conclusion,
                              candidate_range=b7meta.get("candidate_range"), authority_id=b7meta.get("authority_id"),
-                             second_opinion=b7meta.get("second_opinion"))
+                             second_opinion=b7meta.get("second_opinion"), base_branch=base_branch)
     # The binding evidence was computed above and then overwritten by the battery's own dictionary, so no
     # receipt ever carried it. It is the one place a reader can see WHICH range the exemption bound.
     ev["binding"] = binding_ev
@@ -2919,6 +2869,17 @@ def probe_effective_verdicts(doc: dict, verdict_of: dict[str, str]) -> tuple[dic
     return {e: v for e, v in downgrades.items() if verdict_of.get(e) == "verified"}, problems
 
 
+def origin_binding_at_base(repo: Path, base: str, bundle_rel: str, path: Path,
+                           receipt_digest: str, enforcement: str) -> dict:
+    if enforcement != "muneral":
+        raise ValueError("origin association requires authentic Muneral evidence enforcement")
+    key = git_text_or_none(repo, "show", base + ":" + bundle_rel.rstrip("/") + "/" + BUNDLE_PUBKEY_NAME)
+    if not key or key.split()[:2] != impact_pair._canonical_bundle_key().split()[:2]:
+        raise ValueError("origin association signing key is not the canonical key already trusted at BASE")
+    return {"raw": path.read_bytes(), "signature": Path(str(path) + ".sig").read_text(),
+            "trusted_base_key": key, "receipt_digest": receipt_digest}
+
+
 def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: dict, *,
          description: str = "", bypass_flag: bool = False, disabled: frozenset[str] = frozenset(),
          work_item_enforcement: str | None = None, ledger_dir: Path = LEDGER_DIR,
@@ -2928,7 +2889,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
          automated_workdir: Path | None = None,
          bundle_rel: str = DEFAULT_BUNDLE_DIR,
          structural_workdir: Path | None = None,
-         base_branch: str | None = None) -> dict:
+         base_branch: str | None = None,
+         origin_association_path: Path | None = None) -> dict:
     checks: list[dict] = []
     # A2-238. The policy's own words: `off` means "the attachment is not required (never used in a
     # PROGRAM-OWNED repository)", and `.github/workflows/graph-admission.yml` therefore defaults its
@@ -3092,7 +3054,14 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
 
         # Revision selections are remeasured from Git, not trusted from receipt node_ids.
         try:
-            coverage_problems = impact_pair.receipt_problems(repo, doc)
+            origin_binding = None
+            if origin_association_path is not None:
+                origin_binding = origin_binding_at_base(repo, base, bundle_rel, origin_association_path,
+                                                       rec["digest"], enforcement)
+            with impact_pair.trace_phase("admission-C18-paired-coverage"):
+                coverage_problems = impact_pair.receipt_problems(repo, doc, origin_binding=origin_binding)
+            if origin_binding is not None and "proof" in origin_binding:
+                rec["origin_association_proof"] = origin_binding["proof"]
         except Exception as exc:
             # The class name alone ("Refusal") hides the whole diagnosis: the reason a coverage
             # measurement refused (STALE_GRAPH, a dirty tree, a missing graph) is carried in the
@@ -4561,7 +4530,8 @@ def cmd_gate(a) -> int:
                automated_workdir=Path(a.workdir) if a.workdir else None,
                bundle_rel=getattr(a, "bundle_dir", None) or DEFAULT_BUNDLE_DIR,
                structural_workdir=(Path(a.workdir) / "gate4b") if a.workdir else None,
-               base_branch=getattr(a, "base_branch", None))
+               base_branch=getattr(a, "base_branch", None),
+               origin_association_path=Path(a.origin_association) if getattr(a, "origin_association", None) else None)
     if a.out:
         write_json(Path(a.out), doc)
     if a.json:
@@ -5131,6 +5101,7 @@ def main(argv=None) -> int:
     g.add_argument("--skip-receipt", action="store_true", help="bypass attempt — always refused (negative control)")
     g.add_argument("--enforcement", choices=["off", "ledger", "muneral"])
     g.add_argument("--ledger-dir")
+    g.add_argument("--origin-association", help="signed GraphOriginAssociation/v1 plus adjacent .sig; requires BASE-trusted canonical key, exact raw receipt and full graph equality, and Muneral enforcement")
     g.add_argument("--policy", type=Path)
     g.add_argument("--out")
     g.add_argument("--json", action="store_true")
@@ -5143,6 +5114,7 @@ def main(argv=None) -> int:
                                                  "anything else, or absent, is not_measured — never an assumed pass")
     g.add_argument("--verifier-output-ref", help="a URL or id the verdict can be traced to (the workflow run)")
     g.add_argument("--workdir", help="scratch directory for the graph build and an authored receipt")
+    g.add_argument("--phase-log", type=Path, help="new private JSONL phase log; diagnostics only, never receipt evidence")
     g.add_argument("--bundle-dir", default=DEFAULT_BUNDLE_DIR, help="the vendored gate bundle directory, for the gate4b self-update classification")
     g.add_argument("--base-branch", help="DEC-AUP-0051: the ref of the branch this change targets (origin/main). A bundle refresh whose branch was UPDATED from its base branch carries the base "
                                          "branch's own commits in its range; paths whose head blob is byte-identical to that branch's are not this change's paths. Default: refs/remotes/origin/HEAD, "
@@ -5277,7 +5249,9 @@ def main(argv=None) -> int:
         ap.print_help()
         return 2
     try:
-        return a.fn(a)
+        with impact_pair.phase_trace_to(getattr(a, "phase_log", None)):
+            with impact_pair.trace_phase("admission-command"):
+                return a.fn(a)
     except UsageError as e:
         (getattr(a, "parser", None) or ap).error(str(e))   # usage + message on stderr, exit 2
 

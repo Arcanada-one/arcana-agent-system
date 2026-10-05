@@ -62,12 +62,33 @@ sys.path.insert(0, str(HERE))
 import workflow_config
 import nest_bootstrap
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
+import native_projection  # noqa: E402
 
-VERSION = "1.0.1"
+VERSION = "1.0.3"  # 1.0.3: conservative scalar-only post-listen diagnostics; graph evidence must use matching pinned sources. Previous: 1.0.2: .mts/.cts code units, .d.ts/.d.mts/.d.cts kind=type_declaration, NodeNext .mjs/.cjs/.js → TS resolution
 BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
-CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+# `.mts` / `.cts` are TypeScript's ESM / CommonJS module flavours. impact.py and verify.py have always
+# counted them as code (their CODE_EXTS), so a producer that did not left every such file — and every
+# `.d.mts` / `.d.cts` declaration — without a node, and a change to one was refused as UNKNOWN_NODE
+# (control-arcana #122, `scripts/check-bundle-budget.d.mts`). The two extension sets must agree.
+CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
+# The code extensions module resolution accepted before 1.0.2; the first resolution pass uses exactly these.
+LEGACY_RESOLVE_CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+# Declaration files carry types only, no runtime code: still a code_unit (the compiler checks them and
+# importers' types depend on them), marked `kind=type_declaration`. Whether a TypeScript project
+# actually type-checks one is NOT decided here and not by extension: as for every other code unit it is
+# the consumer's measurement (verify.py: the attributed tsconfig, then the compiler's --listFiles).
+DECL_EXT = (".d.ts", ".d.mts", ".d.cts")
+# TypeScript NodeNext: an import written with the RUNTIME extension resolves to the source / declaration
+# of the same flavour (`./a.mjs` → a.mts, a.d.mts; `./a.cjs` → a.cts, a.d.cts; `./a.js` → a.d.ts).
+# These candidates, and `.mts` / `.cts` targets at all, belong to a SECOND resolution pass that runs only
+# when the whole pre-1.0.2 resolution (relative, dist→src fallback, every tsconfig `paths` target,
+# workspace packages) found nothing — so no resolution that existed before 1.0.2 can move (Builder.resolve).
+# Consequence, kept on purpose and consistent with the older `.js`/`.ts` rule: with a.mjs, a.mts and a.d.mts
+# all present, `./a.mjs` resolves to the literal a.mjs (plus an edge to its declaration sibling a.d.mts),
+# not to a.mts as the TypeScript compiler would.
+TS_SPEC_EXT = {".js": (".ts", ".tsx", ".d.ts"), ".mjs": (".mts", ".d.mts"), ".cjs": (".cts", ".d.cts")}
 RUST_EXT = (".rs",)
 PY_EXT = (".py",)
 ADAPTER_CLASS_RE = re.compile(r"\bclass\s+\w+\s+extends\s+(\w*Adapter)\b")
@@ -554,6 +575,7 @@ class Builder:
         self.work_item_re = re.compile(work_item_pattern)
         self.work_item_pattern = work_item_pattern
         self.ts: dict[str, TsFile] = {}
+        self._nodenext = False                    # resolution pass 2 in progress (Builder.resolve)
         self.tsconfigs: dict[str, dict] = {}      # dir → {"paths": {...}, "baseUrl": dir}
         self.packages: dict[str, str] = {}        # package name → dir
         self.package_dirs: list[str] = []
@@ -580,11 +602,20 @@ class Builder:
     # ---- always: file nodes, tsconfig/package maps ----------------------------------------------------------
     def base(self):
         t = self.tree
+        for path, kind in native_projection.graph_inputs(t):
+            self.g.node(f"code_unit:{path}", "code_unit", sha_bytes(t.files[path]), path=path, kind=kind)
+            if kind == "native_patch_manifest":
+                payload = str(Path(path).parent / Path(native_projection.INPUTS[2]).name)
+                if payload in t.files:
+                    self.g.edge(f"code_unit:{path}", "imports", f"code_unit:{payload}",
+                                "deterministic", via="BenchNativePatchset/v1-physical-sibling")
         for p in t.paths:
             if workflow_config.is_workflow(p):
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]),
                             path=p, kind="workflow_configuration")
-            if p.endswith(CODE_EXT) or p.endswith(".prisma") or p.endswith(RUST_EXT) or p.endswith(PY_EXT):
+            if p.endswith(DECL_EXT):
+                self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p, kind="type_declaration")
+            elif p.endswith(CODE_EXT) or p.endswith(".prisma") or p.endswith(RUST_EXT) or p.endswith(PY_EXT):
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p)
             if p.endswith(CODE_EXT):
                 self.ts[p] = TsFile(p, t.text(p))
@@ -648,13 +679,25 @@ class Builder:
     def _try_file(self, base: str) -> str | None:
         base = norm_path(base)
         cands = [base] + [base + e for e in RESOLVE_EXT] + [base + "/index" + e for e in (".ts", ".tsx", ".js", ".jsx")]
-        if re.search(r"\.[cm]?js$", base):
-            stem = re.sub(r"\.[cm]?js$", "", base)
+        m = re.search(r"\.[cm]?js$", base)
+        if m:
+            stem = base[:m.start()]
             cands += [stem + ".ts", stem + ".tsx"]
+            if self._nodenext:
+                cands += [stem + e for e in TS_SPEC_EXT[m.group(0)] if stem + e not in cands]
+        accept = CODE_EXT if self._nodenext else LEGACY_RESOLVE_CODE_EXT
         for c in cands:
-            if self.tree.exists(c) and (c.endswith(CODE_EXT) or c.endswith((".json", ".d.ts", ".prisma"))):
+            if self.tree.exists(c) and (c.endswith(accept) or c.endswith((".json", ".d.ts", ".prisma"))):
                 return c
         return None
+
+    def _declaration_sibling(self, path: str) -> str | None:
+        """The declaration file TypeScript reads for a JavaScript module of the same flavour, if present."""
+        m = re.search(r"\.([cm]?)js$", path)
+        if not m:
+            return None
+        d = path[:m.start()] + ".d." + m.group(1) + "ts"
+        return d if self.tree.exists(d) else None
 
     def _try_file_dist_fallback(self, base: str) -> tuple[str | None, str | None]:
         r = self._try_file(base)
@@ -677,7 +720,21 @@ class Builder:
             d = os.path.dirname(d)
 
     def resolve(self, frm: str, spec: str) -> tuple[str | None, str | None]:
-        """→ (repo path or None, via)."""
+        """→ (repo path or None, via). Pass 1 is the pre-1.0.2 resolution, unchanged; pass 2 (NodeNext
+        `.mts`/`.cts`/declaration targets, see TS_SPEC_EXT) runs only when pass 1 resolved nothing."""
+        self._nodenext = False
+        r, via = self._resolve_pass(frm, spec)
+        if r is None:
+            self._nodenext = True
+            try:
+                r, via = self._resolve_pass(frm, spec)
+            finally:
+                self._nodenext = False
+            if r is not None:
+                via = f"{via}(nodenext)"
+        return r, via
+
+    def _resolve_pass(self, frm: str, spec: str) -> tuple[str | None, str | None]:
         if spec.startswith("."):
             r, via = self._try_file_dist_fallback(os.path.join(os.path.dirname(frm), spec))
             return r, ("relative" if r and not via else via)
@@ -770,6 +827,15 @@ class Builder:
                 r = f.resolved.get(imp["spec"])
                 if r and f"code_unit:{r}" in self.g.nodes and r != f.path:
                     self.g.edge(f"code_unit:{f.path}", "imports", f"code_unit:{r}", "deterministic", via=imp.get("via"))
+                    # A TypeScript importer of a JavaScript module is type-checked against that module's
+                    # declaration sibling (a.mjs → a.d.mts, a.cjs → a.d.cts, a.js → a.d.ts), so a change
+                    # to the declaration reaches the importer too. Added, never substituted: the runtime
+                    # edge stays. A JavaScript importer is not type-checked against it and gets no such edge.
+                    # This is also the whole story for `./a.mjs` when a.mjs, a.mts and a.d.mts all exist:
+                    # the literal a.mjs + the a.d.mts sibling, not a.mts (see TS_SPEC_EXT).
+                    d = self._declaration_sibling(r) if f.path.endswith((".ts", ".tsx", ".mts", ".cts")) else None
+                    if d and d != f.path and f"code_unit:{d}" in self.g.nodes:
+                        self.g.edge(f"code_unit:{f.path}", "imports", f"code_unit:{d}", "deterministic", via="declaration-sibling")
 
     def x_contracts(self):
         t = self.tree

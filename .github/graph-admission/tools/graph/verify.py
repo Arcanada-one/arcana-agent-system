@@ -32,7 +32,7 @@ Semantics (the graph SELECTS verification, it never replaces it — consilium 20
   admission   admitted only when every verdict is verified; a failed verdict ⇒ refused; not_measured ⇒ paused_safe;
               exemptions are attached by the admitting agent (GRAPH-006), never invented here — the output is a DRAFT
   head tree   worktree mode runs the tool-chain verifiers in the repository itself (nothing is emitted: --noEmit,
-              --incremental false); diff mode with head ≠ HEAD exports the head tree with `git archive` into --workdir,
+              scratch buildinfo removed after each check); diff mode with head ≠ HEAD exports the head tree with `git archive` into --workdir,
               links the repository's node_modules into it and builds workspace packages there — the repository is
               never written (the pilot clone stays untouched)
 Exit codes: 0 draft admitted · 1 draft paused_safe / refused · 2 refusal (impact refusal, STALE_GRAPH, …) · 3 draft
@@ -53,9 +53,12 @@ import json
 import os
 import re
 import shutil
+import shlex
+import signal
 import subprocess
 import sys
 import time
+import tempfile
 from types import SimpleNamespace
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -69,8 +72,9 @@ import build_graph  # noqa: E402
 import impact  # noqa: E402
 import impact_pair  # noqa: E402
 import contract_diff  # noqa: E402
+import native_projection  # noqa: E402
 
-VERSION = "1.2.0"   # 1.1.0 (A2-413): every receipt carries `verifier_selection`; 1.2.0 (A2-418): property_check only where declared
+VERSION = "1.3.0"   # global fallback preserves normal obligations and requires a measured full suite
 TOOL = "tools/graph/verify.py"
 MATRIX_PATH = ROOT / "contracts" / "graph-verified-change" / "verifier-matrix.v1.json"
 GATE_POLICY_PATH = ROOT / "contracts" / "graph-verified-change" / "admission-gate.v1.json"
@@ -168,11 +172,23 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict | None = None, timeout: int = 9
     if env:
         e.update(env)
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, text=True, timeout=timeout)
-        out = p.stdout + (("\n[stderr]\n" + p.stderr) if p.stderr.strip() else "")
+        p = subprocess.Popen(cmd, cwd=cwd, env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, start_new_session=True)
+        try:
+            stdout, stderr = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as ex:
+            # This process owns a fresh session/group. Kill its whole job, including
+            # grandchildren that keep pipes open, then drain output and reap the leader.
+            # Never signal the caller's (possibly shared server/worker) process group.
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = p.communicate()
+            out = stdout + (("\n[stderr]\n" + stderr) if stderr.strip() else "")
+            return 124, f"TIMEOUT after {timeout}s: {ex}\n{out}", round(time.monotonic() - t0, 2)
+        out = stdout + (("\n[stderr]\n" + stderr) if stderr.strip() else "")
         return p.returncode, out, round(time.monotonic() - t0, 2)
-    except subprocess.TimeoutExpired as ex:
-        return 124, f"TIMEOUT after {timeout}s: {ex}", round(time.monotonic() - t0, 2)
     except FileNotFoundError as ex:
         return 127, f"NOT FOUND: {ex}", round(time.monotonic() - t0, 2)
 
@@ -901,13 +917,23 @@ def load_profile(a, repo_top: Path) -> tuple[dict, str]:
 
 
 def find_bin(name: str, explicit: str | None, exec_root: Path, repo_top: Path, deployable_dirs: list[str]) -> str | None:
+    # A project compiler is part of its locked dependency graph. --tsc is only
+    # a fallback; preserve explicit-first behavior for every other tool.
+    if explicit and name != "tsc":
+        return explicit if Path(explicit).is_file() else None
+    # Compare project depth across both trees before falling back to ancestors;
+    # an export may link root dependencies without linking a deeper project.
+    if name == "tsc":
+        candidates = ((base, d) for d in dict.fromkeys(deployable_dirs + [""])
+                      for base in (exec_root, repo_top))
+    else:
+        candidates = ((base, d) for base in (exec_root, repo_top) for d in [""] + deployable_dirs)
+    for base, d in candidates:
+        p = base / d / "node_modules" / ".bin" / name
+        if p.is_file():
+            return str(p)
     if explicit:
         return explicit if Path(explicit).is_file() else None
-    for base in (exec_root, repo_top):
-        for d in [""] + deployable_dirs:
-            p = base / d / "node_modules" / ".bin" / name
-            if p.is_file():
-                return str(p)
     return shutil.which(name)
 
 
@@ -991,24 +1017,45 @@ class Verify:
         else:
             files = self.repo.worktree_files()
         self.mode, self.base, self.head = mode, base, head
-        if not build_graph.graph_is_auto(a.graph):   # one definition of the word, shared with contract_diff
+        compatibility = getattr(a, "caller_graph_bundle", None)
+        if compatibility:
+            if mode != "diff" or not build_graph.graph_is_auto(a.graph):
+                raise impact.Refusal("CALLER_GRAPH_MODE", "caller compatibility requires --diff and --graph auto")
+            self.idx, self.pair_head_idx, self.caller_graph_compatibility = impact_pair.caller_graph_pair(
+                self.repo, base, head, compatibility)
+            gp = self.out_dir / f"graph-{base[:12]}.json"
+            gp.write_bytes(build_graph.dump_graph(self.idx.doc))
+            self.graph_path = rel_ref(gp)
+        elif not build_graph.graph_is_auto(a.graph):   # one definition of the word, shared with contract_diff
             self.graph_path = str(a.graph)
             self.idx = impact.load_graph(Path(a.graph), set(impact.RULES))
         else:
             rev = base if mode == "diff" else tree_commit
-            doc = build_graph.build(self.top, rev=rev, built_at=build_graph.FIXED_BUILT_AT)
+            with impact_pair.trace_phase("base-graph-build"):
+                doc = build_graph.build(self.top, rev=rev, built_at=build_graph.FIXED_BUILT_AT)
             gp = self.out_dir / f"graph-{rev[:12]}.json"
             gp.write_bytes(build_graph.dump_graph(doc))
             self.graph_path = rel_ref(gp)
-            self.idx = impact.load_graph(gp, set(impact.RULES))
+            with impact_pair.trace_phase("base-graph-schema-and-index"):
+                self.idx = impact.load_graph(gp, set(impact.RULES))
         if mode == "diff":
-            self.pair_head_idx = impact_pair.index_at(self.repo, head)
+            if not compatibility:
+                self.pair_head_idx = impact_pair.index_at(self.repo, head)
             hp = self.out_dir / f"graph-head-{head[:12]}.json"
             hp.write_bytes(build_graph.dump_graph(self.pair_head_idx.doc))
-            return impact_pair.query(self.idx, self.pair_head_idx, files, repo=self.repo, base=base, head=head,
+            q = impact_pair.query(self.idx, self.pair_head_idx, files, repo=self.repo, base=base, head=head,
                                      tree_commit=tree_commit, tree_dirty=tree_dirty, graph_path=self.graph_path,
                                      head_graph_path=rel_ref(hp),
                                      max_depth=None if a.max_depth is not None and a.max_depth < 0 else (a.max_depth if a.max_depth is not None else impact.DEFAULT_MAX_DEPTH))
+            if getattr(a, "empty_impact_explanation", None):
+                try:
+                    claim = json.loads(Path(a.empty_impact_explanation).read_text())
+                except (OSError, ValueError):
+                    raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INVALID", "explanation input cannot be read") from None
+                q["empty_impact_explanation"] = impact_pair.bind_empty_explanation(q, claim)
+            return q
+        if getattr(a, "empty_impact_explanation", None):
+            raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INAPPLICABLE", "explanation requires a committed paired diff")
         q = impact.query(self.idx, files, mode=mode, base=base, head=head, tree_commit=tree_commit, tree_dirty=tree_dirty,
                          repo=self.repo, max_depth=None if a.max_depth is not None and a.max_depth < 0 else (a.max_depth if a.max_depth is not None else impact.DEFAULT_MAX_DEPTH),
                          rules=set(impact.RULES), graph_path=self.graph_path)
@@ -1042,8 +1089,9 @@ class Verify:
                 self.profile_ref = '.arcana/verify.json at verified head'
             else:
                 self.profile = {"schema": "VerifyProfile/v1", "deployables": {}, "auto": True}
-        self.graph_head = build_graph.build(self.top, worktree=True, built_at=build_graph.FIXED_BUILT_AT) if self.mode == "worktree" \
-            else build_graph.build(self.top, rev=self.head, built_at=build_graph.FIXED_BUILT_AT)
+        with impact_pair.trace_phase("prepare-head-graph-build"):
+            self.graph_head = build_graph.build(self.top, worktree=True, built_at=build_graph.FIXED_BUILT_AT) if self.mode == "worktree" \
+                else build_graph.build(self.top, rev=self.head, built_at=build_graph.FIXED_BUILT_AT)
         self.scan_head = TreeScan(self.tree_head)
         self.head_nodes = {n["id"]: n for n in self.graph_head["nodes"]}
         self.head_rev: dict[str, list[dict]] = {}
@@ -1091,24 +1139,8 @@ class Verify:
     def collect_entities(self, q: dict):
         imp = q["impact_set"]
         self.entities: dict[str, dict] = {}
-        # A global fallback (lockfile / global config) makes the impact the WHOLE REPOSITORY as ONE
-        # entity - the Bazel/Nx rule of DEC-AUP-0008 - and its verifier is the repository's own test
-        # job. impact.py still lists every node in deterministic_core so a reader can see the blast
-        # radius, and the receipt keeps that listing; but those rows ARE the radius, not N separate
-        # measurements. Enumerating them here creates one entity, and therefore one demanded
-        # verdict, per row - which is how the gate came to pause a receipt it had issued itself
-        # (measured on muneral #108: selected() 8 entities against 466 verdicts, 151 of them
-        # not_measured, PAUSED_SAFE). selected() and mandatory_by_entity() already honour the flag;
-        # this is the same disagreement at its source.
-        #
-        # This line used to read `q["seeds"]` directly - "exactly what impact_pair.selected()
-        # returns under a triggered fallback" - and that copy is how the rule came to disagree with
-        # itself a second time: a manifest carries no seed, so a lockfile-only change selected
-        # NOTHING and the receipt weighed nothing while printing paused_safe (A2-232,
-        # talomnia-backend: core=14, verdicts=0, verifiers=0). Call the one function instead. The
-        # repository's own deployable unit is the entity a fallback collapses onto, and it now
-        # comes back from selected() (A2-235).
-        selection = impact_pair.selected(q) if imp.get("global_fallback", {}).get("triggered") else None
+        self.fallback_entities = impact_pair.fallback_units(q) if imp.get("global_fallback", {}).get("triggered") else set()
+        selection = impact_pair.selected(q)
         for section in ("deterministic_core", "inferred_tail"):
             for e in imp[section]:
                 if selection is not None and e["entity"] not in selection:
@@ -1150,6 +1182,8 @@ class Verify:
                 for e in self.head_fwd.get(ent["id"], []) + [x for x in self.idx.doc["edges"] if x["from"] == ent["id"]]:
                     req |= set(m["edge_types"].get(e["type"], {}).get("mandatory", []))
             req = {v for v in req if ntype in m["verifiers"][v]["applies_to_nodes"]}
+            if ent["id"] in self.fallback_entities:
+                req.add("full_fallback_test")
             # A2-353. A canary lists entities of the LIVE contour (routes, config keys, deployables); a
             # test file is never on it, so no canary plan can ever name one and the obligation is
             # permanently unsatisfiable — the same trap polyglot2 removed from `type_check`. Measured on
@@ -1423,19 +1457,19 @@ class Verify:
             else:
                 gen = self.generated_tsconfig(dep, cfg)
                 vid = "v-type-check-" + re.sub(r"[^a-z0-9]+", "-", (dep + "-" + os.path.basename(cfg).replace(".json", "")).lower()).strip("-")
-            # A2-446. The compiler belongs to the project the config lives in, which need not be the
-            # deployable's root: scrutator declares its only TypeScript project as
-            # `deployables["."].tsconfig = ["contracts/http/tsconfig.json"]`, with its own package.json
-            # and install there, and a search of `["", dep]` never looked in contracts/http — so the
-            # verdict was `tsc unavailable` whatever was installed. The config's own directories are
-            # searched AFTER the old ones, so every group that already found a compiler keeps exactly
-            # the compiler it had; only a group that found none can gain one.
-            tsc = find_bin("tsc", self.a.tsc, root, self.top, [dep] + config_dirs(dep, cfg))
+            # The nearest config project owns its compiler before ancestors and fallback.
+            tsc = find_bin("tsc", self.a.tsc, root, self.top, config_dirs(dep, cfg) + [dep])
             if not tsc:
                 self.record(vid, "type_check", f"tsc -p {gen} (tsc not found)", eids, 127, "tsc binary not found (node_modules/.bin/tsc, --tsc, PATH)",
                             started, 0.0, "not_measured: tsc unavailable", {e: ("not_measured", "tsc unavailable on this host") for e in eids})
                 continue
-            rc, out, secs = run_cmd([tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "false", "--listFiles"], root / dep)
+            # Composite forbids --incremental false (TS6379). Keep incremental checking,
+            # but isolate its cache from the source tree and discard it even on failure.
+            with tempfile.TemporaryDirectory(prefix="type-check-", dir=self.out_dir) as cache:
+                command = [tsc, "-p", str(gen.resolve()), "--noEmit", "--incremental", "true",
+                           "--tsBuildInfoFile", str((Path(cache) / "check.tsbuildinfo").resolve()), "--listFiles"]
+                rc, out, secs = run_cmd(command, root / dep)
+            command_text = shlex.join(command)
             if root is not self.exec_root:
                 cfg = f"{cfg} (post-build of {pb['rev'][:12]}, build {pb['seconds']}s, output {pb['digest'][:19]})"
             listed, errors_by_file, n_err, global_errors = set(), {}, 0, []
@@ -1466,12 +1500,12 @@ class Verify:
             if uninstalled:
                 why = (f"{unresolved} of {n_err} diagnostic(s) are unresolved modules and {uninstalled}; "
                        f"a type check over an unresolved module graph measures the absent install, not this change")
-                self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out,
+                self.record(vid, "type_check", command_text, eids, rc, out,
                             started, secs, f"{cfg}: exit {rc}, {n_err} error(s), {unresolved} unresolved-module — "
                                            f"not_measured: dependencies not installed",
                             {e: ("not_measured", why) for e in eids})
                 continue
-            ran.append((cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors))
+            ran.append((cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors, command_text))
         # A2-334. A deployable can carry several projects that partition its files — auth-arcana
         # checks `src/` under `tsconfig.json` (commonjs) and `scripts/` under `tsconfig.scripts.json`
         # (ESM, `import.meta`). Aggregation lets a `not_measured` from one verifier beat a `verified`
@@ -1479,7 +1513,7 @@ class Verify:
         # erase the verdict of the project that did compile it. Non-membership is a verdict only
         # when NO project of the run listed the file; otherwise the owning project speaks.
         listed_anywhere = set().union(*(r[9] for r in ran)) if ran else set()
-        for cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors in ran:
+        for cfg, eids, gen, tsc, vid, rc, out, secs, started, listed, errors_by_file, n_err, global_errors, command_text in ran:
             verdicts = {}
             for eid in eids:
                 n = self.entities[eid]["node"]
@@ -1509,7 +1543,7 @@ class Verify:
                 else:
                     verdicts[eid] = ("not_measured", f"{cfg}: {n_err} error(s) in other files ({', '.join(sorted(errors_by_file)[:3])}); not attributable to {path}")
             summary = f"{cfg}: exit {rc}, {n_err} error(s), {len(listed)} files listed"
-            self.record(vid, "type_check", f"{tsc} -p {gen} --noEmit --incremental false --listFiles", eids, rc, out, started, secs, summary, verdicts)
+            self.record(vid, "type_check", command_text, eids, rc, out, started, secs, summary, verdicts)
 
     def dependency_install_missing(self, dep: str, root: Path | None = None) -> str | None:
         """Why module resolution cannot work in this tree — or None, meaning the compiler is believed.
@@ -1577,6 +1611,13 @@ class Verify:
         if "tsconfig" not in prof:
             if self.tree_head.exists(prefix + "tsconfig.json"):
                 cfgs.append(prefix + "tsconfig.json")
+            # Check genuine sibling projects as well: build-only configs commonly exclude
+            # tests and checkJs tooling. A declared profile remains authoritative.
+            siblings = sorted(p for p in getattr(self.tree_head, "paths", [])
+                              if os.path.dirname(p) == prefix.rstrip("/")
+                              and re.fullmatch(r"tsconfig\.[^.]+\.json", os.path.basename(p))
+                              and os.path.basename(p) != "tsconfig.base.json")
+            cfgs.extend(c for c in siblings if c not in cfgs)
         if path is not None:
             test_cfg = prof.get("tsconfig_test") or (prefix + "tsconfig.test.json" if self.tree_head.exists(prefix + "tsconfig.test.json") else None)
             rel = path[len(prefix):]
@@ -1591,6 +1632,13 @@ class Verify:
             elif (test_cfg and cfgs and test_cfg not in cfgs
                   and not any(tsconfig_names(self.tree_head, c, rel) for c in cfgs) and tsconfig_names(self.tree_head, test_cfg, rel)):
                 cfgs = [test_cfg]
+            elif "tsconfig" not in prof:
+                covering = [c for c in cfgs if tsconfig_names(self.tree_head, c,
+                            os.path.relpath(path, os.path.dirname(c) or "."))]
+                if covering:
+                    cfgs = [covering[0]]
+                elif prefix + "tsconfig.json" in cfgs:
+                    cfgs = [prefix + "tsconfig.json"]
         if prof.get("synthetic_tsconfig") is not None and not cfgs:
             cfgs.append(f"synthetic:{dep}")
         return cfgs
@@ -1719,7 +1767,7 @@ class Verify:
         name = re.sub(r"[^a-z0-9]+", "-", f"{dep}-{cfg}".lower()).strip("-") + ".json"
         gen = gen_dir / name
         overlay = self.profile.get("tsconfig_overlay") or {}
-        co = {"noEmit": True, "incremental": False}
+        co = {"noEmit": True}
         doc = {"compilerOptions": co}
         if cfg.startswith("synthetic:"):
             syn = (self.profile["deployables"][dep].get("synthetic_tsconfig") or {})
@@ -1761,7 +1809,8 @@ class Verify:
         t0 = time.monotonic()
         cmd = f"{contract_diff.TOOL}.run_diff(base={self.tree_base.meta.get('source_commit', '?')[:12]}, head={'worktree' if self.mode == 'worktree' else self.head[:12]}, graph=head graph)"
         try:
-            res = contract_diff.run_diff(self.tree_base, self.tree_head, graph=self.graph_head, repo_name=self.repo.name)
+            res = contract_diff.run_diff(self.tree_base, self.tree_head, graph=self.graph_head, repo_name=self.repo.name,
+                                         metadata_root=self.exec_root, metadata_git_repo=self.top)
         except contract_diff.Refusal as r:
             self.record("v-contract-diff", "contract_diff", cmd, ents, 2, f"REFUSAL {r.code}: {r.detail}", started, round(time.monotonic() - t0, 2),
                         f"refusal {r.code}", {e: ("not_measured", f"contract_diff refused: {r.code}") for e in ents}, "txt")
@@ -1988,8 +2037,10 @@ class Verify:
 
     def v_config_schema(self):
         self.v_workflow_config()
+        self.v_native_patch_binding()
         ents = [e for e in self.needing("config_schema")
-                if not workflow_config.is_workflow(self.entity_file(e) or "")]
+                if not workflow_config.is_workflow(self.entity_file(e) or "")
+                and self.entities[e]["node"].get("kind") not in native_projection.GRAPH_KINDS]
         if not ents:
             return
         started = now_iso()
@@ -2044,6 +2095,29 @@ class Verify:
                     f"{len(sources)} source(s), {len(new)} new / {len(frozen)} frozen undeclared reads, {failed} failed"
                     + (f"; {sum(len(r['files']) for r in vendored_report.values())} vendored file(s) not attributed to this repository "
                        f"({', '.join(sorted(vendored_report))})" if vendored_report else ""), verdicts, "json")
+
+    def v_native_patch_binding(self):
+        ents = [e for e in self.needing("config_schema")
+                if self.entities[e]["node"].get("kind") in native_projection.GRAPH_KINDS]
+        if not ents:
+            return
+        started, t0 = now_iso(), time.monotonic()
+        try:
+            result = native_projection.verify_graph_binding(
+                self.top, self.head, self.tree_head, [self.entities[e]["node"] for e in ents],
+                self.profile.get("native_physical_binding"), self.workdir,
+                os.environ.get("MUNERAL_API_KEY"))
+            verdict = "verified" if result is not None else "not_measured"
+            detail = ("independent physical patch/manifest/native binding; compiler other files NOT_MEASURED"
+                      if result is not None else "native physical declaration or authenticated GET credential absent")
+            output = result or {"reason": detail, "compiler": "not_measured"}
+        except Exception as error:
+            verdict, detail = "failed", "native physical binding refused: " + type(error).__name__
+            output = {"reason": detail, "graph_admission": "not_measured", "runtime_admission": False}
+        self.record("v-native-physical-binding", "config_schema",
+                    "native_projection.verify_graph_binding: independent Git/physical/authenticated native GET",
+                    ents, 0 if verdict == "verified" else 1, output, started,
+                    round(time.monotonic() - t0, 2), detail, {e: (verdict, detail) for e in ents}, "json")
 
     def v_fitness(self):
         ents = self.needing("fitness_rules")
@@ -2345,6 +2419,54 @@ class Verify:
             if m2 and runner == "vitest":
                 status[m2.group(2)] = "PASS" if m2.group(1) == "\u2713" else "FAIL"
         return status
+
+    def full_fallback_test_runner(self, dep: str) -> list[str] | None:
+        """Use a declared full job; a targeted-test profile command is not that declaration."""
+        prof = (self.profile.get("deployables") or {}).get(dep, {})
+        full = prof.get("full_test")
+        if isinstance(full, list) and full and all(isinstance(arg, str) for arg in full):
+            return list(full)
+        return None  # scripts.test is not an explicit full-suite declaration
+
+    def full_fallback_test_timeout(self, dep: str) -> int | None:
+        """A bounded explicit budget supports measured long full jobs without omitting gates."""
+        prof = (self.profile.get("deployables") or {}).get(dep, {})
+        budget = prof.get("full_test_timeout_seconds", 900)
+        return budget if type(budget) is int and 1 <= budget <= 7200 else None
+
+    def v_global_fallback_test(self):
+        """Run the repository's complete suite, independently of targeted spec selection."""
+        groups = {}
+        for eid in self.fallback_entities:
+            node = self.entities[eid]["node"]
+            dep = node.get("path", ".") if node["type"] == "deployable_unit" else "."
+            groups.setdefault(dep or ".", []).append(eid)
+        for dep, entities in sorted(groups.items()):
+            cmd = self.full_fallback_test_runner(dep)
+            timeout = self.full_fallback_test_timeout(dep)
+            started = now_iso()
+            if timeout is None:
+                rc, out, secs = 125, "FULL_FALLBACK_TEST_NOT_MEASURED: full_test_timeout_seconds must be an integer in 1..7200", 0.0
+                verdict = "not_measured"
+            elif "full_fallback_test" in self.disabled or not cmd:
+                rc, out, secs = 127, "FULL_FALLBACK_TEST_NOT_MEASURED: explicit full_test declaration/runner absent or disabled", 0.0
+                verdict = "not_measured"
+            else:
+                rc, out, secs = run_cmd(cmd, self.exec_root / dep, env={"CI": "1", "PYTHONDONTWRITEBYTECODE": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"}, timeout=timeout)
+                # Exit zero alone (including an empty or wholly skipped suite) measures nothing.
+                passed = bool(re.search(r"(?:\b[1-9]\d* passed\b|\b[1-9]\d* passing\b|# pass [1-9]\d*|Ran [1-9]\d* tests?\b)", out))
+                unittest_count = re.search(r"Ran (\d+) tests?", out)
+                skipped = re.search(r"OK \(skipped=(\d+)\)", out)
+                if unittest_count and skipped and int(skipped[1]) >= int(unittest_count[1]):
+                    passed = False
+                verdict = "not_measured" if rc in (124, 127) else ("failed" if rc else ("verified" if passed else "not_measured"))
+            vid = "v-global-fallback-test-" + (re.sub(r"[^a-z0-9]+", "-", dep.lower()).strip("-") or "root")
+            logical_cmd = [Path(cmd[0]).name if Path(cmd[0]).is_absolute() else cmd[0], *cmd[1:]] if cmd else []
+            self.record(vid, "targeted_test", shlex.join(logical_cmd), entities, rc, out, started, secs,
+                        "complete fallback suite: " + verdict,
+                        {eid: (verdict, "complete fallback suite: " + verdict) for eid in entities})
+            self.verifiers[-1]["scope"] = "global_fallback_full_suite"
+            self.verifiers[-1]["timeout_seconds"] = timeout
 
     def v_targeted_test(self):
         if "targeted_test" not in self.selected or "targeted_test" in self.disabled:
@@ -2857,6 +2979,8 @@ class Verify:
                 rec["admission"]["verdict"] = "paused_safe"
         if "empty_impact_explanation" in q:
             rec["empty_impact_explanation"] = q["empty_impact_explanation"]
+        if getattr(self, "caller_graph_compatibility", None):
+            rec["caller_graph_compatibility"] = self.caller_graph_compatibility
         if self.a.work_item:
             rec["work_item"] = self.a.work_item
         if self.self_receipt_rel:
@@ -2929,6 +3053,8 @@ class Verify:
 
     def matrix_id_of(self, v: dict) -> str:
         vid = v["id"]
+        if v.get("scope") == "global_fallback_full_suite":
+            return "full_fallback_test"
         if vid.startswith("v-type-check"):
             return "type_check"
         if vid.startswith("v-route-config"):
@@ -2973,26 +3099,32 @@ class Verify:
     def run(self) -> tuple[dict, int]:
         t_all = time.monotonic()
         try:
-            q = self.impact_query()
+            with impact_pair.trace_phase("impact-query"):
+                q = self.impact_query()
         except impact.Refusal as r:
             doc = impact.refusal_doc(getattr(self, "idx", None), r, mode="diff" if self.a.diff else "worktree", tree_commit=None, tree_dirty=None,
                                      repo=self.repo, graph_path=getattr(self, "graph_path", None), files=[])
             return doc, 2
         self.change_files = q["change_set"]["files"]
-        self.prepare_head()
-        self.load_baseline()
-        self.collect_entities(q)
+        with impact_pair.trace_phase("prepare-head"):
+            self.prepare_head()
+        with impact_pair.trace_phase("fitness-baseline"):
+            self.load_baseline()
+        with impact_pair.trace_phase("collect-entities"):
+            self.collect_entities(q)
         for mid, fn in (("type_check", self.v_type_check), ("contract_diff", self.v_contract_diff),
                         ("route_config_consistency", self.v_route_config), ("schema_diff", self.v_schema_diff),
                         ("config_schema", self.v_config_schema), ("fitness_rules", self.v_fitness),
                         ("doc_reference", self.v_doc_reference), ("canary", self.v_canary),
-                        ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
-            self.run_verifier(mid, fn)
-        rec = self.aggregate(q)
+                        ("full_fallback_test", self.v_global_fallback_test), ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
+            with impact_pair.trace_phase("verifier-" + mid):
+                self.run_verifier(mid, fn)
+        with impact_pair.trace_phase("aggregate-receipt"):
+            rec = self.aggregate(q)
         rec["verify"]["seconds"]["total"] = round(time.monotonic() - t_all, 2)
         rec["verify"]["events"] = self.events + [{"code": e} for e in q.get("events", [])]
         code = 0 if rec["admission"]["verdict"] == "admitted" else 1
-        if q.get("events"):
+        if impact_pair.blocking_query_events(q):
             code = 3
         return rec, code
 
@@ -3723,6 +3855,8 @@ def main(argv=None) -> int:
     ap.add_argument("--worktree", action="store_true")
     ap.add_argument("--files", nargs="*")
     ap.add_argument("--graph", default="auto", help="RelationshipGraph/v1 at base/HEAD, or 'auto' to build it from git objects")
+    ap.add_argument("--empty-impact-explanation", help="EmptyImpactExplanation/v1 JSON bound to the exact paired revisions and graph digests; retains raw events and all verifier obligations")
+    ap.add_argument("--caller-graph-bundle", help="unchanged canonical signed BASE bundle; both installed/current graphs must fully agree")
     ap.add_argument("--exemptions", help="a JSON list (or {\"exemptions\": [...]}) of NON-structural exemptions "
                                          "to attach BEFORE the admission verdict is computed. Each needs entity, "
                                          "code, owner, expires_at_utc, reason. Run once to see the verdicts, write "
@@ -3736,6 +3870,7 @@ def main(argv=None) -> int:
     ap.add_argument("--tsc")
     ap.add_argument("--prisma")
     ap.add_argument("--workdir", help="scratch directory for exports / generated tsconfigs")
+    ap.add_argument("--phase-log", type=Path, help="new private JSONL phase log; diagnostics only, never receipt evidence")
     ap.add_argument("--out", type=Path, help="write the ChangeAdmissionReceipt/v1 draft here")
     ap.add_argument("--verifier-out", help="directory for captured verifier outputs (default <workdir>/verifier-out; never beside --out)")
     ap.add_argument("--json", action="store_true")
@@ -3770,7 +3905,9 @@ def main(argv=None) -> int:
         return freeze_baseline(a)
     if not a.repo or not (a.diff or a.worktree or a.files):
         ap.error("--repo and one of --diff / --worktree / --files are required")
-    rec, code = Verify(a, load_matrix()).run()
+    with impact_pair.phase_trace_to(a.phase_log):
+        with impact_pair.trace_phase("verification-command"):
+            rec, code = Verify(a, load_matrix()).run()
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_bytes(dump(rec))
