@@ -48,7 +48,7 @@ fn cli_consumer_binds_observation_before_export_and_retains_unknown_allocation()
             changed_paths: vec![],
             changed_count: 0,
             writes: vec![],
-            executed_tools: Default::default(),
+            executed_tools: std::collections::BTreeMap::default(),
             claimed_paths: vec![],
             claimed_but_absent: vec![],
             claimed_but_unchanged: vec![],
