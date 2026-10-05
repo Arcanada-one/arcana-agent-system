@@ -89,6 +89,16 @@ digest from a legacy plan nor resumes v1 plans as v2. Consumer policy limits the
 combined occupation/competency cohort to at most 20 targets; related competencies
 use only explicitly delegated unconsumed slots after the root cohort.
 
+The consumer's versioned allocation request must retain its actual original demand
+input and rank-output digests, target evidence and candidate snapshot, full ordered
+cohort digest, policy and stratum-list digests, task/allocation-stream/batch/request
+identity, and expected allocation revision/digest. These are proposed consumer
+requirements, not fields supplied or authenticated by this wire v1 export. The
+consumer must atomically advance its allocation-stream cursor and create the cohort
+across batches; a per-batch completion cursor or batch lock does not provide that
+serialization. Missing the authenticated resolver or allocation CAS leaves planning
+only, with no invented context digest or allocation fairness claim.
+
 Run-cumulative observations must never be divided among items or attempts, treated
 as bills, release reserved liability, or make an unknown cost free after a timeout.
 The consumer's authenticated task/principal/request/source/operation fence and
