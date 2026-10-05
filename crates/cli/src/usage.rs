@@ -17,6 +17,19 @@
 use std::fmt::Write as _;
 
 use arcana_core::cost::CostSnapshot;
+use arcana_core::usage_export::{PrivateRunUsage, RunUsageBinding};
+
+/// Export existing run accounting for a private consumer without activating it.
+///
+/// This pure source adapter writes no ledger and adds no public CLI/HTTP route.
+/// Caller correlation is unverified; reservation and paid execution remain denied.
+#[must_use]
+pub fn private_run_usage(
+    summary: &crate::run::RunSummary,
+    binding: RunUsageBinding,
+) -> PrivateRunUsage {
+    PrivateRunUsage::from_run(binding, &summary.out)
+}
 
 /// Convert integer micros to USD for display.
 ///

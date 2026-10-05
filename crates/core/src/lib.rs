@@ -14,6 +14,7 @@ pub mod permission;
 pub mod prompt_budget;
 pub mod tool;
 pub mod tool_dialect;
+pub mod usage_export;
 
 #[must_use]
 pub fn skeleton_marker() -> &'static str {
