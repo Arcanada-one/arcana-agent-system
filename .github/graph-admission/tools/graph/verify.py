@@ -59,6 +59,7 @@ import subprocess
 import sys
 import time
 import tempfile
+from contextlib import contextmanager
 from types import SimpleNamespace
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -78,6 +79,114 @@ import shell_source
 
 VERSION = "1.4.1"   # workflow shell unknown cannot discharge mandatory caller closure
 TOOL = "tools/graph/verify.py"
+
+
+def compiler_sdk_arguments(parser):
+    """Explicit tool inputs, never an imported verdict or exemption."""
+    parser.add_argument("--compiler-sdk-root", type=Path)
+    parser.add_argument("--compiler-sdk-declaration", type=Path)
+    parser.add_argument("--compiler-sdk-declaration-sha256")
+    parser.add_argument("--compiler-sdk-evidence", type=Path,
+                        help="new diagnostic input-binding record; not admission evidence")
+
+
+@contextmanager
+def compiler_sdk_input(a, repo, base, head):
+    """Expose byte-bound tsc to this invocation and its real children only.
+
+    C16 still evaluates every structural obligation live. No receipt/result is
+    accepted here, and the declaration's historical source/config fields grant
+    no approval for the receiving tree.
+    """
+    values = [getattr(a, name, None) for name in (
+        "compiler_sdk_root", "compiler_sdk_declaration",
+        "compiler_sdk_declaration_sha256", "compiler_sdk_evidence")]
+    if not any(values):
+        yield
+        return
+    if not all(values):
+        raise ValueError("compiler SDK needs root, declaration, exact SHA256 and new evidence path")
+    root, declaration, expected, evidence = values
+    root, declaration, evidence = Path(root), Path(declaration), Path(evidence)
+    if (not re.fullmatch(r"[0-9a-f]{64}", expected) or declaration.is_symlink()
+            or not declaration.is_file() or declaration.stat().st_size > 4 * 1024 * 1024):
+        raise ValueError("compiler SDK declaration must be a bounded regular byte-pinned file")
+    raw = declaration.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise ValueError("compiler SDK declaration digest mismatch")
+    doc = json.loads(raw)
+    members = doc.get("sdk_files")
+    if (doc.get("schema") != "GraphToolsCompilerSDKByteBinding/v1"
+            or not isinstance(members, list) or not 1 <= len(members) <= 10000
+            or root.is_symlink() or not root.is_dir()):
+        raise ValueError("unsupported compiler SDK byte declaration/root")
+    paths = {}
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError("compiler SDK member must be a path/digest object")
+        name, digest = member.get("path"), member.get("sha256")
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9@._/-]+", name)
+                or Path(name).is_absolute() or any(p in (".", "..") for p in name.split("/"))
+                or name in paths or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            raise ValueError("compiler SDK member is ambiguous or escapes its declared root")
+        paths[name] = digest
+    if "typescript/bin/tsc" not in paths:
+        raise ValueError("compiler SDK declaration lacks the actual tsc executable")
+
+    def check_bytes():
+        if declaration.read_bytes() != raw:
+            raise ValueError("compiler SDK declaration changed during invocation")
+        for name, digest in paths.items():
+            path = root / name
+            if (any(p.is_symlink() for p in [path, *path.parents]) or not path.is_file()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+                raise ValueError("compiler SDK declared bytes differ: " + name)
+
+    check_bytes()
+    tsc = root / "typescript/bin/tsc"
+    node = shutil.which("node")
+    if not os.access(tsc, os.X_OK) or not node:
+        raise ValueError("compiler SDK executable or native node unavailable")
+    if getattr(a, "tsc", None) and Path(a.tsc).resolve() != tsc.resolve():
+        raise ValueError("explicit tsc conflicts with the declared compiler SDK")
+    def oid(ref):
+        return subprocess.check_output(["git", "-C", str(repo), "rev-parse", ref], text=True).strip()
+    binding = {"schema": "CompilerSDKInvocationBinding/v1", "declaration_sha256": expected,
+               "members": paths, "base": oid(base), "head": oid(head), "tree": oid(head + "^{tree}"),
+               "node_sha256": hashlib.sha256(Path(node).read_bytes()).hexdigest(),
+               "tool_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                               for p in HERE.iterdir() if p.is_file() and p.suffix in (".py", ".cjs")},
+               "scope": "tool discovery for one live invocation; no imported verdict, cache or authority",
+               "complete": False}
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    with evidence.open("x") as output:
+        output.write(json.dumps(binding, indent=2) + "\n")
+    old_path = os.environ.get("PATH")
+    old_tsc = getattr(a, "tsc", None)
+    os.environ["PATH"] = str(tsc.parent.resolve()) + os.pathsep + (old_path or os.defpath)
+    try:
+        a.tsc = str(tsc.resolve())
+        if Path(shutil.which("tsc") or "").resolve() != tsc.resolve():
+            raise ValueError("compiler SDK discovery differs from declared tsc")
+        yield
+        check_bytes()
+        if (oid(base) != binding["base"] or oid(head) != binding["head"]
+                or oid(head + "^{tree}") != binding["tree"]):
+            raise ValueError("receiving source tree changed during invocation")
+        if hashlib.sha256(Path(node).read_bytes()).hexdigest() != binding["node_sha256"]:
+            raise ValueError("native node bytes changed during invocation")
+        if any(hashlib.sha256((HERE / name).read_bytes()).hexdigest() != digest
+               for name, digest in binding["tool_sha256"].items()):
+            raise ValueError("verifier tool bytes changed during invocation")
+        binding["complete"] = True
+    finally:
+        a.tsc = old_tsc
+        if old_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = old_path
+        evidence.write_text(json.dumps(binding, indent=2) + "\n")
 MATRIX_PATH = ROOT / "contracts" / "graph-verified-change" / "verifier-matrix.v1.json"
 GATE_POLICY_PATH = ROOT / "contracts" / "graph-verified-change" / "admission-gate.v1.json"
 # The codes only the GATE may issue (admission-gate.v1.json → structural_exemptions.issued_by:
@@ -4007,6 +4116,7 @@ def main(argv=None) -> int:
     ap.add_argument("--profile", help="VerifyProfile/v1 (default <repo>/.arcana/verify.json or auto-detection)")
     ap.add_argument("--baseline", help="FitnessBaseline/v1 (default <repo>/.arcana/fitness-baseline.json, then the program registry, then auto-freeze at base; 'auto' forces the freeze at base)")
     ap.add_argument("--tsc")
+    compiler_sdk_arguments(ap)
     ap.add_argument("--prisma")
     ap.add_argument("--workdir", help="scratch directory for exports / generated tsconfigs")
     ap.add_argument("--phase-log", type=Path, help="new private JSONL phase log; diagnostics only, never receipt evidence")
@@ -4032,6 +4142,10 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-out", help="with --pilot: directory for the per-commit drafts")
     ap.add_argument("--pilot-commits", type=int, default=12)
     a = ap.parse_args(argv)
+    if any(getattr(a, name, None) for name in (
+            "compiler_sdk_root", "compiler_sdk_declaration",
+            "compiler_sdk_declaration_sha256", "compiler_sdk_evidence")) and (a.selftest or a.freeze_baseline):
+        ap.error("compiler SDK binding is supported only for committed ordinary verification")
     label = getattr(a, "host_label", None)
     if label:
         try:
@@ -4046,9 +4160,13 @@ def main(argv=None) -> int:
         return freeze_baseline(a)
     if not a.repo or not (a.diff or a.worktree or a.files):
         ap.error("--repo and one of --diff / --worktree / --files are required")
+    if a.compiler_sdk_root and not a.diff:
+        ap.error("compiler SDK binding requires an exact committed --diff range")
+    base, head = a.diff.split("..", 1) if a.diff else ("HEAD", "HEAD")
     with impact_pair.phase_trace_to(a.phase_log):
         with impact_pair.trace_phase("verification-command"):
-            rec, code = Verify(a, load_matrix()).run()
+            with compiler_sdk_input(a, a.repo, base, head):
+                rec, code = Verify(a, load_matrix()).run()
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_bytes(dump(rec))

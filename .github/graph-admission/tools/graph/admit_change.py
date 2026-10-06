@@ -21,6 +21,8 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import io
+from contextlib import redirect_stdout
 import full_suite_ci
 import os
 import re
@@ -4621,6 +4623,40 @@ def repo_of(a) -> Path:
     return Path(a.repo).resolve()
 
 
+def command_output_json(a, path, doc):
+    """Delay authoritative CLI output until the declared-input postcheck passes."""
+    pending = getattr(a, "_compiler_output_json", None)
+    if pending is None:
+        write_json(path, doc)
+    else:
+        pending.append((Path(path), json.loads(json.dumps(doc))))
+
+
+def compiler_bound_command(a, repo, base, head):
+    import verify as canonical_verify
+    pending = []
+    output = io.StringIO()
+    a._compiler_output_json = pending
+    try:
+        with redirect_stdout(output):
+            with canonical_verify.compiler_sdk_input(a, repo, base, head):
+                code = a.fn(a)
+        # Nothing authoritative has escaped yet. This point is reachable only
+        # after all declared SDK/Node/source/tool postchecks succeeded.
+        for path, doc in pending:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=".compiler-output-", delete=False) as staged:
+                staged.write(json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
+                staged.flush()
+                os.fsync(staged.fileno())
+            os.replace(staged.name, path)
+        sys.stdout.write(output.getvalue())
+        return code
+    finally:
+        del a._compiler_output_json
+
+
 def cmd_gate(a) -> int:
     policy = load_policy(a.policy)
     repo = Path(a.repo).resolve()
@@ -4660,7 +4696,7 @@ def cmd_gate(a) -> int:
                base_branch=getattr(a, "base_branch", None),
                origin_association_path=Path(a.origin_association) if getattr(a, "origin_association", None) else None)
     if a.out:
-        write_json(Path(a.out), doc)
+        command_output_json(a, Path(a.out), doc)
     if a.json:
         print(json.dumps(doc, ensure_ascii=False, indent=1))
     else:
@@ -4799,7 +4835,7 @@ def cmd_exempt(a) -> int:
               "case": ev.get("case"), "eligible": bool(exemptions), "evidence": ev,
               "exemptions": exemptions}
     if a.evidence_out:
-        write_json(Path(a.evidence_out), report)
+        command_output_json(a, Path(a.evidence_out), report)
     for c in ev.get("checks") or []:
         print(f"  [{c['verdict']}] {c['id']} {c['code']}: {c['detail']}")
     if not exemptions:
@@ -4836,7 +4872,7 @@ def cmd_exempt(a) -> int:
         f"{len(exemptions)} entity(ies), bound to {ev['change_binding']['digest'][:23]}… "
         f"({base[:12]}..{head[:12]}); the digest, not the clock, is the expiry.")
     out = Path(a.out) if a.out else rp
-    write_json(out, doc)
+    command_output_json(a, out, doc)
     print(f"{adm.upper()}  {CODE_OF_CASE[ev['case']]}  {len(exemptions)} exemption(s)  "
           f"binding {ev['change_binding']['digest'][:23]}…  → {out}")
     return 0 if adm == "admitted_with_exemptions" else 3
@@ -5248,6 +5284,8 @@ def main(argv=None) -> int:
                                          "read from the clone — never a guessed branch name; unresolvable means not_measured, which pauses, never admits")
 
     g.set_defaults(fn=cmd_gate)
+    import verify as canonical_verify
+    canonical_verify.compiler_sdk_arguments(g)
 
     ri = sub.add_parser("reissue", help="re-issue a ChangeAdmissionReceipt at the path it already occupies "
                                         "(DEC-AUP-0035 supersedes the previous draft only at the SAME path)")
@@ -5294,6 +5332,7 @@ def main(argv=None) -> int:
     ex.add_argument("--b7-second-opinion", help="B7 rule 7: a B7SecondOpinion/v1 file from `b7-opine`, produced "
                                                 "by a DIFFERENT authority-id")
     ex.set_defaults(fn=cmd_exempt)
+    canonical_verify.compiler_sdk_arguments(ex)
 
     xd = sub.add_parser("exempt-decision", help="A2-314 — an ADMITTING agent signs a decision to proceed "
                                                 "(DEC-AUP-0037 R3) past named not_measured entities; the gate "
@@ -5378,6 +5417,12 @@ def main(argv=None) -> int:
     try:
         with impact_pair.phase_trace_to(getattr(a, "phase_log", None)):
             with impact_pair.trace_phase("admission-command"):
+                if getattr(a, "compiler_sdk_root", None):
+                    base, head = resolve_range(a)
+                    return compiler_bound_command(a, repo_of(a), base, head)
+                if any(getattr(a, name, None) for name in (
+                        "compiler_sdk_declaration", "compiler_sdk_declaration_sha256", "compiler_sdk_evidence")):
+                    raise UsageError("compiler SDK inputs require --compiler-sdk-root")
                 return a.fn(a)
     except UsageError as e:
         (getattr(a, "parser", None) or ap).error(str(e))   # usage + message on stderr, exit 2

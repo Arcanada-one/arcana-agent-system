@@ -104,7 +104,8 @@ def _digest(raw):
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def workflow_step(raw, job_key, step_name, command, *, deployable=".", timeout=None):
+def workflow_step(raw, job_key, step_name, command, *, deployable=".", timeout=None,
+                  workspace_packages=None):
     """Inspect YAML representation only; no constructors, expressions or shell execution."""
     import yaml
     for token in yaml.scan(raw.decode()):
@@ -125,6 +126,15 @@ def workflow_step(raw, job_key, step_name, command, *, deployable=".", timeout=N
     if step.get("shell") not in (None, "bash"):
         raise ValueError("full-suite step shell unsupported")
     if deployable != ".":
+        # pnpm's exact package selector runs the declared package's entire test
+        # script from a root workflow. It is not a shell cd or a test-file filter.
+        # The caller supplies identities read from this measured Git source,
+        # never from the evidence record or the live worktree.
+        if (workspace_packages is not None and deployable in workspace_packages
+                and command == ["pnpm", "--filter", workspace_packages[deployable], "test"]):
+            _literal_command(step, command)
+            return {**job, "full_binding": "pnpm_workspace_test/v1",
+                    "execution_cwd": ".", "test_cwd": deployable}
         # One maintained, reviewed wrapper; never interpret caller-supplied shell.
         # Exact bytes bind setup, subshell cwd, TERM/kill deadline, captured status
         # and final status propagation. No generic multiline/script admission.
@@ -132,11 +142,54 @@ def workflow_step(raw, job_key, step_name, command, *, deployable=".", timeout=N
                 or step.get("run") != PERSONAL_WRAPPER):
             raise ValueError("nested FULL requires the exact personal cwd/1800-second wrapper")
         return {**job, "full_binding": "persist_personal_wrapper/v1"}
+    _literal_command(step, command)
+    return {**job, "full_binding": "literal_argv/v1"}
+
+
+def _literal_command(step, command):
     if shlex.split(step.get("run", "")) != command:
         raise ValueError("workflow step is not exactly the declared full_test argv")
     if "\n" in step.get("run", "").strip() or any(x in step.get("run", "") for x in ("${{", ";", "&&", "||", "|", ">", "$", "`")):
         raise ValueError("full-suite step must be one literal unfiltered command")
-    return {**job, "full_binding": "literal_argv/v1"}
+
+
+def workspace_test_packages(repo, source, dep, command):
+    """Bounded literal workspace membership and unique package identity at source."""
+    if (len(command) != 4 or command[:2] != ["pnpm", "--filter"] or command[3] != "test"
+            or not re.fullmatch(r"(?:@[a-z0-9._-]+/)?[a-z0-9._-]+", command[2])):
+        raise ValueError("nested workspace FULL requires one exact package test selector")
+    import yaml
+    raw = _git(repo, "show", source + ":pnpm-workspace.yaml").decode()
+    for token in yaml.scan(raw):
+        if isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken,
+                              yaml.tokens.TagToken, yaml.tokens.DirectiveToken)):
+            raise ValueError("workspace aliases/tags/directives unsupported")
+    doc = yaml.load(raw, Loader=yaml.BaseLoader)
+    members = doc.get("packages") if isinstance(doc, dict) else None
+    if (not isinstance(members, list) or not members or len(members) > 256
+            or any(not isinstance(p, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*", p)
+                   for p in members) or len(set(members)) != len(members) or dep not in members):
+        raise ValueError("nested FULL requires unique literal committed workspace paths")
+    packages = {}
+    for path in members:
+        package_path = path + "/package.json"
+        entry = _git(repo, "ls-tree", source, "--", package_path).split(b"\t", 1)[0]
+        if not entry.startswith(b"100644 blob "):
+            raise ValueError("workspace package must be a committed regular JSON blob")
+        package = json.loads(_git(repo, "show", source + ":" + package_path))
+        if not isinstance(package, dict):
+            raise ValueError("workspace package must be a JSON object")
+        name = package.get("name")
+        if not isinstance(name, str) or name in packages.values():
+            raise ValueError("workspace package identity absent or ambiguous")
+        packages[path] = name
+        if path == dep:
+            scripts = package.get("scripts")
+            if not isinstance(scripts, dict) or not isinstance(scripts.get("test"), str) or not scripts["test"].strip():
+                raise ValueError("workspace package has no declared test script")
+    if packages[dep] != command[2]:
+        raise ValueError("package selector differs from the declared deployable identity")
+    return packages
 
 
 def consume(repo, head, repository, dep, command, evidence_path, *, read_api=None):
@@ -181,8 +234,11 @@ def consume(repo, head, repository, dep, command, evidence_path, *, read_api=Non
             result["verdict"] = "failed"
             raise ValueError("authenticated complete CI run/job failed")
         workflow = _git(repo, "show", measured + ":" + doc["workflow"])
+        packages = (workspace_test_packages(repo, measured, dep, command)
+                    if dep != "." and command[:2] == ["pnpm", "--filter"] else None)
         definition = workflow_step(workflow, doc["job_key"], doc["step"], command,
-                                   deployable=dep, timeout=declared.get("full_test_timeout_seconds", 900))
+                                   deployable=dep, timeout=declared.get("full_test_timeout_seconds", 900),
+                                   workspace_packages=packages)
         if job.get("name") != definition.get("name", doc["job_key"]):
             raise ValueError("authenticated job does not match declared workflow job")
         steps = [s for s in job.get("steps", []) if s.get("name") == doc["step"]]
@@ -238,12 +294,13 @@ def consume(repo, head, repository, dep, command, evidence_path, *, read_api=Non
         if (counted and skipped and not re.search(r"\b[1-9]\d* passed\b|# pass [1-9]\d*", text)
                 and sum(map(int, skipped)) >= sum(map(int, counted))):
             raise ValueError("full-suite step only measured skipped tests")
-        if definition.get("full_binding") == "literal_argv/v1" and shlex.join(command) not in text:
+        if definition.get("full_binding") in ("literal_argv/v1", "pnpm_workspace_test/v1") and shlex.join(command) not in text:
             raise ValueError("authenticated step log lacks the exact declared command")
         result.update(verdict="verified", source_commit=measured, checkout_commit=checkout,
                       run_id=run_id, job_id=job_id, run_attempt=attempt, duration_s=(end-start).total_seconds(),
                       log_sha256=_digest(log), workflow_sha256=_digest(workflow),
                       cwd=dep, workflow_binding=definition.get("full_binding", "literal_argv/v1"),
+                      execution_cwd=definition.get("execution_cwd", dep),
                       output=text, measurement="authenticated complete declared CI full suite; no local replay")
     except (ValueError, KeyError, TypeError, OSError, ImportError, subprocess.SubprocessError) as ex:
         result["errors"].append(str(ex))
