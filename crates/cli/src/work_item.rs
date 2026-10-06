@@ -196,7 +196,7 @@ async fn execute_admitted(
             binding,
             contract_source: source.label(),
             contract_origin: source.origin(),
-            verified_live: source.label() == "argana",
+            source_is_argana: source.label() == "argana",
             worktree_sha: built.worktree.sha.clone(),
             receipt_path: &receipt_path,
             audit_path,

@@ -32,6 +32,8 @@ pub struct AuthorityTrust {
 /// Output of a purpose-correct Auth/KC verifier, NOT deserializable claims.
 /// The adapter must authenticate the contract digest and all scope fields,
 /// resolve issuer standing and principal/incarnation lineage independently,
+/// including the acting subject and its full incarnation/ancestor chain
+/// transitively in executor lineage (not only immediate actor aliases),
 /// and read current revocation/generation state in that same authority domain.
 /// Public fields permit adapters to implement this port; only the trusted
 /// composition root may supply one. Synthetic adapters prove predicates only.
@@ -158,6 +160,10 @@ fn qualify(
     {
         return Err(AuthorityRefusal::SubjectMismatch);
     }
+    // An adapter omission cannot turn the actual actor into an independent issuer.
+    if proof.issuer_principal == subject || proof.issuer_incarnation == subject {
+        return Err(AuthorityRefusal::IssuerNotIndependent);
+    }
     // Both principal and incarnation must be independent of BOTH lineages.
     if proof.proposer_lineage.is_empty()
         || proof.executor_lineage.is_empty()
@@ -176,6 +182,11 @@ fn qualify(
         .any(|id| id == &proof.issuer_principal || id == &proof.issuer_incarnation)
     {
         return Err(AuthorityRefusal::IssuerNotIndependent);
+    }
+    // Even an otherwise independent issuer must name the actual run executor.
+    // Completeness of its transitive incarnation chain remains the adapter's duty.
+    if !proof.executor_lineage.iter().any(|id| id == subject) {
+        return Err(AuthorityRefusal::SubjectMismatch);
     }
     let generation = proof
         .current_generation

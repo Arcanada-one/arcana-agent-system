@@ -110,7 +110,16 @@ at this point: the digest check is pure local arithmetic.
 `CONTRACT_AUTHORITY_UNAVAILABLE` use the same typed stderr/done-marker shape.
 Missing authenticated caller context, trust configuration, issuer lineage or
 current-generation evidence refuses closed. Rebinding the same bytes after
-revocation cannot restore an older authority generation.
+revocation cannot restore an older authority generation. The authority adapter
+must resolve the full transitive principal/incarnation lineage, including the
+acting subject itself in executor lineage. The consumer refuses an omitted
+acting subject and rejects an issuer equal to that subject even if an adapter
+omits it from the lineage. Transitive chain authenticity still requires the
+purpose-correct authority adapter; these local checks do not supply one.
+
+Learning trace `source_is_argana` reports transport provenance only, never
+admission. The legacy v1 `verified_against_live_endpoint` field is retained as
+`false`; downloading a document must not be read as authority verification.
 
 ## Notes
 

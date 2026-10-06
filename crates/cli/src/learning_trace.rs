@@ -87,7 +87,10 @@ pub struct ContractRest {
     pub digest: String,
     pub source: String,
     pub origin: String,
+    /// Deprecated v1 field: never evidence of admission; retained as false.
     pub verified_against_live_endpoint: bool,
+    /// Transport provenance only, not an authority or verification verdict.
+    pub source_is_argana: bool,
     pub kc2_revision: Option<String>,
     pub kc2_snapshot: Option<String>,
     /// The constraints the steps rested on: what the contract admitted.
@@ -209,7 +212,7 @@ pub struct Sources<'a> {
     pub binding: &'a ContractBinding,
     pub contract_source: &'a str,
     pub contract_origin: String,
-    pub verified_live: bool,
+    pub source_is_argana: bool,
     pub worktree_sha: Option<String>,
     pub receipt_path: &'a Path,
     pub audit_path: PathBuf,
@@ -264,7 +267,8 @@ pub fn build(sources: &Sources, summary: &RunSummary, root: &Path) -> Trace {
             digest: sources.binding.digest().to_owned(),
             source: sources.contract_source.to_owned(),
             origin: sources.contract_origin.clone(),
-            verified_against_live_endpoint: sources.verified_live,
+            verified_against_live_endpoint: false,
+            source_is_argana: sources.source_is_argana,
             kc2_revision: sources.binding.kc2_revision().map(ToOwned::to_owned),
             kc2_snapshot: sources.binding.kc2_snapshot().map(ToOwned::to_owned),
             allowlist: sources.binding.allowlist().iter().cloned().collect(),
@@ -573,7 +577,7 @@ mod tests {
             binding,
             contract_source: "argana",
             contract_origin: "http://127.0.0.1:18380/".to_owned(),
-            verified_live: true,
+            source_is_argana: true,
             worktree_sha: Some("0".repeat(40)),
             receipt_path: receipt,
             audit_path,
@@ -600,6 +604,8 @@ mod tests {
             dir.path(),
         );
 
+        assert!(trace.contract.source_is_argana);
+        assert!(!trace.contract.verified_against_live_endpoint);
         assert_eq!(trace.steps.len(), 2);
         assert_eq!(trace.steps[0].seq, 1);
         assert_eq!(trace.steps[0].tool, "read");
