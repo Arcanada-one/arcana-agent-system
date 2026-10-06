@@ -209,6 +209,30 @@
       "sha256": "e03460fe72b259f6d25ad029f085e4bedc3f90477da4401d8fbc1efa9793230e"
     },
     {
+      "path": "@types/node/ts5.6/buffer.buffer.d.ts",
+      "sha256": "a98aedd64ad81793f146d36d1611ed9ba61b8b49ff040f0d13a103ed626595d9"
+    },
+    {
+      "path": "@types/node/ts5.6/compatibility/float16array.d.ts",
+      "sha256": "394fda71d5d6bd00a372437dff510feab37b92f345861e592f956d6995e9c1ce"
+    },
+    {
+      "path": "@types/node/ts5.6/globals.typedarray.d.ts",
+      "sha256": "6f2442c0ca5e7fcb9d51ebbd7d43079844bcbfd947bb679b9419900745f871d5"
+    },
+    {
+      "path": "@types/node/ts5.6/index.d.ts",
+      "sha256": "cc6a8f0089e3c787e829bd1bbfb563aadc9f60bf569326abea8220f390ec5e0b"
+    },
+    {
+      "path": "@types/node/ts5.7/compatibility/float16array.d.ts",
+      "sha256": "cebfeedf63623d54f7423d58cae1ec204c0d8d97a66d5fb17579e26a902085e1"
+    },
+    {
+      "path": "@types/node/ts5.7/index.d.ts",
+      "sha256": "63228283eda38338f98e629d8033bffe727d2247ba2f3a1cbd1273a6827a1ec4"
+    },
+    {
       "path": "@types/node/tty.d.ts",
       "sha256": "4286a3a6619514fca656089aee160bb6f2e77f4dd53dc5a96b26a0b4fc778055"
     },
@@ -271,6 +295,10 @@
     {
       "path": "@types/node/zlib.d.ts",
       "sha256": "bfd3b3c21a56104693183942e221c1896ee23bcb8f8d91ab0b941f7b32985411"
+    },
+    {
+      "path": "typescript/bin/tsc",
+      "sha256": "8d5fa5bd883fec0979fc2004f1fe1d99aef40570155d550eadc0b03b55513bf0"
     },
     {
       "path": "typescript/lib/_tsc.js",
@@ -669,6 +697,10 @@
       "sha256": "b1616b8959bf557feb16369c6124a97a0e74ed6f49d1df73bb4b9ddf68acf3f3"
     },
     {
+      "path": "undici-types/package.json",
+      "sha256": "01701286a0441eddf1cd47d488047d363ce7d75466e7b6c89f1c605fba1c3957"
+    },
+    {
       "path": "undici-types/patch.d.ts",
       "sha256": "addf417b9eb3f938fddf8d81e96393a165e4be0d4a8b6402292f9c634b1cb00d"
     },
@@ -713,12 +745,12 @@
       "sha256": "cdcf9ea426ad970f96ac930cd176d5c69c6c24eebd9fc580e1572d6c6a88f62c"
     },
     {
-      "path": "undici-types/websocket.d.ts",
-      "sha256": "b64d4d1c5f877f9c666e98e833f0205edb9384acc46e98a1fef344f64d6aba44"
+      "path": "undici-types/webidl.d.ts",
+      "sha256": "f769602cfc723e250e63cffec9cda19b7d13cdfd09885ebcde441380c68f71b1"
     },
     {
-      "path": "typescript/bin/tsc",
-      "sha256": "8d5fa5bd883fec0979fc2004f1fe1d99aef40570155d550eadc0b03b55513bf0"
+      "path": "undici-types/websocket.d.ts",
+      "sha256": "b64d4d1c5f877f9c666e98e833f0205edb9384acc46e98a1fef344f64d6aba44"
     }
   ],
   "runtime_authorized": false
