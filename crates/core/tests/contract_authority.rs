@@ -268,3 +268,36 @@ fn refusal_codes_are_specific_and_stable() {
         "CONTRACT_AUTHORITY_UNAVAILABLE"
     );
 }
+
+#[tokio::test]
+async fn acting_subject_cannot_issue_even_if_adapter_omits_it_from_lineage() {
+    paired(
+        |p| {
+            p.executor_lineage = vec!["fixture-other-executor".into()];
+            p.issuer_principal.clone_from(&p.subject_id);
+        },
+        Refusal::IssuerNotIndependent,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn acting_subject_cannot_be_issuer_incarnation_with_incomplete_lineage() {
+    paired(
+        |p| {
+            p.executor_lineage = vec!["fixture-other-executor".into()];
+            p.issuer_incarnation.clone_from(&p.subject_id);
+        },
+        Refusal::IssuerNotIndependent,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn executor_lineage_must_anchor_the_actual_acting_subject() {
+    paired(
+        |p| p.executor_lineage = vec!["fixture-other-executor".into()],
+        Refusal::SubjectMismatch,
+    )
+    .await;
+}
