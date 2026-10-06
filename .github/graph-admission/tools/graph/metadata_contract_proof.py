@@ -23,12 +23,41 @@ EXPECTED_NODE_RUNTIMES = {
     "v24.21.0": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c",
 }
 OBSERVER = Path(__file__).with_name("metadata_contract_observer.cjs")
+TARGET_SOURCE_FILES = ("apps/api/src/auth/agent-scope.decorator.ts",
+                       "apps/api/src/auth/guards/agent-task-scope.guard.ts")
 # Measured SDK/compiler scope from independently sealed Security v7 inputs.
 EXPECTED_DEPENDENCIES = {'apps/api/node_modules/typescript/lib/typescript.js': '3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675', 'apps/api/node_modules/typescript/package.json': '822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6', 'apps/api/node_modules/@nestjs/common/decorators/core/set-metadata.decorator.d.ts': 'eefafec7c059f07b885b79b327d381c9a560e82b439793de597441a4e68d774a', 'apps/api/node_modules/@nestjs/common/decorators/core/set-metadata.decorator.js': '3ad740a6bad3c92685ea0b47e96470140258bed18fd2810f80bcd265e1f25ec7', 'apps/api/node_modules/@nestjs/core/services/reflector.service.d.ts': 'eed40a963fe55142d62b9da657ecbb31a0b7ce745f9304c92ed6a00be6db3cb2', 'apps/api/node_modules/@nestjs/core/services/reflector.service.js': '102030b3983eb599efe259c5473a28189af211ff842b43e53af019afc729e631'}
 
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def compiler_project_binding(tree) -> tuple[dict | None, list[str]]:
+    """Choose the nearest tracked primary config; native TS must prove membership.
+
+    No synthetic config, caller-selected project, dependency relocation or inferred
+    include/exclude membership is accepted. Missing inputs remain unmeasured.
+    """
+    targets = [Path(name) for name in TARGET_SOURCE_FILES]
+    if any(name not in tree.files for name in TARGET_SOURCE_FILES):
+        return None, ["METADATA_PROJECT_TARGET_MISSING"]
+    candidates = []
+    for name, data in tree.files.items():
+        config = Path(name)
+        if config.name != "tsconfig.json" or config.is_absolute() or ".." in config.parts:
+            continue
+        if all(target.is_relative_to(config.parent) for target in targets):
+            candidates.append((len(config.parent.parts), name, data))
+    if not candidates:
+        return None, ["METADATA_PROJECT_CONFIG_MISSING"]
+    depth = max(candidate[0] for candidate in candidates)
+    closest = [candidate for candidate in candidates if candidate[0] == depth]
+    if len(closest) != 1:
+        return None, ["METADATA_PROJECT_CONFIG_AMBIGUOUS"]
+    _, name, data = closest[0]
+    return {"path": name, "sha256": digest(data),
+            "targets": list(TARGET_SOURCE_FILES)}, []
 
 
 def source_binding(tree, root: Path) -> tuple[list[dict], list[str]]:
@@ -62,6 +91,9 @@ def observation_problems(doc: dict, binding: dict) -> list[str]:
     for key in ("head", "repo", "contract"):
         if doc.get(key) != binding[key]:
             errors.append("OBSERVATION_SUBJECT_MISMATCH")
+    if (not isinstance(binding.get("compiler_project"), dict)
+            or doc.get("compiler_project") != binding["compiler_project"]):
+        errors.append("OBSERVATION_COMPILER_PROJECT_MISMATCH")
     if doc.get("source_files") != binding["files"]:
         errors.append("OBSERVATION_SOURCE_INVENTORY_MISMATCH")
     obs = doc.get("observation")
@@ -119,6 +151,9 @@ def observe(tree, root: Path, *, node: str = "node", git_repo: Path | None = Non
                 errors.append("DEPENDENCY_OUTSIDE_MEASURED_SCOPE")
         except OSError:
             errors.append("DEPENDENCY_BYTES_MISSING")
+    project, project_errors = compiler_project_binding(tree)
+    binding["compiler_project"] = project
+    errors.extend(project_errors)
     files, source_errors = source_binding(tree, root)
     binding["files"] = files
     errors.extend(source_errors)

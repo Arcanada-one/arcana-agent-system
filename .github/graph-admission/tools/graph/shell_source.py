@@ -19,6 +19,8 @@ def kind(path, raw, mode=None):
         return "bats_test"
     if path.endswith((".sh", ".bash")):
         return "bash_source"
+    if mode != "100755":
+        return None
     first = raw.splitlines()[0].decode("utf-8", errors="replace") if raw else ""
     if mode == "100755" and re.fullmatch(r"#!\s*(?:/bin/bash|/usr/bin/bash|/usr/bin/env\s+bash)\s*", first):
         return "bash_source"

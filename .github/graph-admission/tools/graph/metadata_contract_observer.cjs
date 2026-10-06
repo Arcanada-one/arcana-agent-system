@@ -5,7 +5,10 @@ const root=path.resolve(input.root);
 const bindingErrors=[];
 for(const f of input.files){const full=path.resolve(root,f.path);if(!full.startsWith(root+path.sep)||!fs.existsSync(full)||hash(fs.readFileSync(full))!==f.sha256)bindingErrors.push('SOURCE_BYTES_MISMATCH');}
 const ts=require(path.join(root,'apps/api/node_modules/typescript'));
-const configPath=path.join(root,'apps/api/tsconfig.json');
+const project=input.compiler_project;
+if(!project||typeof project.path!=='string'||path.isAbsolute(project.path)||project.path.split('/').includes('..'))throw Error('METADATA_PROJECT_BINDING_INVALID');
+const configPath=path.resolve(root,project.path);
+if(!configPath.startsWith(root+path.sep)||!input.files.some(f=>f.path===project.path&&f.sha256===project.sha256)||hash(fs.readFileSync(configPath))!==project.sha256)throw Error('METADATA_PROJECT_BINDING_MISMATCH');
 const config=ts.readConfigFile(configPath,ts.sys.readFile);
 const parsed=ts.parseJsonConfigFileContent(config.config,ts.sys,path.dirname(configPath));
 const options={...parsed.options,noEmit:true,incremental:false};
@@ -21,6 +24,11 @@ function analyze(overrides={},claimedHead=expectedHead){
  host.getSourceFile=(name,version,onError,fresh)=>overrides[path.relative(root,path.resolve(name))]!==undefined?ts.createSourceFile(name,overrides[path.relative(root,path.resolve(name))],version,true):original(name,version,onError,fresh);
  const program=ts.createProgram(parsed.fileNames,options,host),checker=program.getTypeChecker();
  const dec=program.getSourceFile(path.join(root,decoratorRel)),guard=program.getSourceFile(path.join(root,guardRel));
+ const projectDiagnostics=[...(config.error?[config.error]:[]),...parsed.errors];
+ if(projectDiagnostics.length||!dec||!guard)return {
+  errors:['METADATA_PROJECT_MEMBERSHIP_NOT_MEASURED'],
+  diagnostics:projectDiagnostics.map(d=>({code:d.code,message:ts.flattenDiagnosticMessageText(d.messageText,' '),file:d.file?path.relative(root,d.file.fileName):null})),
+  closed:false};
  const sym=n=>{let s=checker.getSymbolAtLocation(n);if(s?.flags&ts.SymbolFlags.Alias)s=checker.getAliasedSymbol(s);return s;};
  const loc=n=>({file:path.relative(root,n.getSourceFile().fileName),line:n.getSourceFile().getLineAndCharacterOfPosition(n.getStart()).line+1});
  const alias=dec.statements.find(n=>ts.isTypeAliasDeclaration(n)&&n.name.text==='AgentScopeKind');
@@ -217,5 +225,5 @@ for(const name of ['apps/api/node_modules/typescript/lib/typescript.js','apps/ap
 }
 for(const f of input.files){const full=path.resolve(root,f.path);if(!fs.existsSync(full)||hash(fs.readFileSync(full))!==f.sha256)result.errors.push('SOURCE_BYTES_CHANGED_DURING_PROOF');}
 result.closed=result.errors.length===0;
-process.stdout.write(JSON.stringify({schema:'NativeMetadataContractObservation/v1',head:input.head,repo:input.repo,contract:input.contract,source_files:input.files,typescript:ts.version,dependencies,observation:result})+'\n');
+process.stdout.write(JSON.stringify({schema:'NativeMetadataContractObservation/v1',head:input.head,repo:input.repo,contract:input.contract,source_files:input.files,compiler_project:project,typescript:ts.version,dependencies,observation:result})+'\n');
 process.exitCode=result.closed?0:3;

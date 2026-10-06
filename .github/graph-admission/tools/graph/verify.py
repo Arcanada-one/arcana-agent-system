@@ -60,6 +60,7 @@ import sys
 import time
 import tempfile
 from contextlib import contextmanager
+from contextvars import ContextVar
 from types import SimpleNamespace
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -79,6 +80,22 @@ import shell_source
 
 VERSION = "1.4.1"   # workflow shell unknown cannot discharge mandatory caller closure
 TOOL = "tools/graph/verify.py"
+
+
+_COMPILER_SDK_TYPE_ROOTS = ContextVar("compiler_sdk_type_roots", default=None)
+
+
+def compiler_sdk_type_check_args(tsc=None):
+    """Only the live byte-bound context can select an external type root."""
+    selection = _COMPILER_SDK_TYPE_ROOTS.get()
+    if not selection:
+        return []
+    compiler, root = selection
+    # The project's locked compiler still wins discovery; do not mix that
+    # compiler with external ambient types from a fallback SDK.
+    if tsc is not None and Path(tsc).resolve() != Path(compiler).resolve():
+        return []
+    return ["--typeRoots", root]
 
 
 def compiler_sdk_arguments(parser):
@@ -134,6 +151,37 @@ def compiler_sdk_input(a, repo, base, head):
     if "typescript/bin/tsc" not in paths:
         raise ValueError("compiler SDK declaration lacks the actual tsc executable")
 
+    # A Node declaration is a resolution input, not merely executable discovery.
+    # Keep legacy tsc-only inputs unchanged; never infer types from PATH or a host SDK.
+    node_types = any(name.startswith("@types/node/") for name in paths)
+    type_roots = str((root / "@types").resolve()) if node_types else None
+
+    def check_resolution():
+        if not node_types:
+            return
+        for package in ("typescript", "@types/node", "undici-types"):
+            metadata = package + "/package.json"
+            if metadata not in paths:
+                raise ValueError("compiler SDK resolution metadata undeclared: " + metadata)
+        for package in ("@types/node", "undici-types"):
+            metadata = json.loads((root / package / "package.json").read_text())
+            target = metadata.get("typings", metadata.get("types"))
+            if (not isinstance(target, str) or Path(target).is_absolute()
+                    or any(part in ("", ".", "..") for part in target.split("/"))
+                    or package + "/" + target not in paths):
+                raise ValueError("compiler SDK type entry is not byte-bound: " + package)
+            for directory, dirs, files in os.walk(root / package, followlinks=False):
+                for name in dirs + files:
+                    member = Path(directory) / name
+                    if member.is_symlink():
+                        raise ValueError("compiler SDK resolution alias refused: " + str(member))
+                    if member.is_file() and (member.name == "package.json" or member.name.endswith((".d.ts", ".d.cts", ".d.mts"))):
+                        relative = member.relative_to(root).as_posix()
+                        if relative not in paths:
+                            raise ValueError("compiler SDK resolution member undeclared: " + relative)
+        if sorted(p.name for p in (root / "@types").iterdir()) != ["node"]:
+            raise ValueError("compiler SDK type root contains an undeclared ambient package")
+
     def check_bytes():
         if declaration.read_bytes() != raw:
             raise ValueError("compiler SDK declaration changed during invocation")
@@ -144,6 +192,7 @@ def compiler_sdk_input(a, repo, base, head):
                 raise ValueError("compiler SDK declared bytes differ: " + name)
 
     check_bytes()
+    check_resolution()
     tsc = root / "typescript/bin/tsc"
     node = shutil.which("node")
     if not os.access(tsc, os.X_OK) or not node:
@@ -158,6 +207,7 @@ def compiler_sdk_input(a, repo, base, head):
                "tool_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                for p in HERE.iterdir() if p.is_file() and p.suffix in (".py", ".cjs")},
                "scope": "tool discovery for one live invocation; no imported verdict, cache or authority",
+               "type_roots": type_roots,
                "complete": False}
     evidence.parent.mkdir(parents=True, exist_ok=True)
     with evidence.open("x") as output:
@@ -165,12 +215,14 @@ def compiler_sdk_input(a, repo, base, head):
     old_path = os.environ.get("PATH")
     old_tsc = getattr(a, "tsc", None)
     os.environ["PATH"] = str(tsc.parent.resolve()) + os.pathsep + (old_path or os.defpath)
+    resolution_token = _COMPILER_SDK_TYPE_ROOTS.set((str(tsc.resolve()), type_roots) if type_roots else None)
     try:
         a.tsc = str(tsc.resolve())
         if Path(shutil.which("tsc") or "").resolve() != tsc.resolve():
             raise ValueError("compiler SDK discovery differs from declared tsc")
         yield
         check_bytes()
+        check_resolution()
         if (oid(base) != binding["base"] or oid(head) != binding["head"]
                 or oid(head + "^{tree}") != binding["tree"]):
             raise ValueError("receiving source tree changed during invocation")
@@ -181,6 +233,7 @@ def compiler_sdk_input(a, repo, base, head):
             raise ValueError("verifier tool bytes changed during invocation")
         binding["complete"] = True
     finally:
+        _COMPILER_SDK_TYPE_ROOTS.reset(resolution_token)
         a.tsc = old_tsc
         if old_path is None:
             os.environ.pop("PATH", None)
@@ -1216,11 +1269,11 @@ class Verify:
             else:
                 self.profile = {"schema": "VerifyProfile/v1", "deployables": {}, "auto": True}
         with impact_pair.trace_phase("prepare-head-graph-build"):
-            # Auto diff already built and checked this exact current head graph
-            # in impact_query. Reuse only that in-process graph, never a supplied
-            # graph, installed caller graph, verdict, or cross-invocation cache.
-            if (self.mode == "diff" and build_graph.graph_is_auto(self.a.graph)
-                    and not getattr(self.a, "caller_graph_bundle", None)):
+            # Every ordinary diff builds and checks the exact current head graph
+            # in impact_query, including when only BASE is supplied. Reuse that
+            # in-process HEAD, never supplied BASE, installed caller graphs,
+            # verdicts, or cross-invocation caches.
+            if (self.mode == "diff" and not getattr(self.a, "caller_graph_bundle", None)):
                 manifest = self.pair_head_idx.doc["manifest"]
                 if manifest.get("source_commit") != self.head or manifest.get("dirty") is not False:
                     raise impact.Refusal("STALE_GRAPH", "prepared head graph is not bound to the verified head")
@@ -1263,7 +1316,7 @@ class Verify:
                     pdir = dest / os.path.dirname(d)
                     tsc = find_bin("tsc", self.a.tsc, dest, self.top, [os.path.dirname(d)])
                     if tsc:
-                        rc, out, secs = run_cmd([tsc, "-p", "tsconfig.json"], pdir)
+                        rc, out, secs = run_cmd([tsc, "-p", "tsconfig.json", *compiler_sdk_type_check_args(tsc)], pdir)
                         built.append(f"{os.path.dirname(d)} (tsc exit {rc}, {secs}s)")
             (dest / ".arcana-export-ok").write_text(json.dumps({"head": self.head, "node_modules_linked": linked, "packages_built": built}))
         info = json.loads((dest / ".arcana-export-ok").read_text())
@@ -1603,7 +1656,8 @@ class Verify:
             # Composite/extended/unknown projects keep the existing isolated cache.
             with tempfile.TemporaryDirectory(prefix="type-check-", dir=self.out_dir) as cache:
                 command = [tsc, "-p", str(gen.resolve()), "--noEmit",
-                           *type_check_incremental_args(gen, Path(cache)), "--listFiles"]
+                           *type_check_incremental_args(gen, Path(cache)),
+                           *compiler_sdk_type_check_args(tsc), "--listFiles"]
                 rc, out, secs = run_cmd(command, root / dep)
             command_text = shlex.join(command)
             if root is not self.exec_root:
@@ -2619,6 +2673,10 @@ class Verify:
                     self.verifiers[-1].update(scope="global_fallback_full_suite", timeout_seconds=timeout,
                                              measurement_origin="authenticated_github_ci",
                                              ci_evidence=candidates, ci_source_commit=proof.get("source_commit"))
+                    if "tests_executed_now" in proof:
+                        self.verifiers[-1].update(tests_executed_now=proof["tests_executed_now"],
+                                                 ci_reused_from=proof.get("reused_from"),
+                                                 ci_measurement=proof.get("measurement"))
                     continue
                 rc, out, secs = run_cmd(cmd, self.exec_root / dep, env={"CI": "1", "PYTHONDONTWRITEBYTECODE": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"}, timeout=timeout)
                 # Exit zero alone (including an empty or wholly skipped suite) measures nothing.
