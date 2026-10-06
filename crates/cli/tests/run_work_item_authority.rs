@@ -13,7 +13,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TASK: &str = "6aaa720c-233e-4f84-bcd5-b8770e93aef0";
 
-async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value) {
+async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value, http_source: bool) {
     let server = MockServer::start().await;
     let work = TempDir::new().unwrap();
     let state = TempDir::new().unwrap();
@@ -25,13 +25,19 @@ async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let projection = json!({"tools": {"allow": ["read"]}, "untrusted_admission": claims}).to_string();
+    let projection =
+        json!({"tools": {"allow": ["read"]}, "untrusted_admission": claims}).to_string();
     let digest = digest_of(projection.as_bytes());
     let contract = inputs.path().join("contract.json");
-    std::fs::write(&contract, json!({
-        "digest": digest, "projection": projection,
-        "tools": {"allow": ["read"]},
-    }).to_string()).unwrap();
+    std::fs::write(
+        &contract,
+        json!({
+            "digest": digest, "projection": projection,
+            "tools": {"allow": ["read"]},
+        })
+        .to_string(),
+    )
+    .unwrap();
     Mock::given(method("GET"))
         .and(path(format!("/api/v1/tasks/{TASK}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -39,15 +45,36 @@ async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value) {
             "contractDigest": digest,
         })))
         .expect(1)
-        .mount(&server).await;
-    Command::cargo_bin("arcana").unwrap()
+        .mount(&server)
+        .await;
+    let mut command = Command::cargo_bin("arcana").unwrap();
+    command
         .env_remove("ARCANA_MC_TOKEN")
         .env("XDG_STATE_HOME", state.path())
         .env("ARCANA_MUNERAL_URL", format!("{}/api/v1", server.uri()))
         .env("ARCANA_MUNERAL_KEY_FILE", &key)
-        .args(["run", "--cwd"]).arg(work.path())
-        .args(["--work-item", TASK, "--contract-file"]).arg(&contract)
-        .assert().failure()
+        .args(["run", "--cwd"])
+        .arg(work.path())
+        .args(["--work-item", TASK]);
+    if http_source {
+        Mock::given(method("GET"))
+            .and(path(format!("/v1/contract/{digest}")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    serde_json::from_slice::<serde_json::Value>(&std::fs::read(&contract).unwrap())
+                        .unwrap(),
+                ),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        command.env("ARCANA_ARGANA_URL", server.uri());
+    } else {
+        command.arg("--contract-file").arg(&contract);
+    }
+    command
+        .assert()
+        .failure()
         .stderr(predicate::str::contains("CONTRACT_AUTHORITY_UNAVAILABLE"))
         .stderr(predicate::str::contains("ARCANA_MC_TOKEN").not());
     assert!(!work.path().join("receipts").exists());
@@ -56,20 +83,41 @@ async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value) {
 
 #[tokio::test]
 async fn another_tasks_valid_digest_cannot_supply_its_own_admission() {
-    untrusted_claims_refuse_before_provider(json!({"task_id": "different-task"})).await;
+    untrusted_claims_refuse_before_provider(json!({"task_id": "different-task"}), false).await;
 }
 
 #[tokio::test]
 async fn a_different_subject_in_digest_claims_does_not_supply_authority() {
-    untrusted_claims_refuse_before_provider(json!({"task_id": TASK, "subject_id": "other-subject"})).await;
+    untrusted_claims_refuse_before_provider(
+        json!({"task_id": TASK, "subject_id": "other-subject"}),
+        false,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn a_self_declared_issuer_cannot_authorize_a_work_item() {
-    untrusted_claims_refuse_before_provider(json!({"task_id": TASK, "issuer": "executor-self-issued"})).await;
+    untrusted_claims_refuse_before_provider(
+        json!({"task_id": TASK, "issuer": "executor-self-issued"}),
+        false,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn a_self_declared_current_generation_cannot_authorize_a_work_item() {
-    untrusted_claims_refuse_before_provider(json!({"task_id": TASK, "generation": 1, "current_generation": 1})).await;
+    untrusted_claims_refuse_before_provider(
+        json!({"task_id": TASK, "generation": 1, "current_generation": 1}),
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn argana_http_source_label_does_not_supply_admission_authority() {
+    untrusted_claims_refuse_before_provider(
+        json!({"task_id": TASK, "issuer": "executor-self-issued"}),
+        true,
+    )
+    .await;
 }

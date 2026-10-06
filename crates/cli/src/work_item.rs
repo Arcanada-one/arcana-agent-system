@@ -14,8 +14,13 @@
 //!    answers with some other contract, or with bytes that were edited after
 //!    they were stamped, gets `CONTRACT_DIGEST_MISMATCH` — also before the
 //!    first model call.
-//! 4. Only then run, with the contract's allowlist in the permission cascade,
-//!    and write `receipts/ReadinessReceipt-<id>.json`.
+//! 4. Authenticate task/project/subject, independent issuer and current
+//!    generation through a trusted task-run authority provider. A digest or
+//!    Argana source label is not authority. The production mapping is absent:
+//!    fail closed before constructing the Model Connector client.
+//! 5. Only an admitted continuation may run with the contract's allowlist in
+//!    the permission cascade and write a readiness receipt. Effect-time
+//!    revocation fencing remains a separate, unsupported runtime gate.
 //!
 //! What this command never does is write to Muneral. The work item's status is
 //! the control plane's to move, and an executor that closed its own work item
@@ -28,6 +33,9 @@ use arcana_connectors::contract_source::{
 };
 use arcana_connectors::muneral::{MuneralClient, WorkItem};
 use arcana_core::contract::{verify, ContractBinding, ContractRefusal};
+use arcana_core::contract_authority::{
+    admit_then, AdmittedContract, UnavailableContractAuthority, WorkItemScope,
+};
 
 use crate::ground_truth::{self, GroundTruth};
 use crate::learning_trace;
@@ -39,7 +47,7 @@ pub struct WorkItemRequest {
     /// The Muneral work item id.
     pub id: String,
     /// Read the contract from this file instead of from Argana. The receipt
-    /// records which was used, and only Argana counts as verified live.
+    /// records which was used. Neither source supplies admission authority.
     pub contract_file: Option<PathBuf>,
     /// Files quoted into the brief as ground truth about this repository, in
     /// the order the dispatcher named them. See [`crate::ground_truth`].
@@ -67,7 +75,7 @@ pub fn run(request: WorkItemRequest) -> i32 {
     runtime.block_on(run_async(request))
 }
 
-async fn run_async(mut request: WorkItemRequest) -> i32 {
+async fn run_async(request: WorkItemRequest) -> i32 {
     let client = match MuneralClient::try_from_env() {
         Ok(client) => client,
         Err(err) => return refuse("MUNERAL_UNAVAILABLE", &err.to_string()),
@@ -92,14 +100,44 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         Err(code) => return code,
     };
 
+    // A matching hash proves bytes, not permission. Neither local file claims,
+    // Muneral task revision nor the KB-reader M2M token provides task-run
+    // authority. No purpose-correct production adapter is published yet.
+    let scope = WorkItemScope {
+        task_id: request.id.clone(),
+        project_id: item.project_id.clone(),
+        subject_id: None,
+    };
+    match admit_then(
+        binding,
+        &scope,
+        &UnavailableContractAuthority,
+        None,
+        |admitted| execute_admitted(request, item, source, admitted),
+    )
+    .await
+    {
+        Ok(code) => code,
+        Err(err) => refuse(err.code(), &err.to_string()),
+    }
+}
+
+async fn execute_admitted(
+    mut request: WorkItemRequest,
+    item: WorkItem,
+    source: Box<dyn ContractSource>,
+    admitted: AdmittedContract,
+) -> i32 {
+    let binding = admitted.binding();
+
     // Before step 4, and therefore before the first billable call.
     let grounding = match grounding_or_refuse(&request.ground_truth) {
         Ok(grounding) => grounding,
         Err(code) => return code,
     };
 
-    // Step 4.
-    request.run.prompt = task_prompt(&item, &binding, &grounding);
+    // The model client is constructed only inside this admitted continuation.
+    request.run.prompt = task_prompt(&item, binding, &grounding);
     request.run.contract = Some(binding.clone());
 
     // Taken BEFORE the run, because it is the only thing that can say which
@@ -121,7 +159,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         .unwrap_or_else(|_| request.run.cwd.clone());
     let built = receipt::build(
         &item.id,
-        &binding,
+        binding,
         source.as_ref(),
         &root,
         &summary,
@@ -155,7 +193,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
     let trace = learning_trace::build(
         &learning_trace::Sources {
             task_id: &item.id,
-            binding: &binding,
+            binding,
             contract_source: source.label(),
             contract_origin: source.origin(),
             verified_live: source.label() == "argana",
