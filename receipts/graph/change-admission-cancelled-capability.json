@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T16:14:36Z",
+ "captured_at_utc": "2026-10-07T16:19:09Z",
  "change_set": {
   "base": "e7ce758a6f479848a687cc84820d5112aa847f5f",
   "files": [
@@ -64,27 +64,27 @@
     "status": "A"
    }
   ],
-  "head": "77dd5ab2ab53bfc1c6ebe8e5fcf06577768fa71c",
+  "head": "518caf335f0dd349d0dab16ff563bc601ad2797d",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
  "exemptions": [],
  "graph": {
-  "builder_version": "1.0.5",
+  "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:f35e4a7c657e244a269e601561cf0bf1a9d00fa2fa5d22817e93ceaaa49dca11",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CURRENT-MAIN-CANONICAL-OUTPUTS/graph-e7ce758a6f47.json",
+  "graph_digest": "sha256:b235b3a59c684d1190262a02ccbde42d9fb7216b5de836861b1463fa5c151083",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/graph-e7ce758a6f47.json",
   "source_commit": "e7ce758a6f479848a687cc84820d5112aa847f5f"
  },
  "head_graph": {
-  "builder_version": "1.0.5",
+  "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:6b7f8626a13a225e2575f5e4fc63c08dd4e74c8f8dd98ff36bd5e1733568f5f5",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CURRENT-MAIN-CANONICAL-OUTPUTS/graph-head-77dd5ab2ab53.json",
-  "source_commit": "77dd5ab2ab53bfc1c6ebe8e5fcf06577768fa71c",
+  "graph_digest": "sha256:a7e214730840f79f689c8f7f039bf1fffbdad4325a4c196614c29cce1fa9c502",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/graph-head-518caf335f0d.json",
+  "source_commit": "518caf335f0dd349d0dab16ff563bc601ad2797d",
   "staleness": {
-   "checked_at_utc": "2026-10-07T16:14:45Z",
-   "checked_nodes": 422,
+   "checked_at_utc": "2026-10-07T16:19:16Z",
+   "checked_nodes": 397,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -92,7 +92,7 @@
  },
  "host": "aras-owner",
  "host_redacted": true,
- "host_sha256": "b36fb7aa2271d11860f589ce5d14d4e294e3bc6ec3c59096af0d1d613214f7cc",
+ "host_sha256": "e97f3a96cb560adf108e3406b8e762fb53f172ecff0f12d3853f00fc03cbfd53",
  "impact_set": {
   "deterministic_core": [
    {
@@ -1989,14 +1989,14 @@
   "total": 84
  },
  "notes": [
-  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.2.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
   "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
-  "version": "1.4.1"
+  "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261007T161436Z-77dd5ab2",
+ "receipt_id": "car-verify-20261007T161909Z-518caf33",
  "receipt_path": "receipts/graph/change-admission-cancelled-capability.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -2190,7 +2190,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T16:14:45Z",
+  "checked_at_utc": "2026-10-07T16:19:16Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2199,7 +2199,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:b1399e6f035e9579f5788031c12be46d453c285e4a9b190e52f6e61003153b8f"
+    "head": "sha256:9f1e578b662863ed24b91929ba824caa1d598b6359b1029baad2cd349f9ed5d4"
    },
    "entity": "receipt:receipts/graph/change-admission-cancelled-capability.json",
    "node_type": "receipt",
@@ -2213,7 +2213,7 @@
   }
  ],
  "tree": {
-  "commit": "77dd5ab2ab53bfc1c6ebe8e5fcf06577768fa71c",
+  "commit": "518caf335f0dd349d0dab16ff563bc601ad2797d",
   "dirty": false
  },
  "verdicts": [
@@ -3123,13 +3123,13 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CURRENT-MAIN-CANONICAL-OUTPUTS/v-fitness.json",
-   "started_at_utc": "2026-10-07T16:14:49Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/v-fitness.json",
+   "started_at_utc": "2026-10-07T16:19:21Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.01,
+   "duration_s": 0.02,
    "entities": [
     "document:CHANGELOG.md"
    ],
@@ -3139,8 +3139,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CURRENT-MAIN-CANONICAL-OUTPUTS/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T16:14:49Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T16:19:21Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
@@ -3429,9 +3429,9 @@
    "receipt:receipts/graph/change-admission-cancelled-capability.json": []
   },
   "seconds": {
-   "prepare": 1.37,
-   "total": 13.35,
-   "verifiers": 0.02
+   "prepare": 3.42,
+   "total": 12.19,
+   "verifiers": 0.03
   }
  },
  "work_item": "2b5abe3f-b09d-479b-80eb-fa4e04d0a468"
