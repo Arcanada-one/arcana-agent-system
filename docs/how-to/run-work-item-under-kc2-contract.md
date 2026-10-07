@@ -121,6 +121,15 @@ Learning trace `source_is_argana` reports transport provenance only, never
 admission. The legacy v1 `verified_against_live_endpoint` field is retained as
 `false`; downloading a document must not be read as authority verification.
 
+## Tool restrictions
+
+An explicit `tools.allow` list restricts the tool catalogue and every attempted
+tool effect. An empty list admits no tools, including `read`, `grep`, `write`,
+`edit`, and `bash`; it is recorded as a contract allowlist. Omitting `tools`
+retains the existing default of `read`, `grep`, `write`, and `edit` without a
+shell. A digest check and tool restriction alone do not establish independent
+semantic fit, current native KC2 authority, or an effect-time revocation lease.
+
 ## Notes
 
 - **The agent key must be in a file.**  The value of `ARCANA_MUNERAL_KEY_FILE`

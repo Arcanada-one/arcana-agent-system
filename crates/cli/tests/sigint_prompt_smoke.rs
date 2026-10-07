@@ -9,45 +9,70 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::io::Read;
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// Long enough that a swallowed signal is unambiguous, short enough that a
 /// failure does not stall CI.
 const DEADLINE: Duration = Duration::from_secs(20);
 
+/// A failed readiness or exit assertion must not leave its session behind.
+struct SessionChild(Child);
+
+impl Drop for SessionChild {
+    fn drop(&mut self) {
+        let _ignored = self.0.kill();
+        let _ignored = self.0.wait();
+    }
+}
+
 #[test]
 fn an_interrupt_at_the_prompt_ends_the_session_with_130() {
     let state = tempfile::TempDir::new().unwrap();
     // stdin stays an open pipe with nothing written to it, so the session is
     // parked on the read — the state a prompt is in when nobody is typing.
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin("arcana"))
-        .env("XDG_STATE_HOME", state.path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = SessionChild(
+        Command::new(assert_cmd::cargo::cargo_bin("arcana"))
+            .env("XDG_STATE_HOME", state.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
 
-    // Wait for the banner: it is printed after the session is built, so its
-    // arrival is proof the process has reached the read rather than a guess
-    // dressed up as a sleep.
-    let mut stdout = child.stdout.take().unwrap();
-    let mut banner = [0_u8; 64];
-    let read = stdout.read(&mut banner).unwrap();
-    assert!(read > 0, "no banner; the session never started");
+    // main prints a version before REPL setup. Only the full normal session
+    // banner proves that the SIGINT listener confirmed registration; arbitrary
+    // first bytes and the unarmed-session banner are not readiness signals.
+    let stdout = child.0.stdout.take().unwrap();
+    let ready_banner = format!(
+        "arcana {} — interactive session. `exit` or Ctrl-D to leave.",
+        env!("CARGO_PKG_VERSION")
+    );
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line == ready_banner {
+                let _ignored = ready_tx.send(());
+            }
+        }
+    });
+    ready_rx
+        .recv_timeout(DEADLINE)
+        .expect("the session never confirmed SIGINT listener readiness");
 
     let killed = Command::new("kill")
         .arg("-INT")
-        .arg(child.id().to_string())
+        .arg(child.0.id().to_string())
         .status()
         .unwrap();
     assert!(killed.success());
 
     let deadline = Instant::now() + DEADLINE;
     let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
+        if let Some(status) = child.0.try_wait().unwrap() {
             break status;
         }
         assert!(
@@ -62,6 +87,9 @@ fn an_interrupt_at_the_prompt_ends_the_session_with_130() {
         status.code(),
         Some(130),
         "a session ended by Ctrl-C must report 130, not a signal death or a \
-         success"
+        success"
     );
+    // Keep draining stdout through process exit: dropping the pipe at the
+    // readiness line could make the following audit line fail with EPIPE.
+    reader.join().unwrap();
 }
