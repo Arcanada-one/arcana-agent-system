@@ -213,3 +213,15 @@ fn canonical_bytes_b64_that_is_not_base64_is_unverifiable_not_a_mismatch() {
     let refusal = verify(&expected, &doc).expect_err("undecodable");
     assert_eq!(refusal.code(), "CONTRACT_UNVERIFIABLE");
 }
+
+#[test]
+fn an_explicit_empty_allowlist_admits_no_tools() {
+    let mut doc = document("Role: reviewer.");
+    doc.tools = Some(ContractTools { allow: vec![] });
+    let binding = verify(&doc.digest, &doc).expect("the fixture binds");
+    assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
+    assert!(binding.allowlist().is_empty());
+    for tool in DEFAULT_ALLOWLIST.into_iter().chain(["bash"]) {
+        assert!(!binding.admits(tool), "explicit empty must refuse {tool}");
+    }
+}

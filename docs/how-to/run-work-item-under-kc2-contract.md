@@ -86,6 +86,15 @@ computation ran.  This makes it possible to debug a stale or mis-linked
 contract without needing the contract body.  Again, no model call has been made
 at this point: the digest check is pure local arithmetic.
 
+## Tool restrictions
+
+An explicit `tools.allow` list restricts the tool catalogue and every attempted
+tool effect. An empty list admits no tools, including `read`, `grep`, `write`,
+`edit`, and `bash`; it is recorded as a contract allowlist. Omitting `tools`
+retains the existing default of `read`, `grep`, `write`, and `edit` without a
+shell. A digest check and tool restriction alone do not establish independent
+semantic fit, current native KC2 authority, or an effect-time revocation lease.
+
 ## Notes
 
 - **The agent key must be in a file.**  The value of `ARCANA_MUNERAL_KEY_FILE`
