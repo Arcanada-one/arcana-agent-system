@@ -5,9 +5,9 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T18:38:16Z",
+ "captured_at_utc": "2026-10-07T22:17:39Z",
  "change_set": {
-  "base": "70262721ef24caec6f410ba7fede23d971a13b27",
+  "base": "d2c6c2ebf758857f54a71f4eb3a032e08b6007f9",
   "files": [
    {
     "kind": "doc",
@@ -91,7 +91,7 @@
     "status": "A"
    }
   ],
-  "head": "d5e76708337705bfbbecfb0baed7eec573fb57c2",
+  "head": "fad49a3450c63ee3081549e4ebaa067fcb49810d",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -99,18 +99,18 @@
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:d061f63b672116c3c7bee5bdecf1913caf92042ff4733797645b77e5ac70255b",
-  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/graph-70262721ef24.json",
-  "source_commit": "70262721ef24caec6f410ba7fede23d971a13b27"
+  "graph_digest": "sha256:6d5e927d4ae69f6e923ef5c120e1d7888ce39aebeecf76c9816a0649901faa53",
+  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-IDENTITY-CORRECTED-OUT/graph-d2c6c2ebf758.json",
+  "source_commit": "d2c6c2ebf758857f54a71f4eb3a032e08b6007f9"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:53a0251e7dba7e788679c622fd72f81fba6a6a4d89a88676349a77603698abae",
-  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/graph-head-d5e767083377.json",
-  "source_commit": "d5e76708337705bfbbecfb0baed7eec573fb57c2",
+  "graph_digest": "sha256:65db40c33dfa7c2a6198eab3fd30b6ebbbc895556b1355d54d1b09fd556d455a",
+  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-IDENTITY-CORRECTED-OUT/graph-head-fad49a3450c6.json",
+  "source_commit": "fad49a3450c63ee3081549e4ebaa067fcb49810d",
   "staleness": {
-   "checked_at_utc": "2026-10-07T18:38:21Z",
+   "checked_at_utc": "2026-10-07T22:17:45Z",
    "checked_nodes": 402,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -119,7 +119,7 @@
  },
  "host": "aras-owner",
  "host_redacted": true,
- "host_sha256": "66d56fc384f43e91af9d3a5ae07f2ba33f2813eddad746cb0d3f9aefa6d93c6a",
+ "host_sha256": "6b4d6605322f472267cd4621207cbc6e4bacb2c92fb46c74eb7788b2686c4f6b",
  "impact_set": {
   "deterministic_core": [
    {
@@ -2560,10 +2560,10 @@
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261007T183816Z-d5e76708",
+ "receipt_id": "car-verify-20261007T221739Z-fad49a34",
  "receipt_path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
  "repo": {
-  "name": "_temp/aras244-tools-binding-ccda-20261004",
+  "name": "Arcanada-one/arcana-agent-system",
   "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/source"
  },
  "revision_selection": {
@@ -2779,7 +2779,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T18:38:21Z",
+  "checked_at_utc": "2026-10-07T22:17:45Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2787,8 +2787,8 @@
  "structural_exclusions": [
   {
    "content_hash": {
-    "base": "sha256:b2cabc32b184f49796f271ec70ed0003c0c5e7b0b1b4308e3442b1f7667b73ca",
-    "head": "sha256:b2cabc32b184f49796f271ec70ed0003c0c5e7b0b1b4308e3442b1f7667b73ca"
+    "base": "sha256:fcc8a44285323aadf8c5f314594a7594a4c4400b63510525c671f78ccc138b53",
+    "head": "sha256:fcc8a44285323aadf8c5f314594a7594a4c4400b63510525c671f78ccc138b53"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS252-634.json",
    "node_type": "receipt",
@@ -2799,7 +2799,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:3e4e7057d47e70b1d297f31e0e57319528587318005da648a56575d411baf6d1"
+    "head": "sha256:910ba424d6c6455ab8e9d2a0c2f942b8605dc12361c5e3f03e4388b50fb3745a"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
    "node_type": "receipt",
@@ -2868,7 +2868,7 @@
   }
  ],
  "tree": {
-  "commit": "d5e76708337705bfbbecfb0baed7eec573fb57c2",
+  "commit": "fad49a3450c63ee3081549e4ebaa067fcb49810d",
   "dirty": false
  },
  "verdicts": [
@@ -3836,8 +3836,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/v-fitness.json",
-   "started_at_utc": "2026-10-07T18:38:25Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-IDENTITY-CORRECTED-OUT/v-fitness.json",
+   "started_at_utc": "2026-10-07T22:17:51Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3854,8 +3854,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T18:38:25Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-IDENTITY-CORRECTED-OUT/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T22:17:51Z",
    "summary": "2 document(s), 0 failed"
   }
  ],
@@ -4168,8 +4168,8 @@
    "receipt:receipts/graph/change-admission-empty-contract.json": []
   },
   "seconds": {
-   "prepare": 2.68,
-   "total": 9.21,
+   "prepare": 4.02,
+   "total": 12.14,
    "verifiers": 0.02
   }
  },
