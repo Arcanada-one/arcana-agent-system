@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T16:19:09Z",
+ "captured_at_utc": "2026-10-07T16:27:08Z",
  "change_set": {
   "base": "e7ce758a6f479848a687cc84820d5112aa847f5f",
   "files": [
@@ -64,7 +64,7 @@
     "status": "A"
    }
   ],
-  "head": "518caf335f0dd349d0dab16ff563bc601ad2797d",
+  "head": "31b38939fac5e0edcb4b13faca3564505b18432f",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -73,17 +73,17 @@
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:b235b3a59c684d1190262a02ccbde42d9fb7216b5de836861b1463fa5c151083",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/graph-e7ce758a6f47.json",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/FINAL-SOURCE/RECEIVING-CLEAN-OUTPUTS/graph-e7ce758a6f47.json",
   "source_commit": "e7ce758a6f479848a687cc84820d5112aa847f5f"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:a7e214730840f79f689c8f7f039bf1fffbdad4325a4c196614c29cce1fa9c502",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/graph-head-518caf335f0d.json",
-  "source_commit": "518caf335f0dd349d0dab16ff563bc601ad2797d",
+  "graph_digest": "sha256:aaae028f2709e514683772bd3d1d00a1be037476a957213a41ffe6c464f35a15",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/FINAL-SOURCE/RECEIVING-CLEAN-OUTPUTS/graph-head-31b38939fac5.json",
+  "source_commit": "31b38939fac5e0edcb4b13faca3564505b18432f",
   "staleness": {
-   "checked_at_utc": "2026-10-07T16:19:16Z",
+   "checked_at_utc": "2026-10-07T16:27:15Z",
    "checked_nodes": 397,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -92,7 +92,7 @@
  },
  "host": "aras-owner",
  "host_redacted": true,
- "host_sha256": "e97f3a96cb560adf108e3406b8e762fb53f172ecff0f12d3853f00fc03cbfd53",
+ "host_sha256": "5a920d081d85ffbf37a43d5d280ab277df662d7f3eff2ea578007aabaf0da628",
  "impact_set": {
   "deterministic_core": [
    {
@@ -1996,7 +1996,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261007T161909Z-518caf33",
+ "receipt_id": "car-verify-20261007T162708Z-31b38939",
  "receipt_path": "receipts/graph/change-admission-cancelled-capability.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -2190,7 +2190,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T16:19:16Z",
+  "checked_at_utc": "2026-10-07T16:27:14Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2199,7 +2199,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:9f1e578b662863ed24b91929ba824caa1d598b6359b1029baad2cd349f9ed5d4"
+    "head": "sha256:1c65562397291a8f36e7b116f9f3c1059327616aa08f4014e5b6150752928eff"
    },
    "entity": "receipt:receipts/graph/change-admission-cancelled-capability.json",
    "node_type": "receipt",
@@ -2213,7 +2213,7 @@
   }
  ],
  "tree": {
-  "commit": "518caf335f0dd349d0dab16ff563bc601ad2797d",
+  "commit": "31b38939fac5e0edcb4b13faca3564505b18432f",
   "dirty": false
  },
  "verdicts": [
@@ -3123,13 +3123,13 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/v-fitness.json",
-   "started_at_utc": "2026-10-07T16:19:21Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/FINAL-SOURCE/RECEIVING-CLEAN-OUTPUTS/v-fitness.json",
+   "started_at_utc": "2026-10-07T16:27:20Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.02,
+   "duration_s": 0.01,
    "entities": [
     "document:CHANGELOG.md"
    ],
@@ -3139,8 +3139,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/CI-ENGINE-MATCH-OUTPUTS/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T16:19:21Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ROOT1550-CANCEL239/FINAL-SOURCE/RECEIVING-CLEAN-OUTPUTS/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T16:27:20Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
@@ -3429,9 +3429,9 @@
    "receipt:receipts/graph/change-admission-cancelled-capability.json": []
   },
   "seconds": {
-   "prepare": 3.42,
-   "total": 12.19,
-   "verifiers": 0.03
+   "prepare": 3.59,
+   "total": 12.42,
+   "verifiers": 0.02
   }
  },
  "work_item": "2b5abe3f-b09d-479b-80eb-fa4e04d0a468"
