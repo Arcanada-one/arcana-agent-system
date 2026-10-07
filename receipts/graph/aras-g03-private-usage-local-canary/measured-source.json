@@ -1,0 +1,11 @@
+{
+  "schema": "MeasuredGitSource/v1",
+  "commit": "716f1c370aa58427e5cbba36d15e5d28e0692285",
+  "tree": "a0a44aeb5a00db15688e608db9bd5d7d263093d1",
+  "dirty": false,
+  "producer": {
+    "tool": "git rev-parse/git status; Cargo JSON executable output",
+    "runtime": "SAME ARAS owned local source executor"
+  },
+  "captured_at_utc": "2026-10-05T11:08:45.147756+00:00"
+}

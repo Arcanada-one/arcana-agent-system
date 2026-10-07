@@ -89,6 +89,84 @@ async fn usage_always_sends_the_window_the_route_requires() {
         .success();
 }
 
+/// A local HTTP fixture measures the actual CLI request contract, not live
+/// provider billing or authenticated financial authority.
+#[tokio::test]
+async fn usage_canary_binds_stats_credential_window_and_read_only_route() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/stats/requests/daily"))
+        .and(wiremock::matchers::header(
+            "x-stats-token",
+            "local-canary-stats",
+        ))
+        .and(wiremock::matchers::query_param("since", "2026-08-27"))
+        .and(wiremock::matchers::query_param("until", "2026-08-28"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(live_shaped_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = TempDir::new().unwrap();
+    Command::cargo_bin("arcana")
+        .unwrap()
+        .env("ARCANA_MC_BASE_URL", server.uri())
+        .env("ARCANA_STATS_TOKEN", "local-canary-stats")
+        .env("ARCANA_MC_TOKEN", "local-canary-inference-not-stats")
+        .env("XDG_STATE_HOME", state.path())
+        .args(["usage", "--since", "2026-08-27", "--until", "2026-08-28"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0.001734"));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key("authorization"));
+}
+
+#[tokio::test]
+async fn usage_canary_malformed_response_is_unknown_not_zero_spend() {
+    let server = MockServer::start().await;
+    // The legacy/defaulted field shape is invalid for this route. A HTTP 200
+    // must not turn failed decoding into a successful zero-cost observation.
+    Mock::given(method("GET"))
+        .and(path("/stats/requests/daily"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {"date": "2026-08-28", "requests": 1, "total_tokens": 0, "cost_usd": 0}
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = TempDir::new().unwrap();
+    Command::cargo_bin("arcana")
+        .unwrap()
+        .env("ARCANA_MC_BASE_URL", server.uri())
+        .env("ARCANA_STATS_TOKEN", "local-canary-stats")
+        .env("XDG_STATE_HOME", state.path())
+        .args(["usage", "--since", "2026-08-27", "--until", "2026-08-28"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("usage response could not be read"))
+        .stdout(predicate::str::contains("TOTAL").not())
+        .stdout(predicate::str::contains("No recorded usage").not());
+}
+
+#[tokio::test]
+async fn usage_canary_missing_stats_token_never_uses_inference_or_http() {
+    let server = MockServer::start().await;
+    let state = TempDir::new().unwrap();
+    Command::cargo_bin("arcana")
+        .unwrap()
+        .env("ARCANA_MC_BASE_URL", server.uri())
+        .env_remove("ARCANA_STATS_TOKEN")
+        .env("ARCANA_MC_TOKEN", "local-canary-inference-not-stats")
+        .env("XDG_STATE_HOME", state.path())
+        .args(["usage", "--since", "2026-08-27", "--until", "2026-08-28"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("ARCANA_STATS_TOKEN"))
+        .stdout(predicate::str::contains("TOTAL").not());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn the_default_window_is_sent_even_when_the_user_passes_nothing() {
     // The no-flags path is the one a first-time user takes, and the one that

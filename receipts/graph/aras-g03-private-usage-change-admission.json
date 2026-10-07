@@ -1,0 +1,508 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted"
+ },
+ "caller_graph_compatibility": {
+  "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
+  "bundle_digest": "sha256:61b71c5e70c77c22e206d160aae91e881c271579cece4ed5d5eb1242d67f7c97",
+  "bundle_path": ".github/graph-admission",
+  "current_producer_files_sha256": "sha256:89009590bc785ee69bf6b29b19e406cfb67816e532ecfa7352fa459448ce3397",
+  "graphs": {
+   "base": {
+    "body_sha256": "sha256:fc37e0903a84c7158a056cabbf261739b5368d343246890c8dd6a64c9448c94d",
+    "current_builder_version": "1.0.3",
+    "current_graph_digest": "sha256:60710091f61c44b8ba2f2c4d8523b2084554af39aae6f5900d46b0cd82ac378b",
+    "installed_builder_version": "1.0.1",
+    "installed_graph_digest": "sha256:87ef4f869efa395f593869be3836b783941018635c686335edbae687c9171193",
+    "source_commit": "62149eabbc7224f65c66c91dc07eae1d02c11e02"
+   },
+   "head": {
+    "body_sha256": "sha256:c9999eb579c225b0358b06578d2004aeaa9db5d55a3a00aefc9fe6d2c4c1f260",
+    "current_builder_version": "1.0.3",
+    "current_graph_digest": "sha256:f2896b55ba45a74e5b57b8004c940538891af6eedbd3c7b26dc445a76ed1ed29",
+    "installed_builder_version": "1.0.1",
+    "installed_graph_digest": "sha256:c7571334ef344e96cdc0640941d05da36da21c1150cc5cbca67bd862994b92c6",
+    "source_commit": "a71426bdebd2356d9e7a283ab6b3ff0f0fc5c03f"
+   }
+  },
+  "head": "a71426bdebd2356d9e7a283ab6b3ff0f0fc5c03f",
+  "program_ref": "db9784badb35048732f6bb74b8f2b96a7da05da0",
+  "schema": "CallerGraphCompatibility/v1",
+  "trusted_key_fingerprint": "SHA256:9QFqysn44UjA8rXyfHjItP3b2Oadhnbf1bDNqXrsCig"
+ },
+ "captured_at_utc": "2026-10-05T11:29:10Z",
+ "change_set": {
+  "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
+  "files": [
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/usage.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/usage.rs"
+    ],
+    "path": "crates/cli/src/usage.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/usage_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/usage_smoke.rs"
+    ],
+    "path": "crates/cli/tests/usage_smoke.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/src/lib.rs",
+    "node_ids": [
+     "code_unit:crates/core/src/lib.rs"
+    ],
+    "path": "crates/core/src/lib.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/src/usage_export.rs",
+    "node_ids": [
+     "code_unit:crates/core/src/usage_export.rs"
+    ],
+    "path": "crates/core/src/usage_export.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/core/tests/private_usage_export.rs",
+    "node_ids": [
+     "code_unit:crates/core/tests/private_usage_export.rs"
+    ],
+    "path": "crates/core/tests/private_usage_export.rs",
+    "status": "A"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/reference/private-run-usage.md",
+    "node_ids": [
+     "document:docs/reference/private-run-usage.md"
+    ],
+    "path": "docs/reference/private-run-usage.md",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/aras-g03-private-usage-local-canary/canary-plan-frozen.json",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/aras-g03-private-usage-local-canary/canary-result-measured.json",
+    "status": "A"
+   },
+   {
+    "kind": "receipt",
+    "new": true,
+    "path": "receipts/graph/aras-g03-private-usage-local-canary/measured-source.json",
+    "status": "A"
+   }
+  ],
+  "head": "a71426bdebd2356d9e7a283ab6b3ff0f0fc5c03f",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:87ef4f869efa395f593869be3836b783941018635c686335edbae687c9171193",
+  "path": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras-a714-absolute-can-compatibility-qualification/verifier-out/graph-62149eabbc72.json",
+  "source_commit": "62149eabbc7224f65c66c91dc07eae1d02c11e02"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:c7571334ef344e96cdc0640941d05da36da21c1150cc5cbca67bd862994b92c6",
+  "path": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras-a714-absolute-can-compatibility-qualification/verifier-out/graph-head-a71426bdebd2.json",
+  "source_commit": "a71426bdebd2356d9e7a283ab6b3ff0f0fc5c03f",
+  "staleness": {
+   "checked_at_utc": "2026-10-05T11:29:21Z",
+   "checked_nodes": 396,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/lib.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/usage.rs",
+      "via": "rust-mod-decl"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "code_unit:crates/cli/src/repl.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/cli/src/repl.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/cli/src/usage.rs",
+      "via": "rust-use-crate-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/usage.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/core",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/core/src/lib.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/core",
+      "via": "containment"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 4
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.3.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.3.0"
+ },
+ "receipt_id": "car-verify-20261005T112910Z-a71426bd",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/arcanada/_temp/aras244-tools-binding-ccda-20261004"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/repl.rs",
+   "code_unit:crates/cli/src/usage.rs",
+   "code_unit:crates/cli/tests/usage_smoke.rs",
+   "code_unit:crates/core/src/lib.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/core"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/repl.rs",
+   "code_unit:crates/cli/src/usage.rs",
+   "code_unit:crates/cli/tests/usage_smoke.rs",
+   "code_unit:crates/core/src/lib.rs",
+   "code_unit:crates/core/src/usage_export.rs",
+   "code_unit:crates/core/tests/private_usage_export.rs",
+   "deployable_unit:crates/cli",
+   "deployable_unit:crates/core",
+   "document:docs/reference/private-run-usage.md"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-10-05T11:29:21Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [],
+ "tree": {
+  "commit": "a71426bdebd2356d9e7a283ab6b3ff0f0fc5c03f",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/repl.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/usage.rs",
+   "reason": "v-config-schema: every key read is declared; v-fitness: no new fitness violation; v-canary-1: canary aras-g03-716f1c3-local-cli-http (pre) on Owned loopback HTTP fixture and temporary local filesystem; no provider/production credentials/model/effect route: Actual owned real CLI/local HTTP fixture positive and refusal controls. Source-local only; production/installed/runtime authority not measured.",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-canary-1",
+    "v-config-schema",
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/usage_smoke.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/src/usage_export.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/private_usage_export.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/core",
+   "reason": "v-fitness: no new violation in crates/core",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:docs/reference/private-run-usage.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifier_selection": {
+  "applied": {},
+  "not_applied": [],
+  "requested": [],
+  "schema": "VerifierSelection/v1"
+ },
+ "verifiers": [
+  {
+   "command": "verify.py config_schema: keys read at head ⊆ declared keys",
+   "duration_s": 1.03,
+   "entities": [
+    "code_unit:crates/cli/src/usage.rs"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/usage.rs": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-config-schema",
+   "kind": "config_schema",
+   "output_ref": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras-a714-absolute-can-compatibility-qualification/verifier-out/v-config-schema.json",
+   "started_at_utc": "2026-10-05T11:29:26Z",
+   "summary": "1 source(s), 0 new / 0 frozen undeclared reads, 0 failed; 4 vendored file(s) not attributed to this repository (Arcanada-one/arcanada-universal-program)"
+  },
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.01,
+   "entities": [
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/repl.rs",
+    "code_unit:crates/cli/src/usage.rs",
+    "code_unit:crates/cli/tests/usage_smoke.rs",
+    "code_unit:crates/core/src/lib.rs",
+    "code_unit:crates/core/src/usage_export.rs",
+    "code_unit:crates/core/tests/private_usage_export.rs",
+    "deployable_unit:crates/cli",
+    "deployable_unit:crates/core"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/lib.rs": "verified",
+    "code_unit:crates/cli/src/repl.rs": "verified",
+    "code_unit:crates/cli/src/usage.rs": "verified",
+    "code_unit:crates/cli/tests/usage_smoke.rs": "verified",
+    "code_unit:crates/core/src/lib.rs": "verified",
+    "code_unit:crates/core/src/usage_export.rs": "verified",
+    "code_unit:crates/core/tests/private_usage_export.rs": "verified",
+    "deployable_unit:crates/cli": "verified",
+    "deployable_unit:crates/core": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras-a714-absolute-can-compatibility-qualification/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-05T11:29:27Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.0,
+   "entities": [
+    "document:docs/reference/private-run-usage.md"
+   ],
+   "entity_verdicts": {
+    "document:docs/reference/private-run-usage.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras-a714-absolute-can-compatibility-qualification/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-10-05T11:29:27Z",
+   "summary": "1 document(s), 0 failed"
+  },
+  {
+   "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
+   "duration_s": 4.97,
+   "entities": [
+    "code_unit:crates/cli/src/usage.rs"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/usage.rs": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-canary-1",
+   "kind": "canary",
+   "output_ref": "receipts/graph/aras-g03-private-usage-local-canary/canary-result-measured.json",
+   "started_at_utc": "2026-10-05T11:29:27Z",
+   "summary": "receipts/graph/aras-g03-private-usage-local-canary/canary-result-measured.json: 1 verified / 0 failed / 0 not_measured"
+  },
+  {
+   "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
+   "duration_s": 4.97,
+   "entities": [],
+   "exit_code": 0,
+   "id": "v-canary",
+   "kind": "canary",
+   "output_ref": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras-a714-absolute-can-compatibility-qualification/verifier-out/v-canary.json",
+   "started_at_utc": "2026-10-05T11:29:27Z",
+   "summary": "1 canary result(s), 1 committed at head; 1 verified / 0 failed / 0 not_measured of 1 entities"
+  }
+ ],
+ "verify": {
+  "events": [],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/repl.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/usage.rs": [
+    "canary",
+    "config_schema",
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/usage_smoke.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/src/usage_export.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/private_usage_export.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/core": [
+    "fitness_rules"
+   ],
+   "document:docs/reference/private-run-usage.md": [
+    "doc_reference"
+   ]
+  },
+  "seconds": {
+   "prepare": 3.05,
+   "total": 21.97,
+   "verifiers": 10.98
+  }
+ },
+ "work_item": "908aca19-96bc-4328-a5a5-932bf0a63a0a"
+}
