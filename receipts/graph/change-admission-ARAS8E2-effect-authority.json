@@ -5,9 +5,9 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T06:17:53Z",
+ "captured_at_utc": "2026-10-07T18:38:16Z",
  "change_set": {
-  "base": "e806a8f3e2cd0ee007c975c82e4b6764b5d1282b",
+  "base": "70262721ef24caec6f410ba7fede23d971a13b27",
   "files": [
    {
     "kind": "doc",
@@ -91,33 +91,35 @@
     "status": "A"
    }
   ],
-  "head": "a68264720eaf7e2d43fd2e8b05d86b43b1335394",
+  "head": "d5e76708337705bfbbecfb0baed7eec573fb57c2",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
  "exemptions": [],
  "graph": {
-  "builder_version": "1.0.5",
+  "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:28f204d17016c79ad4750c9634dbd778dc43db6ae2b4945d2988567dfdce48b3",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/graph-e806a8f3e2cd.json",
-  "source_commit": "e806a8f3e2cd0ee007c975c82e4b6764b5d1282b"
+  "graph_digest": "sha256:d061f63b672116c3c7bee5bdecf1913caf92042ff4733797645b77e5ac70255b",
+  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/graph-70262721ef24.json",
+  "source_commit": "70262721ef24caec6f410ba7fede23d971a13b27"
  },
  "head_graph": {
-  "builder_version": "1.0.5",
+  "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:e4450451707c357a38216156d83f1498f16f5150c0d68016f001f22670d93189",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/graph-head-a68264720eaf.json",
-  "source_commit": "a68264720eaf7e2d43fd2e8b05d86b43b1335394",
+  "graph_digest": "sha256:53a0251e7dba7e788679c622fd72f81fba6a6a4d89a88676349a77603698abae",
+  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/graph-head-d5e767083377.json",
+  "source_commit": "d5e76708337705bfbbecfb0baed7eec573fb57c2",
   "staleness": {
-   "checked_at_utc": "2026-10-07T06:18:03Z",
-   "checked_nodes": 423,
+   "checked_at_utc": "2026-10-07T18:38:21Z",
+   "checked_nodes": 402,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
   }
  },
- "host": "arcana-devs",
+ "host": "aras-owner",
+ "host_redacted": true,
+ "host_sha256": "66d56fc384f43e91af9d3a5ae07f2ba33f2813eddad746cb0d3f9aefa6d93c6a",
  "impact_set": {
   "deterministic_core": [
    {
@@ -663,6 +665,33 @@
       "from": "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
       "provenance": "deterministic",
       "to": "code_unit:crates/core/src/agent_loop.rs",
+      "via": "rust-use-workspace-crate"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "type-check / compile of the importer"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 2,
+    "entity": "code_unit:crates/core/tests/capability_cancellation.rs",
+    "node_type": "code_unit",
+    "path": [
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/src/execution.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/permission/mod.rs",
+      "via": "rust-use-crate-path"
+     },
+     {
+      "edge_type": "imports",
+      "from": "code_unit:crates/core/tests/capability_cancellation.rs",
+      "provenance": "deterministic",
+      "to": "code_unit:crates/core/src/execution.rs",
       "via": "rust-use-workspace-crate"
      }
     ],
@@ -2492,6 +2521,26 @@
      "head"
     ],
     "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-empty-contract.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-empty-contract.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
    }
   ],
   "edge_types": "all",
@@ -2501,17 +2550,17 @@
   "inferred_tail": [],
   "max_depth": 3,
   "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
-  "total": 91
+  "total": 93
  },
  "notes": [
-  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.2.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
   "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
-  "version": "1.4.1"
+  "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261007T061753Z-a6826472",
+ "receipt_id": "car-verify-20261007T183816Z-d5e76708",
  "receipt_path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
  "repo": {
   "name": "_temp/aras244-tools-binding-ccda-20261004",
@@ -2546,6 +2595,7 @@
    "code_unit:crates/core/src/permission/contract.rs",
    "code_unit:crates/core/src/permission/mod.rs",
    "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+   "code_unit:crates/core/tests/capability_cancellation.rs",
    "code_unit:crates/core/tests/capability_executor_security.rs",
    "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
    "code_unit:crates/core/tests/common/mod.rs",
@@ -2617,7 +2667,8 @@
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
    "receipt:receipts/graph/change-admission-a2-297c.json",
    "receipt:receipts/graph/change-admission-a2-361.json",
-   "receipt:receipts/graph/change-admission-credential-file-guard.json"
+   "receipt:receipts/graph/change-admission-credential-file-guard.json",
+   "receipt:receipts/graph/change-admission-empty-contract.json"
   ],
   "head": [
    "code_unit:crates/cli/src/bootstrap.rs",
@@ -2647,6 +2698,7 @@
    "code_unit:crates/core/src/permission/contract.rs",
    "code_unit:crates/core/src/permission/mod.rs",
    "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+   "code_unit:crates/core/tests/capability_cancellation.rs",
    "code_unit:crates/core/tests/capability_executor_security.rs",
    "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
    "code_unit:crates/core/tests/common/mod.rs",
@@ -2719,14 +2771,15 @@
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
    "receipt:receipts/graph/change-admission-a2-297c.json",
    "receipt:receipts/graph/change-admission-a2-361.json",
-   "receipt:receipts/graph/change-admission-credential-file-guard.json"
+   "receipt:receipts/graph/change-admission-credential-file-guard.json",
+   "receipt:receipts/graph/change-admission-empty-contract.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T06:18:03Z",
+  "checked_at_utc": "2026-10-07T18:38:21Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2734,8 +2787,8 @@
  "structural_exclusions": [
   {
    "content_hash": {
-    "base": "sha256:af1300b1afb91d274a96e3e4d999823ff9f88959a7e8e2a7cc3aa48189eb4ff1",
-    "head": "sha256:af1300b1afb91d274a96e3e4d999823ff9f88959a7e8e2a7cc3aa48189eb4ff1"
+    "base": "sha256:b2cabc32b184f49796f271ec70ed0003c0c5e7b0b1b4308e3442b1f7667b73ca",
+    "head": "sha256:b2cabc32b184f49796f271ec70ed0003c0c5e7b0b1b4308e3442b1f7667b73ca"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS252-634.json",
    "node_type": "receipt",
@@ -2746,7 +2799,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:c476452315c4fe4e8e809f42d45a72e89b0d25c4e3f6d59d272f14cf91f44942"
+    "head": "sha256:3e4e7057d47e70b1d297f31e0e57319528587318005da648a56575d411baf6d1"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
    "node_type": "receipt",
@@ -2801,10 +2854,21 @@
    "path": "receipts/graph/change-admission-credential-file-guard.json",
    "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
    "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:506f210f7a7c23218277b86ff0f06e4e712150d0859e0667b3646ee6007f8cb0",
+    "head": "sha256:506f210f7a7c23218277b86ff0f06e4e712150d0859e0667b3646ee6007f8cb0"
+   },
+   "entity": "receipt:receipts/graph/change-admission-empty-contract.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-empty-contract.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
   }
  ],
  "tree": {
-  "commit": "a68264720eaf7e2d43fd2e8b05d86b43b1335394",
+  "commit": "d5e76708337705bfbbecfb0baed7eec573fb57c2",
   "dirty": false
  },
  "verdicts": [
@@ -3018,6 +3082,14 @@
   },
   {
    "entity": "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/core/tests/capability_cancellation.rs",
    "reason": "v-fitness: no new fitness violation",
    "verdict": "verified",
    "verifier_ids": [
@@ -3599,6 +3671,7 @@
     "code_unit:crates/core/src/permission/contract.rs",
     "code_unit:crates/core/src/permission/mod.rs",
     "code_unit:crates/core/tests/agent_loop_exhaustive.rs",
+    "code_unit:crates/core/tests/capability_cancellation.rs",
     "code_unit:crates/core/tests/capability_executor_security.rs",
     "code_unit:crates/core/tests/capstone_vertical_prototype.rs",
     "code_unit:crates/core/tests/common/mod.rs",
@@ -3693,6 +3766,7 @@
     "code_unit:crates/core/src/permission/contract.rs": "verified",
     "code_unit:crates/core/src/permission/mod.rs": "verified",
     "code_unit:crates/core/tests/agent_loop_exhaustive.rs": "verified",
+    "code_unit:crates/core/tests/capability_cancellation.rs": "verified",
     "code_unit:crates/core/tests/capability_executor_security.rs": "verified",
     "code_unit:crates/core/tests/capstone_vertical_prototype.rs": "verified",
     "code_unit:crates/core/tests/common/mod.rs": "verified",
@@ -3762,8 +3836,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-07T06:18:08Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/v-fitness.json",
+   "started_at_utc": "2026-10-07T18:38:25Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3780,8 +3854,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T06:18:08Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/CHILD-RECEIVING-OUT/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T18:38:25Z",
    "summary": "2 document(s), 0 failed"
   }
  ],
@@ -3796,7 +3870,7 @@
    {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "6 affected entity(ies) owe no verdict (receipt: 6): unchanged at both revisions and given no verifier by the matrix"
+    "text": "7 affected entity(ies) owe no verdict (receipt: 7): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -3879,6 +3953,9 @@
     "fitness_rules"
    ],
    "code_unit:crates/core/tests/agent_loop_exhaustive.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/core/tests/capability_cancellation.rs": [
     "fitness_rules"
    ],
    "code_unit:crates/core/tests/capability_executor_security.rs": [
@@ -4087,11 +4164,12 @@
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json": [],
    "receipt:receipts/graph/change-admission-a2-297c.json": [],
    "receipt:receipts/graph/change-admission-a2-361.json": [],
-   "receipt:receipts/graph/change-admission-credential-file-guard.json": []
+   "receipt:receipts/graph/change-admission-credential-file-guard.json": [],
+   "receipt:receipts/graph/change-admission-empty-contract.json": []
   },
   "seconds": {
-   "prepare": 1.4,
-   "total": 14.22,
+   "prepare": 2.68,
+   "total": 9.21,
    "verifiers": 0.02
   }
  },
