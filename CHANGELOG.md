@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cancellation during final validation or the durable admission audit. Refusals
   retain a correlated audit result and report operator abort; already-admitted
   effects are not promised rollback. This is local admission, not remote fencing.
+- Retain the empty and nonempty test assertions using Rust 1.99-compatible
+  comparison macros under strict Clippy warnings.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
   Missing files and unsafe owner/permissions/type/size have distinct reasons;
   status/watch include the rejected condition. FIFOs cannot block file opening.

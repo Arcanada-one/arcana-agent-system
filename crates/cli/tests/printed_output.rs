@@ -815,7 +815,7 @@ fn the_done_marker_keys_come_from_the_writer() {
 fn prose_is_left_to_the_prose_check() {
     let root = repo_root();
     let page = "The command prints Error: CONTRACT_MISSING: no digest, and stops.\n";
-    assert!(findings(&root, "docs/example.md", page).is_empty());
+    assert_eq!(findings(&root, "docs/example.md", page).len(), 0);
 }
 
 /// A refusal prints its code once, and the run through the real refusal types

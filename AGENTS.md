@@ -1,4 +1,4 @@
-# CLAUDE.md — Arcanada Agent System
+# AGENTS.md — Arcanada Agent System
 
 # SUPREME DIRECTIVE — Universal Laws of Artificial Entities
 

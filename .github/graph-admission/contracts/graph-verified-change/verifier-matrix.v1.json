@@ -463,8 +463,8 @@
     "route"
    ],
    "kind": "type_check",
-   "tool": "tsc --noEmit --incremental false -p <tsconfig> (per deployable; test tsconfig when a spec is affected)",
-   "verdict_rule": "verified when the project containing the entity compiles with 0 errors; failed when an error is reported in the entity's file; not_measured when the project fails only in other files (error not attributable) or tsc is unavailable",
+   "tool": "tsc --noEmit --incremental false -p <tsconfig> (per deployable; test tsconfig when a spec is affected; a config declared in VerifyProfile/v1 deployables.<dep>.tsconfig_postbuild is compiled inside a fresh git-archive tree of the measured revision after the declared build ran there — contracts/graph-verified-change/postbuild-type-check.v1.md, A2-444)",
+   "verdict_rule": "verified when the project containing the entity compiles with 0 errors; failed when an error is reported in the entity's file; not_measured when the project fails only in other files (error not attributable) or tsc is unavailable; for a post-build config, not_measured with the reason when the build was not performed, wrote no declared output, or an output file was not produced by that build (never a build output found in the worktree)",
    "what": "compilation of the deployable that contains the affected caller / importer / controller / consumer at the head tree"
   }
  },

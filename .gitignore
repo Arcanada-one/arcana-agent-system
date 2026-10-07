@@ -31,7 +31,7 @@ __pycache__/
 # Logs
 *.log
 
-# Credentials — defence in depth (canonical store is Vault per CLAUDE.md)
+# Credentials — defence in depth (canonical store is Vault per AGENTS.md)
 *.pem
 *.key
 *.token

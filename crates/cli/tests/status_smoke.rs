@@ -117,7 +117,7 @@ async fn denied_and_missing_items_have_identical_output_and_no_readiness_probe()
         )
         .await;
         assert_eq!(result.0, 1);
-        assert!(result.1.is_empty());
+        assert_eq!(result.1.len(), 0);
         assert_eq!(result.2, "arcana status: STATUS_NOT_ACCESSIBLE\n");
         outputs.push(result);
     }
@@ -190,7 +190,7 @@ async fn malformed_task_identity_or_status_is_not_displayed() {
         let (code, stdout, stderr) =
             run_fixture(ResponseTemplate::new(200).set_body_json(body), None).await;
         assert_eq!(code, 1);
-        assert!(stdout.is_empty());
+        assert_eq!(stdout.len(), 0);
         assert_eq!(stderr, "arcana status: STATUS_INVALID_RESPONSE\n");
     }
 }
