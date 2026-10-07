@@ -103,6 +103,21 @@ computation ran.  This makes it possible to debug a stale or mis-linked
 contract without needing the contract body.  Again, no model call has been made
 at this point: the digest check is pure local arithmetic.
 
+### Effect authority is unavailable
+
+Initial admission is a point-in-time check, not an execution lease. Even if
+initial admission succeeds, the current consumer refuses before constructing
+a model client with `CONTRACT_EFFECT_AUTHORITY_UNAVAILABLE`. A contract-bound
+headless executor also denies tools with this code before operator rules or
+workspace auto-allow can authorize them. The static allowlist remains a
+separate restriction.
+
+Authenticated current-generation authority through the effect, atomic
+revocation fencing across retries/resume, and a provider-free live executor
+are not implemented. This fail-closed boundary does not measure a live allowed
+action or a refusal after revocation. A local file or permission rule cannot
+enable it.
+
 ### Authority refusals
 
 `CONTRACT_SUBJECT_MISMATCH`, `CONTRACT_ISSUER_UNVERIFIED`,
