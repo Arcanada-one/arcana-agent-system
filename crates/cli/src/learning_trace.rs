@@ -684,6 +684,28 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_admission_is_a_step_but_never_an_executed_capability() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancelled = r#"{"phase":"result","invocation_id":1,"tool":"read","outcome":"cancelled","output_hash":null}"#;
+        let log = audit(dir.path(), &[DISPATCH, READ_OK, cancelled]);
+        let bind = binding(&["read"]);
+        let receipt = dir.path().join("r.json");
+        std::fs::write(&receipt, b"{}").unwrap();
+        let src = sources(dir.path(), &bind, log, Some(0), "task-1", &receipt);
+        let trace = build(
+            &src,
+            &out(TerminalReason::AbortedByOperator, &[]),
+            dir.path(),
+        );
+        assert_eq!(trace.steps.len(), 1);
+        assert_eq!(trace.steps[0].outcome.as_deref(), Some("cancelled"));
+        assert_eq!(trace.capability_set, [] as [String; 0]);
+        assert!(trace.capability_witness.agrees);
+        assert!(trace.outcome.negative);
+        assert_eq!(trace.outcome.reason, "AbortedByOperator");
+    }
+
+    #[test]
     fn the_offset_keeps_an_earlier_runs_steps_out_of_this_trace() {
         let dir = tempfile::tempdir().unwrap();
         let earlier = format!("{READ_OK}\n{READ_RESULT}\n");
