@@ -699,7 +699,7 @@ mod tests {
         );
         assert_eq!(trace.steps.len(), 1);
         assert_eq!(trace.steps[0].outcome.as_deref(), Some("cancelled"));
-        assert!(trace.capability_set.is_empty());
+        assert_eq!(trace.capability_set, [] as [String; 0]);
         assert!(trace.capability_witness.agrees);
         assert!(trace.outcome.negative);
         assert_eq!(trace.outcome.reason, "AbortedByOperator");
