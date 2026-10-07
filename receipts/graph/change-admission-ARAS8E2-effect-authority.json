@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T06:12:18Z",
+ "captured_at_utc": "2026-10-07T06:14:48Z",
  "change_set": {
   "base": "e806a8f3e2cd0ee007c975c82e4b6764b5d1282b",
   "files": [
@@ -25,6 +25,15 @@
      "code_unit:crates/cli/src/work_item.rs"
     ],
     "path": "crates/cli/src/work_item.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/run_contract_allowlist.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/run_contract_allowlist.rs"
+    ],
+    "path": "crates/cli/tests/run_contract_allowlist.rs",
     "status": "M"
    },
    {
@@ -62,9 +71,18 @@
     ],
     "path": "docs/how-to/run-work-item-under-kc2-contract.md",
     "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json"
+    ],
+    "path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
+    "status": "A"
    }
   ],
-  "head": "1f6bf4f1313b3c2dd80157a0900d393a6518d944",
+  "head": "280ea6c3151c6dda9480b75c7353cc08aa20743c",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -73,18 +91,18 @@
   "builder_version": "1.0.5",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:28f204d17016c79ad4750c9634dbd778dc43db6ae2b4945d2988567dfdce48b3",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/graph-work/verifier-out/graph-e806a8f3e2cd.json",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/graph-e806a8f3e2cd.json",
   "source_commit": "e806a8f3e2cd0ee007c975c82e4b6764b5d1282b"
  },
  "head_graph": {
   "builder_version": "1.0.5",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:325557bf8c074f9e3d655c3e6d3723ba640e83102fe919c4f2277f0d31d02c0e",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/graph-work/verifier-out/graph-head-1f6bf4f1313b.json",
-  "source_commit": "1f6bf4f1313b3c2dd80157a0900d393a6518d944",
+  "graph_digest": "sha256:e05624ab07755b0e63c0c0a4f27505a0556ad9b88010da88cffb32d15c85fcc1",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/graph-head-280ea6c3151c.json",
+  "source_commit": "280ea6c3151c6dda9480b75c7353cc08aa20743c",
   "staleness": {
-   "checked_at_utc": "2026-10-07T06:12:27Z",
-   "checked_nodes": 422,
+   "checked_at_utc": "2026-10-07T06:14:57Z",
+   "checked_nodes": 423,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -411,40 +429,6 @@
      {
       "edge_type": "imports",
       "from": "code_unit:crates/cli/tests/run_boundary_relative_path_recovery.rs",
-      "provenance": "deterministic",
-      "to": "code_unit:crates/core/src/agent_loop.rs",
-      "via": "rust-use-workspace-crate"
-     }
-    ],
-    "revisions": [
-     "base",
-     "head"
-    ],
-    "verifier_hint": "type-check / compile of the importer"
-   },
-   {
-    "boundary": "intra_unit",
-    "depth": 3,
-    "entity": "code_unit:crates/cli/tests/run_contract_allowlist.rs",
-    "node_type": "code_unit",
-    "path": [
-     {
-      "edge_type": "imports",
-      "from": "code_unit:crates/core/src/execution.rs",
-      "provenance": "deterministic",
-      "to": "code_unit:crates/core/src/permission/mod.rs",
-      "via": "rust-use-crate-path"
-     },
-     {
-      "edge_type": "imports",
-      "from": "code_unit:crates/core/src/agent_loop.rs",
-      "provenance": "deterministic",
-      "to": "code_unit:crates/core/src/execution.rs",
-      "via": "rust-use-crate-path"
-     },
-     {
-      "edge_type": "imports",
-      "from": "code_unit:crates/cli/tests/run_contract_allowlist.rs",
       "provenance": "deterministic",
       "to": "code_unit:crates/core/src/agent_loop.rs",
       "via": "rust-use-workspace-crate"
@@ -2528,7 +2512,7 @@
   "inferred_tail": [],
   "max_depth": 3,
   "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
-  "total": 93
+  "total": 92
  },
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
@@ -2538,7 +2522,8 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261007T061218Z-1f6bf4f1",
+ "receipt_id": "car-verify-20261007T061448Z-280ea6c3",
+ "receipt_path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
  "repo": {
   "name": "_temp/aras244-tools-binding-ccda-20261004",
   "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/source"
@@ -2741,6 +2726,7 @@
    "document:CHANGELOG.md",
    "document:docs/how-to/run-work-item-under-kc2-contract.md",
    "receipt:receipts/graph/change-admission-ARAS252-634.json",
+   "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
    "receipt:receipts/graph/change-admission-a2-297c.json",
    "receipt:receipts/graph/change-admission-a2-361.json",
@@ -2751,7 +2737,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T06:12:27Z",
+  "checked_at_utc": "2026-10-07T06:14:57Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2767,6 +2753,21 @@
    "path": "receipts/graph/change-admission-ARAS252-634.json",
    "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
    "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:68c69e855997aec90a3c9d515cc8404dfd8d18890a5a32ca1d9a6a39a8aeea96"
+   },
+   "entity": "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-ARAS8E2-effect-authority.json for work item 8e2bb454-db66-429e-946a-3868e7be40ba",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
+    "work_item": "8e2bb454-db66-429e-946a-3868e7be40ba"
+   }
   },
   {
    "content_hash": {
@@ -2814,7 +2815,7 @@
   }
  ],
  "tree": {
-  "commit": "1f6bf4f1313b3c2dd80157a0900d393a6518d944",
+  "commit": "280ea6c3151c6dda9480b75c7353cc08aa20743c",
   "dirty": false
  },
  "verdicts": [
@@ -3772,8 +3773,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/graph-work/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-07T06:12:31Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-07T06:15:02Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3790,17 +3791,23 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/graph-work/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T06:12:31Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T06:15:02Z",
    "summary": "2 document(s), 0 failed"
   }
  ],
  "verify": {
   "events": [
    {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-ARAS8E2-effect-authority.json is the previous version of the one this run is writing, for the same work item 8e2bb454-db66-429e-946a-3868e7be40ba — superseded by construction, so it owes this change no verdict"
+   },
+   {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "5 affected entity(ies) owe no verdict (receipt: 5): unchanged at both revisions and given no verifier by the matrix"
+    "text": "6 affected entity(ies) owe no verdict (receipt: 6): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -4087,14 +4094,15 @@
     "doc_reference"
    ],
    "receipt:receipts/graph/change-admission-ARAS252-634.json": [],
+   "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json": [],
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json": [],
    "receipt:receipts/graph/change-admission-a2-297c.json": [],
    "receipt:receipts/graph/change-admission-a2-361.json": [],
    "receipt:receipts/graph/change-admission-credential-file-guard.json": []
   },
   "seconds": {
-   "prepare": 1.29,
-   "total": 13.12,
+   "prepare": 1.36,
+   "total": 13.89,
    "verifiers": 0.03
   }
  },
