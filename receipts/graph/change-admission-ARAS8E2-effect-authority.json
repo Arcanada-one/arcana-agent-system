@@ -5,10 +5,19 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T06:14:48Z",
+ "captured_at_utc": "2026-10-07T06:17:53Z",
  "change_set": {
   "base": "e806a8f3e2cd0ee007c975c82e4b6764b5d1282b",
   "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
    {
     "kind": "other",
     "node_id": "code_unit:crates/cli/src/run.rs",
@@ -82,7 +91,7 @@
     "status": "A"
    }
   ],
-  "head": "280ea6c3151c6dda9480b75c7353cc08aa20743c",
+  "head": "a68264720eaf7e2d43fd2e8b05d86b43b1335394",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -91,17 +100,17 @@
   "builder_version": "1.0.5",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:28f204d17016c79ad4750c9634dbd778dc43db6ae2b4945d2988567dfdce48b3",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/graph-e806a8f3e2cd.json",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/graph-e806a8f3e2cd.json",
   "source_commit": "e806a8f3e2cd0ee007c975c82e4b6764b5d1282b"
  },
  "head_graph": {
   "builder_version": "1.0.5",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:e05624ab07755b0e63c0c0a4f27505a0556ad9b88010da88cffb32d15c85fcc1",
-  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/graph-head-280ea6c3151c.json",
-  "source_commit": "280ea6c3151c6dda9480b75c7353cc08aa20743c",
+  "graph_digest": "sha256:e4450451707c357a38216156d83f1498f16f5150c0d68016f001f22670d93189",
+  "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/graph-head-a68264720eaf.json",
+  "source_commit": "a68264720eaf7e2d43fd2e8b05d86b43b1335394",
   "staleness": {
-   "checked_at_utc": "2026-10-07T06:14:57Z",
+   "checked_at_utc": "2026-10-07T06:18:03Z",
    "checked_nodes": 423,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -2387,26 +2396,6 @@
    {
     "boundary": "intra_unit",
     "depth": 1,
-    "entity": "document:CHANGELOG.md",
-    "node_type": "document",
-    "path": [
-     {
-      "edge_type": "documents",
-      "from": "document:CHANGELOG.md",
-      "provenance": "deterministic",
-      "to": "document:docs/how-to/run-work-item-under-kc2-contract.md",
-      "via": "explicit-path"
-     }
-    ],
-    "revisions": [
-     "base",
-     "head"
-    ],
-    "verifier_hint": "doc reference check (path/id still resolves)"
-   },
-   {
-    "boundary": "intra_unit",
-    "depth": 1,
     "entity": "receipt:receipts/graph/change-admission-ARAS252-634.json",
     "node_type": "receipt",
     "path": [
@@ -2512,7 +2501,7 @@
   "inferred_tail": [],
   "max_depth": 3,
   "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
-  "total": 92
+  "total": 91
  },
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
@@ -2522,7 +2511,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261007T061448Z-280ea6c3",
+ "receipt_id": "car-verify-20261007T061753Z-a6826472",
  "receipt_path": "receipts/graph/change-admission-ARAS8E2-effect-authority.json",
  "repo": {
   "name": "_temp/aras244-tools-binding-ccda-20261004",
@@ -2737,7 +2726,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T06:14:57Z",
+  "checked_at_utc": "2026-10-07T06:18:03Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2757,7 +2746,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:68c69e855997aec90a3c9d515cc8404dfd8d18890a5a32ca1d9a6a39a8aeea96"
+    "head": "sha256:c476452315c4fe4e8e809f42d45a72e89b0d25c4e3f6d59d272f14cf91f44942"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS8E2-effect-authority.json",
    "node_type": "receipt",
@@ -2815,7 +2804,7 @@
   }
  ],
  "tree": {
-  "commit": "280ea6c3151c6dda9480b75c7353cc08aa20743c",
+  "commit": "a68264720eaf7e2d43fd2e8b05d86b43b1335394",
   "dirty": false
  },
  "verdicts": [
@@ -3773,13 +3762,13 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-07T06:15:02Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-07T06:18:08Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.02,
+   "duration_s": 0.01,
    "entities": [
     "document:CHANGELOG.md",
     "document:docs/how-to/run-work-item-under-kc2-contract.md"
@@ -3791,8 +3780,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/final-graph-work/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T06:15:02Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/ARAS-REVOCATION8E2-SOURCE-20261007/changelog-graph-work/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T06:18:08Z",
    "summary": "2 document(s), 0 failed"
   }
  ],
@@ -4101,9 +4090,9 @@
    "receipt:receipts/graph/change-admission-credential-file-guard.json": []
   },
   "seconds": {
-   "prepare": 1.36,
-   "total": 13.89,
-   "verifiers": 0.03
+   "prepare": 1.4,
+   "total": 14.22,
+   "verifiers": 0.02
   }
  },
  "work_item": "8e2bb454-db66-429e-946a-3868e7be40ba"
