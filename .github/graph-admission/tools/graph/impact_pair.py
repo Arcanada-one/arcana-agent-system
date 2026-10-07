@@ -7,9 +7,13 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hashlib
 import json
+import os
 import re
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import build_graph
@@ -17,6 +21,148 @@ import impact
 import schema_check
 
 SOURCE_EXTS = impact.CODE_EXTS | {".prisma", ".py", ".rs", ".go", ".java", ".kt", ".cs", ".c", ".cpp", ".h"}
+
+
+def graph_parity(installed: dict, current: dict) -> dict:
+    """Bind two genuine outputs only when their entire semantic documents agree.
+
+    Version/timestamp/digest are producer metadata, not evidence of equivalence.
+    Every other manifest field, every node/edge/attribute and every extra field
+    remains in the comparison. Neither input nor its digest is rewritten.
+    """
+    bodies = []
+    for doc in (installed, current):
+        manifest = doc.get("manifest", {})
+        if manifest.get("graph_digest") != schema_check.graph_digest(doc):
+            raise impact.Refusal("CALLER_GRAPH_INVALID", "producer graph digest is invalid")
+        body = copy.deepcopy(doc)
+        for key in ("builder_version", "built_at_utc", "graph_digest"):
+            body["manifest"].pop(key, None)
+        bodies.append(body)
+    if bodies[0] != bodies[1]:
+        raise impact.Refusal("CALLER_GRAPH_SEMANTIC_DRIFT", "installed and current graph bodies differ")
+    return {"source_commit": current["manifest"]["source_commit"],
+            "installed_graph_digest": installed["manifest"]["graph_digest"],
+            "current_graph_digest": current["manifest"]["graph_digest"],
+            "installed_builder_version": installed["manifest"]["builder_version"],
+            "current_builder_version": current["manifest"]["builder_version"],
+            "body_sha256": "sha256:" + hashlib.sha256(impact.dump(bodies[0])).hexdigest()}
+
+
+def _canonical_bundle_key() -> str:
+    return (Path(__file__).resolve().parents[2] /
+            "contracts/graph-verified-change/bundle-signing-key.pub").read_text()
+
+
+def caller_graph_pair(repo: impact.Repo, base: str, head: str, bundle_path: str):
+    try:
+        return _caller_graph_pair(repo, base, head, bundle_path)
+    except impact.Refusal:
+        raise
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+        raise impact.Refusal("CALLER_GRAPH_COMPATIBILITY_REFUSED", "trusted paired build could not be completed",
+                             {"error_type": type(exc).__name__}) from exc
+
+
+def _caller_graph_pair(repo: impact.Repo, base: str, head: str, bundle_path: str):
+    """Execute only an unchanged, trusted signed BASE bundle in owned quarantine.
+
+    Independently rebuild current graphs at both revisions before returning the
+    installed graphs and their exact paired proof. No author executable is used.
+    """
+    import ci_gate
+    import sshsig
+
+    if repo.path != repo.top or bundle_path not in {".github/graph-admission", ".arcana/graph-gate"}:
+        raise impact.Refusal("CALLER_BUNDLE_PATH", "compatibility requires a repository-root canonical bundle path")
+    base, head = repo.rev(base), repo.rev(head)
+    def tree(rev):
+        rows = impact.git(["ls-tree", "-r", "-z", rev, "--", bundle_path], repo.top)
+        out = {}
+        for row in filter(None, rows.split("\0")):
+            meta, path = row.split("\t", 1)
+            mode, kind, oid = meta.split()
+            if mode not in {"100644", "100755"} or kind != "blob":
+                raise impact.Refusal("CALLER_BUNDLE_FILE_TYPE", "bundle contains a non-regular Git object")
+            out[path] = (mode, oid)
+        return out
+    files = tree(base)
+    if not files or files != tree(head):
+        raise impact.Refusal("CALLER_BUNDLE_CHANGED", "BASE and HEAD signed bundle objects must be identical")
+    key = _canonical_bundle_key()
+    fingerprint = sshsig.fingerprint(*sshsig.parse_public_key(key))
+    with tempfile.TemporaryDirectory(prefix="caller-graph-compat-") as directory:
+        root = Path(directory)
+        for path, (_, oid) in files.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(subprocess.run(["git", "cat-file", "blob", oid], cwd=repo.top,
+                                              capture_output=True, check=True).stdout)
+        tools = root / bundle_path
+        ok, _, _ = sshsig.verify_detached((tools / "BUNDLE.json").read_bytes(),
+                                         (tools / "BUNDLE.json.sig").read_text(), key,
+                                         ci_gate.SIGNING_NAMESPACE)
+        if not ok:
+            raise impact.Refusal("CALLER_BUNDLE_UNTRUSTED", "BASE manifest lacks the canonical trusted signature")
+        signed_manifest = json.loads((tools / "BUNDLE.json").read_text())
+        for entry in signed_manifest.get("files", []):
+            path = entry.get("path", "")
+            if not path or Path(path).is_absolute() or ".." in Path(path).parts:
+                raise impact.Refusal("CALLER_BUNDLE_PATH", "signed manifest path escapes quarantine")
+        # Signature and all executable files are checked before reading workflow paths
+        # or running any code. The second check binds the actual unchanged workflow.
+        man, problems, _ = ci_gate.verify_bundle(tools, None, fingerprint)
+        if problems:
+            raise impact.Refusal("CALLER_BUNDLE_UNTRUSTED", "signed BASE bundle refused", {"problems": problems})
+        for entry in man.get("files", []):
+            path = entry.get("path", "")
+            if Path(path).is_absolute() or ".." in Path(path).parts:
+                raise impact.Refusal("CALLER_BUNDLE_PATH", "signed manifest path escapes quarantine")
+            if entry.get("verified_by_the_job") is False:
+                rows = []
+                for rev in (base, head):
+                    row = impact.git(["ls-tree", rev, "--", path], repo.top).strip()
+                    if not row or row.split()[0] not in {"100644", "100755"}:
+                        raise impact.Refusal("CALLER_WORKFLOW_UNBOUND", "signed workflow is not a regular committed file")
+                    rows.append(row)
+                if rows[0] != rows[1]:
+                    raise impact.Refusal("CALLER_WORKFLOW_CHANGED", "signed workflow changed in caller range")
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(subprocess.run(["git", "show", f"{base}:{path}"], cwd=repo.top,
+                                                  capture_output=True, check=True).stdout)
+        man, problems, signature = ci_gate.verify_bundle(tools, None, fingerprint, repo=root)
+        if problems or signature.get("workflow", {}).get("verdict") != "verified":
+            raise impact.Refusal("CALLER_BUNDLE_UNTRUSTED", "signed workflow/bundle refused", {"problems": problems})
+        env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        indices, proofs = [], {}
+        for role, rev in (("base", base), ("head", head)):
+            output = root / (role + ".json")
+            runner = ("import runpy,sys;sys.path.insert(0,sys.argv[1]);"
+                      "sys.argv=sys.argv[2:];runpy.run_path(sys.argv[0],run_name='__main__')")
+            proc = subprocess.run([sys.executable, "-I", "-B", "-c", runner, str(tools / "tools/graph"),
+                                   str(tools / "tools/graph/build_graph.py"),
+                                   str(repo.top), "--rev", rev, "--built-at", build_graph.FIXED_BUILT_AT,
+                                   "--out", str(output)], cwd=root, env=env, capture_output=True, timeout=120)
+            if proc.returncode:
+                raise impact.Refusal("CALLER_GRAPH_BUILD_FAILED", "trusted installed builder failed",
+                                     {"revision": rev, "exit_code": proc.returncode})
+            doc = json.loads(output.read_text())
+            errors = schema_check.check_graph(doc, schema_check.load_schema(schema_check.GRAPH_SCHEMA_PATH))
+            if errors:
+                raise impact.Refusal("CALLER_GRAPH_INVALID", "installed graph is invalid", {"violations": errors})
+            current = index_at(repo, rev)
+            proofs[role] = graph_parity(doc, current.doc)
+            indices.append(impact.GraphIndex(doc))
+    binding = {"schema": "CallerGraphCompatibility/v1", "bundle_path": bundle_path,
+               "program_ref": man["program_ref"], "bundle_digest": man["bundle_digest"],
+               "trusted_key_fingerprint": fingerprint, "base": base, "head": head, "graphs": proofs}
+    source_root = Path(__file__).resolve().parents[2]
+    source_files = {path: hashlib.sha256((source_root / path).read_bytes()).hexdigest()
+                    for path in ci_gate.BUNDLE_FILES}
+    binding["current_producer_files_sha256"] = "sha256:" + hashlib.sha256(impact.dump(source_files)).hexdigest()
+    return indices[0], indices[1], binding
 
 
 def index_at(repo: impact.Repo, revision: str) -> impact.GraphIndex:
@@ -39,26 +185,10 @@ def fallback_units(q: dict) -> set[str]:
 
 
 def selected(q: dict) -> set[str]:
-    # A global fallback (lockfile / global config) makes the impact the WHOLE REPOSITORY as ONE
-    # entity - the Bazel/Nx rule of DEC-AUP-0008 - and its verifier is the repository's own test
-    # job. impact.py still lists every node in deterministic_core so a reader can see the blast
-    # radius, but those rows ARE the radius, not N separate measurements: enumerating them here
-    # demands N verdicts for one measurement, which no receipt can honestly supply.
-    # MEASURED on the real subject: muneral #32/#55/#60, where the gate issued
-    # AUTOMATED_AUTHOR_RECEIPT_ISSUED - authoring a receipt carrying exactly two verdicts, the
-    # repository entity and the missing author - and then paused that same receipt with
-    # HEAD_IMPACT_NOT_COVERED over 464 nodes it had itself collapsed into one. Two halves of one
-    # gate disagreeing about how many entities a fallback carries.
-    #
-    # The seeds alone were NOT that one entity, and a manifest carries no seed: a change to
-    # package.json / pnpm-lock.yaml alone selected nothing at all, so the receipt printed
-    # `paused_safe` over an empty verdict list (A2-232, talomnia-backend: core=14, verdicts=0,
-    # verifiers=0, against core=4 / verdicts=6 for a .ts change in the same repository). The
-    # collapse was right; the entity it collapsed onto was missing. `fallback_units` supplies it.
+    rows = [e for section in ("deterministic_core", "inferred_tail") for e in q["impact_set"][section]]
     if q["impact_set"].get("global_fallback", {}).get("triggered"):
-        return set(q["seeds"]) | fallback_units(q)
-    return set(q["seeds"]) | {e["entity"] for section in ("deterministic_core", "inferred_tail")
-                             for e in q["impact_set"][section]}
+        return set(q["seeds"]) | fallback_units(q) | schema_check.traversal_entities(rows)
+    return set(q["seeds"]) | {e["entity"] for e in rows}
 
 
 def merge_revisions(versions: list[tuple[str, dict]]) -> dict:
@@ -144,7 +274,50 @@ def query(base_idx: impact.GraphIndex, head_idx: impact.GraphIndex, files: list[
                         new_files=missing)
     out["revision_selection"] = {"schema": "RevisionImpactSelection/v1", "base": sorted(selected(before)),
                                  "head": sorted(selected(after)) if after else [], "unmeasured_head_files": missing}
+    if "empty_impact_explanation" in out:
+        out["empty_impact_explanation"]["graph_metadata"] = {
+            "scope": "graph_non_seed_dependents",
+            "revisions": {role: empty_revision_metadata(idx, q) for role, idx, q in
+                          [("base", base_idx, before)] + ([("head", head_idx, after)] if after else [])}}
     return out
+
+
+def empty_revision_metadata(idx, q):
+    seeds = set(q["seeds"])
+    edges = [e for seed in sorted(seeds) for e in idx.rev.get(seed, []) if e["type"] != "deploys_to"]
+    return {"source_commit": idx.manifest["source_commit"], "graph_digest": idx.manifest["graph_digest"],
+            "extractors": idx.manifest.get("extractors"), "language_coverage": idx.manifest.get("language_coverage"),
+            "seeds": sorted(seeds), "changed_node_known_to_graph": bool(seeds),
+            "internal_reverse_edges": sum(e["from"] in seeds for e in edges),
+            "external_reverse_edges": sum(e["from"] not in seeds for e in edges),
+            "files": copy.deepcopy(q["change_set"]["files"]),
+            "max_depth": q["impact_set"]["max_depth"], "edge_types": q["impact_set"]["edge_types"]}
+
+
+def bind_empty_explanation(q, claim):
+    """Bind an author's explanation to actual paired graphs; never alter raw events."""
+    fields = {"schema", "base", "head", "base_graph_digest", "head_graph_digest", "scope", "reason"}
+    reason = claim.get("reason") if isinstance(claim, dict) else None
+    if not isinstance(claim, dict) or set(claim) != fields or claim.get("schema") != "EmptyImpactExplanation/v1":
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INVALID", "exact explanation fields are required")
+    if not isinstance(reason, str) or len(reason.strip()) < 40 or reason.strip().lower().startswith(("generated", "todo", "placeholder", "not_measured")):
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INVALID", "a substantive author explanation is required")
+    cs = q["change_set"]
+    if claim["scope"] != "graph_non_seed_dependents" or any(claim[k] != cs[k] for k in ("base", "head")) or claim["base_graph_digest"] != q["graph"]["graph_digest"] or claim["head_graph_digest"] != q.get("head_graph", {}).get("graph_digest"):
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_STALE", "explanation does not bind this exact paired measurement")
+    imp = q["impact_set"]
+    metadata = q.get("empty_impact_explanation", {}).get("graph_metadata", {})
+    revisions = metadata.get("revisions", {})
+    if cs.get("mode") != "diff" or imp["total"] or imp["global_fallback"]["triggered"] or q.get("revision_selection", {}).get("unmeasured_head_files") or set(revisions) != {"base", "head"} or any(m["external_reverse_edges"] for m in revisions.values()) or not any(e.get("code") == "EMPTY_IMPACT_REQUIRES_EXPLANATION" for e in q["events"]):
+        raise impact.Refusal("EMPTY_IMPACT_EXPLANATION_INAPPLICABLE", "only a complete empty non-seed dependent prediction may be explained")
+    return {"schema": "BoundEmptyImpactExplanation/v1", "reason": reason.strip(), "graph_metadata": copy.deepcopy(metadata),
+            "binding": {"schema": "BoundEmptyImpactExplanation/v1", "input": copy.deepcopy(claim),
+                        "input_sha256": "sha256:" + hashlib.sha256(impact.dump(claim)).hexdigest()}}
+
+
+def blocking_query_events(q):
+    bound = q.get("empty_impact_explanation", {}).get("binding")
+    return [e for e in q.get("events", []) if not (bound and e.get("code") == "EMPTY_IMPACT_REQUIRES_EXPLANATION")]
 
 
 def receipt_problems(repo_path: Path, doc: dict) -> list[str]:
@@ -164,7 +337,19 @@ A paired receipt must match both graph digests and the complete dual selection.
     files = [f for f in actual if f["path"] in paths]
     if not files:
         return []  # ordinary file/range binding checks reject unrelated receipts
-    before, after = index_at(repo, base), index_at(repo, head)
+    compatibility = doc.get("caller_graph_compatibility")
+    if compatibility is not None:
+        if not isinstance(compatibility, dict):
+            return ["caller graph compatibility is not an object"]
+        try:
+            before, after, rebuilt = caller_graph_pair(repo, base, head,
+                                                       compatibility.get("bundle_path"))
+        except (impact.Refusal, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+            return ["caller graph compatibility refused: " + str(exc)]
+        if compatibility != rebuilt:
+            return ["caller graph compatibility differs from independently rebuilt trusted BASE proof"]
+    else:
+        before, after = index_at(repo, base), index_at(repo, head)
     selection_config = doc.get("impact_set") or {}
     depth = selection_config.get("max_depth", impact.DEFAULT_MAX_DEPTH)
     edge_types = selection_config.get("edge_types", "all")
@@ -183,10 +368,24 @@ A paired receipt must match both graph digests and the complete dual selection.
         for role, idx in (("base", before), ("head", after))
         for entity in selection[role]
     )
-    enforce_mandatory = paired or workflow_selected
+    enforce_mandatory = paired or workflow_selected or q["impact_set"].get("global_fallback", {}).get("triggered", False) or "binding" in (doc.get("empty_impact_explanation") or {})
     if not enforce_mandatory and not new_required and not selection["unmeasured_head_files"]:
         return []
-    problems = []
+    problems = schema_check.fallback_evidence_problems(doc, fallback_units(q)) if q["impact_set"].get("global_fallback", {}).get("triggered") else []
+    explanation = doc.get("empty_impact_explanation") or {}
+    if "binding" in explanation:
+        try:
+            expected_explanation = bind_empty_explanation(q, explanation["binding"].get("input"))
+            if expected_explanation != explanation:
+                problems.append("empty impact explanation differs from independent paired graph binding")
+            if any(e.get("code") != "EMPTY_IMPACT_REQUIRES_EXPLANATION" for e in q["events"]):
+                problems.append("empty impact explanation cannot satisfy other query diagnostics")
+            if not paired:
+                problems.append("empty impact explanation requires both revision graph bindings")
+        except (impact.Refusal, AttributeError, TypeError, KeyError):
+            problems.append("empty impact explanation binding invalid or inapplicable")
+    elif explanation.get("schema") == "BoundEmptyImpactExplanation/v1":
+        problems.append("empty impact prediction has no bound author explanation")
     if not paired and (new_required or selection["unmeasured_head_files"]):
         problems.append("head graph binding missing for new head impact obligations")
     if paired:
@@ -228,7 +427,7 @@ A paired receipt must match both graph digests and the complete dual selection.
             if record.get("verdict") != "verified":
                 continue
             referenced = [verifiers.get(i, {}) for i in record.get("verifier_ids", [])]
-            covered_kinds = {v.get("kind") for v in referenced
+            covered_kinds = {("full_fallback_test" if v.get("scope") == "global_fallback_full_suite" else v.get("kind")) for v in referenced
                              if entity in v.get("entities", []) and row_measured_verified(v, entity)
                              and isinstance(v.get("output_ref"), str) and v["output_ref"].strip()}
             if uncovered_row_kinds(minimum, covered_kinds):
@@ -260,7 +459,8 @@ def uncovered_row_kinds(minimum, covered_kinds: set) -> set:
     itself, which is the old comparison.
     """
     declared = _matrix()["verifiers"]
-    return {m for m in minimum if declared.get(m, {}).get("kind", m) not in covered_kinds}
+    return {m for m in minimum if (m if m == "full_fallback_test" else
+                                  declared.get(m, {}).get("kind", m)) not in covered_kinds}
 
 
 def _matrix() -> dict:
@@ -439,6 +639,7 @@ def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: 
     matrix = json.loads((Path(__file__).resolve().parents[2] / "contracts/graph-verified-change/verifier-matrix.v1.json").read_text())
     affected = selected(q)
     changed = set(q["seeds"])
+    full_test_units = fallback_units(q) if q["impact_set"].get("global_fallback", {}).get("triggered") else set()
     hops = {e: set() for e in affected}
     for section in ("deterministic_core", "inferred_tail"):
         for e in q["impact_set"][section]:
@@ -477,6 +678,8 @@ def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: 
         # The A2-353 discharge, the SAME function verify.py calls (see canary_unreachable_test).
         if "canary" in required and canary_unreachable_test(node["type"], node.get("path", ""), boundary.get(eid, False)):
             required.discard("canary")
+        if eid in full_test_units:
+            required.add("full_fallback_test")  # separate full-suite row, never targeted spec coverage
         result[eid] = sorted(required)
     return result
 

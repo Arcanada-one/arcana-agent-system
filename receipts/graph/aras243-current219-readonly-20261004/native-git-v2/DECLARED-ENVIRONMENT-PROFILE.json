@@ -1,0 +1,15 @@
+{
+  "environment_keys": [
+    "PATH",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONNOUSERSITE",
+    "GIT_OPTIONAL_LOCKS"
+  ],
+  "PATH": "/usr/bin:/bin",
+  "git": "/usr/bin/git",
+  "git_sha256": "2a8c18fbf43da9f692d75474c72bea9dfd796c260b0f3dfe456376abc3bbd668",
+  "reason": "explicit native Git replaces HOME-dependent rtk shim; previous failures preserved"
+}
