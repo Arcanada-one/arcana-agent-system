@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-07T18:33:53Z",
+ "captured_at_utc": "2026-10-07T22:14:07Z",
  "change_set": {
   "base": "bd57926a37d6501862dfe186e43718952f222ade",
   "files": [
@@ -100,7 +100,7 @@
     "status": "A"
    }
   ],
-  "head": "5660bf39e8e6d35aae93f11111c3118731589158",
+  "head": "70262721ef24caec6f410ba7fede23d971a13b27",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -108,18 +108,18 @@
  "graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:a67b49bbd9e72a52d13e07fbd14ee83df1fa0b22a8293e3ce452bf2fd1f572b8",
-  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-RECEIVING-OUT/graph-bd57926a37d6.json",
+  "graph_digest": "sha256:6f2534cb3feb4cde33e247311707212118299b8bd636b608fde526fe3d12bdcf",
+  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-IDENTITY-CORRECTED-OUT/graph-bd57926a37d6.json",
   "source_commit": "bd57926a37d6501862dfe186e43718952f222ade"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:bfed0cb06c929e20c469b377292b1018a109c2fa61f248ccef792c191b281796",
-  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-RECEIVING-OUT/graph-head-5660bf39e8e6.json",
-  "source_commit": "5660bf39e8e6d35aae93f11111c3118731589158",
+  "graph_digest": "sha256:e5a1c36a285a3ef6b45c40729d788322ced37878314c1c0eb4c4159a6550f29a",
+  "path": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-IDENTITY-CORRECTED-OUT/graph-head-70262721ef24.json",
+  "source_commit": "70262721ef24caec6f410ba7fede23d971a13b27",
   "staleness": {
-   "checked_at_utc": "2026-10-07T18:33:57Z",
+   "checked_at_utc": "2026-10-07T22:14:13Z",
    "checked_nodes": 401,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -128,7 +128,7 @@
  },
  "host": "aras-owner",
  "host_redacted": true,
- "host_sha256": "fc9049c9756fced42adbf5e8bf42b14312c6491e020081c201c3233c7a05018d",
+ "host_sha256": "8375f41bd2bcf2944eee04a48cc30cad2fe8c1d6969cbe5675e060e267930ee1",
  "impact_set": {
   "deterministic_core": [
    {
@@ -1854,10 +1854,10 @@
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261007T183353Z-5660bf39",
+ "receipt_id": "car-verify-20261007T221407Z-70262721",
  "receipt_path": "receipts/graph/change-admission-ARAS252-634.json",
  "repo": {
-  "name": "_temp/aras244-tools-binding-ccda-20261004",
+  "name": "Arcanada-one/arcana-agent-system",
   "path": "/home/dev/arcanada/_temp/kc-closure/ARAS-HF-AUTHORITY-CCDA-20261006/source"
  },
  "revision_selection": {
@@ -2004,7 +2004,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-07T18:33:57Z",
+  "checked_at_utc": "2026-10-07T22:14:13Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2013,7 +2013,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:af1300b1afb91d274a96e3e4d999823ff9f88959a7e8e2a7cc3aa48189eb4ff1"
+    "head": "sha256:b2cabc32b184f49796f271ec70ed0003c0c5e7b0b1b4308e3442b1f7667b73ca"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS252-634.json",
    "node_type": "receipt",
@@ -2082,7 +2082,7 @@
   }
  ],
  "tree": {
-  "commit": "5660bf39e8e6d35aae93f11111c3118731589158",
+  "commit": "70262721ef24caec6f410ba7fede23d971a13b27",
   "dirty": false
  },
  "verdicts": [
@@ -2730,8 +2730,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-RECEIVING-OUT/v-fitness.json",
-   "started_at_utc": "2026-10-07T18:34:01Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-IDENTITY-CORRECTED-OUT/v-fitness.json",
+   "started_at_utc": "2026-10-07T22:14:18Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -2748,8 +2748,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-RECEIVING-OUT/v-doc-reference.txt",
-   "started_at_utc": "2026-10-07T18:34:01Z",
+   "output_ref": "/home/dev/arcanada/_temp/kc-closure/8E-CURRENT-STACK-20261007/PARENT-IDENTITY-CORRECTED-OUT/v-doc-reference.txt",
+   "started_at_utc": "2026-10-07T22:14:18Z",
    "summary": "2 document(s), 0 failed"
   }
  ],
@@ -2965,8 +2965,8 @@
    "receipt:receipts/graph/change-admission-empty-contract.json": []
   },
   "seconds": {
-   "prepare": 2.6,
-   "total": 8.4,
+   "prepare": 3.17,
+   "total": 10.29,
    "verifiers": 0.02
   }
  },
