@@ -292,7 +292,7 @@ def classify_file(path: str, idx: GraphIndex | None) -> str:
         return "receipt"
     if ext == ".prisma" or re.search(r"(^|/)prisma/migrations/.*\.sql$", path):
         return "data_model"
-    if TEST_RE.search(path) and (ext in CODE_EXTS or ext == ".json"):
+    if ext == ".bats" or TEST_RE.search(path) and (ext in CODE_EXTS or ext in (".json", ".py", ".sh", ".bash")):
         return "test"
     if idx is not None:
         types = {idx.nodes[i]["type"] for i in idx.by_path.get(path, [])}
@@ -302,7 +302,8 @@ def classify_file(path: str, idx: GraphIndex | None) -> str:
             return "route"
     if ext in DOC_EXTS or path.startswith("docs/") or "/docs/" in path:
         return "doc"
-    if ext in CODE_EXTS:
+    if ext in CODE_EXTS or ext in (".sh", ".bash") or (idx is not None and any(
+            idx.nodes[i].get("kind") == "bash_source" for i in idx.by_path.get(path, []))):
         return "code"
     if ext in CONFIG_EXTS or base.startswith(".env") or base == "Dockerfile" or path.startswith(".github/"):
         return "config"
@@ -530,6 +531,12 @@ def query(idx: GraphIndex, files: list[dict], *, mode: str, base: str | None = N
                      f"max_depth {max_depth if max_depth is not None else 'unlimited'}",
            "max_depth": max_depth, "edge_types": sorted(edge_types) if edge_types else "all",
            "global_fallback": {"triggered": False}, "deterministic_core": [], "inferred_tail": [], "total": 0}
+    # Global scope adds coverage; it cannot erase the normal dependency paths.
+    reached = traverse(idx, seeds, max_depth, edge_types, rules, open_containment)
+    for e in reached:
+        non_det = any(h["provenance"] != "deterministic" for h in e["path"])
+        (imp["inferred_tail"] if non_det else imp["deterministic_core"]).append(e)
+    normal_ids = {e["entity"] for e in reached}
     if fallback_files and "global_fallback" in rules:
         trig = fallback_files[0]
         imp["global_fallback"] = {"triggered": True, "files": fallback_files,
@@ -537,17 +544,13 @@ def query(idx: GraphIndex, files: list[dict], *, mode: str, base: str | None = N
                                             f"config / env schema: safe fallback, Bazel/Nx practice)"}
         imp["method"] = "global fallback: every node of the graph is affected (depth 0, synthetic containment hop); " + imp["method"]
         for nid in sorted(idx.nodes):
-            if nid in seeds:
+            if nid in seeds or nid in normal_ids:
                 continue
             imp["deterministic_core"].append({"entity": nid, "node_type": idx.nodes[nid]["type"], "depth": 0,
                                               "boundary": "intra_unit",
                                               "path": [{"from": f"code_unit:{trig}", "to": nid, "edge_type": "deploys_to",
                                                         "provenance": "deterministic", "via": "global-fallback"}],
                                               "verifier_hint": idx.hints.get("deploys_to", "")})
-    else:
-        for e in traverse(idx, seeds, max_depth, edge_types, rules, open_containment):
-            non_det = any(h["provenance"] != "deterministic" for h in e["path"])
-            (imp["inferred_tail"] if non_det else imp["deterministic_core"]).append(e)
     imp["total"] = len(imp["deterministic_core"]) + len(imp["inferred_tail"])
     out["impact_set"] = imp
     out["stats"] = {"seeds": len(seeds), "deterministic_core": len(imp["deterministic_core"]),
