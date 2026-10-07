@@ -407,11 +407,11 @@ pub fn verify(
     }
 
     let (allowlist, allowlist_source) = match document.tools.as_ref() {
-        Some(tools) if !tools.allow.is_empty() => (
+        Some(tools) => (
             tools.allow.iter().cloned().collect::<BTreeSet<_>>(),
             AllowlistSource::Contract,
         ),
-        _ => (
+        None => (
             DEFAULT_ALLOWLIST
                 .iter()
                 .map(|name| (*name).to_owned())

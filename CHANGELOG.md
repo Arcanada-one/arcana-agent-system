@@ -44,12 +44,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   green and carries a real page (A2-297b).
 
 ### Fixed
+- Cancelled turns cannot invoke a tool through an empty hook chain or after
+  cancellation during final validation or the durable admission audit. Refusals
+  retain a correlated audit result and report operator abort; already-admitted
+  effects are not promised rollback. This is local admission, not remote fencing.
 
 - A matching contract digest alone no longer starts `run --work-item`.
   Task-run admission requires authenticated task/project/subject binding,
   independent issuer standing and current non-revoked generation. The shipped
   authority adapter is unavailable and refuses before model client construction;
   contract JSON, a local file and an Argana source label cannot authorize a run.
+- Publish the interactive session banner only after SIGINT registration has
+  completed. The real-signal smoke test waits for the full readiness banner,
+  bounds missing readiness, and reaps its child on failure. An unavailable
+  listener retains the existing fallback with a distinct unarmed banner.
+- Explicit empty contract tool allowlists now refuse every tool effect instead
+  of inheriting the default read, grep, write, and edit capabilities.
 - Retain the empty and nonempty test assertions using Rust 1.99-compatible
   comparison macros under strict Clippy warnings.
 - Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
