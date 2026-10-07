@@ -1,0 +1,2 @@
+CHANGELOG.md: verified — 5 reference(s) resolve at head
+docs/how-to/run-work-item-under-kc2-contract.md: verified — 0 reference(s) resolve at head

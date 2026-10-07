@@ -1,0 +1,39 @@
+{
+ "rules": {
+  "FR-01": {
+   "name": "no-transport-to-persistence",
+   "rule": "a transport-layer unit (*.controller.ts, *.gateway.ts, *.resolver.ts) must not import a persistence unit (prisma.service*, @prisma/client, *.repository.ts, typeorm)",
+   "severity": "failed",
+   "source": "imports edges of the head graph + the head import statements"
+  },
+  "FR-02": {
+   "name": "no-import-cycles",
+   "rule": "no strongly connected component of size > 1 over value imports (import type / export type excluded) among code units of one deployable",
+   "severity": "failed",
+   "source": "head sources (AST-lite import scan)"
+  },
+  "FR-03": {
+   "name": "module-boundary",
+   "rule": "a unit under src/<a>/ may import from src/<b>/ (a ≠ b) only through the module's exported surface: never another module's *.controller.ts / *.gateway.ts / *.processor.ts",
+   "severity": "failed",
+   "source": "imports edges of the head graph"
+  },
+  "FR-04": {
+   "name": "reuse-marker-resolves",
+   "rule": "a `reuse: @arcanada/<pkg>` marker must name a package declared as a dependency of the containing deployable or present as a workspace package (packages/*), or be registered in the exemption registry",
+   "severity": "failed",
+   "source": "reuse-marker imports edges of the head graph + package.json files at head"
+  },
+  "FR-05": {
+   "name": "deployable-boundary",
+   "rule": "a unit of deployable A must not import a unit of deployable B unless B is a shared package (kind library / shared_package)",
+   "severity": "failed",
+   "source": "imports + deploys_to edges of the head graph"
+  }
+ },
+ "baseline": "(auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline)",
+ "baseline_status": "valid",
+ "new": [],
+ "frozen": [],
+ "log": []
+}
