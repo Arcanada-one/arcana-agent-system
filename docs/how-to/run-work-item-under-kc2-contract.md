@@ -6,6 +6,22 @@ contract, not from `--prompt`. The run writes a readiness receipt to
 `receipts/ReadinessReceipt-<id>.json` and never changes the work item's own
 status.
 
+## Current authority limitation
+
+The shipped task-run authority provider is unavailable. A work item with a
+valid contract digest currently refuses with `CONTRACT_AUTHORITY_UNAVAILABLE`
+before constructing the Model Connector client. A local contract file, Argana
+HTTP response, task revision or KB-reader service token cannot override this.
+The intended steps below become executable only after the existing Auth/KC
+owners publish a purpose-correct task-run instrument and ARAS mounts its
+authenticated verifier and current-generation source. No configuration flag
+can supply an issuer grant.
+
+This admission boundary checks task/project/subject, independent issuer and
+current generation through a trusted provider. Synthetic positive tests prove
+these predicates only; they are not live authority or an effect-time revocation
+fence. The empty-tools fallback remains a separate source obligation.
+
 ## Prerequisites
 
 - The `arcana` binary installed (see [`install.md`](install.md)).
@@ -41,7 +57,8 @@ Both environment variables are required and checked before the first model call.
    from the file named by `ARCANA_MUNERAL_KEY_FILE`, fetches the work item from
    Muneral (`https://api.muneral.com/api/v1` unless `ARCANA_MUNERAL_URL`
    overrides it), re-hashes the contract document named by the work item's
-   `contractDigest`, and runs the task under that binding.
+   `contractDigest`, authenticates its task-run authority, and only then runs
+   the task. A matching digest alone is insufficient.
 
 3. **Read the result.**  Every run — success or refusal — prints the
    done-marker as its last line of stdout:
@@ -85,6 +102,24 @@ preimage (`canonical.bytes_b64`, `canonical_bytes`, or `projection`) the
 computation ran.  This makes it possible to debug a stale or mis-linked
 contract without needing the contract body.  Again, no model call has been made
 at this point: the digest check is pure local arithmetic.
+
+### Authority refusals
+
+`CONTRACT_SUBJECT_MISMATCH`, `CONTRACT_ISSUER_UNVERIFIED`,
+`CONTRACT_ISSUER_NOT_INDEPENDENT`, `CONTRACT_REVOKED` and
+`CONTRACT_AUTHORITY_UNAVAILABLE` use the same typed stderr/done-marker shape.
+Missing authenticated caller context, trust configuration, issuer lineage or
+current-generation evidence refuses closed. Rebinding the same bytes after
+revocation cannot restore an older authority generation. The authority adapter
+must resolve the full transitive principal/incarnation lineage, including the
+acting subject itself in executor lineage. The consumer refuses an omitted
+acting subject and rejects an issuer equal to that subject even if an adapter
+omits it from the lineage. Transitive chain authenticity still requires the
+purpose-correct authority adapter; these local checks do not supply one.
+
+Learning trace `source_is_argana` reports transport provenance only, never
+admission. The legacy v1 `verified_against_live_endpoint` field is retained as
+`false`; downloading a document must not be read as authority verification.
 
 ## Tool restrictions
 

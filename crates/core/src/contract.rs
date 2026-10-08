@@ -1,9 +1,12 @@
 //! The KC2 contract a work item is bound to, and the rule that binds it.
 //!
-//! A work item in Muneral carries a `contractDigest`. That digest is the whole
-//! of the binding: it names one immutable KC2 contract, and everything the run
+//! A work item in Muneral carries a `contractDigest`. That digest is the byte
+//! integrity part of the binding: it names one immutable KC2 contract, and the tools the run
 //! is allowed to do is read out of the document that digest addresses. Two
 //! failures this module exists to make impossible:
+//!
+//! Task-run admission additionally requires [`crate::contract_authority`].
+//! Hash verification alone authenticates no task, subject, issuer or generation.
 //!
 //! * **A work item with no digest.** Nothing says what the run may do, so
 //!   there is nothing to run under. The refusal is [`ContractRefusal::Missing`]

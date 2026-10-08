@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Task-run admission rejects self-issuers even when an authority adapter omits
+  the acting subject, and requires that subject in executor lineage. Learning
+  trace transport provenance no longer sets the legacy verification flag.
+
 ### Added
 
 - Bounded, noninteractive `status --watch` with separate ready, not-ready and
@@ -39,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retain a correlated audit result and report operator abort; already-admitted
   effects are not promised rollback. This is local admission, not remote fencing.
 
+- A matching contract digest alone no longer starts `run --work-item`.
+  Task-run admission requires authenticated task/project/subject binding,
+  independent issuer standing and current non-revoked generation. The shipped
+  authority adapter is unavailable and refuses before model client construction;
+  contract JSON, a local file and an Argana source label cannot authorize a run.
 - Publish the interactive session banner only after SIGINT registration has
   completed. The real-signal smoke test waits for the full readiness banner,
   bounds missing readiness, and reaps its child on failure. An unavailable
