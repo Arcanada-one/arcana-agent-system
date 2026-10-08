@@ -20,7 +20,10 @@ pub mod interactive;
 pub mod rule;
 pub mod schema;
 
-pub use contract::ContractAllowlistLayer;
+pub use contract::{
+    require_contract_effect_authority, ContractAllowlistLayer, ContractEffectAuthorityLayer,
+    ContractEffectAuthorityUnavailable,
+};
 pub use hook_bridge::HookBridgeLayer;
 pub use interactive::{AutoFromEnv, InteractiveDirective, InteractiveLayer};
 pub use rule::{RuleLayer, RuleLoadError};

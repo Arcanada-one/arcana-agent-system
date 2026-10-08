@@ -45,8 +45,8 @@ use arcana_core::hooks::audit::AuditLog;
 use arcana_core::hooks::HookChain;
 use arcana_core::permission::rule::ToolRuleSet;
 use arcana_core::permission::{
-    AutoFromEnv, ContractAllowlistLayer, InteractiveDirective, PermissionCascade, PermissionLayer,
-    RuleLayer, SchemaLayer,
+    AutoFromEnv, ContractAllowlistLayer, ContractEffectAuthorityLayer, InteractiveDirective,
+    PermissionCascade, PermissionLayer, RuleLayer, SchemaLayer,
 };
 use arcana_core::prompt_budget::{
     DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, MC_FIELD_MAX_UTF16_UNITS, MIN_ELISION_BUDGET,
@@ -145,8 +145,9 @@ pub struct RunRequest {
     /// default — writes no transcript at all.
     pub save_transcript: Option<PathBuf>,
     /// The KC2 contract this run is bound to, when it was started from a work
-    /// item. `Some` inserts [`ContractAllowlistLayer`] into the cascade, so a
-    /// tool the contract never admitted is refused with the contract named.
+    /// item. `Some` inserts the static allowlist and a fail-closed effect-authority
+    /// gate into the cascade. Initial admission alone cannot authorize an effect.
+    /// The allowlist refuses an unlisted tool with the contract named.
     ///
     /// `None` is the ordinary `--prompt` run: no work item, no contract, and
     /// nothing for the layer to enforce. It is NOT a permissive mode — the
@@ -677,6 +678,9 @@ fn assemble_executor(
     // boundary it happened to trip on the way past.
     if let Some(binding) = contract {
         layers.push(Arc::new(ContractAllowlistLayer::new(binding)));
+        // A static allowlist and point-in-time admission are not effect authority.
+        // Keep this ahead of any operator rule or workspace auto-allow.
+        layers.push(Arc::new(ContractEffectAuthorityLayer));
     }
     layers.extend::<Vec<Arc<dyn PermissionLayer>>>(vec![
         // The floor precedes the boundary: both are deny-or-defer, so the
@@ -1045,6 +1049,55 @@ pub fn done_marker_body(marker: &DoneMarker<'_>) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// Actual executor wiring: the workspace auto-allow must not bypass missing
+    /// contract effect authority. The unbound control proves the same tool can
+    /// write, without claiming a positive KC2 authority measurement.
+    #[tokio::test]
+    async fn contracted_executor_refuses_effect_while_unbound_control_writes() {
+        use arcana_core::contract::{digest_of, verify, ContractDocument, ContractTools};
+        use arcana_core::execution::CapabilityError;
+        use arcana_core::hooks::HookContext;
+        use tokio_util::sync::CancellationToken;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let policy = Arc::new(WorkspacePolicy::new(root).unwrap());
+        let tools = workspace_tools(root, &root.join("home"));
+        let projection = "Source test control; not authority evidence.";
+        let doc = ContractDocument {
+            digest: digest_of(projection.as_bytes()),
+            projection: serde_json::json!(projection),
+            tools: Some(ContractTools {
+                allow: vec!["write".to_owned()],
+            }),
+            ..ContractDocument::default()
+        };
+        let binding = verify(&doc.digest, &doc).unwrap();
+        let executor =
+            assemble_executor(&tools, &policy, root, &root.join("audit"), Some(binding)).unwrap();
+        let ctx = HookContext::new(CancellationToken::new(), Arc::new(CostTracker::new()));
+        let input = serde_json::json!({"path": "effect.txt", "content": "control"});
+        let error = executor
+            .execute(&ctx, "write", input.clone())
+            .await
+            .unwrap_err();
+        match error {
+            CapabilityError::Denied { layer, reason } => {
+                assert_eq!(layer, "contract-effect-authority");
+                assert!(reason.contains("CONTRACT_EFFECT_AUTHORITY_UNAVAILABLE"));
+            }
+            other => panic!("unexpected refusal: {other}"),
+        }
+        assert!(!root.join("effect.txt").exists());
+        let executor =
+            assemble_executor(&tools, &policy, root, &root.join("control-audit"), None).unwrap();
+        executor.execute(&ctx, "write", input).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("effect.txt")).unwrap(),
+            "control"
+        );
+    }
 
     #[test]
     fn the_system_prompt_states_the_wire_format_and_every_registered_tool() {

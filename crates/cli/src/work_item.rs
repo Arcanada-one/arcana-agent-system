@@ -128,6 +128,10 @@ async fn execute_admitted(
     source: Box<dyn ContractSource>,
     admitted: AdmittedContract,
 ) -> i32 {
+    // Admission is point-in-time only; refuse before grounding or any model call.
+    if let Err(err) = arcana_core::permission::require_contract_effect_authority() {
+        return refuse(err.code(), &err.to_string());
+    }
     let binding = admitted.binding();
 
     // Before step 4, and therefore before the first billable call.
