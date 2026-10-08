@@ -103,8 +103,10 @@ def plan_probe_errors(p):
     entities = p.get("entities")
     if not strings(entities, nonempty=True) or any(not re.fullmatch(r"(?:code_unit|config_key):.+", e) for e in entities):
         errors.append("process evidence supports only code units and config keys")
-    if p.get("mutating") is not True or any(k in p for k in ("status", "url", "method", "path", "auth")):
-        errors.append("process requires explicit mutation scope and no HTTP fields")
+    if type(p.get("mutating")) is not bool:
+        errors.append("process requires an explicit boolean mutation scope")
+    if any(k in p for k in ("status", "url", "method", "path", "auth")):
+        errors.append("process cannot contain HTTP fields")
     return errors
 
 
@@ -115,13 +117,21 @@ def plan_errors(plan):
     for key in ("id", "owner", "environment"):
         if not isinstance(plan.get(key), str) or not plan[key].strip():
             errors.append("missing named plan " + key)
-    if plan.get("read_only") is not False:
-        errors.append("process plans require explicit non-read-only ownership")
+    if type(plan.get("read_only")) is not bool:
+        errors.append("process plans require an explicit boolean read_only scope")
+    producer_root = plan.get("producer_repository")
+    if producer_root is not None and (not isinstance(producer_root, str)
+            or not os.path.isabs(producer_root) or os.path.normpath(producer_root) != producer_root
+            or producer_root == os.path.sep):
+        errors.append("producer_repository must name a canonical absolute repository directory")
     probes = plan.get("probes")
     if not isinstance(probes, list) or not probes:
         return errors + ["missing original process probes"]
     for probe in probes:
         errors.extend(plan_probe_errors(probe))
+        if (isinstance(probe, dict) and type(plan.get("read_only")) is bool
+                and probe.get("mutating") is not (not plan["read_only"])):
+            errors.append("process mutation scope differs from original plan read_only scope")
     if not errors and len({p["id"] for p in probes}) != len(probes):
         errors.append("duplicate original probe ids")
     return errors
@@ -219,10 +229,24 @@ def bound_errors(doc, read):
         plan = json.loads(raw)
         errors = plan_errors(plan)
         if errors: return errors
-        if plan["id"] != ref["id"] or plan["environment"] != doc["environment"] or plan["owner"] != doc.get("mutating_owner") or doc.get("read_only") is not False or plan.get("subject") != doc.get("subject"):
+        owner_field = "observation_owner" if plan["read_only"] else "mutating_owner"
+        other_owner_field = "mutating_owner" if plan["read_only"] else "observation_owner"
+        if (plan["id"] != ref["id"] or plan["environment"] != doc["environment"]
+                or plan["owner"] != doc.get(owner_field) or other_owner_field in doc
+                or doc.get("read_only") is not plan["read_only"]
+                or plan.get("subject") != doc.get("subject")):
             return ["process plan identity/subject differs from result"]
         if doc.get("source_binding_errors") != []:
             return ["producer could not preserve source attribution"]
+        producer_root = plan.get("producer_repository")
+        if producer_root is not None:
+            source_ref = plan.get("subject", {}).get("evidence", {})
+            source_raw = read(source_ref.get("path"))
+            source = json.loads(source_raw)
+            if (digest(source_raw) != source_ref.get("sha256")
+                    or source.get("schema") != "MeasuredGitSource/v1"
+                    or source.get("repository_path") != producer_root):
+                return ["producer repository is not anchored in original hash-bound Git source evidence"]
         unmeasured = []
         # A2-263 §5.2. Is the producer's scratch tree HERE at all? `execution_files` and
         # `artifacts` are absolute paths on the machine that ran the probes, and re-digesting them
@@ -234,7 +258,14 @@ def bound_errors(doc, read):
         # simply not on this host and the document is judged on its committed pins instead.
         inventory = [item["path"] for pr in plan["probes"] for key in ("execution_files", "artifacts")
                      for item in pr.get(key, []) if isinstance(item, dict) and isinstance(item.get("path"), str)]
-        tree_present = any(os.path.exists(x) for x in inventory)
+        # A shared /usr/bin executable says nothing about whether this host can
+        # read the producing checkout. The producer validates the optional root
+        # against its actual Git checkout before and after execution; its source
+        # evidence and original plan both bind that root. Legacy plans retain
+        # their existing inventory discriminator.
+        tree_present = (os.path.isdir(producer_root) if producer_root is not None
+                        else any(os.path.exists(x) for x in inventory))
+        remote_origin = producer_root is not None and not tree_present
         plans = {p["id"]: p for p in plan["probes"]}
         if {p["id"] for p in doc["probes"]} != set(plans): return ["process result omits or adds original probes"]
         expected_entities = {}
@@ -255,13 +286,16 @@ def bound_errors(doc, read):
             if not set(result["environment_keys"]).issubset(p.get("env_keys", [])): errors.append("undeclared process environment names")
             if result["executed"]:
                 if result.get("executable_sha256") != p["executable_sha256"]: errors.append("executable identity differs from original plan")
-                try:
-                    if file_digest(p["argv"][0])[0] != p["executable_sha256"]: errors.append("executable changed since observation")
-                except (OSError, ValueError) as exc:
-                    if tree_present or not host_cannot_reach(exc):
-                        errors.append("executable is no longer verifiable")
-                    else:
-                        unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
+                if remote_origin:
+                    unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
+                else:
+                    try:
+                        if file_digest(p["argv"][0])[0] != p["executable_sha256"]: errors.append("executable changed since observation")
+                    except (OSError, ValueError) as exc:
+                        if tree_present or not host_cannot_reach(exc):
+                            errors.append("executable is no longer verifiable")
+                        else:
+                            unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
             cap = p.get("capture_limit_bytes", MAX_CAPTURE)
             captured = sum(x["captured_bytes"] for x in result["streams"].values())
             if captured > cap:
@@ -275,6 +309,15 @@ def bound_errors(doc, read):
                 if [a["path"] for a in actuals] != [a["path"] for a in expected]: errors.append("manifest differs from original plan")
                 for actual, item in zip(actuals, expected):
                     # Execution inputs remain hash-verifiable; streams are deliberately not retained.
+                    if remote_origin:
+                        if (not re.fullmatch(r"[0-9a-f]{64}", str(actual.get("sha256")))
+                                or not isinstance(actual.get("bytes"), int)):
+                            errors.append("execution manifest entry records no usable digest")
+                        elif actual["matched"] != (actual["sha256"] == item["sha256"]):
+                            errors.append("artifact or execution input changed/unverifiable")
+                        else:
+                            unmeasured.append(f"{result['id']}: {key} {item['path']}")
+                        continue
                     try:
                         h, size = file_digest(item["path"], MAX_CAPTURE if key == "artifacts" else 512 * 1024 * 1024)
                         if actual.get("sha256") != h or actual.get("bytes") != size or actual["matched"] != (h == item["sha256"]): errors.append("artifact or execution input changed/unverifiable")
