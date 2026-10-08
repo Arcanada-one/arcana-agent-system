@@ -53,6 +53,7 @@ BUNDLE_FILES = [
     "tools/graph/admit_change.py",
     "tools/graph/schema_check.py",
     "tools/graph/build_graph.py",
+    "tools/graph/python_search_path.py",
     "tools/graph/native_projection.py",
     "tools/graph/nest_bootstrap.py",
     # build_graph.py imports this at module scope to classify .github/workflows/* paths, so a bundle

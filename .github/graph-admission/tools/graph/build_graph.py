@@ -61,11 +61,12 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import workflow_config
 import nest_bootstrap
+import python_search_path
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
 import shell_source
 import native_projection  # noqa: E402
 
-VERSION = "1.0.5"  # Literal workflow cwd contexts and conservative unknown reverse callers.
+VERSION = "1.0.6"  # Bounded Python caller contexts remain explicitly inferred.
 BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
@@ -99,8 +100,8 @@ RUST_USE_RE = re.compile(r"\buse\s+((?:crate|self|super)(?:::[A-Za-z_][A-Za-z0-9
                           r"|[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)")
 RUST_ENV_RE = re.compile(r"\b(?:std::)?env::var(?:_os)?\(\s*\"([A-Za-z_][A-Za-z0-9_]*)\"")
 RUST_SERVICE_DEPS = {"axum", "actix-web", "warp", "tonic", "hyper"}
-PY_FROM_RE = re.compile(r"(?m)^from[ \t]+(\.*)([\w.]*)[ \t]+import\b")
-PY_IMPORT_RE = re.compile(r"(?m)^import[ \t]+([\w.]+)")
+PY_FROM_RE = re.compile(r"(?m)^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import\b")
+PY_IMPORT_RE = re.compile(r"(?m)^[ \t]*import[ \t]+([\w.]+)")
 PY_ENV_RE = re.compile(r"""os\.environ\[\s*['"]([A-Z_][A-Z0-9_]*)['"]\s*\]"""
                         r"""|os\.environ\.get\(\s*['"]([A-Z_][A-Z0-9_]*)['"]"""
                         r"""|os\.getenv\(\s*['"]([A-Z_][A-Z0-9_]*)['"]""")
@@ -1135,7 +1136,7 @@ class Builder:
 
     def x_python(self):
         """AUP-GRAPH-009: pyproject.toml/setup.py (tomllib for pyproject) → deployable_unit; absolute imports matched
-        against every discovered src root, relative imports resolved from the importing file's directory;
+        against bounded explicit per-file search roots followed by discovered src roots, relative imports resolved from the importing file's directory;
         os.environ/os.getenv → config_key; `@app.get(...)`-style decorators → route (same node forms as the TS
         stack). Star imports, importlib-dynamic imports and bare `from . import x` (no module name to anchor a
         file) are not resolved — recorded in limitations."""
@@ -1174,12 +1175,17 @@ class Builder:
             py_roots.add(norm_path((d + "/" if d else "") + "src"))
         py_roots_sorted = sorted(py_roots, key=len, reverse=True)
 
-        def resolve_absolute(module: str) -> str | None:
+        def resolve_absolute(module: str, local_roots: list[str] | None = ()) -> str | None:
+            if local_roots is None:
+                return None
             rel = module.replace(".", "/")
-            for root in py_roots_sorted:
+            for root in list(local_roots) + py_roots_sorted:
                 target = norm_path((root + "/" if root else "") + rel)
-                for cand in (target + ".py", target + "/__init__.py"):
+                for cand in (target + "/__init__.py", target + ".py"):
                     if t.exists(cand):
+                        # Explicit Path.resolve claims cannot treat a Git symlink as regular source.
+                        if local_roots and t.meta.get("file_modes", {}).get(cand) == "120000":
+                            return None
                         return cand
             return None
 
@@ -1190,7 +1196,7 @@ class Builder:
             for _ in range(dots - 1):
                 d = os.path.dirname(d)
             target = norm_path((d + "/" if d else "") + module.replace(".", "/"))
-            for cand in (target + ".py", target + "/__init__.py"):
+            for cand in (target + "/__init__.py", target + ".py"):
                 if t.exists(cand):
                     return cand
             return None
@@ -1211,6 +1217,9 @@ class Builder:
         resolved_of: dict[str, list[str]] = {}
         for p in py_files:
             code, literals = scan_python(t.text(p))
+            local_by_line, path_limitations = python_search_path.import_roots(t.text(p), p)
+            self.limitations.extend(path_limitations)
+            roots_for = lambda m: local_by_line.get(code.count("\n", 0, m.start()) + 1, [])
             # A construct QUOTED inside a string is an example, not a declaration. The guard is on the
             # match start, so the decorator's own path argument and the key of an `os.environ[...]`
             # read — both of which are literals themselves — stay readable. See scan_python.
@@ -1220,7 +1229,7 @@ class Builder:
                 if not source(m):
                     continue
                 dots, module = m.group(1), m.group(2)
-                r = resolve_relative(p, len(dots), module) if dots else (resolve_absolute(module) if module else None)
+                r = resolve_relative(p, len(dots), module) if dots else (resolve_absolute(module, roots_for(m)) if module else None)
                 if r and r != p and f"code_unit:{r}" in self.g.nodes:
                     self.g.edge(f"code_unit:{p}", "imports", f"code_unit:{r}", "deterministic",
                                 via="python-relative-import" if dots else "python-absolute-import")
@@ -1228,7 +1237,7 @@ class Builder:
             for m in PY_IMPORT_RE.finditer(code):
                 if not source(m):
                     continue
-                r = resolve_absolute(m.group(1))
+                r = resolve_absolute(m.group(1), roots_for(m))
                 if r and r != p and f"code_unit:{r}" in self.g.nodes:
                     self.g.edge(f"code_unit:{p}", "imports", f"code_unit:{r}", "deterministic", via="python-import")
                     targets.append(r)
@@ -1245,6 +1254,17 @@ class Builder:
                 rid = f"route:{m.group(1).upper()} {m.group(2)}"
                 self.g.node(rid, "route", sha_bytes(t.files[p]), path=p, kind="fastapi")
                 self.g.edge(f"code_unit:{p}", "provides_route", rid, "deterministic", via="fastapi-decorator")
+        contextual, context_limitations = python_search_path.contextual_imports(
+            {p: t.text(p) for p in py_files}, t.meta.get("file_modes", {}), py_roots_sorted)
+        self.limitations.extend(context_limitations)
+        for row in contextual:
+            frm, to = f"code_unit:{row['from']}", f"code_unit:{row['to']}"
+            if frm in self.g.nodes and to in self.g.nodes:
+                self.g.edge(frm, "imports", to, "inferred", via="python-caller-context",
+                            inferred_by="bounded-python-caller-context", site=row["contexts"])
+                if is_test(row["from"]) and not is_test(row["to"]):
+                    self.g.edge(frm, "verifies", to, "inferred", via="python-caller-context-test-import",
+                                inferred_by="bounded-python-caller-context", site=row["contexts"])
         for p in py_files:
             if not is_test(p):
                 continue
@@ -1252,8 +1272,9 @@ class Builder:
                 if not is_test(r):
                     self.g.edge(f"code_unit:{p}", "verifies", f"code_unit:{r}", "deterministic", via="python-test-import")
         if pkgs or py_files:
-            self.limitations.append("python: absolute imports are matched against every discovered src root (no per-file "
-                                     "sys.path modelling); star imports, importlib-dynamic imports and bare `from . import x` "
+            self.limitations.append("python: absolute imports use bounded explicit per-file insertions and discovered src roots (no "
+                                     "dynamic sys.path modelling; explicit bounded per-file Path(__file__) insertions are supported); "
+                                     "star imports, importlib-dynamic imports and bare `from . import x` "
                                      "are not resolved")
 
     def x_config(self):

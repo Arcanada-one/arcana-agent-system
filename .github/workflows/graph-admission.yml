@@ -173,14 +173,107 @@ jobs:
           corepack enable --install-directory "${RUNNER_TEMP}/corepack-bin"
           echo "${RUNNER_TEMP}/corepack-bin" >> "$GITHUB_PATH"
 
+      - name: Node for the pinned admission-selftest compiler
+        if: steps.derived.outputs.declared != 'yes'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '24.20.0'
+
+      - name: Install and qualify the pinned admission-selftest compiler
+        env:
+          NODE_DISABLE_COMPILE_CACHE: '1'
+        run: |
+          set -euo pipefail
+          compiler_root=$(mktemp -d "${RUNNER_TEMP}/aup-graph-tsc.XXXXXX")
+          cat > "$compiler_root/package.json" <<'AUP_PACKAGE_JSON'
+          {
+            "name": "aup-graph-selftest-compiler",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "typescript": "5.9.3"
+            }
+          }
+          AUP_PACKAGE_JSON
+          cat > "$compiler_root/package-lock.json" <<'AUP_PACKAGE_LOCK_JSON'
+          {
+            "name": "aup-graph-selftest-compiler",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "requires": true,
+            "packages": {
+              "": {
+                "name": "aup-graph-selftest-compiler",
+                "version": "1.0.0",
+                "private": true,
+                "dependencies": {
+                  "typescript": "5.9.3"
+                }
+              },
+              "node_modules/typescript": {
+                "version": "5.9.3",
+                "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+                "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+                "bin": {
+                  "tsc": "bin/tsc",
+                  "tsserver": "bin/tsserver"
+                },
+                "engines": {
+                  "node": ">=14.17"
+                }
+              }
+            }
+          }
+          AUP_PACKAGE_LOCK_JSON
+          cat > "$compiler_root/qualify-tsc.py" <<'AUP_QUALIFY_TSC_PY'
+          #!/usr/bin/env python3
+          import json, pathlib, subprocess, sys, tempfile
+          
+          def qualify(root, executable):
+              root = pathlib.Path(root).resolve()
+              executable = pathlib.Path(executable)
+              expected = root / "node_modules/typescript/bin/tsc"
+              if executable.resolve() != expected:
+                  raise ValueError("TSC_EXECUTABLE_OUTSIDE_PINNED_PACKAGE")
+              package = json.loads((root / "node_modules/typescript/package.json").read_text())
+              if package["version"] != "5.9.3":
+                  raise ValueError("TSC_PACKAGE_VERSION_MISMATCH")
+              result = subprocess.run([str(executable), "--version"], capture_output=True, text=True, timeout=20)
+              if result.returncode != 0 or result.stdout.strip() != "Version 5.9.3":
+                  raise ValueError("TSC_EXECUTABLE_VERSION_MISMATCH")
+              with tempfile.TemporaryDirectory(prefix="aup-tsc-controls-") as scratch:
+                  path = pathlib.Path(scratch)
+                  for filename, contents, expected_success in [
+                      ("valid.ts", "const value: number = 1;\n", True),
+                      ("invalid.ts", "const value: number = 'wrong';\n", False),
+                  ]:
+                      source = path / filename
+                      source.write_text(contents)
+                      result = subprocess.run([str(executable), "--noEmit", "--strict", "--skipLibCheck", str(source)], capture_output=True, text=True, timeout=30)
+                      if (result.returncode == 0) != expected_success:
+                          raise ValueError("TSC_SEMANTIC_CONTROL_FAILED:" + filename)
+              return {"version": "5.9.3", "executable": str(executable.resolve()), "valid_input": "PASS", "invalid_input": "REFUSED"}
+          
+          if __name__ == "__main__":
+              print(json.dumps(qualify(sys.argv[1], sys.argv[2]), sort_keys=True))
+          AUP_QUALIFY_TSC_PY
+          : > "$compiler_root/user.npmrc"
+          : > "$compiler_root/global.npmrc"
+          npm ci --prefix "$compiler_root" --ignore-scripts --no-audit --no-fund --cache "$compiler_root/npm-cache" --userconfig "$compiler_root/user.npmrc" --globalconfig "$compiler_root/global.npmrc" --registry https://registry.npmjs.org
+          python3 "$compiler_root/qualify-tsc.py" "$compiler_root" "$compiler_root/node_modules/.bin/tsc"
+          printf '%s\n' "$compiler_root/node_modules/.bin" >> "$GITHUB_PATH"
+
       - name: Resolve the change range
         id: range
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          BASE_BRANCH=""
           if [ -n "${PR_BASE:-}" ]; then
+            if [ -n "${PR_BASE_REF:-}" ]; then BASE_BRANCH="refs/remotes/origin/${PR_BASE_REF}"; fi
             BASE="$(git merge-base "$PR_BASE" "$PR_HEAD")"
             HEAD_SHA="$PR_HEAD"
           else
@@ -189,6 +282,7 @@ jobs:
           fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           echo "head=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Write the pull-request body to a file (never interpolated into a shell command)
         env:
@@ -253,6 +347,7 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           RANGE_BASE: ${{ steps.range.outputs.base }}
           RANGE_HEAD: ${{ steps.range.outputs.head }}
+          RANGE_BASE_BRANCH: ${{ steps.range.outputs.base_branch }}
           # AUP-GRAPH-006:gate2a — the automated-author path. GITHUB_EVENT_PATH is the payload GitHub
           # itself delivered; it is the ONLY source of author identity the gate consults. The head
           # branch name is never consulted: anyone who can open a pull request can name their branch
@@ -269,6 +364,7 @@ jobs:
           # single place the check turns red (GitHub starts this shell with -e; it is cleared here).
           set +e
           ARGS=()
+          if [ -n "${RANGE_BASE_BRANCH:-}" ]; then ARGS+=(--base-branch "$RANGE_BASE_BRANCH"); fi
           while IFS= read -r g; do [ -n "$g" ] && ARGS+=(--receipt-glob "$g"); done <<< "$RECEIPT_GLOBS"
           if [ "$BUILD_GRAPH" = "true" ]; then ARGS+=(--build-graph); fi
           if [ -n "${EVENT_PATH:-}" ] && [ -f "$EVENT_PATH" ]; then ARGS+=(--event-file "$EVENT_PATH"); fi

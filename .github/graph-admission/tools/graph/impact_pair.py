@@ -9,7 +9,6 @@ import copy
 import contextlib
 import contextvars
 import hashlib
-import hashlib
 import json
 import os
 import re
@@ -17,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import build_graph
@@ -223,7 +223,7 @@ def _caller_graph_pair(repo: impact.Repo, base: str, head: str, bundle_path: str
 
 def index_at(repo: impact.Repo, revision: str) -> impact.GraphIndex:
     with trace_phase("revision-graph-build"):
-        doc = build_graph.build(repo.path, rev=revision, built_at=build_graph.FIXED_BUILT_AT)
+        doc = build_graph.build(repo.top, rev=revision, subdir=repo.prefix, built_at=build_graph.FIXED_BUILT_AT)
     with trace_phase("revision-graph-schema"):
         errors = schema_check.check_graph(doc, schema_check.load_schema(schema_check.GRAPH_SCHEMA_PATH))
     if errors:
@@ -470,6 +470,8 @@ A paired receipt must match both graph digests and the complete dual selection.
         for section in ("deterministic_core", "inferred_tail"):
             if selection_config.get(section) != q["impact_set"][section]:
                 problems.append("revision impact paths differ from independent traversal: " + section)
+    # Muneral d2c3de8c: evaluated at the receipt's own capture time, the instant verify.py evaluated it.
+    not_owed = not_owed_context(repo, base, head, str(doc.get("captured_at_utc") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")), after, before)
     expected = set(selection["base"]) | set(selection["head"])
     verdicts = {v.get("entity") for v in doc.get("verdicts", [])}
     excluded, exclusion_problems = structural_exclusions_rederived(repo, doc, base, head, before, after)
@@ -486,11 +488,11 @@ A paired receipt must match both graph digests and the complete dual selection.
         if not isinstance(required, dict) or expected - set(required):
             problems.append("required_by_entity omits independently selected entities")
         else:
-            mandatory = mandatory_by_entity(before, after, q)
+            mandatory = mandatory_by_entity(before, after, q, not_owed=not_owed)
             if any(not isinstance(required[e], list) or not set(vs) <= set(required[e]) for e, vs in mandatory.items()):
                 problems.append("required_by_entity omits mandatory base/head verifier obligations")
     if enforce_mandatory and admitted:
-        mandatory = mandatory_by_entity(before, after, q)
+        mandatory = mandatory_by_entity(before, after, q, not_owed=not_owed)
         records = {v.get("entity"): v for v in doc.get("verdicts", []) if isinstance(v, dict)}
         verifiers = {v.get("id"): v for v in doc.get("verifiers", []) if isinstance(v, dict)}
         for entity, minimum in mandatory.items():
@@ -706,7 +708,124 @@ def inferred_boundary_by_entity(q: dict) -> dict[str, bool]:
     return out
 
 
-def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: dict) -> dict[str, list[str]]:
+# ---- Muneral d2c3de8c: declared `type_check_not_owed` — ONE definition, called by verify.py (producer) and by
+# mandatory_by_entity (gate). Two copies of a discharge rule is the HEAD_IMPACT class (#227): the producer drops an
+# obligation the gate still demands, and the gate refuses a receipt that was issued correctly.
+NOT_OWED_CLASSES = ("data", "vendored")
+NOT_OWED_TS_EXTS = (".ts", ".tsx", ".mts", ".cts")   # TypeScript is live code by construction: never declared away
+NOT_OWED_PROFILE = ".arcana/verify.json"
+
+
+def not_owed_entries(profile, now_utc: str, invalid: list) -> list[dict]:
+    """Valid, unexpired `type_check_not_owed` entries of a VerifyProfile. An invalid one goes to `invalid`, never applied.
+
+    Entry: {"class": "data"|"vendored", "paths": [...], "reason", "owner", "expires_at_utc", "reverse_if"} — the same
+    owner/expiry/reverse_if an exemption carries. Paths are ENUMERATED, never patterns over the repository:
+      data      a literal directory followed by `/**` (e.g. `datarim/**`) — a tree kept as a record;
+      vendored  exact file paths (e.g. `.obsidian/plugins/calendar/main.js`) — no wildcard at all.
+    """
+    out = []
+    raw = profile.get("type_check_not_owed") if isinstance(profile, dict) else None
+    for ent in raw if isinstance(raw, list) else []:
+        if not isinstance(ent, dict):
+            invalid.append(f"not an object: {ent!r:.80}")
+            continue
+        cls, paths = ent.get("class"), ent.get("paths")
+        text = {k: ent.get(k) for k in ("reason", "owner", "expires_at_utc", "reverse_if")}
+        if (cls not in NOT_OWED_CLASSES or not isinstance(paths, list) or not paths
+                or not all(isinstance(v, str) and v.strip() for v in text.values())
+                or len(text["reason"].strip()) < 20 or len(text["reverse_if"].strip()) < 20
+                or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", text["expires_at_utc"])):
+            invalid.append(f"needs class in {NOT_OWED_CLASSES}, paths, reason/reverse_if (>= 20 characters), owner and "
+                           f"expires_at_utc (YYYY-MM-DDTHH:MM:SSZ): {ent!r:.200}")
+            continue
+        try:
+            datetime.strptime(text["expires_at_utc"], "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            invalid.append(f"invalid UTC expiry: {text['expires_at_utc']}")
+            continue
+        if text["expires_at_utc"] <= now_utc:
+            invalid.append(f"expired at {text['expires_at_utc']} (owner {text['owner']}): {paths!r:.120}")
+            continue
+        for g in paths:
+            ok = isinstance(g, str) and not g.startswith("/") and ".." not in g.split("/")
+            if ok and cls == "data":
+                ok = g.endswith("/**") and "*" not in g[:-3] and len(g) > 3
+            elif ok:
+                ok = "*" not in g and "/" in g
+            if not ok:
+                invalid.append(f"{cls} path {g!r} refused: data takes `<literal dir>/**`, vendored takes an exact file path")
+                continue
+            out.append({"glob": g, "class": cls, **{k: v.strip() for k, v in text.items()}})
+    return out
+
+
+def _not_owed_match(e: dict, path: str) -> bool:
+    return path.startswith(e["glob"][:-2]) if e["class"] == "data" else path == e["glob"]
+
+
+def not_owed_in_force(base_profile, head_profile, now_utc: str, revision_paths, invalid: list) -> list[dict]:
+    """The entries that apply: identical at base AND head (a change never discharges its own files by adding one),
+    unexpired, and covering no TypeScript file at either revision."""
+    key = lambda e: tuple(e[k] for k in ("glob", "class", "reason", "owner", "expires_at_utc", "reverse_if"))
+    base = {key(e) for e in not_owed_entries(base_profile, now_utc, [])}
+    out = []
+    for e in not_owed_entries(head_profile, now_utc, invalid):
+        if key(e) not in base:
+            invalid.append(f"`{e['glob']}` is not declared identically at base — it takes effect once merged")
+            continue
+        ts = sorted(p for p in revision_paths if p.endswith(NOT_OWED_TS_EXTS) and _not_owed_match(e, p))
+        if ts:
+            invalid.append(f"`{e['glob']}` covers TypeScript ({', '.join(ts[:3])}{' …' if len(ts) > 3 else ''}): "
+                           f"live code is never declared away")
+            continue
+        out.append(e)
+    return out
+
+
+def type_check_not_owed(path: str, entries: list[dict], revision_paths, deployable_paths) -> dict | None:
+    """The in-force entry that discharges `type_check` for `path`, or None. Never when a compiler project could
+    cover the file in either revision: inside a deployable, or with a tsconfig.json in its directory or any directory above it."""
+    # A paired impact can retain a deleted BASE-only TypeScript node.
+    if path.endswith(NOT_OWED_TS_EXTS):
+        return None
+    e = next((x for x in entries if _not_owed_match(x, path)), None)
+    if e is None:
+        return None
+    for d in deployable_paths:
+        d = d.rstrip("/")
+        if d in ("", ".") or path.startswith(d + "/"):
+            return None
+    parts = path.split("/")[:-1]
+    for i in range(len(parts) + 1):
+        if ("/".join(parts[:i]) + "/tsconfig.json" if i else "tsconfig.json") in revision_paths:
+            return None
+    return e
+
+
+def not_owed_context(repo: impact.Repo, base: str, head: str, now_utc: str, after: impact.GraphIndex,
+                     before: impact.GraphIndex) -> dict:
+    """What the gate needs to apply the declaration, read from Git exactly as verify.py reads its trees."""
+    def profile_at(rev):
+        r = subprocess.run(["git", "-C", str(repo.top), "show", f"{rev}:{repo.prefix}{NOT_OWED_PROFILE}"],
+                           capture_output=True, text=True)
+        try:
+            return json.loads(r.stdout) if r.returncode == 0 else {}
+        except ValueError:
+            return {}
+    revision_paths = set()
+    for rev in (base, head):
+        ls = subprocess.run(["git", "-C", str(repo.path), "ls-tree", "-rz", "--name-only", rev],
+                            capture_output=True, text=True, check=True).stdout.split("\0")
+        revision_paths.update(path for path in ls if path)
+    deployables = {n.get("path") or "" for idx in (before, after) for n in idx.nodes.values()
+                   if n.get("type") == "deployable_unit"}
+    entries = not_owed_in_force(profile_at(base), profile_at(head), now_utc, revision_paths, [])
+    return {"entries": entries, "revision_paths": revision_paths, "deployables": deployables}
+
+
+def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: dict,
+                       not_owed: dict | None = None) -> dict[str, list[str]]:
     """The matrix minimum, independent of a producer's supplied requirement arrays."""
     matrix = json.loads((Path(__file__).resolve().parents[2] / "contracts/graph-verified-change/verifier-matrix.v1.json").read_text())
     affected = selected(q)
@@ -747,6 +866,11 @@ def mandatory_by_entity(before: impact.GraphIndex, after: impact.GraphIndex, q: 
             required.discard("type_check")
         if node["type"] == "deployable_unit" and not _deployable_has_ts(node.get("path", ""), before, after):
             required.discard("type_check")
+        # Muneral d2c3de8c: the declared discharge, the SAME function verify.py calls.
+        if (not_owed and "type_check" in required and node["type"] in ("code_unit", "route")
+                and type_check_not_owed(node.get("path", ""), not_owed["entries"], not_owed["revision_paths"],
+                                        not_owed["deployables"])):
+            required.discard("type_check")
         # The A2-353 discharge, the SAME function verify.py calls (see canary_unreachable_test).
         if "canary" in required and canary_unreachable_test(node["type"], node.get("path", ""), boundary.get(eid, False)):
             required.discard("canary")
@@ -773,6 +897,8 @@ def _deployable_has_ts(dep_path: str, before: impact.GraphIndex, after: impact.G
             rel = p[len(prefix):]
             if rel.startswith(".github/graph-admission/") or "node_modules/" in rel or rel.startswith("vendor/"):
                 continue
-            if Path(rel).suffix in impact.CODE_EXTS:
+            # Match verify.Verify.deployable_has_ts: JS is source code for impact traversal,
+            # but does not make the deployable owe a TypeScript compiler check.
+            if Path(rel).suffix in {".ts", ".tsx", ".mts", ".cts"}:
                 return True
     return False
