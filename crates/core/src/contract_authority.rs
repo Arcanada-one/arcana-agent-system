@@ -74,6 +74,100 @@ pub enum AuthorityRefusal {
     Unavailable,
 }
 
+/// One exact effect request presented to its trusted task-run participant.
+///
+/// These fields are request data, not authenticated claims. A participating
+/// provider must bind them to the authentic caller and current task-run state
+/// in the authority domain that also serializes revocation and effect
+/// acceptance. This crate currently has no such provider implementation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectDispatchRequest {
+    pub contract_digest: String,
+    pub task_id: String,
+    pub project_id: String,
+    pub subject_id: String,
+    pub participant_id: String,
+    pub request_id: String,
+    pub issued_generation: u64,
+    pub effect_digest: String,
+}
+
+/// Non-transferable result record for a provider-owned exact dispatch.
+///
+/// This is not a lease or a capability for a later effect. It may be returned
+/// only after the participating provider has accepted the selected callback
+/// under the same fence as current revocation and single-use validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectDispatchOutcome {
+    pub request_id: String,
+    pub effect_digest: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EffectRefusal {
+    #[error(
+        "EFFECT_PROVIDER_UNAVAILABLE: no qualified participating effect provider is available"
+    )]
+    ProviderUnavailable,
+    #[error("EFFECT_PARTICIPANT_UNKNOWN: the selected effect participant is not qualified")]
+    UnknownParticipant,
+    #[error("EFFECT_REQUEST_MISMATCH: the exact request or effect binding does not match")]
+    RequestMismatch,
+    #[error("EFFECT_REQUEST_STALE: the request generation is no longer current")]
+    StaleRequest,
+    #[error("EFFECT_REQUEST_DUPLICATE: the request has already been consumed")]
+    DuplicateRequest,
+    #[error("EFFECT_REVOKED: the request was revoked before provider acceptance")]
+    Revoked,
+}
+
+impl EffectRefusal {
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::ProviderUnavailable => "EFFECT_PROVIDER_UNAVAILABLE",
+            Self::UnknownParticipant => "EFFECT_PARTICIPANT_UNKNOWN",
+            Self::RequestMismatch => "EFFECT_REQUEST_MISMATCH",
+            Self::StaleRequest => "EFFECT_REQUEST_STALE",
+            Self::DuplicateRequest => "EFFECT_REQUEST_DUPLICATE",
+            Self::Revoked => "EFFECT_REVOKED",
+        }
+    }
+}
+
+/// Provider-owned acceptance boundary for one exact effect request.
+///
+/// Implementations must authenticate caller/task/project/subject and bind the
+/// contract, request and effect digests, current generation, revocation and
+/// single-use state in the same authority domain that accepts the selected
+/// effect callback. The provider owns that callback acceptance; the caller
+/// cannot supply a post-verification continuation. A check followed by a
+/// separate caller-owned effect, an admission token, or a local consumer lock
+/// is not a conforming implementation. No participating implementation is
+/// currently wired in this crate.
+#[async_trait]
+pub trait EffectAcceptanceProvider: Send + Sync {
+    /// Atomically validate and accept/dispatch this exact request in the
+    /// provider's authority domain, or refuse before accepting its callback.
+    async fn accept_and_dispatch(
+        &self,
+        request: &EffectDispatchRequest,
+    ) -> Result<EffectDispatchOutcome, EffectRefusal>;
+}
+
+/// Fail-closed default until a real authority-domain participant is wired.
+pub struct UnavailableEffectProvider;
+
+#[async_trait]
+impl EffectAcceptanceProvider for UnavailableEffectProvider {
+    async fn accept_and_dispatch(
+        &self,
+        _request: &EffectDispatchRequest,
+    ) -> Result<EffectDispatchOutcome, EffectRefusal> {
+        Err(EffectRefusal::ProviderUnavailable)
+    }
+}
+
 impl AuthorityRefusal {
     #[must_use]
     pub fn code(self) -> &'static str {
