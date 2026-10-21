@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-10-21T14:49:52Z",
+ "captured_at_utc": "2026-10-21T14:49:57Z",
  "change_set": {
   "base": "dfbffa2da65fcdb8aa9a5058fa9be38375e71a4e",
   "files": [
@@ -26,9 +26,18 @@
     ],
     "path": ".github/workflows/release.yml",
     "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-macos-15-runners.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-macos-15-runners.json"
+    ],
+    "path": "receipts/graph/change-admission-macos-15-runners.json",
+    "status": "A"
    }
   ],
-  "head": "ac2fda4ce3fb7d818ec1bb2862833dcf13a983b7",
+  "head": "d109386ade5758bcea2da385b1414084f6b0d1a2",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -37,18 +46,18 @@
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:870d9b6fb39799623a46229c29ff4b27fc7e44f89becaa085b046e4d35679635",
-  "path": "/tmp/verify-macos15/wd2/verifier-out/graph-dfbffa2da65f.json",
+  "path": "/tmp/arcana-verify/verifier-out/graph-dfbffa2da65f.json",
   "source_commit": "dfbffa2da65fcdb8aa9a5058fa9be38375e71a4e"
  },
  "head_graph": {
   "builder_version": "1.0.1",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:374e326a1be5ccc83b180e7c493a87d19f788074bb5da718dfb06c9ba5bf5908",
-  "path": "/tmp/verify-macos15/wd2/verifier-out/graph-head-ac2fda4ce3fb.json",
-  "source_commit": "ac2fda4ce3fb7d818ec1bb2862833dcf13a983b7",
+  "graph_digest": "sha256:3cc0459ae6cbcdf074937fa96bc53a965865657f18790d5467b3c433b264a48a",
+  "path": "/tmp/arcana-verify/verifier-out/graph-head-d109386ade57.json",
+  "source_commit": "d109386ade5758bcea2da385b1414084f6b0d1a2",
   "staleness": {
-   "checked_at_utc": "2026-10-21T14:49:55Z",
-   "checked_nodes": 401,
+   "checked_at_utc": "2026-10-21T14:49:59Z",
+   "checked_nodes": 402,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -175,7 +184,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.2.0"
  },
- "receipt_id": "car-verify-20261021T144952Z-ac2fda4c",
+ "receipt_id": "car-verify-20261021T144957Z-d109386a",
  "receipt_path": "receipts/graph/change-admission-macos-15-runners.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -198,14 +207,15 @@
    "receipt:receipts/graph/change-admission-a2-238.json",
    "receipt:receipts/graph/change-admission-a2-272.json",
    "receipt:receipts/graph/change-admission-a2-361.json",
-   "receipt:receipts/graph/change-admission-empty-contract.json"
+   "receipt:receipts/graph/change-admission-empty-contract.json",
+   "receipt:receipts/graph/change-admission-macos-15-runners.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-10-21T14:49:55Z",
+  "checked_at_utc": "2026-10-21T14:49:59Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -265,10 +275,25 @@
    "path": "receipts/graph/change-admission-empty-contract.json",
    "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
    "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:fd911e0e54b4781399a1eba634f3fc44da5c4a020f94cd25f8895bbcad1b1492"
+   },
+   "entity": "receipt:receipts/graph/change-admission-macos-15-runners.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-macos-15-runners.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-macos-15-runners.json for work item macos-15-runners",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-macos-15-runners.json",
+    "work_item": "macos-15-runners"
+   }
   }
  ],
  "tree": {
-  "commit": "ac2fda4ce3fb7d818ec1bb2862833dcf13a983b7",
+  "commit": "d109386ade5758bcea2da385b1414084f6b0d1a2",
   "dirty": false
  },
  "verdicts": [
@@ -310,8 +335,8 @@
    "exit_code": 0,
    "id": "v-workflow-config-b803fcb7f17ed923",
    "kind": "config_schema",
-   "output_ref": "/tmp/verify-macos15/wd2/verifier-out/v-workflow-config-b803fcb7f17ed923.txt",
-   "started_at_utc": "2026-10-21T14:49:56Z",
+   "output_ref": "/tmp/arcana-verify/verifier-out/v-workflow-config-b803fcb7f17ed923.txt",
+   "started_at_utc": "2026-10-21T14:50:01Z",
    "summary": "bounded workflow configuration shape valid; expressions, shell, actions and hosted execution NOT_MEASURED"
   },
   {
@@ -326,8 +351,8 @@
    "exit_code": 0,
    "id": "v-workflow-config-87db21a973eed4fe",
    "kind": "config_schema",
-   "output_ref": "/tmp/verify-macos15/wd2/verifier-out/v-workflow-config-87db21a973eed4fe.txt",
-   "started_at_utc": "2026-10-21T14:49:56Z",
+   "output_ref": "/tmp/arcana-verify/verifier-out/v-workflow-config-87db21a973eed4fe.txt",
+   "started_at_utc": "2026-10-21T14:50:01Z",
    "summary": "bounded workflow configuration shape valid; expressions, shell, actions and hosted execution NOT_MEASURED"
   },
   {
@@ -344,17 +369,23 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/tmp/verify-macos15/wd2/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-10-21T14:49:56Z",
+   "output_ref": "/tmp/arcana-verify/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-10-21T14:50:01Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   }
  ],
  "verify": {
   "events": [
    {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-macos-15-runners.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-macos-15-runners.json is the previous version of the one this run is writing, for the same work item macos-15-runners — superseded by construction, so it owes this change no verdict"
+   },
+   {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "5 affected entity(ies) owe no verdict (receipt: 5): unchanged at both revisions and given no verifier by the matrix"
+    "text": "6 affected entity(ies) owe no verdict (receipt: 6): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -370,11 +401,12 @@
    "receipt:receipts/graph/change-admission-a2-238.json": [],
    "receipt:receipts/graph/change-admission-a2-272.json": [],
    "receipt:receipts/graph/change-admission-a2-361.json": [],
-   "receipt:receipts/graph/change-admission-empty-contract.json": []
+   "receipt:receipts/graph/change-admission-empty-contract.json": [],
+   "receipt:receipts/graph/change-admission-macos-15-runners.json": []
   },
   "seconds": {
    "prepare": 1.24,
-   "total": 4.19,
+   "total": 4.3,
    "verifiers": 0.0
   }
  },
