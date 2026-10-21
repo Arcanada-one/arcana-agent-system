@@ -154,7 +154,7 @@ name = "arcana-core"
 version = "0.2.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "jsonschema",
  "regex",
