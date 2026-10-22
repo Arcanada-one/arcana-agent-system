@@ -1,0 +1,23 @@
+[
+  {
+    "control": "substituted_owner",
+    "rows": {},
+    "errors": [
+      "process plan identity/subject differs from result"
+    ]
+  },
+  {
+    "control": "contradictory_scope",
+    "rows": {},
+    "errors": [
+      "process plan identity/subject differs from result"
+    ]
+  },
+  {
+    "control": "forged_executable_identity",
+    "rows": {},
+    "errors": [
+      "executable identity differs from original plan"
+    ]
+  }
+]

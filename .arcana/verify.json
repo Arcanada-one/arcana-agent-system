@@ -1,0 +1,96 @@
+{
+  "schema": "VerifyProfile/v1",
+  "auto": true,
+  "deployables": {
+    "crates/cli": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-agent"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/connectors": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-connectors"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/core": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-core"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/credential-broker": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-credential-broker"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/execution-boundary": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-execution-boundary"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/mcp": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-mcp"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/skills": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-skills"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/supervisor": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-supervisor"
+      ],
+      "full_test_timeout_seconds": 900
+    },
+    "crates/tools": {
+      "full_test": [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "arcana-tools"
+      ],
+      "full_test_timeout_seconds": 900
+    }
+  }
+}

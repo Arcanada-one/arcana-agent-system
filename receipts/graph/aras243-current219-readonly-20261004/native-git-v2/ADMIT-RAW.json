@@ -1,0 +1,245 @@
+{
+ "automated_author": {
+  "author_match": {
+   "matched": false,
+   "reason": "no pull_request event payload was supplied to the gate"
+  },
+  "eligible": false,
+  "receipt_path": null
+ },
+ "captured_at_utc": "2026-10-04T23:18:41Z",
+ "checks": [
+  {
+   "code": "MANUAL_BYPASS_REFUSED",
+   "detail": "bypass attempt: --skip-receipt",
+   "id": "C01",
+   "verdict": "refuse"
+  },
+  {
+   "code": "NOT_MEASURED_WITHOUT_EXEMPTION",
+   "detail": "VERIFY-RAW.json: 4 entity(ies) not_measured without an exemption",
+   "entities": [
+    "code_unit:.github/graph-admission/tools/graph/admit_change.py",
+    "code_unit:.github/graph-admission/tools/graph/ci_gate.py",
+    "code_unit:.github/graph-admission/tools/graph/impact.py",
+    "code_unit:.github/graph-admission/tools/graph/verify.py"
+   ],
+   "id": "C09",
+   "verdict": "paused_safe"
+  },
+  {
+   "code": "ADMISSION_NOT_ADMITTED",
+   "detail": "VERIFY-RAW.json: the receipt itself pauses the change",
+   "id": "C11",
+   "verdict": "paused_safe"
+  },
+  {
+   "code": "CHANGE_SET_INCOMPLETE",
+   "detail": "20/24 changed file(s) are absent from the receipt change_set",
+   "entities": [
+    ".arcana/graph-tools-compiler-sdk.v1.json",
+    ".github/graph-admission/BUNDLE.json",
+    ".github/graph-admission/BUNDLE.json.sig",
+    ".github/graph-admission/contracts/graph-verified-change/bundle-signing-key.pub",
+    ".github/graph-admission/contracts/graph-verified-change/change-admission-receipt.v1.json",
+    ".github/graph-admission/contracts/graph-verified-change/relationship-graph.v1.json",
+    ".github/graph-admission/contracts/graph-verified-change/verifier-matrix.v1.json",
+    ".github/graph-admission/tools/graph/build_graph.py",
+    ".github/graph-admission/tools/graph/contract_diff.py",
+    ".github/graph-admission/tools/graph/impact_pair.py",
+    ".github/graph-admission/tools/graph/metadata_contract_observer.cjs",
+    ".github/graph-admission/tools/graph/metadata_contract_proof.py",
+    ".github/graph-admission/tools/graph/nest_bootstrap.py",
+    ".github/graph-admission/tools/graph/schema_check.py",
+    ".github/graph-admission/tools/graph/workflow_config.py",
+    ".github/workflows/ci.yml",
+    ".github/workflows/graph-admission-call.yml",
+    ".github/workflows/graph-admission.yml",
+    "receipts/graph/change-admission-bundle-72ea-20261001.json",
+    "tsconfig.json"
+   ],
+   "id": "C06",
+   "verdict": "refuse"
+  }
+ ],
+ "decision_ref": "DEC-AUP-0008",
+ "disabled_checks": [],
+ "exit_code": 5,
+ "gate_receipt_id": "gate-20261004T231841Z",
+ "model": "claude-opus-5",
+ "policy": {
+  "digest": "sha256:be22d70338b6dcc491920042ad84a13bac105a126039e194611b597b2f7e01a4",
+  "id": "admission-gate.v1",
+  "path": "contracts/graph-verified-change/admission-gate.v1.json"
+ },
+ "producer": {
+  "tool": "tools/graph/admit_change.py",
+  "version": "1.0.0"
+ },
+ "provisional_until_fable_review": true,
+ "range": {
+  "base": "62149eabbc7224f65c66c91dc07eae1d02c11e02",
+  "commits": 20,
+  "files": [
+   {
+    "path": ".arcana/graph-tools-compiler-sdk.v1.json",
+    "status": "A"
+   },
+   {
+    "path": ".github/graph-admission/BUNDLE.json",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/BUNDLE.json.sig",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/contracts/graph-verified-change/bundle-signing-key.pub",
+    "status": "A"
+   },
+   {
+    "path": ".github/graph-admission/contracts/graph-verified-change/change-admission-receipt.v1.json",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/contracts/graph-verified-change/relationship-graph.v1.json",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/contracts/graph-verified-change/verifier-matrix.v1.json",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/admit_change.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/build_graph.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/ci_gate.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/contract_diff.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/impact.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/impact_pair.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/metadata_contract_observer.cjs",
+    "status": "A"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/metadata_contract_proof.py",
+    "status": "A"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/nest_bootstrap.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/schema_check.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/verify.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/graph-admission/tools/graph/workflow_config.py",
+    "status": "M"
+   },
+   {
+    "path": ".github/workflows/ci.yml",
+    "status": "M"
+   },
+   {
+    "path": ".github/workflows/graph-admission-call.yml",
+    "status": "M"
+   },
+   {
+    "path": ".github/workflows/graph-admission.yml",
+    "status": "M"
+   },
+   {
+    "path": "receipts/graph/change-admission-bundle-72ea-20261001.json",
+    "status": "A"
+   },
+   {
+    "path": "tsconfig.json",
+    "status": "A"
+   }
+  ],
+  "head": "219034f7360d85f7a41fbf3c1679a174310fbd52"
+ },
+ "reason_codes": [
+  "ADMISSION_NOT_ADMITTED",
+  "CHANGE_SET_INCOMPLETE",
+  "MANUAL_BYPASS_REFUSED",
+  "NOT_MEASURED_WITHOUT_EXEMPTION"
+ ],
+ "receipts": [
+  {
+   "admission": "paused_safe",
+   "bound": true,
+   "decision_exemptions": {
+    "enforcement": "off",
+    "problems": []
+   },
+   "digest": "sha256:a8843d891b5187cc90432f71f35d2391b90426953b9ae6c6ccca71c4e1c8b969",
+   "entity_counts": {
+    "exempted": 0,
+    "failed": 0,
+    "not_measured": 4,
+    "verified": 0
+   },
+   "path": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-219-actual-readonly-native-can-v2/VERIFY-RAW.json",
+   "reason": "worktree at 219034f7360d",
+   "receipt_id": "car-verify-20261004T231826Z-219034f7",
+   "schema_codes": [],
+   "schema_verdict": "conformant"
+  }
+ ],
+ "record_commits": {
+  "admitted_paths": {
+   "derived": [],
+   "receipts": [],
+   "work_item_evidence": []
+  },
+  "derived_verification": {
+   "verdict": null,
+   "why": "no declared path"
+  },
+  "edited_after_receipt_head": [],
+  "receipt_heads": [
+   "219034f7360d85f7a41fbf3c1679a174310fbd52"
+  ],
+  "rule": "contracts/graph-verified-change/trailing-record-commits.v1.md",
+  "trailing_commits": [],
+  "work_item_evidence_ledger": {
+   "dir": null,
+   "paths": []
+  }
+ },
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/arcanada/_temp/aras243-current0e1c-ctx41"
+ },
+ "rule": "«Нет receipt — нет мержа». A change is admitted into a program-owned repository only when a ChangeAdmissionReceipt/v1 exists that is conformant, fresh, bound to exactly this change, whose every affected entity carries a tri-valued verdict, and whose admission verdict is admitted or admitted_with_exemptions. The receipt is evidence attached to the Work Item — never a status, never a checkbox in a pull-request description.",
+ "schema": "AdmissionGateReceipt/v1",
+ "verdict": "refuse",
+ "work_item_evidence": {
+  "enforcement": "off",
+  "enforcement_source": "--enforcement",
+  "entries": [],
+  "status": "not_measured"
+ }
+}

@@ -1,0 +1,72 @@
+{
+  "schema": "CompilerProjectConsumptionMeasurement/v1",
+  "head": "219034f7360d85f7a41fbf3c1679a174310fbd52",
+  "canonical_tool": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/a421-publication-prepared/official-protected/.arcana/graph-gate/tools/graph/verify.py",
+  "canonical_tool_sha256": "f528a6a30dda39a41d6ca700453f0b438b75f191057c52bdefaadc776bb001bb",
+  "actual_graph_node": {
+    "id": "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs",
+    "type": "code_unit",
+    "content_hash": "sha256:f5797b130e5daf54645d4deafdf885b9eb3c5f6e63925c0ab2cb4cb022a68b08",
+    "path": ".github/graph-admission/tools/graph/metadata_contract_observer.cjs",
+    "attrs": {
+      "vendored": true,
+      "vendored_from": "Arcanada-one/arcanada-universal-program",
+      "vendor_bundle": ".github/graph-admission/BUNDLE.json",
+      "vendor_ref": "d26c4436d855d1e6e5ba96592917d300d6192458"
+    }
+  },
+  "graph_digest": "sha256:ff59b11f2c084c449df1faac941a79886501f2ee915c17a56296bb88cd0df801",
+  "project": ".",
+  "configuration": "tsconfig.json",
+  "sdk_physical_root": "/home/dev/.producer-ctx41/tbt0640-metadata-contract-consumer/clean-declared-compiler-sdk/node_modules",
+  "sdk_declared_files": 178,
+  "sdk_before_after": "all declared bytes matched",
+  "source_config_bytes": "exact Git HEAD positive export retained unchanged",
+  "positive_source_sha256": "f5797b130e5daf54645d4deafdf885b9eb3c5f6e63925c0ab2cb4cb022a68b08",
+  "negative_source_sha256": "55c751dfc558754e6cc3349d3b0f99939802f1338b86838d50bcbcab452b9f3c",
+  "separate_positive_negative_exports": true,
+  "physical_node_executable": {
+    "path": "/usr/bin/node",
+    "sha256": "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7"
+  },
+  "positive": [
+    {
+      "id": "v-type-check-tsconfig",
+      "kind": "type_check",
+      "command": "/home/dev/.producer-ctx41/tbt0640-metadata-contract-consumer/clean-declared-compiler-sdk/node_modules/typescript/bin/tsc -p /home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-current219-canonical-type-v3/export/tsconfig.json --noEmit --incremental true --tsBuildInfoFile /home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-current219-canonical-type-v3/output/type-check-1cc_9bhp/check.tsbuildinfo --listFiles",
+      "entities": [
+        "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs"
+      ],
+      "exit_code": 0,
+      "output_ref": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-current219-canonical-type-v3/output/v-type-check-tsconfig.txt",
+      "started_at_utc": "2026-10-04T23:19:55Z",
+      "duration_s": 3.22,
+      "summary": "tsconfig.json: exit 0, 0 error(s), 175 files listed",
+      "entity_verdicts": {
+        "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs": "verified"
+      }
+    }
+  ],
+  "negative_semantic_control": [
+    {
+      "id": "v-type-check-tsconfig",
+      "kind": "type_check",
+      "command": "/home/dev/.producer-ctx41/tbt0640-metadata-contract-consumer/clean-declared-compiler-sdk/node_modules/typescript/bin/tsc -p /home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-current219-canonical-type-v3/negative-export/tsconfig.json --noEmit --incremental true --tsBuildInfoFile /home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-current219-canonical-type-v3/negative-output/type-check-ppud_4m3/check.tsbuildinfo --listFiles",
+      "entities": [
+        "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs"
+      ],
+      "exit_code": 2,
+      "output_ref": "/home/dev/.producer-ctx41/root1658-upstream271-repair-20261004/aras243-current219-canonical-type-v3/negative-output/v-type-check-tsconfig.txt",
+      "started_at_utc": "2026-10-04T23:19:58Z",
+      "duration_s": 3.14,
+      "summary": "tsconfig.json: exit 2, 1 error(s), 175 files listed",
+      "entity_verdicts": {
+        "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs": "failed"
+      }
+    }
+  ],
+  "source_worktree_unchanged": true,
+  "whole_change_admission": "NOT_MEASURED",
+  "other_compiler_and_canary_obligations": "unchanged; no exemption or FULL replay",
+  "installation": "NOT_MEASURED; existing physical SDK linked only in measurement export"
+}

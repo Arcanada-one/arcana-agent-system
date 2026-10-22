@@ -1,0 +1,8 @@
+{
+  "schema": "MeasuredGitSource/v1",
+  "commit": "219034f7360d85f7a41fbf3c1679a174310fbd52",
+  "tree": "c498f3399127cfe24e4a46c1b54456610506757c",
+  "dirty": false,
+  "producer": "fresh exact source Git objects and physical tracked files",
+  "captured_at_utc": "2026-10-04T23:18:23Z"
+}

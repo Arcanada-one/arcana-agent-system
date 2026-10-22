@@ -1,0 +1,17 @@
+{
+  "schema": "ReadOnlyObserverSourceEvidenceRecord/v1",
+  "measured_source": "219034f7360d85f7a41fbf3c1679a174310fbd52",
+  "current_tool_source": "14d0b7b9f2dafd2c366a157bd01e616d4623969b",
+  "producer_scope": "owned target READ-ONLY declaration; exact executable/input/exit/capture checks; no sandbox or runtime grant",
+  "positive": "native-git-v2 actual4verified/errors[]; verifies declared refusal/selection behavior, not whole admission",
+  "negative": "first-failed actual4failed retained; three separately altered result guards refused; real SDK semantic TS2322 negative failed",
+  "compiler": "positive175actual compiler files;178 real SDK pins; isolated unchanged positive and separate negative export",
+  "remaining": [
+    "Published8fe consumer cannot accept readonly process extension until independently reviewed source successor is merged and genuinely published",
+    "Current PR243 mixed caller bundle/source yields BUNDLE_MODIFIED_BY_PR",
+    "Root tsconfig requires40 additive FULL obligations. Nested compiler project under vendored path is explicitly excluded, so relocation is not a valid causal correction",
+    "Other original21compiler NM and PERSIST31FULL/storage holds are separate unchanged obligations"
+  ],
+  "authority_grants": false,
+  "whole_admission": "NOT_MEASURED"
+}

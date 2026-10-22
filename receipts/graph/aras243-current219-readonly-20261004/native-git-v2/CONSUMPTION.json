@@ -1,0 +1,42 @@
+{
+  "canonical_source": "14d0b7b9f2dafd2c366a157bd01e616d4623969b",
+  "source": "219034f7360d85f7a41fbf3c1679a174310fbd52",
+  "producer_exit": 0,
+  "rows": {
+    "code_unit:.github/graph-admission/tools/graph/verify.py": {
+      "entity": "code_unit:.github/graph-admission/tools/graph/verify.py",
+      "verdict": "verified",
+      "reason": "Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
+      "probe_ids": [
+        "verify-current-four-targets-holds"
+      ]
+    },
+    "code_unit:.github/graph-admission/tools/graph/impact.py": {
+      "entity": "code_unit:.github/graph-admission/tools/graph/impact.py",
+      "verdict": "verified",
+      "reason": "Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
+      "probe_ids": [
+        "impact-current-pair"
+      ]
+    },
+    "code_unit:.github/graph-admission/tools/graph/admit_change.py": {
+      "entity": "code_unit:.github/graph-admission/tools/graph/admit_change.py",
+      "verdict": "verified",
+      "reason": "Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
+      "probe_ids": [
+        "admit-explicit-bypass-refuses"
+      ]
+    },
+    "code_unit:.github/graph-admission/tools/graph/ci_gate.py": {
+      "entity": "code_unit:.github/graph-admission/tools/graph/ci_gate.py",
+      "verdict": "verified",
+      "reason": "Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
+      "probe_ids": [
+        "ci-current-mixed-source-refuses"
+      ]
+    }
+  },
+  "errors": [],
+  "source_worktree_unchanged": true,
+  "published8fe_supports_extension": false
+}

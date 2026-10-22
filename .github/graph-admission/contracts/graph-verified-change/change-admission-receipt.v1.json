@@ -34,6 +34,7 @@
    "notes",
    "canaries",
    "head_graph",
+   "caller_graph_compatibility",
    "revision_selection",
    "structural_exclusions",
    "receipt_path",
@@ -174,7 +175,31 @@
     "reason",
     "graph_metadata"
    ],
-   "graph_metadata": "which extractors ran, language coverage, and why the changed nodes have no reverse edges (e.g. leaf unit, new file, unsupported language); an explanation may not simply say 'no impact'"
+   "graph_metadata": "which extractors ran, language coverage, and why the changed nodes have no reverse edges (e.g. leaf unit, new file, unsupported language); an explanation may not simply say 'no impact'",
+   "optional": [
+    "schema",
+    "binding"
+   ],
+   "binding": {
+    "schema": "BoundEmptyImpactExplanation/v1",
+    "required": [
+     "schema",
+     "input",
+     "input_sha256"
+    ],
+    "input_schema": "EmptyImpactExplanation/v1",
+    "input_fields": [
+     "schema",
+     "base",
+     "head",
+     "base_graph_digest",
+     "head_graph_digest",
+     "scope",
+     "reason"
+    ],
+    "scope": "graph_non_seed_dependents",
+    "rule": "Optional author input is exact-revision/digest bound to both independently rebuilt graphs. Raw EMPTY_IMPACT_REQUIRES_EXPLANATION events remain unchanged. Only the empty dependent prediction diagnostic is satisfied; ordinary seed/verifier obligations, other diagnostics, failed/not_measured results and additive full-global obligations remain. The native gate independently reproduces all metadata and the input digest; no verdict, waiver, disable or exemption field is accepted. A new confirmed explanation carries schema BoundEmptyImpactExplanation/v1; removing its binding is refused. Legacy generated/unconfirmed explanation documents remain readable with their original raw query diagnostics and do not acquire confirmation."
+   }
   },
   "verifier": {
    "required": [
@@ -253,6 +278,11 @@
     "staleness"
    ],
    "rule": "If paired evidence is present: source_commit equals change_set.head, sha256 digest is exact rebuilt head graph, staleness.verdict is fresh."
+  },
+  "caller_graph_compatibility": {
+   "schema": "CallerGraphCompatibility/v1",
+   "required": ["bundle_path", "program_ref", "bundle_digest", "trusted_key_fingerprint", "base", "head", "graphs", "current_producer_files_sha256"],
+   "rule": "Optional paired diff binding only. Primary graph/head_graph are genuine outputs of the unchanged canonical-path signed BASE caller bundle, trusted under the current producer's canonical public key. Independently rebuild installed and current graphs at both exact Git revisions. Entire graph documents must agree except genuine builder_version, built_at_utc and graph_digest; all other manifest fields, nodes, edges and attributes participate. Record both actual digests and versions, semantic body hash and the actual current producer source-file digest. The gate independently reproduces this binding before ordinary impact, mandatory verifier, raw verdict and full-fallback checks; it grants no exemption. No graph header/digest rewrite, arbitrary executable/path or version-only compatibility. Absent binding retains ordinary current-producer admission."
   },
   "revision_selection": {
    "schema": "RevisionImpactSelection/v1",
