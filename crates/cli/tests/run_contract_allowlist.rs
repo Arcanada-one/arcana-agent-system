@@ -176,9 +176,9 @@ async fn a_tool_outside_the_contract_is_denied_and_the_refusal_is_on_disk() {
 }
 
 #[tokio::test]
-async fn the_paired_negative_the_same_call_under_a_contract_that_admits_it_runs() {
-    // Without this, the test above would pass just as well if `bash` were
-    // broken, or if the workspace boundary were refusing everything.
+async fn an_allowlisted_tool_without_effect_authority_is_refused_on_disk() {
+    // Digest validity and a static allowlist do not provide current authority.
+    // The unbound test below remains the actual execution control.
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
 
@@ -193,12 +193,21 @@ async fn the_paired_negative_the_same_call_under_a_contract_that_admits_it_runs(
     )
     .await;
 
-    let contents = std::fs::read_to_string(work.path().join("proof.txt"))
-        .expect("an admitted tool really runs");
-    assert!(contents.contains("HELLO"), "got {contents:?}");
-    assert_eq!(out.tool_calls, 1);
-    assert_eq!(out.tool_calls_denied, 0);
-    assert!(!work.path().join(DENIED_DIR).exists());
+    assert!(!work.path().join("proof.txt").exists());
+    assert_eq!(out.tool_calls, 0);
+    assert_eq!(out.tool_calls_denied, 1);
+    let records: Vec<_> = std::fs::read_dir(work.path().join(DENIED_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .collect();
+    assert_eq!(records.len(), 1);
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(records[0].path()).unwrap()).unwrap();
+    assert_eq!(record["layer"], "contract-effect-authority");
+    assert!(record["reason"]
+        .as_str()
+        .unwrap()
+        .contains("CONTRACT_EFFECT_AUTHORITY_UNAVAILABLE"));
 }
 
 #[tokio::test]
@@ -313,7 +322,7 @@ async fn an_explicit_empty_contract_refuses_the_actual_write_effect() {
 }
 
 #[tokio::test]
-async fn an_explicit_write_contract_performs_the_paired_effect() {
+async fn an_explicit_write_contract_without_effect_authority_refuses_the_paired_effect() {
     let work = TempDir::new().unwrap();
     let audit = TempDir::new().unwrap();
     let call = tool_call(
@@ -327,10 +336,38 @@ async fn an_explicit_write_contract_performs_the_paired_effect() {
         &[&call, "done"],
     )
     .await;
+    assert!(!work.path().join("proof.txt").exists());
+    assert_eq!(out.tool_calls, 0);
+    assert_eq!(out.tool_calls_denied, 1);
+    let records: Vec<_> = std::fs::read_dir(work.path().join(DENIED_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .collect();
+    assert_eq!(records.len(), 1);
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(records[0].path()).unwrap()).unwrap();
+    assert_eq!(record["layer"], "contract-effect-authority");
+    assert!(record["reason"]
+        .as_str()
+        .unwrap()
+        .contains("CONTRACT_EFFECT_AUTHORITY_UNAVAILABLE"));
+
+    // The same actual write tool must remain executable without a contract.
+    // This proves the refusal above comes from authority, not a broken tool.
+    // It is a scratch-filesystem control, never a KC2 ALLOW or issued grant.
+    let unbound_work = TempDir::new().unwrap();
+    let unbound_audit = TempDir::new().unwrap();
+    let unbound = drive(
+        unbound_work.path(),
+        unbound_audit.path(),
+        None,
+        &[&call, "done"],
+    )
+    .await;
     assert_eq!(
-        std::fs::read_to_string(work.path().join("proof.txt")).unwrap(),
+        std::fs::read_to_string(unbound_work.path().join("proof.txt")).unwrap(),
         "HELLO"
     );
-    assert_eq!(out.tool_calls, 1);
-    assert_eq!(out.tool_calls_denied, 0);
+    assert_eq!(unbound.tool_calls, 1);
+    assert_eq!(unbound.tool_calls_denied, 0);
 }

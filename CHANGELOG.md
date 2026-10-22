@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Contract-bound headless runs refuse before model construction and tool effects
+  until authenticated authority can be fenced through execution. A static
+  allowlist or initial admission cannot bypass this fail-closed boundary.
+
 - Task-run admission rejects self-issuers even when an authority adapter omits
   the acting subject, and requires that subject in executor lineage. Learning
   trace transport provenance no longer sets the legacy verification flag.

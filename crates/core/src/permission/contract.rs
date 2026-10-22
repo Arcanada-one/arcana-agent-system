@@ -59,3 +59,49 @@ impl PermissionLayer for ContractAllowlistLayer {
         ))
     }
 }
+
+/// The effect boundary has no authenticated, current-generation fence yet.
+///
+/// Gate-set: this refusal supplements the static tool allowlist and initial
+/// point-in-time admission. It permits no effect. Authenticated revocation,
+/// retry/resume fencing and a provider-free live executor remain unsupported.
+/// A task claim, local contract file or operator permission rule cannot supply
+/// the missing authority. Replace this gate only with a purpose-correct
+/// authenticated protocol that fences authority through the actual effect.
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("authenticated contract authority through the effect is unavailable")]
+pub struct ContractEffectAuthorityUnavailable;
+
+impl ContractEffectAuthorityUnavailable {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        "CONTRACT_EFFECT_AUTHORITY_UNAVAILABLE"
+    }
+}
+
+/// Refuse before constructing a model client for a contract-bound run.
+/// Initial admission alone is not an execution lease.
+///
+/// # Errors
+///
+/// Always returns the typed refusal until authenticated through-effect
+/// authority is implemented. This is a closed gate, not a probe of a service.
+pub fn require_contract_effect_authority() -> Result<(), ContractEffectAuthorityUnavailable> {
+    Err(ContractEffectAuthorityUnavailable)
+}
+
+/// Deny contracted tool dispatch, including direct executor callers.
+#[derive(Debug, Clone, Copy)]
+pub struct ContractEffectAuthorityLayer;
+
+#[async_trait]
+impl PermissionLayer for ContractEffectAuthorityLayer {
+    fn name(&self) -> &'static str {
+        "contract-effect-authority"
+    }
+
+    async fn evaluate(&self, _tool: &str, _input: &Value) -> LayerDecision {
+        let refusal = ContractEffectAuthorityUnavailable;
+        LayerDecision::Deny(format!("{}: {refusal}", refusal.code()))
+    }
+}
