@@ -1,0 +1,9 @@
+{
+  "schema": "MeasuredGitSource/v1",
+  "commit": "75c51007b96c8c73b482bcb54c627b786d0ffaba",
+  "tree": "a85b070a874e8310f88ef36f569d886f157e9670",
+  "dirty": false,
+  "repository_path": "/home/dev/arcanada/_temp/kc-closure/ARAS-PRODUCER-CUTOVER-20261007/receiver",
+  "captured_at_utc": "2026-10-07T08:04:00.546927+00:00",
+  "producer": "SAME ARAS owner; Root0757 authorized read-only source measurements; no execution authority"
+}
