@@ -4,10 +4,14 @@
 use arcana_core::contract::{digest_of, verify, ContractBinding, ContractDocument};
 use arcana_core::contract_authority::{
     admit_then, AuthenticatedContractAuthority as Proof, AuthorityRefusal as Refusal,
-    AuthorityTrust, ContractAuthorityProvider, UnavailableContractAuthority, WorkItemScope,
+    AuthorityTrust, ContractAuthorityProvider, EffectAcceptanceProvider, EffectDispatchOutcome,
+    EffectDispatchRequest, EffectRefusal, UnavailableContractAuthority, UnavailableEffectProvider,
+    WorkItemScope,
 };
 use async_trait::async_trait;
 use serde_json::json;
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 fn binding() -> ContractBinding {
     let text = "synthetic read-only contract";
@@ -300,4 +304,158 @@ async fn executor_lineage_must_anchor_the_actual_acting_subject() {
         Refusal::SubjectMismatch,
     )
     .await;
+}
+
+fn effect_request() -> EffectDispatchRequest {
+    EffectDispatchRequest {
+        contract_digest: "fixture-contract-digest".into(),
+        task_id: "fixture-task".into(),
+        project_id: "fixture-project".into(),
+        subject_id: "fixture-executor".into(),
+        participant_id: "fixture-effect-participant".into(),
+        request_id: "fixture-single-use-request".into(),
+        issued_generation: 7,
+        effect_digest: "fixture-effect-digest".into(),
+    }
+}
+
+/// Predicate fixture only. This models a provider boundary for deterministic
+/// source controls; it is not an authority-domain participant and cannot clear
+/// T51/KC or establish a live revocation/effect fence.
+struct PredicateOnlyEffectProvider {
+    expected: EffectDispatchRequest,
+    current_generation: u64,
+    revoked: bool,
+    consumed: Mutex<HashSet<String>>,
+    acceptance_count: Mutex<usize>,
+}
+
+impl PredicateOnlyEffectProvider {
+    fn new(expected: EffectDispatchRequest, current_generation: u64, revoked: bool) -> Self {
+        Self {
+            expected,
+            current_generation,
+            revoked,
+            consumed: Mutex::new(HashSet::new()),
+            acceptance_count: Mutex::new(0),
+        }
+    }
+
+    fn acceptance_count(&self) -> usize {
+        *self.acceptance_count.lock().unwrap()
+    }
+}
+
+#[async_trait]
+impl EffectAcceptanceProvider for PredicateOnlyEffectProvider {
+    async fn accept_and_dispatch(
+        &self,
+        request: &EffectDispatchRequest,
+    ) -> Result<EffectDispatchOutcome, EffectRefusal> {
+        if request.participant_id != self.expected.participant_id {
+            return Err(EffectRefusal::UnknownParticipant);
+        }
+        if self.revoked {
+            return Err(EffectRefusal::Revoked);
+        }
+        if request.issued_generation != self.current_generation {
+            return Err(EffectRefusal::StaleRequest);
+        }
+        if request != &self.expected {
+            return Err(EffectRefusal::RequestMismatch);
+        }
+
+        let mut consumed = self.consumed.lock().unwrap();
+        if !consumed.insert(request.request_id.clone()) {
+            return Err(EffectRefusal::DuplicateRequest);
+        }
+        *self.acceptance_count.lock().unwrap() += 1;
+        Ok(EffectDispatchOutcome {
+            request_id: request.request_id.clone(),
+            effect_digest: request.effect_digest.clone(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn unavailable_effect_provider_refuses_with_stable_code() {
+    let result = UnavailableEffectProvider
+        .accept_and_dispatch(&effect_request())
+        .await;
+
+    assert_eq!(result, Err(EffectRefusal::ProviderUnavailable));
+    assert_eq!(
+        EffectRefusal::ProviderUnavailable.code(),
+        "EFFECT_PROVIDER_UNAVAILABLE"
+    );
+}
+
+#[tokio::test]
+async fn predicate_only_provider_positive_binds_one_exact_request() {
+    let request = effect_request();
+    let provider = PredicateOnlyEffectProvider::new(request.clone(), 7, false);
+
+    let result = provider.accept_and_dispatch(&request).await;
+
+    assert_eq!(
+        result,
+        Ok(EffectDispatchOutcome {
+            request_id: request.request_id,
+            effect_digest: request.effect_digest,
+        })
+    );
+    assert_eq!(provider.acceptance_count(), 1);
+}
+
+#[tokio::test]
+async fn unknown_participant_stale_altered_and_revoked_requests_refuse_before_acceptance() {
+    let request = effect_request();
+
+    let unknown = PredicateOnlyEffectProvider::new(request.clone(), 7, false);
+    let mut unknown_request = request.clone();
+    unknown_request.participant_id = "unqualified-participant".into();
+    assert_eq!(
+        unknown.accept_and_dispatch(&unknown_request).await,
+        Err(EffectRefusal::UnknownParticipant)
+    );
+    assert_eq!(unknown.acceptance_count(), 0);
+
+    let stale = PredicateOnlyEffectProvider::new(request.clone(), 7, false);
+    let mut stale_request = request.clone();
+    stale_request.issued_generation = 6;
+    assert_eq!(
+        stale.accept_and_dispatch(&stale_request).await,
+        Err(EffectRefusal::StaleRequest)
+    );
+    assert_eq!(stale.acceptance_count(), 0);
+
+    let altered = PredicateOnlyEffectProvider::new(request.clone(), 7, false);
+    let mut altered_request = request.clone();
+    altered_request.effect_digest = "different-effect-digest".into();
+    assert_eq!(
+        altered.accept_and_dispatch(&altered_request).await,
+        Err(EffectRefusal::RequestMismatch)
+    );
+    assert_eq!(altered.acceptance_count(), 0);
+
+    let revoked = PredicateOnlyEffectProvider::new(request.clone(), 7, true);
+    assert_eq!(
+        revoked.accept_and_dispatch(&request).await,
+        Err(EffectRefusal::Revoked)
+    );
+    assert_eq!(revoked.acceptance_count(), 0);
+}
+
+#[tokio::test]
+async fn duplicate_request_refuses_without_a_second_acceptance() {
+    let request = effect_request();
+    let provider = PredicateOnlyEffectProvider::new(request.clone(), 7, false);
+
+    assert!(provider.accept_and_dispatch(&request).await.is_ok());
+    assert_eq!(provider.acceptance_count(), 1);
+    assert_eq!(
+        provider.accept_and_dispatch(&request).await,
+        Err(EffectRefusal::DuplicateRequest)
+    );
+    assert_eq!(provider.acceptance_count(), 1);
 }
