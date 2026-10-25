@@ -90,7 +90,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             package_dir: linux
           - platform: macos-arm64
-            os: macos-14
+            os: macos-15
             target: aarch64-apple-darwin
             package_dir: macos
     runs-on: ${{ matrix.os }}
