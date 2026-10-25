@@ -1,0 +1,11 @@
+{
+  "schema": "MeasuredGitSource/v1",
+  "commit": "1e75afd35ecf279cfb094aa9402c04b1e859791e",
+  "tree": "da50146caae2bbdcce86e8b3939da1e21f38c442",
+  "dirty": false,
+  "producer": {
+    "tool": "git rev-parse HEAD/HEAD^{tree}; git status --porcelain",
+    "runtime": "deterministic local executor"
+  },
+  "captured_at_utc": "2026-10-02T20:51:22.388634+00:00"
+}
