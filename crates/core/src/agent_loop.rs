@@ -3141,6 +3141,9 @@ same call again, unchanged, ends the run."
         state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
         let capability = match self.executor.execute(&ctx, name, input).await {
             Ok(capability) => capability,
+            Err(CapabilityError::Cancelled) => {
+                return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
+            }
             Err(CapabilityError::Denied { layer, reason }) => {
                 return self.fold_denial(state, name, layer, &reason, &attempted);
             }
