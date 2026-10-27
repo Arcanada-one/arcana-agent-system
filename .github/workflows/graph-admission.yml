@@ -866,6 +866,55 @@ jobs:
           print("range=" + base + ".." + head)
           PY
 
+      - name: Prepare canonical Scrutator contract verifier dependencies
+        if: github.repository == 'Arcanada-one/scrutator' && steps.self_update_classifier.outputs.case == 'gate_self_update'
+        env:
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+        run: |
+          set -euo pipefail
+          test -f contracts/http/package.json && test ! -L contracts/http/package.json
+          test -f contracts/http/tsconfig.json && test ! -L contracts/http/tsconfig.json
+          git diff --quiet "$RANGE_BASE" "$RANGE_HEAD" -- contracts/http/package.json contracts/http/tsconfig.json
+          contract_root=$(mktemp -d "${RUNNER_TEMP}/scrutator-contract-ts.XXXXXX")
+          cat > "$contract_root/package.json" <<'SCRUTATOR_PACKAGE_JSON'
+          {"name":"scrutator-contract-graph-verifier","version":"1.0.0","private":true,"dependencies":{"typescript":"5.9.3","zod":"4.6.5"}}
+          SCRUTATOR_PACKAGE_JSON
+          cat > "$contract_root/package-lock.json" <<'SCRUTATOR_PACKAGE_LOCK_JSON'
+          {
+            "name":"scrutator-contract-graph-verifier","version":"1.0.0","lockfileVersion":3,"requires":true,
+            "packages":{
+              "":{"name":"scrutator-contract-graph-verifier","version":"1.0.0","dependencies":{"typescript":"5.9.3","zod":"4.6.5"}},
+              "node_modules/typescript":{"version":"5.9.3","resolved":"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz","integrity":"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==","bin":{"tsc":"bin/tsc","tsserver":"bin/tsserver"},"engines":{"node":">=14.17"}},
+              "node_modules/zod":{"version":"4.6.5","resolved":"https://registry.npmjs.org/zod/-/zod-4.6.5.tgz","integrity":"sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="}
+            }
+          }
+          SCRUTATOR_PACKAGE_LOCK_JSON
+          : > "$contract_root/user.npmrc"
+          : > "$contract_root/global.npmrc"
+          npm ci --prefix "$contract_root" --ignore-scripts --no-audit --no-fund --cache "$contract_root/npm-cache" --userconfig "$contract_root/user.npmrc" --globalconfig "$contract_root/global.npmrc" --registry https://registry.npmjs.org
+          export CONTRACT_ROOT="$contract_root"
+          python3 -I -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          package = json.loads(Path('contracts/http/package.json').read_text(encoding='utf-8'))
+          if package.get('name') != '@arcanada/scrutator-http-contract' or package.get('devDependencies') != {'typescript': '5.9.3', 'zod': '4.6.5'}:
+              raise SystemExit('SCRUTATOR_CONTRACT_DEPENDENCY_SUBJECT_REFUSED')
+          root = Path(os.environ['CONTRACT_ROOT']).resolve(strict=True)
+          for name, version in (('typescript', '5.9.3'), ('zod', '4.6.5')):
+              installed = json.loads((root / 'node_modules' / name / 'package.json').read_text(encoding='utf-8'))
+              if installed.get('version') != version:
+                  raise SystemExit('SCRUTATOR_CONTRACT_PINNED_PACKAGE_MISMATCH:' + name)
+          PY
+          contract_modules="$GITHUB_WORKSPACE/contracts/http/node_modules"
+          if [ -e "$contract_modules" ] || [ -L "$contract_modules" ]; then
+            echo "::error::contracts/http/node_modules already exists; refusing to replace it" >&2
+            exit 2
+          fi
+          printf '/contracts/http/node_modules\n' >> .git/info/exclude
+          ln -s "$contract_root/node_modules" "$contract_modules"
+
       # A caller may opt into the one fixed MUN web-typecheck setup policy. The signed bundle validates
       # exact repository/range/package/lock/blob pins before Node or pnpm executes; the caller input
       # contains data only and cannot choose commands, paths, registries, or environment variables.

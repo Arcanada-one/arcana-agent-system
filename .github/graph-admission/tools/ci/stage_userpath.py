@@ -162,6 +162,8 @@ def candidate_cli_outcome(repo: Path, repo_name: str, base: str, head: str,
         except (UnicodeError, json.JSONDecodeError):
             raise ValueError("current-source empty-impact explanation input is not UTF-8 JSON") from None
         expected_scripts["verify"].extend(["--empty-impact-explanation", str(explanation_path)])
+    if repo_name == "Arcanada-one/auth-arcana":
+        expected_scripts["verify"].extend(["--root-typecheck-ci-root", str(candidate_root / "ci-typecheck")])
     commands = []
     for name in ("build", "verify"):
         argv_path = candidate_root / f"{name}.argv.nul"

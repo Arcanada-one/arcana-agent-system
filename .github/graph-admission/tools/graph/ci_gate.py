@@ -933,6 +933,8 @@ def validate_current_source_cli_outcome(outcome: object, root: Path, repo: Path,
                            or explanation_digest_path.exists() or explanation_digest_path.is_symlink())
     if explanation_present:
         expected_argv["verify"].extend(["--empty-impact-explanation", str(explanation_path)])
+    if repo_name == "Arcanada-one/auth-arcana":
+        expected_argv["verify"].extend(["--root-typecheck-ci-root", str(candidate_root / "ci-typecheck")])
     resolved_outputs = {}
     for name, row in command_by_id.items():
         if (set(row) != {"id", "argv", "cwd", "pid", "start_utc", "end_utc", "exit_code",
