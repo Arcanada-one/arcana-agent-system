@@ -34,10 +34,12 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -48,10 +50,35 @@ VERSION = "1.0.0"
 MODEL = "claude-opus-5"
 PROGRAM_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE_FILES = [
+    # The finished-stage publisher is part of the pinned Program bundle so external callers
+    # can run the same producer without a Program checkout in their workspace.
+    "tools/ci/stage_userpath.py",
+    "governance/decisions/DEC-AUP-0167.md",
+    "tools/graph/full_suite_ci.py",
+    "tools/graph/shell_source.py",
+    "tools/graph/shell_workflow.py",
     "tools/graph/admit_change.py",
+    # The StageEvidence validator reads this committed contract relative to the bundle root.
+    # Without it, a vendored admission tool cannot validate the explicit finished-stage input.
+    "contracts/graph-verified-change/stage-evidence.v1.json",
     "tools/graph/schema_check.py",
     "tools/graph/build_graph.py",
+    # build_graph.py imports this at module scope to add declared source-input edges.
+    # Keep the parser beside the builder in every exported caller bundle.
+    "tools/graph/source_input_contract.py",
+    "tools/graph/test_source_input_contract.py",
+    "contracts/graph-verified-change/source-input-contract.v1.json",
+    "tools/graph/python_search_path.py",
+    "tools/graph/selected_dependency.py",
+    "tools/graph/selected_dependency_fitness.py",
+    "tools/graph/selected_dependency_replay.py",
+    "tools/graph/selected_dependency_runner.py",
+    "tools/graph/native_projection.py",
     "tools/graph/nest_bootstrap.py",
+    # DEC0147: transitive executable inputs of compiler-bound inline harness projection.
+    "tools/graph/nest_fixture_scope.py",
+    "tools/graph/inline_nest_harness.cjs",
+    "tools/graph/fixture_contracts.py",
     # build_graph.py imports this at module scope to classify .github/workflows/* paths, so a bundle
     # without it is not merely reduced — the vendored builder raises ModuleNotFoundError on import
     # and the caller's gate cannot build a graph at all. Measured: the pre-1.0.1 builder carried no
@@ -67,8 +94,15 @@ BUNDLE_FILES = [
     # verification path: absent, they do not fail at import time, they fail when the gate reaches
     # the work they do, which is worse — a bundle that starts and then cannot finish.
     "tools/graph/impact_pair.py",
+    # The executable CI handoff consumes the same paired graph and mandatory
+    # matrix. Ship it in the canonical bundle rather than asking private-repo
+    # callers to copy a second producer or fetch with a new credential.
+    "tools/graph/ci_selection.py",
+    "tools/graph/origin_association.py",
     "tools/graph/verify.py",
     "tools/graph/contract_diff.py",
+    "tools/graph/metadata_contract_proof.py",
+    "tools/graph/metadata_contract_observer.cjs",
     # verify.py's own chain: canary_evidence at module scope, process_observation from there.
     # Found by importing every bundled module from a directory that contains nothing else — a
     # static import scan missed it, and so did testing one entry point by hand.
@@ -88,9 +122,32 @@ BUNDLE_FILES = [
     "contracts/graph-verified-change/relationship-graph.v1.json",
     "contracts/graph-verified-change/change-admission-receipt.v1.json",
     "contracts/graph-verified-change/verifier-matrix.v1.json",
+    # Caller graph compatibility trusts the current producer's committed public
+    # key, never a key supplied by an author receipt or the legacy bundle itself.
+    "contracts/graph-verified-change/bundle-signing-key.pub",
     "contracts/readiness-receipt-v1.schema.json",
 ]
 DEFAULT_RECEIPT_GLOBS = ["receipts/graph/**/*.json", "receipts/**/change-admission-*.json"]
+
+# The Program's finished-stage userpath is a separate hosted process observation. It exercises the
+# current Program source against a temporary fixture; its ordinary fixture admission is never the
+# candidate CAR or a work-item receipt. Keep the source inventory explicit and compare it to Git at
+# the exact candidate head before including the run in the CI result.
+STAGE_USERPATH_SOURCE_FILES = (
+    "tools/ci/stage_userpath.py",
+    "tools/graph/ci_gate.py",
+    "tools/graph/test_stage_userpath.py",
+    "tools/graph/test_ci_gate_stage_input.py",
+    "tools/graph/build_graph.py",
+    "tools/graph/impact.py",
+    "tools/graph/verify.py",
+    "tools/graph/admit_change.py",
+    "tools/graph/source_input_contract.py",
+    "tools/graph/test_source_input_contract.py",
+    "contracts/graph-verified-change/source-input-contract.v1.json",
+    ".github/workflows/ci.yml",
+    ".github/workflows/graph-admission.yml",
+)
 
 # AUP-GRAPH-006:gate2b — the bundle's cryptographic half.
 BUNDLE_MANIFEST_FILE = "BUNDLE.json"
@@ -146,6 +203,16 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_file(p: Path) -> str:
     return sha256_bytes(p.read_bytes())
+
+
+def matches_signed_bundle_digest(path: Path, expected: str) -> bool:
+    """Compare a source file with the canonical digest representation in an authenticated manifest."""
+    if not isinstance(expected, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+        return False
+    try:
+        return sha256_file(path) == expected
+    except OSError:
+        return False
 
 
 def git_blob_oid_of_bytes(data: bytes) -> str:
@@ -470,6 +537,27 @@ def verify_bundle(tools: Path, program_ref: str | None,
     return man, problems, sigrec
 
 
+def rebuild_compatible_receipt_graph(repo: Path, receipt: dict) -> dict:
+    """Rebuild the receipt's measured range, including a record-only descendant.
+
+    The ordinary gate binds the receipt to the requested PR range first (C06).
+    The PR record head can differ from the measured source head; rebuilding at
+    the record head would contradict the genuine source graph in its receipt.
+    This check reproduces the measured proof, never edits either graph digest.
+    """
+    import impact
+    import impact_pair
+    cs = receipt.get("change_set") or {}
+    compatibility = receipt.get("caller_graph_compatibility")
+    if cs.get("mode") != "diff" or not isinstance(compatibility, dict):
+        raise impact.Refusal("CALLER_GRAPH_BINDING", "compatibility requires a paired diff receipt")
+    before, _, proof = impact_pair.caller_graph_pair(impact.Repo(repo), cs.get("base"), cs.get("head"),
+                                                   compatibility.get("bundle_path"))
+    if proof != compatibility or (receipt.get("graph") or {}).get("source_commit") != before.manifest["source_commit"]:
+        raise impact.Refusal("CALLER_GRAPH_BINDING", "independently rebuilt measured proof differs")
+    return before.doc
+
+
 # --------------------------------------------------------------------------------------- run
 def changed_files(repo: Path, base: str, head: str) -> list[str]:
     out = git(repo, "diff", "--name-only", f"{base}..{head}")
@@ -550,9 +638,17 @@ def check_readiness_receipts(result: dict, body: str, repo: Path, files: list[st
     a pass (DEC-AUP-0008 I4). What IS decided here is the self-contradiction: a receipt that claims
     it verified a contract binding and will not say which contract.
     """
-    sys.path.insert(0, str(tools / "tools" / "graph"))
+    validator_path = (tools / "tools" / "graph" / "readiness_check.py").resolve()
     try:
-        import readiness_check  # noqa: PLC0415 — the bundled validator, loaded from the pinned bundle
+        # Use a private module name and pinned file path so each invocation reads its own bundle,
+        # without reusing a cached module from a different bundle or changing sys.path/sys.modules.
+        spec = importlib.util.spec_from_file_location("_aup_bundled_readiness_check", validator_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load bundled validator at {validator_path}")
+        readiness_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(readiness_check)
+        if Path(readiness_check.__file__).resolve() != validator_path:
+            raise ImportError(f"readiness_check loaded from {readiness_check.__file__}, expected {validator_path}")
     except Exception as e:  # pragma: no cover — a bundle without the validator
         result["checks"].append({"code": "READINESS_VALIDATOR_UNAVAILABLE", "verdict": "not_measured",
                                  "detail": f"the pinned bundle carries no usable readiness_check: {e!r}. "
@@ -649,6 +745,951 @@ def receipts_from_tree(repo: Path, globs: list[str], changed: set[str] | None = 
                 out.append(p)
     return out
 
+
+def select_stage_receipt(receipts: list[Path], evidence_path: str | None,
+                         evidence_root: str | None, required: bool, *,
+                         expected_repo: str, expected_base: str, expected_head: str) -> tuple[list[Path], dict]:
+    """Select only the raw CAR whose bytes are named by an explicit StageEvidence input.
+
+    The stage document is not authority and does not alter a CAR. Its source tuple binds the
+    digest-selected raw CAR; the candidate PR range is a separate identity checked downstream.
+    Native admit_change validates its full repository/range, provenance, coverage, E2E, review,
+    CI and policy bindings. This adapter prevents the reusable workflow from silently pairing a
+    finished-stage request with an unrelated receipt found by broad tree discovery.
+    """
+    if not evidence_path:
+        if required or evidence_root:
+            return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_INPUT_MISSING"}
+        return receipts, {"verdict": "not_requested"}
+    if not evidence_root:
+        return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_ROOT_MISSING"}
+    path, root = Path(evidence_path), Path(evidence_root)
+    try:
+        resolved_root = root.resolve(strict=True)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("stage evidence is not a regular non-symlink file")
+        resolved = path.resolve(strict=True)
+        if resolved_root not in resolved.parents:
+            raise ValueError("stage evidence escapes its declared root")
+        if path.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError("stage evidence exceeds the native size limit")
+        raw = path.read_bytes()
+        doc = json.loads(raw.decode("utf-8"))
+        if not isinstance(doc, dict) or doc.get("schema") != "StageEvidence/v1":
+            raise ValueError("stage evidence schema is not StageEvidence/v1")
+        digest = doc.get("raw_car_sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise ValueError("stage evidence raw_car_sha256 is malformed")
+        subject = doc.get("repository")
+        if not isinstance(subject, dict) or subject.get("name") != expected_repo:
+            return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_REPOSITORY_MISMATCH",
+                        "expected_repository": expected_repo}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_INPUT_INVALID",
+                    "detail": str(exc)}
+    try:
+        matching = [p for p in receipts if p.is_file() and not p.is_symlink()
+                    and "sha256:" + hashlib.sha256(p.read_bytes()).hexdigest() == digest]
+    except OSError as exc:
+        return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_CAR_INVALID",
+                    "detail": type(exc).__name__}
+    if len(matching) != 1:
+        return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_CAR_BINDING_MISMATCH",
+                    "matching_receipts": len(matching), "raw_car_sha256": digest}
+    try:
+        raw_car = json.loads(matching[0].read_text(encoding="utf-8"))
+        car_repo = raw_car.get("repo") if isinstance(raw_car, dict) else None
+        change = raw_car.get("change_set") if isinstance(raw_car, dict) else None
+        source = {
+            "name": car_repo.get("name") if isinstance(car_repo, dict) else None,
+            "base": change.get("base") if isinstance(change, dict) else None,
+            "head": change.get("head") if isinstance(change, dict) else None,
+        }
+        if (not isinstance(raw_car, dict)
+                or raw_car.get("schema") != "ChangeAdmissionReceipt/v1"
+                or source["name"] != expected_repo
+                or not isinstance(source["base"], str)
+                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source["base"])
+                or not isinstance(source["head"], str)
+                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source["head"])):
+            raise ValueError("digest-matched raw CAR has no supported repository/base/head")
+        if (subject.get("name") != source["name"] or subject.get("base") != source["base"]
+                or subject.get("head") != source["head"]):
+            return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_SOURCE_MISMATCH",
+                        "raw_car_source": source}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return [], {"verdict": "refuse", "reason": "STAGE_EVIDENCE_CAR_INVALID",
+                    "detail": str(exc)}
+    return matching, {"verdict": "selected", "receipt": str(matching[0]),
+                      "raw_car_sha256": digest, "raw_car_source": source,
+                      "candidate": {"repository": expected_repo,
+                                    "base": expected_base, "head": expected_head}}
+
+
+def _stage_userpath_ref(root: Path, descriptor: object) -> tuple[Path | None, str | None]:
+    if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
+        return None, "output reference fields are invalid"
+    rel, digest, size = descriptor.get("path"), descriptor.get("sha256"), descriptor.get("bytes")
+    if (not isinstance(rel, str) or not rel or "\\" in rel or Path(rel).is_absolute()
+            or ".." in Path(rel).parts or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest) or type(size) is not int or size < 0):
+        return None, "output reference path, digest, or length is malformed"
+    path = root / rel
+    try:
+        resolved_root = root.resolve(strict=True)
+        if path.is_symlink() or not path.is_file():
+            return None, "referenced process output is missing or not a regular file"
+        resolved = path.resolve(strict=True)
+        if resolved_root not in resolved.parents:
+            return None, "referenced process output escapes the result directory"
+        raw = path.read_bytes()
+    except OSError as exc:
+        return None, "referenced process output is unavailable: " + type(exc).__name__
+    if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest:
+        return None, "referenced process output bytes do not match the captured digest/length"
+    return path, None
+
+
+def _argv_uses_pinned_interpreter(argv: object, interpreter: object) -> bool:
+    """Accept an argv0 alias only when it resolves to the recorded interpreter bytes."""
+    if (not isinstance(argv, list) or not argv or not isinstance(argv[0], str)
+            or not isinstance(interpreter, dict)):
+        return False
+    interpreter_path = interpreter.get("path")
+    expected_digest = interpreter.get("sha256")
+    if (not isinstance(interpreter_path, str)
+            or not isinstance(expected_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)):
+        return False
+    try:
+        expected = Path(interpreter_path).resolve(strict=True)
+        actual = Path(argv[0]).resolve(strict=True)
+        return (actual == expected and actual.is_file()
+                and hashlib.sha256(actual.read_bytes()).hexdigest() == expected_digest)
+    except OSError:
+        return False
+
+
+def validate_current_source_cli_outcome(outcome: object, root: Path, repo: Path, repo_name: str,
+                                        base: str, head: str, candidate_tree: str,
+                                        program_source: dict, tools_root: Path,
+                                        required: bool) -> tuple[dict | None, list[str]]:
+    """Validate fresh same-run candidate CLI captures; never interpret them as admission."""
+    if outcome is None:
+        return None, (["required current-source CLI outcome is missing"] if required else [])
+    problems = []
+    if not isinstance(outcome, dict) or outcome.get("kind") != "ProgramCurrentSourceCLIOutcome/v1":
+        return None, ["current-source CLI outcome contract is malformed"]
+    if set(outcome) != {"kind", "subject", "program_source", "working_tree", "interpreter", "commands",
+                        "raw_candidate_car", "admission"}:
+        problems.append("current-source CLI outcome fields are incomplete or unknown")
+    subject = outcome.get("subject")
+    expected_paths = changed_files(repo, base, head)
+    if (not isinstance(subject, dict) or set(subject) != {"repository", "base", "head", "tree", "changed_paths"}
+            or subject.get("repository") != repo_name
+            or subject.get("base") != base or subject.get("head") != head
+            or subject.get("tree") != candidate_tree or subject.get("changed_paths") != expected_paths):
+        problems.append("current-source CLI outcome has a stale or wrong source subject")
+    if outcome.get("program_source") != program_source:
+        problems.append("current-source CLI outcome Program tool-source binding differs from the validated source")
+    if outcome.get("working_tree") != "clean_at_capture":
+        problems.append("current-source CLI outcome does not bind a clean candidate checkout")
+    interpreter = outcome.get("interpreter")
+    if (not isinstance(interpreter, dict) or set(interpreter) != {"path", "sha256"}
+            or not isinstance(interpreter.get("path"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(interpreter.get("sha256", "")))):
+        problems.append("current-source CLI interpreter identity is malformed")
+    else:
+        try:
+            expected_python = Path(shutil.which("python3") or "").resolve(strict=True)
+            if (Path(interpreter["path"]).resolve(strict=True) != expected_python
+                    or hashlib.sha256(expected_python.read_bytes()).hexdigest() != interpreter["sha256"]):
+                problems.append("current-source CLI interpreter differs from the hosted Python executable")
+        except OSError:
+            problems.append("current-source CLI interpreter cannot be resolved or pinned")
+    commands = outcome.get("commands")
+    if (not isinstance(commands, list) or not commands or not isinstance(commands[0], dict)
+            or commands[0].get("id") != "build"):
+        return None, problems + ["current-source CLI command inventory is malformed"]
+    command_by_id = {row.get("id"): row for row in commands if isinstance(row, dict)}
+    if len(command_by_id) != len(commands) or set(command_by_id) not in ({"build"}, {"build", "verify"}):
+        problems.append("current-source CLI command inventory is incomplete or duplicated")
+        return None, problems
+    candidate_root = root / "current-candidate"
+    if candidate_root.is_symlink() or not candidate_root.is_dir():
+        return None, problems + ["current-source CLI capture root is missing or unsafe"]
+    expected_argv = {
+        "build": ["python3", str(tools_root / "tools/graph/build_graph.py"), ".", "--rev", base,
+                  "--out", str(candidate_root / "base-graph.json")],
+        "verify": ["python3", str(tools_root / "tools/graph/verify.py"), "--repo", ".", "--diff", f"{base}..{head}",
+                   "--graph", str(candidate_root / "base-graph.json"), "--out",
+                   str(candidate_root / "receipt.json"), "--json", "--workdir",
+                   str(candidate_root / "work"), "--verifier-out", str(candidate_root / "verifier-out"),
+                   "--phase-log", str(candidate_root / "phase.jsonl")],
+    }
+    explanation_path = candidate_root / "empty-impact-explanation.json"
+    explanation_digest_path = candidate_root / "empty-impact-explanation.sha256"
+    explanation_present = (explanation_path.exists() or explanation_path.is_symlink()
+                           or explanation_digest_path.exists() or explanation_digest_path.is_symlink())
+    if explanation_present:
+        expected_argv["verify"].extend(["--empty-impact-explanation", str(explanation_path)])
+    resolved_outputs = {}
+    for name, row in command_by_id.items():
+        if (set(row) != {"id", "argv", "cwd", "pid", "start_utc", "end_utc", "exit_code",
+                         "capture_refs", "stdout", "stderr", "artifacts"}
+                or row.get("argv") != expected_argv[name] or row.get("cwd") != str(repo.resolve())
+                or type(row.get("pid")) is not int or row.get("pid") <= 0
+                or type(row.get("exit_code")) is not int):
+            problems.append(f"current-source {name} process identity/argv/result is malformed")
+        try:
+            start = datetime.fromisoformat(str(row.get("start_utc", "")).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(row.get("end_utc", "")).replace("Z", "+00:00"))
+            if start.tzinfo is None or end.tzinfo is None or end < start:
+                raise ValueError("invalid timestamp order")
+        except ValueError:
+            problems.append(f"current-source {name} timestamps are invalid")
+        for label in ("stdout", "stderr"):
+            descriptor = row.get(label)
+            if isinstance(descriptor, dict) and descriptor.get("path") != f"current-candidate/{name}.{label}":
+                problems.append(f"current-source {name} {label} is not the fresh named process capture")
+            output, error = _stage_userpath_ref(root, descriptor)
+            if error:
+                problems.append(f"current-source {name} {label}: {error}")
+            else:
+                resolved_outputs[(name, label)] = output
+        capture_refs = row.get("capture_refs")
+        if not isinstance(capture_refs, dict) or set(capture_refs) != {"argv", "cwd", "pid", "start", "end", "exit"}:
+            problems.append(f"current-source {name} process capture inventory is incomplete")
+        else:
+            capture_bytes = {}
+            expected_capture_names = {"argv": f"{name}.argv.nul", "cwd": f"{name}.cwd",
+                                      "pid": f"{name}.pid", "start": f"{name}-start.utc",
+                                      "end": f"{name}-end.utc", "exit": f"{name}.exit"}
+            for label, descriptor in capture_refs.items():
+                if (not isinstance(descriptor, dict)
+                        or descriptor.get("path") != f"current-candidate/{expected_capture_names[label]}"):
+                    problems.append(f"current-source {name} {label} is not the fresh named process capture")
+                capture_path, capture_error = _stage_userpath_ref(root, descriptor)
+                if capture_error or capture_path is None:
+                    problems.append(f"current-source {name} {label} capture: {capture_error or 'unavailable'}")
+                else:
+                    capture_bytes[label] = capture_path.read_bytes()
+            try:
+                argv_capture = capture_bytes["argv"].split(b"\0")
+                if argv_capture[-1] != b"":
+                    raise ValueError("argv NUL terminator is absent")
+                actual_argv = [item.decode("utf-8") for item in argv_capture[:-1]]
+                if actual_argv != row.get("argv"):
+                    problems.append(f"current-source {name} argv differs from its raw process capture")
+                expected_text = {"cwd": str(row.get("cwd", "")) + "\n",
+                                 "pid": str(row.get("pid", "")) + "\n",
+                                 "start": str(row.get("start_utc", "")) + "\n",
+                                 "end": str(row.get("end_utc", "")) + "\n",
+                                 "exit": str(row.get("exit_code", "")) + "\n"}
+                for label, expected in expected_text.items():
+                    if capture_bytes.get(label) != expected.encode("utf-8"):
+                        problems.append(f"current-source {name} {label} differs from its raw process capture")
+            except (KeyError, UnicodeDecodeError, ValueError):
+                problems.append(f"current-source {name} process capture bytes are malformed")
+        artifacts = row.get("artifacts")
+        expected_labels = {"base_graph"} if name == "build" else {"raw_candidate_car", "phase_log"}
+        if name == "verify" and explanation_present:
+            expected_labels.update({"explanation_input", "explanation_input_sha256"})
+        if not isinstance(artifacts, dict) or set(artifacts) != expected_labels:
+            problems.append(f"current-source {name} artifact inventory is incomplete")
+            continue
+        for label, descriptor in artifacts.items():
+            expected_artifact_name = {"base_graph": "base-graph.json", "raw_candidate_car": "receipt.json",
+                                      "phase_log": "phase.jsonl",
+                                      "explanation_input": "empty-impact-explanation.json",
+                                      "explanation_input_sha256": "empty-impact-explanation.sha256"}[label]
+            if (not isinstance(descriptor, dict)
+                    or descriptor.get("path") != f"current-candidate/{expected_artifact_name}"):
+                problems.append(f"current-source {name} {label} is not the fresh named process artifact")
+            output, error = _stage_userpath_ref(root, descriptor)
+            if error:
+                problems.append(f"current-source {name} {label}: {error}")
+            elif output is not None:
+                resolved_outputs[(name, label)] = output
+    build = command_by_id["build"]
+    if build.get("exit_code") != 0:
+        problems.append("current-source graph build did not complete successfully")
+    if set(command_by_id) == {"build", "verify"}:
+        verify = command_by_id["verify"]
+        if build.get("exit_code") != 0:
+            problems.append("current-source verify ran after a failed graph build")
+        if verify.get("exit_code") not in (0, 1):
+            problems.append("current-source verifier exited outside the supported result codes")
+        try:
+            build_end = datetime.fromisoformat(str(build.get("end_utc", "")).replace("Z", "+00:00"))
+            verify_start = datetime.fromisoformat(str(verify.get("start_utc", "")).replace("Z", "+00:00"))
+            if verify_start < build_end:
+                problems.append("current-source verify began before the graph build ended")
+        except ValueError:
+            pass
+    raw_car = outcome.get("raw_candidate_car")
+    if "verify" in command_by_id:
+        car_path, car_error = _stage_userpath_ref(root, raw_car)
+        verify_car = resolved_outputs.get(("verify", "raw_candidate_car"))
+        if car_error or car_path is None or verify_car is None or car_path != verify_car:
+            problems.append("current-source raw CAR is missing or differs from the verify output")
+        verify = command_by_id["verify"]
+        if verify.get("exit_code") == 0 and car_path is None:
+            problems.append("zero-exit current-source verifier has no raw CAR")
+        if explanation_present:
+            explanation_capture = resolved_outputs.get(("verify", "explanation_input"))
+            explanation_digest_capture = resolved_outputs.get(("verify", "explanation_input_sha256"))
+            if (explanation_capture is None or explanation_capture != explanation_path
+                    or explanation_digest_capture is None or explanation_digest_capture != explanation_digest_path):
+                problems.append("current-source explanation input is not the exact fixed same-run file")
+            elif car_path is not None:
+                try:
+                    explanation_raw = explanation_capture.read_bytes()
+                    if len(explanation_raw) > 65536:
+                        raise ValueError("input exceeds the size limit")
+                    if explanation_digest_capture.read_text(encoding="ascii") != hashlib.sha256(explanation_raw).hexdigest() + "\n":
+                        raise ValueError("input differs from its pre-verify digest")
+                    explanation_doc = json.loads(explanation_raw.decode("utf-8"))
+                    car_doc = json.loads(car_path.read_bytes())
+                    explanation_binding = (car_doc.get("empty_impact_explanation")
+                                           if isinstance(car_doc, dict) else None)
+                    bound = (explanation_binding.get("binding")
+                             if isinstance(explanation_binding, dict) else None)
+                    change = car_doc.get("change_set") if isinstance(car_doc, dict) else None
+                    base_graph = car_doc.get("graph") if isinstance(car_doc, dict) else None
+                    head_graph = car_doc.get("head_graph") if isinstance(car_doc, dict) else None
+                    impact_set = car_doc.get("impact_set") if isinstance(car_doc, dict) else None
+                    selection = car_doc.get("revision_selection") if isinstance(car_doc, dict) else None
+                    fallback = impact_set.get("global_fallback") if isinstance(impact_set, dict) else None
+                    if (not isinstance(explanation_doc, dict)
+                            or not isinstance(bound, dict) or bound.get("input") != explanation_doc
+                            or not isinstance(change, dict) or change.get("mode") != "diff"
+                            or explanation_doc.get("base") != change.get("base")
+                            or explanation_doc.get("head") != change.get("head")
+                            or not isinstance(base_graph, dict) or not isinstance(head_graph, dict)
+                            or explanation_doc.get("base_graph_digest") != base_graph.get("graph_digest")
+                            or explanation_doc.get("head_graph_digest") != head_graph.get("graph_digest")
+                            or explanation_doc.get("scope") != "graph_non_seed_dependents"
+                            or not isinstance(impact_set, dict) or impact_set.get("total") != 0
+                            or not isinstance(fallback, dict) or fallback.get("triggered") is not False
+                            or not isinstance(selection, dict)
+                            or selection.get("unmeasured_head_files") != []):
+                        problems.append("current-source explanation input does not bind the exact empty paired CAR measurement")
+                except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+                    problems.append("current-source explanation input or raw CAR binding is unavailable or malformed")
+    elif raw_car is not None:
+        problems.append("current-source raw CAR exists without a captured verify process")
+    if outcome.get("admission") != "not_claimed_by_process_outcome":
+        problems.append("current-source process outcome makes an unsupported admission claim")
+    return {"kind": "ProgramCurrentSourceCLIOutcome/v1", "subject": subject,
+            "program_source": outcome.get("program_source"), "working_tree": outcome.get("working_tree"),
+            "interpreter": interpreter, "commands": commands,
+            "raw_candidate_car": raw_car, "admission": "not_claimed_by_process_outcome"}, problems
+
+
+def current_source_outcome_car_mismatch(outcome: object, stage_root: Path, selected_car: Path,
+                                        raw_car: bytes, producer_exit: int) -> str | None:
+    """Require the native adapter to consume the exact CAR and exit captured by the source run."""
+    if not isinstance(outcome, dict):
+        return "the current-source process outcome is missing"
+    car = outcome.get("raw_candidate_car")
+    car_path, error = _stage_userpath_ref(stage_root, car)
+    commands = outcome.get("commands")
+    verify = next((row for row in commands if isinstance(row, dict) and row.get("id") == "verify"), None) \
+        if isinstance(commands, list) else None
+    if (not isinstance(car, dict) or error or car_path is None or car_path != selected_car
+            or car.get("sha256") != hashlib.sha256(raw_car).hexdigest()
+            or car.get("bytes") != len(raw_car) or verify is None
+            or verify.get("exit_code") != producer_exit):
+        return "the process-bound raw CAR path, bytes, or verifier exit differs from the selected candidate input"
+    return None
+
+
+def validate_stage_userpath_result(result_path: str | None, result_root: str | None, required: bool,
+                                   repo: Path, repo_name: str, base: str, head: str,
+                                   outer_exit: int | None = None,
+                                   candidate_outcome_required: bool = False,
+                                   tools_root: Path | None = None,
+                                   trusted_bundle: dict | None = None) -> tuple[dict, list[str]]:
+    """Validate the actual Program-stage runner output without treating its fixture gate as candidate admission."""
+    if not result_path:
+        return {}, (["required ProgramStageUserpath/v1 result is missing"] if required else [])
+    if not result_root:
+        return {}, ["ProgramStageUserpath result root is missing"]
+    path = Path(result_path)
+    try:
+        root_path = Path(result_root).resolve(strict=True)
+        if path.is_symlink() or not path.is_file():
+            return {}, ["ProgramStageUserpath/v1 result is missing or not a regular file"]
+        resolved_path = path.resolve(strict=True)
+        if root_path not in resolved_path.parents:
+            return {}, ["ProgramStageUserpath/v1 result escapes its declared run directory"]
+        root = root_path
+        if path.stat().st_size > 8 * 1024 * 1024:
+            return {}, ["ProgramStageUserpath/v1 result exceeds the size limit"]
+        fd = os.open(resolved_path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 8 * 1024 * 1024:
+                return {}, ["ProgramStageUserpath/v1 result changed to an unsafe file"]
+            chunks = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(65536, 8 * 1024 * 1024 + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > 8 * 1024 * 1024:
+                    return {}, ["ProgramStageUserpath/v1 result exceeds the size limit"]
+            raw_result = b"".join(chunks)
+        finally:
+            os.close(fd)
+        doc = json.loads(raw_result.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {}, ["ProgramStageUserpath/v1 result is unavailable or malformed: " + type(exc).__name__]
+    problems = []
+    if not isinstance(doc, dict) or doc.get("kind") != "ProgramStageUserpath/v1":
+        return {}, ["result is not ProgramStageUserpath/v1"]
+    candidate = doc.get("candidate")
+    if (not isinstance(candidate, dict) or candidate.get("repository") != repo_name
+            or candidate.get("base") != base or candidate.get("head") != head):
+        problems.append("ProgramStageUserpath result has a stale or wrong candidate subject")
+        candidate = candidate if isinstance(candidate, dict) else {}
+    actual_candidate_tree = git(repo, "rev-parse", f"{head}^{{tree}}").strip()
+    if candidate.get("tree") != actual_candidate_tree:
+        problems.append("ProgramStageUserpath candidate tree does not match the exact candidate commit")
+    if (doc.get("verdict") != "completed" or type(doc.get("exit_code")) is not int
+            or doc.get("exit_code") != 0 or doc.get("refusal") is not None
+            or doc.get("candidate_admission") != "not_measured_by_fixture_gate"):
+        problems.append("ProgramStageUserpath did not complete with an explicitly separate fixture result")
+    if outer_exit is None:
+        problems.append("required ProgramStageUserpath outer process exit is missing")
+    elif outer_exit is not None and outer_exit != doc.get("exit_code"):
+        problems.append("ProgramStageUserpath recorded exit differs from the hosted outer process exit")
+    outer_capture = {}
+    for filename in ("outer-start.utc", "outer-end.utc", "outer-exit.txt", "runner.stdout", "runner.stderr"):
+        capture_path = root / filename
+        try:
+            if capture_path.is_symlink() or not capture_path.is_file():
+                raise ValueError("missing regular capture")
+            raw_capture = capture_path.read_bytes()
+            outer_capture[filename] = {"sha256": hashlib.sha256(raw_capture).hexdigest(),
+                                       "bytes": len(raw_capture)}
+        except (OSError, ValueError):
+            problems.append(f"ProgramStageUserpath outer capture is missing or invalid: {filename}")
+    exit_capture = root / "outer-exit.txt"
+    if exit_capture.is_file() and not exit_capture.is_symlink():
+        try:
+            if exit_capture.read_text(encoding="ascii").strip() != str(outer_exit):
+                problems.append("ProgramStageUserpath outer exit capture differs from the hosted step output")
+        except (OSError, UnicodeError):
+            problems.append("ProgramStageUserpath outer exit capture is unreadable")
+    try:
+        start_text = (root / "outer-start.utc").read_text(encoding="ascii").strip()
+        end_text = (root / "outer-end.utc").read_text(encoding="ascii").strip()
+        start_time = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+        end_time = datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+        if start_time.tzinfo is None or end_time.tzinfo is None or end_time < start_time:
+            raise ValueError("timestamp order")
+    except (OSError, UnicodeError, ValueError):
+        problems.append("ProgramStageUserpath outer execution timestamps are invalid")
+    if git(repo, "rev-parse", "HEAD").strip() != head:
+        problems.append("ProgramStageUserpath candidate checkout is not at the exact candidate head")
+    if git(repo, "status", "--porcelain").strip():
+        problems.append("ProgramStageUserpath candidate checkout is dirty")
+    if candidate.get("changed_paths") != changed_files(repo, base, head):
+        problems.append("ProgramStageUserpath changed-path inventory differs from the candidate Git range")
+
+    program_source = doc.get("program_source")
+    source_fields = {"origin", "program_ref", "bundle_digest", "manifest_sha256", "files"}
+    if not isinstance(program_source, dict) or set(program_source) != source_fields:
+        problems.append("ProgramStageUserpath Program tool-source binding is malformed")
+        program_source = {"origin": None, "program_ref": None, "bundle_digest": None,
+                          "manifest_sha256": None, "files": []}
+    sources = program_source.get("files")
+    if (not isinstance(sources, list)
+            or any(not isinstance(row, dict) or set(row) != {"path", "sha256"}
+                   or not isinstance(row.get("path"), str)
+                   or not isinstance(row.get("sha256"), str) for row in sources)):
+        problems.append("ProgramStageUserpath Program source inventory is malformed")
+        sources = []
+    source_by_path = {row.get("path"): row.get("sha256") for row in sources if isinstance(row, dict)}
+    if len(source_by_path) != len(sources):
+        problems.append("ProgramStageUserpath Program source inventory is duplicated")
+    if repo_name == "Arcanada-one/arcanada-universal-program":
+        expected_program_files = set(STAGE_USERPATH_SOURCE_FILES)
+        if (program_source.get("origin") != "candidate_program_tree"
+                or program_source.get("program_ref") != head
+                or program_source.get("bundle_digest") is not None
+                or program_source.get("manifest_sha256") is not None
+                or set(source_by_path) != expected_program_files):
+            problems.append("ProgramStageUserpath Program source pins do not bind the candidate Program tree")
+        for relative in STAGE_USERPATH_SOURCE_FILES:
+            digest = source_by_path.get(relative)
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                problems.append(f"ProgramStageUserpath Program source pin is malformed: {relative}")
+                continue
+            mode = git_bytes(repo, "ls-tree", head, "--", relative)[1].decode("utf-8", errors="replace")
+            if not (mode.startswith("100644 blob ") or mode.startswith("100755 blob ")):
+                problems.append(f"ProgramStageUserpath source is not a regular candidate-head blob: {relative}")
+                continue
+            rc, raw = git_bytes(repo, "show", f"{head}:{relative}")
+            if rc != 0 or hashlib.sha256(raw).hexdigest() != digest:
+                problems.append(f"ProgramStageUserpath source bytes differ from the exact candidate head: {relative}")
+        effective_tools_root = tools_root or repo
+    else:
+        effective_tools_root = tools_root
+        if not isinstance(trusted_bundle, dict):
+            problems.append("ProgramStageUserpath external candidate lacks an already-verified Program bundle")
+            trusted_bundle = {}
+        manifest_files = [
+            {"path": row.get("path"), "sha256": row.get("sha256")}
+            for row in trusted_bundle.get("files", [])
+            if isinstance(row, dict) and row.get("verified_by_the_job") is not False
+        ] if isinstance(trusted_bundle.get("files"), list) else []
+        manifest_path = (effective_tools_root / "BUNDLE.json") if effective_tools_root else None
+        try:
+            manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest() if manifest_path else None
+        except OSError:
+            manifest_hash = None
+        if (program_source.get("origin") != "pinned_program_bundle"
+                or program_source.get("program_ref") != trusted_bundle.get("program_ref")
+                or program_source.get("bundle_digest") != trusted_bundle.get("bundle_digest")
+                or program_source.get("manifest_sha256") != manifest_hash
+                or sources != manifest_files):
+            problems.append("ProgramStageUserpath Program source pins do not match the verified signed bundle")
+        if effective_tools_root is None or effective_tools_root.is_symlink():
+            problems.append("ProgramStageUserpath Program bundle root is missing or unsafe")
+            effective_tools_root = repo
+        else:
+            for row in manifest_files:
+                relative = row.get("path")
+                cursor = effective_tools_root
+                for component in Path(str(relative)).parts:
+                    cursor = cursor / component
+                    if cursor.is_symlink():
+                        problems.append(f"ProgramStageUserpath Program bundle source is a symlink: {relative}")
+                        break
+                if not cursor.is_file() or not matches_signed_bundle_digest(cursor, row.get("sha256")):
+                    problems.append(f"ProgramStageUserpath Program bundle source differs from signed bytes: {relative}")
+
+    candidate_outcome, candidate_outcome_problems = validate_current_source_cli_outcome(
+        doc.get("candidate_cli_outcome"), root, repo, repo_name, base, head,
+        actual_candidate_tree, program_source, effective_tools_root or repo,
+        candidate_outcome_required)
+    problems.extend(candidate_outcome_problems)
+
+    fixture = doc.get("fixture")
+    fixture_rel = doc.get("fixture_repository")
+    if (not isinstance(fixture, dict) or not re.fullmatch(r"[0-9a-f]{40}", str(fixture.get("base", "")))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(fixture.get("head", "")))
+            or fixture.get("base") == fixture.get("head") or not isinstance(fixture_rel, str)
+            or not fixture_rel or "\\" in fixture_rel or Path(fixture_rel).is_absolute()
+            or ".." in Path(fixture_rel).parts):
+        problems.append("ProgramStageUserpath fixture source tuple is malformed")
+        fixture_repo = None
+    else:
+        fixture_repo = root / fixture_rel
+        try:
+            if fixture_repo.is_symlink() or not fixture_repo.is_dir() or root.resolve(strict=True) not in fixture_repo.resolve(strict=True).parents:
+                raise ValueError("fixture repository is not contained by the result directory")
+            actual_fixture_head = git(fixture_repo, "rev-parse", "HEAD").strip()
+            if actual_fixture_head != fixture["head"] or git(fixture_repo, "status", "--porcelain").strip():
+                raise ValueError("fixture repository HEAD/clean state differs from the captured tuple")
+            if git(fixture_repo, "rev-parse", f"{fixture['head']}^{{tree}}").strip() != fixture.get("tree"):
+                raise ValueError("fixture tree differs from its captured head tuple")
+            git(fixture_repo, "merge-base", "--is-ancestor", fixture["base"], fixture["head"])
+            actual_fixture_paths = git(fixture_repo, "diff", "--name-only", f"{fixture['base']}..{fixture['head']}").splitlines()
+            if actual_fixture_paths != fixture.get("changed_paths"):
+                raise ValueError("fixture changed-path inventory differs from its Git tuple")
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+            problems.append("ProgramStageUserpath fixture repository refused: " + str(exc)[:200])
+
+    expected_steps = ("build", "impact", "verify", "gate")
+    steps = doc.get("steps")
+    if not isinstance(steps, list) or [s.get("id") for s in steps if isinstance(s, dict)] != list(expected_steps):
+        problems.append("ProgramStageUserpath did not record the exact four native stages in order")
+        steps = []
+    if fixture_repo is not None and len(steps) == 4:
+        fixture_base, fixture_head = fixture.get("base"), fixture.get("head")
+        output_paths = {}
+        artifact_rows = {}
+        for step in steps:
+            name = step.get("id")
+            script = {"build": "tools/graph/build_graph.py", "impact": "tools/graph/impact.py",
+                      "verify": "tools/graph/verify.py", "gate": "tools/graph/admit_change.py"}[name]
+            argv = step.get("argv")
+            if (not isinstance(argv, list) or len(argv) < 2 or not all(isinstance(arg, str) for arg in argv)
+                    or Path(argv[1]).resolve() != (effective_tools_root / script).resolve()
+                    or step.get("cwd") != str(repo.resolve())
+                    or step.get("cwd_role") != "candidate repository" or type(step.get("exit_code")) is not int
+                    or step.get("exit_code") != 0):
+                problems.append(f"ProgramStageUserpath {name} command identity or exit result is invalid")
+            artifacts = step.get("artifacts")
+            wanted_artifacts = {"build": {"base_graph"}, "impact": {"impact"},
+                                "verify": {"raw_fixture_car", "phase_log"},
+                                "gate": {"fixture_gate"}}[name]
+            if not isinstance(artifacts, dict) or set(artifacts) != wanted_artifacts:
+                problems.append(f"ProgramStageUserpath {name} artifact inventory is incomplete")
+                artifacts = {}
+            resolved_artifacts = {}
+            for label, descriptor in artifacts.items():
+                artifact_path, error = _stage_userpath_ref(root, descriptor)
+                if error:
+                    problems.append(f"ProgramStageUserpath {name}: {error}")
+                elif artifact_path is not None:
+                    resolved_artifacts[label] = artifact_path
+                    artifact_rows[(name, label)] = descriptor
+            argv = argv if isinstance(argv, list) else []
+            interpreter = doc.get("interpreter")
+            interpreter_path = interpreter.get("path") if isinstance(interpreter, dict) else None
+            if name == "build":
+                expected_argv = [interpreter_path, str(effective_tools_root / script), str(fixture_repo), "--rev", fixture_base,
+                                 "--out", str(resolved_artifacts.get("base_graph", ""))]
+            elif name == "impact":
+                expected_argv = [interpreter_path, str(effective_tools_root / script), "--graph",
+                                 str(root / "work/steps/fixture-base-graph.json"), "--repo", str(fixture_repo),
+                                 "--diff", f"{fixture_base}..{fixture_head}", "--json", "--out",
+                                 str(resolved_artifacts.get("impact", ""))]
+            elif name == "verify":
+                expected_argv = [interpreter_path, str(effective_tools_root / script), "--repo", str(fixture_repo), "--diff",
+                                 f"{fixture_base}..{fixture_head}", "--graph",
+                                 str(resolved_artifacts.get("base_graph", root / "work/steps/fixture-base-graph.json")),
+                                 "--out", str(resolved_artifacts.get("raw_fixture_car", "")), "--json",
+                                 "--workdir", str(root / "work/steps/verify-work"), "--verifier-out",
+                                 str(root / "work/steps/verifier-out"), "--phase-log",
+                                 str(root / "work/steps/phase.jsonl")]
+            else:
+                expected_argv = [interpreter_path, str(effective_tools_root / script), "gate", "--repo", str(fixture_repo),
+                                 "--range", f"{fixture_base}..{fixture_head}", "--receipt",
+                                 str(root / "work/steps/fixture-raw-car.json"), "--out",
+                                 str(resolved_artifacts.get("fixture_gate", "")), "--json", "--workdir",
+                                 str(root / "work/steps/gate-work")]
+            if (not _argv_uses_pinned_interpreter(argv, interpreter)
+                    or argv[1:] != expected_argv[1:]):
+                problems.append(f"ProgramStageUserpath {name} argv differs from the supported native command")
+            try:
+                step_start = datetime.fromisoformat(str(step.get("start_utc", "")).replace("Z", "+00:00"))
+                step_end = datetime.fromisoformat(str(step.get("end_utc", "")).replace("Z", "+00:00"))
+                if step_start.tzinfo is None or step_end.tzinfo is None or step_end < step_start:
+                    raise ValueError("timestamp order")
+            except ValueError:
+                problems.append(f"ProgramStageUserpath {name} timestamps are invalid")
+            for stream in (step.get("stdout"), step.get("stderr")):
+                output_path, error = _stage_userpath_ref(root, stream)
+                if error:
+                    problems.append(f"ProgramStageUserpath {name}: {error}")
+                elif output_path is not None:
+                    output_paths[output_path.relative_to(root).as_posix()] = output_path
+        fixture_files = fixture.get("source"), fixture.get("schema"), fixture.get("consumer"), fixture.get("control"), fixture.get("manifest")
+        for row in fixture_files:
+            if (not isinstance(row, dict) or not isinstance(row.get("path"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("sha256", row.get("sha256_at_head", ""))))):
+                problems.append("ProgramStageUserpath fixture source pins are malformed")
+                continue
+            digest_key = "sha256_at_head" if "sha256_at_head" in row else "sha256"
+            rc, raw = git_bytes(fixture_repo, "show", f"{fixture_head}:{row['path']}")
+            if rc != 0 or hashlib.sha256(raw).hexdigest() != row[digest_key]:
+                problems.append(f"ProgramStageUserpath fixture source differs from its exact head blob: {row['path']}")
+        for step_name, artifact_name, expected_kind in (
+                ("build", "base_graph", "graph"), ("impact", "impact", "impact"),
+                ("verify", "raw_fixture_car", "receipt")):
+            artifact_path, error = _stage_userpath_ref(
+                root, artifact_rows.get((step_name, artifact_name)))
+            if error or artifact_path is None:
+                problems.append(f"ProgramStageUserpath {step_name} output is unavailable")
+                continue
+            try:
+                artifact_doc = json.loads(artifact_path.read_text(encoding="utf-8"))
+                if expected_kind == "graph":
+                    matched = artifact_doc.get("manifest", {}).get("source_commit") == fixture_base
+                elif expected_kind == "impact":
+                    matched = (artifact_doc.get("schema") == "ImpactQuery/v1"
+                               and artifact_doc.get("change_set", {}).get("base") == fixture_base
+                               and artifact_doc.get("change_set", {}).get("head") == fixture_head)
+                else:
+                    matched = (artifact_doc.get("schema") == "ChangeAdmissionReceipt/v1"
+                               and artifact_doc.get("change_set", {}).get("base") == fixture_base
+                               and artifact_doc.get("change_set", {}).get("head") == fixture_head)
+                if not matched:
+                    problems.append(f"ProgramStageUserpath {step_name} output does not bind the fixture tuple")
+            except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+                problems.append(f"ProgramStageUserpath {step_name} output is malformed")
+        gate = doc.get("fixture_gate")
+        if (not isinstance(gate, dict) or gate.get("subject_role") != "temporary synthetic fixture only"
+                or gate.get("verdict") != "admit" or gate.get("exit_code") != 0
+                or gate.get("range") != {"base": fixture_base, "head": fixture_head}):
+            problems.append("fixture gate result is not an exact successful fixture-only admission")
+        else:
+            gate_path, error = _stage_userpath_ref(root, gate.get("output"))
+            if (gate.get("output") != artifact_rows.get(("gate", "fixture_gate"))):
+                problems.append("fixture gate output does not match the gate step artifact reference")
+            if error or gate_path is None:
+                problems.append("fixture gate output is missing or does not match its captured bytes")
+            else:
+                try:
+                    gate_doc = json.loads(gate_path.read_text(encoding="utf-8"))
+                    gate_range = gate_doc.get("range")
+                    gate_repo = gate_doc.get("repo")
+                    if (gate_doc.get("verdict") != "admit" or gate_doc.get("exit_code") != 0
+                            or not isinstance(gate_range, dict)
+                            or gate_range.get("base") != fixture_base
+                            or gate_range.get("head") != fixture_head
+                            or not isinstance(gate_repo, dict)
+                            or gate_repo.get("name") != "fixture-repository"):
+                        problems.append("saved ordinary gate output contradicts the fixture tuple/result")
+                    raw_car = artifact_rows.get(("verify", "raw_fixture_car"))
+                    if not isinstance(raw_car, dict) or gate.get("raw_receipt_sha256") != raw_car.get("sha256"):
+                        problems.append("fixture gate result is not bound to the captured fixture raw CAR")
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    problems.append("saved ordinary gate output is malformed")
+    if not isinstance(doc.get("interpreter"), dict):
+        problems.append("ProgramStageUserpath interpreter identity is missing")
+    else:
+        interpreter = doc["interpreter"]
+        if set(interpreter) != {"path", "sha256"} or interpreter.get("path") != str(Path(sys.executable).resolve()):
+            problems.append("ProgramStageUserpath interpreter differs from the native CI interpreter")
+        elif hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest() != interpreter.get("sha256"):
+            problems.append("ProgramStageUserpath interpreter bytes differ from the native CI interpreter")
+    invocation = doc.get("runner_invocation")
+    expected_runner_argv = [str(Path(sys.executable).resolve()),
+                            str(effective_tools_root / "tools/ci/stage_userpath.py"),
+                            "--repo", str(repo.resolve()), "--repo-name", repo_name,
+                            "--base", base, "--head", head,
+                            "--out", str(root / "result.json"),
+                            "--workdir", str(root / "work"),
+                            "--tools-root", str(effective_tools_root)]
+    if candidate_outcome_required:
+        expected_runner_argv.extend(["--candidate-root", str(root / "current-candidate")])
+    runner_argv = invocation.get("argv") if isinstance(invocation, dict) else None
+    if (not isinstance(invocation, dict) or invocation.get("cwd") != str(repo.resolve())
+            or not _argv_uses_pinned_interpreter(runner_argv, doc.get("interpreter"))
+            or runner_argv[1:] != expected_runner_argv[1:]):
+        problems.append("ProgramStageUserpath runner argv/cwd differs from the supported hosted invocation")
+    proof = {
+        "kind": "ProgramStageUserpath/v1", "verdict": "completed" if not problems else "refused",
+        "candidate": {"repository": repo_name, "base": base, "head": head, "tree": actual_candidate_tree},
+        "fixture": fixture, "program_source": program_source,
+        "result_path": str(path.resolve()), "result_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "fixture_gate_subject": "temporary synthetic fixture only",
+        "candidate_admission": "not_measured_by_fixture_gate",
+        "candidate_cli_outcome": candidate_outcome,
+        "outer_exit_code": outer_exit,
+        "started_at_utc": doc.get("started_at_utc"),
+        "completed_at_utc": doc.get("completed_at_utc"),
+        "outer_capture": outer_capture,
+        "result_sha256": hashlib.sha256(raw_result).hexdigest(),
+    }
+    return proof, sorted(set(problems))
+
+CALLER_DEPENDENCY_SETUP_SCHEMA = "CallerDependencySetup/v1"
+CALLER_DEPENDENCY_SETUP_POLICY = "pnpm-frozen-web-typecheck/v1"
+CALLER_DEPENDENCY_SETUP_REPOSITORY = "Arcanada-one/muneral"
+CALLER_DEPENDENCY_SETUP_FILES = (
+    ".github/workflows/ci.yml",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "apps/web/package.json",
+    "packages/types/package.json",
+    ".arcana/derived-artefacts.v1.json",
+)
+
+
+def _strict_json_object(text: str, label: str) -> dict:
+    """Parse one JSON object without accepting duplicate keys or non-object roots."""
+    def unique_pairs(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"{label} contains a duplicate key")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(text, object_pairs_hook=unique_pairs)
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        raise ValueError(f"{label} is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _candidate_setup_git(repo: Path, *args: str) -> bytes:
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_NO_LAZY_FETCH"] = "1"
+    try:
+        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                                timeout=15, env=env, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("candidate Git binding is unavailable") from exc
+    if result.returncode != 0:
+        raise ValueError("candidate Git binding is unavailable")
+    return result.stdout
+
+
+def validate_candidate_dependency_setup(manifest: dict, repo_path: str | Path,
+                                        repository: str, base: str, head: str) -> dict:
+    """Validate the fixed MUN web-typecheck setup contract without executing setup commands.
+
+    The manifest is caller-supplied data, never a command source. This function checks its exact
+    policy, subject, range, package scope and seven Git/blob/content pins, then returns only the
+    fixed pnpm operations supported by this profile. Its JSON shape is exactly
+    {schema, policy, repository, base, head, working_directory, scope, files}; each files value is
+    {blob_oid, sha256, bytes}. The workflow is responsible for executing those literal operations
+    after this function succeeds.
+    """
+    if not isinstance(manifest, dict):
+        raise ValueError("dependency setup manifest must be an object")
+    if set(manifest) != {"schema", "policy", "repository", "base", "head",
+                        "working_directory", "scope", "files"}:
+        raise ValueError("dependency setup fields are missing or unsupported")
+    if manifest.get("schema") != CALLER_DEPENDENCY_SETUP_SCHEMA:
+        raise ValueError("dependency setup schema is unsupported")
+    if manifest.get("policy") != CALLER_DEPENDENCY_SETUP_POLICY:
+        raise ValueError("dependency setup policy is unsupported")
+    if repository != CALLER_DEPENDENCY_SETUP_REPOSITORY or manifest.get("repository") != repository:
+        raise ValueError("dependency setup repository does not match the supported caller")
+    if manifest.get("working_directory") != "." or manifest.get("scope") != "apps/web":
+        raise ValueError("dependency setup working directory or package scope is unsupported")
+    if (not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40}", base)
+            or not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head)
+            or base == head or manifest.get("base") != base or manifest.get("head") != head):
+        raise ValueError("dependency setup range does not match the current candidate")
+
+    repo = Path(repo_path).resolve(strict=True)
+    if not repo.is_dir():
+        raise ValueError("candidate workspace is unavailable")
+    actual_head = _candidate_setup_git(repo, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    _candidate_setup_git(repo, "cat-file", "-e", f"{base}^{{commit}}")
+    _candidate_setup_git(repo, "merge-base", "--is-ancestor", base, head)
+    if actual_head != head:
+        raise ValueError("candidate workspace HEAD differs from the dependency setup subject")
+
+    file_pins = manifest.get("files")
+    if not isinstance(file_pins, dict) or set(file_pins) != set(CALLER_DEPENDENCY_SETUP_FILES):
+        raise ValueError("dependency setup file set is incomplete or unsupported")
+    checked_files = {}
+    bytes_by_path = {}
+    for relative in CALLER_DEPENDENCY_SETUP_FILES:
+        pin = file_pins.get(relative)
+        if not isinstance(pin, dict) or set(pin) != {"blob_oid", "sha256", "bytes"}:
+            raise ValueError(f"dependency setup pin is malformed: {relative}")
+        if (not isinstance(pin.get("blob_oid"), str)
+                or not re.fullmatch(r"[0-9a-f]{40}", pin["blob_oid"])
+                or not isinstance(pin.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])
+                or not isinstance(pin.get("bytes"), int) or isinstance(pin.get("bytes"), bool)
+                or pin["bytes"] < 0):
+            raise ValueError(f"dependency setup pin is malformed: {relative}")
+        path = repo / relative
+        cursor = repo
+        for component in Path(relative).parts:
+            cursor = cursor / component
+            try:
+                mode = cursor.lstat().st_mode
+            except OSError as exc:
+                raise ValueError(f"dependency setup source is missing: {relative}") from exc
+            if cursor == path:
+                if not stat.S_ISREG(mode):
+                    raise ValueError(f"dependency setup source is not a regular file: {relative}")
+            elif not stat.S_ISDIR(mode):
+                raise ValueError(f"dependency setup source path is unsafe: {relative}")
+        raw = path.read_bytes()
+        tree_row = _candidate_setup_git(repo, "ls-tree", "-z", "--full-tree", head, "--", relative)
+        rows = [row for row in tree_row.split(b"\0") if row]
+        if len(rows) != 1 or b"\t" not in rows[0]:
+            raise ValueError(f"dependency setup Git tree row is missing or ambiguous: {relative}")
+        metadata, recorded_path = rows[0].split(b"\t", 1)
+        try:
+            mode_text, kind, oid = metadata.decode("ascii").split(" ")
+            path_text = recorded_path.decode("utf-8")
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError(f"dependency setup Git tree row is malformed: {relative}") from exc
+        if (path_text != relative or mode_text != "100644" or kind != "blob"
+                or oid != pin["blob_oid"] or git_blob_oid_of_bytes(raw) != pin["blob_oid"]
+                or len(raw) != pin["bytes"] or hashlib.sha256(raw).hexdigest() != pin["sha256"]):
+            raise ValueError(f"dependency setup source pin mismatch: {relative}")
+        checked_files[relative] = dict(pin)
+        bytes_by_path[relative] = raw
+
+    try:
+        root_package = _strict_json_object(bytes_by_path["package.json"].decode("utf-8"), "package.json")
+        web_package = _strict_json_object(bytes_by_path["apps/web/package.json"].decode("utf-8"),
+                                          "apps/web/package.json")
+        types_package = _strict_json_object(bytes_by_path["packages/types/package.json"].decode("utf-8"),
+                                            "packages/types/package.json")
+        derived = _strict_json_object(bytes_by_path[".arcana/derived-artefacts.v1.json"].decode("utf-8"),
+                                      ".arcana/derived-artefacts.v1.json")
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("dependency setup package inputs are malformed") from exc
+    if (root_package.get("packageManager") != "pnpm@11.5.2"
+            or (root_package.get("engines") or {}).get("node") != "24.22.1"):
+        raise ValueError("root package manager or Node pin differs from the supported setup policy")
+    if (web_package.get("name") != "@muneral/web"
+            or (web_package.get("dependencies") or {}).get("@muneral/types") != "workspace:*"):
+        raise ValueError("web package scope differs from the supported setup policy")
+    if (types_package.get("name") != "@muneral/types"
+            or types_package.get("main") != "./dist/index.js"
+            or types_package.get("types") != "./dist/index.d.ts"
+            or (types_package.get("scripts") or {}).get("build") != "tsc"):
+        raise ValueError("workspace type package build contract differs from the supported setup policy")
+    derived_rows = derived.get("artefacts")
+    mutation_rows = [row for row in derived_rows if isinstance(row, dict)
+                     and row.get("path") == "apps/api/test/assembly/mutation-results.json"] \
+        if isinstance(derived_rows, list) else []
+    mutation_setup = mutation_rows[0].get("setup") if len(mutation_rows) == 1 else None
+    if (derived.get("schema") != "GraphAdmissionDerivedArtefacts/v1" or len(mutation_rows) != 1
+            or mutation_rows[0].get("verified_by_job") != "lint-and-test"
+            or not isinstance(mutation_setup, dict)
+            or set(mutation_setup) != {"argv", "cwd", "why"}
+            or mutation_setup.get("argv") != ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"]
+            or mutation_setup.get("cwd") != "."
+            or not isinstance(mutation_setup.get("why"), str)):
+        raise ValueError("existing derived-artifact setup declaration conflicts with the pinned source profile")
+    workspace = bytes_by_path["pnpm-workspace.yaml"].decode("utf-8")
+    lockfile = bytes_by_path["pnpm-lock.yaml"].decode("utf-8")
+    if (not re.search(r"(?m)^\s*-\s*['\"]apps/\*['\"]\s*$", workspace)
+            or not re.search(r"(?m)^\s*-\s*['\"]packages/\*['\"]\s*$", workspace)
+            or not re.search(r"(?m)^  apps/web:\s*$", lockfile)
+            or not re.search(r"(?m)^  packages/types:\s*$", lockfile)):
+        raise ValueError("workspace and lockfile do not bind the supported package importers")
+
+    return {
+        "schema": "CallerDependencySetupPlan/v1",
+        "policy": CALLER_DEPENDENCY_SETUP_POLICY,
+        "repository": repository,
+        "base": base,
+        "head": head,
+        "working_directory": ".",
+        "scope": "apps/web",
+        "package_manager": root_package["packageManager"],
+        "node_version": root_package["engines"]["node"],
+        "files": checked_files,
+        "argv": [["pnpm", "install", "--frozen-lockfile", "--ignore-scripts",
+                  "--ignore-pnpmfile"],
+                 ["pnpm", "--filter", "@muneral/types", "build"]],
+    }
+
+
+def cmd_candidate_dependency_setup_plan(a) -> int:
+    """Validate the caller's fixed dependency manifest; never install or build dependencies."""
+    try:
+        raw = os.environ.get("CANDIDATE_DEPENDENCY_SETUP", "")
+        if not raw:
+            raise ValueError("dependency setup manifest is absent")
+        manifest = _strict_json_object(raw, "dependency setup manifest")
+        plan = validate_candidate_dependency_setup(
+            manifest, a.repo, a.repository, a.base, a.head)
+    except (OSError, ValueError) as exc:
+        print(f"CANDIDATE_DEPENDENCY_SETUP_REFUSED: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(plan, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def cmd_run(a) -> int:
     repo = Path(a.repo).resolve()
     tools = Path(a.tools).resolve()
@@ -664,7 +1705,8 @@ def cmd_run(a) -> int:
         "decision_refs": ["DEC-AUP-0008", "DEC-AUP-0007"],
         "repo": a.repo_name or repo.name,
         "range": {"base": base, "head": head},
-        "receipt_sources": {"tree": [], "pr_body": []},
+        "receipt_sources": {"tree": [], "pr_body": [], "current_candidate": []},
+        "current_candidate_receipt": None,
         "checks": [],
         "verdict": None,
         "conclusion": None,
@@ -685,7 +1727,8 @@ def cmd_run(a) -> int:
                  f"- repository `{result['repo']}`, range `{base[:12]}..{head[:12]}`, "
                  f"{len(result['range'].get('files', []))} changed file(s)",
                  f"- receipts: {len(result['receipt_sources']['tree'])} from the head tree, "
-                 f"{len(result['receipt_sources']['pr_body'])} from the pull-request body",
+                 f"{len(result['receipt_sources']['pr_body'])} from the pull-request body, "
+                 f"{len(result['receipt_sources']['current_candidate'])} explicit current-candidate input",
                  f"- reason codes: {', '.join(result['reason_codes']) or '—'}",
                  ""]
         for c in result["checks"]:
@@ -698,6 +1741,14 @@ def cmd_run(a) -> int:
             Path(a.summary).write_text(text)
         print(text)
         return rc
+
+    stage_userpath_required = bool(getattr(a, "stage_userpath_required", False))
+    candidate_required = bool(getattr(a, "candidate_receipt_required", False))
+    candidate_source_outcome_required = bool(getattr(a, "candidate_source_outcome_required", False))
+    if candidate_source_outcome_required and not (candidate_required and stage_userpath_required):
+        return fail("CURRENT_SOURCE_OUTCOME_CONFIGURATION_INVALID",
+                    "a current-source outcome requires both the explicit candidate CAR and ProgramStageUserpath routes")
+    stage_userpath_result = getattr(a, "stage_userpath_result", None) or None
 
     man, problems, sigrec = verify_bundle(tools, a.program_ref,
                                           getattr(a, "signing_key_fingerprint", None), repo=repo)
@@ -724,6 +1775,26 @@ def cmd_run(a) -> int:
                                             f"caller's own workflow file to turn this into a provenance claim. "
                                             f"`not_measured` is not a pass (DEC-AUP-0008 I4).")})
 
+    stage_userpath = {}
+    if stage_userpath_required or stage_userpath_result:
+        stage_userpath, stage_userpath_problems = validate_stage_userpath_result(
+            stage_userpath_result,
+            getattr(a, "stage_userpath_root", None),
+            stage_userpath_required, repo, result["repo"], base, head,
+            getattr(a, "stage_userpath_exit", None),
+            candidate_outcome_required=candidate_source_outcome_required,
+            tools_root=(repo if result["repo"] == "Arcanada-one/arcanada-universal-program" else tools),
+            trusted_bundle=man)
+        result["stage_userpath"] = stage_userpath
+        if stage_userpath_problems:
+            result["checks"].append({"code": "STAGE_USERPATH_REFUSED", "verdict": "refuse",
+                                     "detail": "; ".join(stage_userpath_problems[:5])})
+            result["reason_codes"] = sorted(set(result["reason_codes"] + ["STAGE_USERPATH_REFUSED"]))
+        else:
+            result["checks"].append({"code": "STAGE_USERPATH_EXECUTED", "verdict": "verified",
+                                     "detail": ("the four native graph stages completed against the captured temporary fixture; "
+                                                "fixture admission is separate from candidate CAR admission")})
+
     files = changed_files(repo, base, head)
     result["range"]["files"] = files
     bundle_rel = str(tools.relative_to(repo)) if tools.is_relative_to(repo) else None
@@ -749,7 +1820,8 @@ def cmd_run(a) -> int:
             # carrying a GATE_SELF_UPDATE exemption whose B1-B5 battery the gate itself re-measures.
             import admit_change as admit_mod  # sibling tool, reused as a library (bundled)
             files_status = [{"path": f, "status": status.get(f, "M")} for f in files]
-            su_case, su_ev = admit_mod.structural_case(repo, base, head, files_status, bundle_rel)
+            su_case, su_ev = admit_mod.structural_case(
+                repo, base, head, files_status, bundle_rel, getattr(a, "base_branch", None))
             if su_case != "gate_self_update":
                 return fail("BUNDLE_MODIFIED_BY_PR",
                             f"this pull request edits or removes {len(edited)} file(s) under the vendored gate bundle "
@@ -796,16 +1868,166 @@ def cmd_run(a) -> int:
         body = Path(a.pr_body_file).read_text(errors="replace")
     body_receipts = receipts_from_body(body, work)
     check_readiness_receipts(result, body, repo, files, head, tools)
-    tree_receipts = receipts_from_tree(repo, a.receipt_glob or DEFAULT_RECEIPT_GLOBS, changed=set(files), base=base)
-    result["receipt_sources"]["tree"] = [str(p.relative_to(repo)) for p in tree_receipts]
-    result["receipt_sources"]["pr_body"] = [p.name for p in body_receipts]
-    receipts = tree_receipts + body_receipts
+    candidate_receipt = getattr(a, "candidate_receipt", None) or None
+    candidate_exit = getattr(a, "candidate_receipt_exit", None)
+    if candidate_required or candidate_receipt:
+        if getattr(a, "stage_evidence", None) or getattr(a, "stage_evidence_root", None) or \
+                bool(getattr(a, "stage_evidence_required", False)):
+            return fail("CANDIDATE_RECEIPT_STAGE_ROUTE_CONFLICT",
+                        "current-candidate receipt selection cannot be combined with finished-stage StageEvidence")
+        if not candidate_receipt:
+            return fail("CURRENT_CANDIDATE_RECEIPT_MISSING",
+                        "the required hosted current-candidate receipt path is absent; historical receipt discovery is disabled")
+        if candidate_exit is None:
+            return fail("CURRENT_CANDIDATE_PRODUCER_EXIT_MISSING",
+                        "the hosted current-candidate producer exit was not supplied")
+        source_outcome = stage_userpath.get("candidate_cli_outcome") if isinstance(stage_userpath, dict) else None
+        if candidate_source_outcome_required and not isinstance(source_outcome, dict):
+            return fail("CURRENT_SOURCE_OUTCOME_MISSING",
+                        "the exact current-candidate CLI process outcome was not consumed by ProgramStageUserpath")
+        raw_candidate_path = Path(candidate_receipt)
+        try:
+            resolved_candidate = raw_candidate_path.resolve(strict=True)
+            resolved_work = work.resolve(strict=True)
+            if (not raw_candidate_path.is_absolute() or raw_candidate_path.is_symlink()
+                    or not raw_candidate_path.is_file() or resolved_candidate == resolved_work
+                    or resolved_work not in resolved_candidate.parents):
+                raise ValueError("candidate receipt must be a regular file inside the current run work directory")
+            candidate_raw = resolved_candidate.read_bytes()
+            candidate_digest = hashlib.sha256(candidate_raw).hexdigest()
+            candidate_doc = json.loads(candidate_raw)
+            candidate_change_set = candidate_doc.get("change_set") if isinstance(candidate_doc, dict) else None
+            if (not isinstance(candidate_change_set, dict)
+                    or candidate_doc.get("schema") != "ChangeAdmissionReceipt/v1"
+                    or candidate_change_set.get("mode") != "diff"
+                    or candidate_change_set.get("base") != base
+                    or candidate_change_set.get("head") != head
+                    or not isinstance(candidate_doc.get("repo"), dict)
+                    or candidate_doc["repo"].get("name") != result["repo"]):
+                raise ValueError("candidate receipt schema or source range differs from the exact current base..head")
+            # A nonzero verify exit can mean PAUSED_SAFE when a complete, schema-conformant
+            # receipt contains only verified/not_measured rows. Validate those exact bytes with
+            # the pinned bundle's ordinary receipt checker before deciding whether exit 1 is
+            # merely the producer's tri-state NM result. The native gate still independently
+            # re-derives the receipt against Git below; this is not an admission shortcut.
+            schema_checker_path = tools / "tools/graph/schema_check.py"
+            receipt_schema_path = tools / "contracts/graph-verified-change/change-admission-receipt.v1.json"
+            spec = importlib.util.spec_from_file_location("_ci_gate_candidate_schema_check", schema_checker_path)
+            if spec is None or spec.loader is None:
+                raise ValueError("the pinned receipt schema checker is unavailable")
+            schema_checker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(schema_checker)
+            receipt_schema = json.loads(receipt_schema_path.read_text(encoding="utf-8"))
+            schema_result = schema_checker.classify(candidate_doc, rschema=receipt_schema)
+            if schema_result.get("verdict") != "conformant":
+                codes = ", ".join(schema_result.get("codes") or [])
+                raise ValueError("candidate receipt violates its pinned schema: " + (codes or "unspecified violation"))
+        except Exception as exc:
+            return fail("CURRENT_CANDIDATE_RECEIPT_INVALID",
+                        f"the explicit hosted current-candidate receipt is unavailable or unsafe: {exc}")
+        if candidate_source_outcome_required:
+            source_root = Path(getattr(a, "stage_userpath_root", ""))
+            mismatch = current_source_outcome_car_mismatch(
+                source_outcome, source_root, resolved_candidate, candidate_raw, candidate_exit)
+            if mismatch:
+                return fail("CURRENT_SOURCE_OUTCOME_CAR_MISMATCH",
+                            mismatch)
+        candidate_verdict_rows = candidate_doc.get("verdicts")
+        if not isinstance(candidate_verdict_rows, list) or not candidate_verdict_rows:
+            return fail("CURRENT_CANDIDATE_RECEIPT_INVALID",
+                        "the explicit hosted current-candidate receipt has no complete verdict rows")
+        candidate_entities = [row.get("entity") for row in candidate_verdict_rows if isinstance(row, dict)]
+        if (len(candidate_entities) != len(candidate_verdict_rows)
+                or any(not isinstance(entity, str) or not entity for entity in candidate_entities)
+                or len(set(candidate_entities)) != len(candidate_entities)):
+            return fail("CURRENT_CANDIDATE_RECEIPT_INVALID",
+                        "the explicit hosted current-candidate receipt has malformed or duplicate verdict entities")
+        candidate_verdict_counts = {name: sum(1 for row in candidate_verdict_rows
+                                               if isinstance(row, dict) and row.get("verdict") == name)
+                                     for name in ("verified", "not_measured", "failed")}
+        admission = candidate_doc.get("admission")
+        admission_verdict = admission.get("verdict") if isinstance(admission, dict) else None
+        nm_only_paused = (
+            admission_verdict == "paused_safe"
+            and candidate_verdict_counts["not_measured"] > 0
+            and candidate_verdict_counts["verified"] > 0
+            and candidate_verdict_counts["failed"] == 0
+            and sum(candidate_verdict_counts.values()) == len(candidate_verdict_rows)
+        )
+        if candidate_exit != 0 and not (candidate_exit == 1 and nm_only_paused):
+            return fail("CURRENT_CANDIDATE_PRODUCER_FAILED",
+                        f"the hosted current-candidate producer exited {candidate_exit}; its exact CAR is not a complete PAUSED_SAFE/NM-only result")
+        receipts = [resolved_candidate]
+        tree_receipts = []
+        result["current_candidate_receipt"] = {
+            "verdict": "selected_for_native_gate",
+            "path": str(resolved_candidate),
+            "sha256": candidate_digest,
+            "repository": result["repo"], "base": base, "head": head,
+            "producer_exit": candidate_exit,
+            "producer_outcome": "paused_safe_nm_only" if candidate_exit == 1 else "exit_zero",
+            "car_admission_verdict": admission_verdict,
+            "car_verdict_counts": candidate_verdict_counts,
+            "selection": "explicit hosted producer input; native gate revalidates CAR subject and contents",
+            "process_outcome": source_outcome if candidate_source_outcome_required else None,
+        }
+        result["receipt_sources"]["current_candidate"] = [str(resolved_candidate)]
+    else:
+        tree_receipts = receipts_from_tree(repo, a.receipt_glob or DEFAULT_RECEIPT_GLOBS,
+                                           changed=set(files), base=base)
+        receipts = tree_receipts + body_receipts
+    stage_evidence_path = getattr(a, "stage_evidence", None) or None
+    stage_evidence_root = getattr(a, "stage_evidence_root", None) or None
+    stage_evidence_required = bool(getattr(a, "stage_evidence_required", False))
+    stage_requested = bool(stage_evidence_path or stage_evidence_root or stage_evidence_required)
+    stage_route = {"verdict": "not_requested"}
+    if stage_requested:
+        receipts, stage_route = select_stage_receipt(
+            receipts, stage_evidence_path, stage_evidence_root, stage_evidence_required,
+            expected_repo=result["repo"], expected_base=base, expected_head=head)
+        result["stage_result_input"] = stage_route
+        if stage_route.get("verdict") == "refuse":
+            result["checks"].append({"code": stage_route["reason"], "verdict": "refuse",
+                                     "detail": stage_route.get("detail") or
+                                     "the explicit finished-stage input did not identify exactly one raw CAR"})
+        elif stage_route.get("verdict") == "selected":
+            result["stage_result_input"].update({"repository": result["repo"], "base": base, "head": head})
+    current_evaluator_fields = (
+        "current_evaluator_run_id", "current_evaluator_attempt", "current_evaluator_check_run_id",
+        "current_evaluator_job_key", "current_evaluator_repository", "current_evaluator_caller_workflow_ref",
+        "current_evaluator_caller_workflow_sha", "current_evaluator_workflow_repository",
+        "current_evaluator_workflow_file_path", "current_evaluator_workflow_ref",
+        "current_evaluator_workflow_sha",
+    )
+    current_evaluator_values = {name: getattr(a, name, None) for name in current_evaluator_fields}
+    current_evaluator_supplied = any(value is not None for value in current_evaluator_values.values())
+    if current_evaluator_supplied:
+        if not all(value is not None for value in current_evaluator_values.values()):
+            return fail("CURRENT_EVALUATOR_CONTEXT_INCOMPLETE",
+                        "current run, attempt, check-run, caller and canonical workflow fields must be supplied together")
+        if stage_route.get("verdict") != "selected":
+            return fail("CURRENT_EVALUATOR_STAGE_INPUT_REQUIRED",
+                        "current evaluator context is valid only for the selected explicit StageEvidence route")
+        if not isinstance(getattr(a, "_github_token", None), str) or not a._github_token:
+            return fail("CURRENT_EVALUATOR_TOKEN_MISSING",
+                        "the current evaluator route requires the explicitly forwarded workflow token")
+        if (not isinstance(man, dict) or not isinstance(man.get("program_ref"), str)
+                or current_evaluator_values["current_evaluator_workflow_sha"] != man["program_ref"]):
+            return fail("CURRENT_EVALUATOR_WORKFLOW_PIN_MISMATCH",
+                        "the executing reusable workflow SHA does not match the verified bundle program_ref")
+    result["receipt_sources"]["tree"] = [str(p.relative_to(repo)) if p.is_relative_to(repo) else str(p)
+                                           for p in receipts if p in tree_receipts]
+    result["receipt_sources"]["pr_body"] = [p.name for p in receipts if p in body_receipts]
     cmd = [sys.executable, str(tools / "tools/graph/admit_change.py"), "gate", "--repo", str(repo),
            "--range", f"{base}..{head}", "--json", "--out", str(work / "gate.json"),
            "--enforcement", a.enforcement, "--workdir", str(work / "gate2a"),
            "--repo-name", result["repo"]]
     if bundle_rel:
         cmd += ["--bundle-dir", bundle_rel]
+    # A hosted PR checkout can have named remote refs without origin/HEAD.
+    # Preserve the supplied PR target; the maintained gate validates/resolves it.
+    if getattr(a, "base_branch", None):
+        cmd += ["--base-branch", a.base_branch]
     # AUP-GRAPH-006:gate2a — the automated-author path. The event payload is the ONLY source of author
     # identity; the head branch name is attacker-controllable and is never consulted.
     if getattr(a, "event_file", None) and Path(a.event_file).exists():
@@ -838,9 +2060,47 @@ def cmd_run(a) -> int:
                                  "detail": "no ChangeAdmissionReceipt/v1 in the head tree "
                                            f"({', '.join(a.receipt_glob or DEFAULT_RECEIPT_GLOBS)}) and none as a "
                                            "```json block in the pull-request body. «Нет receipt — нет мержа»."})
+    if stage_requested and stage_route.get("verdict") == "selected":
+        cmd += ["--stage-evidence", str(Path(stage_evidence_path).resolve()),
+                "--stage-evidence-root", str(Path(stage_evidence_root).resolve())]
+    if current_evaluator_supplied:
+        current_evaluator_args = (
+            ("--current-evaluator-run-id", "current_evaluator_run_id"),
+            ("--current-evaluator-attempt", "current_evaluator_attempt"),
+            ("--current-evaluator-check-run-id", "current_evaluator_check_run_id"),
+            ("--current-evaluator-job-key", "current_evaluator_job_key"),
+            ("--current-evaluator-repository", "current_evaluator_repository"),
+            ("--current-evaluator-caller-workflow-ref", "current_evaluator_caller_workflow_ref"),
+            ("--current-evaluator-caller-workflow-sha", "current_evaluator_caller_workflow_sha"),
+            ("--current-evaluator-workflow-repository", "current_evaluator_workflow_repository"),
+            ("--current-evaluator-workflow-file-path", "current_evaluator_workflow_file_path"),
+            ("--current-evaluator-workflow-ref", "current_evaluator_workflow_ref"),
+            ("--current-evaluator-workflow-sha", "current_evaluator_workflow_sha"),
+        )
+        for flag, name in current_evaluator_args:
+            cmd += [flag, str(current_evaluator_values[name])]
+        cmd += ["--current-evaluator-program-ref", str(man["program_ref"])]
+    if candidate_source_outcome_required:
+        # The native gate revalidates this exact process outcome at the point where it makes
+        # DEC-AUP-0167 eligibility decisions. The fixture gate remains a separate measurement.
+        cmd += ["--current-source-userpath-result", str(Path(stage_userpath_result).resolve()),
+                "--current-source-userpath-root", str(Path(getattr(a, "stage_userpath_root")).resolve()),
+                "--current-source-userpath-exit", str(getattr(a, "stage_userpath_exit")),
+                "--current-source-producer-exit", str(candidate_exit)]
+        if result["repo"] != "Arcanada-one/arcanada-universal-program":
+            cmd += ["--current-source-program-tools-root", str(tools),
+                    "--current-source-program-ref", str(a.program_ref),
+                    "--current-source-signing-key-fingerprint",
+                    str(getattr(a, "signing_key_fingerprint", "") or "")]
+    root_typecheck_root = getattr(a, "root_typecheck_ci_root", None)
+    if root_typecheck_root:
+        cmd += ["--root-typecheck-ci-root", str(Path(root_typecheck_root).resolve())]
     if a.pr_body_file and Path(a.pr_body_file).exists():
         cmd += ["--description-file", a.pr_body_file]
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    github_token = getattr(a, "_github_token", None)
+    if github_token:
+        env["GH_TOKEN"] = github_token
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     try:
         gate_doc = json.loads((work / "gate.json").read_text())
@@ -873,13 +2133,24 @@ def cmd_run(a) -> int:
                                                    "source_commit/digest to rebuild against"})
                 continue
             gp = work / f"graph-{g['source_commit'][:12]}.json"
-            b = subprocess.run([sys.executable, str(tools / "tools/graph/build_graph.py"), str(repo),
-                                "--rev", g["source_commit"], "--out", str(gp)], capture_output=True, text=True,
-                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-            if b.returncode != 0:
-                result["checks"].append({"code": "GRAPH_BUILD_FAILED", "verdict": "not_measured",
-                                         "detail": (b.stderr or b.stdout).strip()[:300]})
-                continue
+            compatibility = (src or {}).get("caller_graph_compatibility")
+            if compatibility is not None:
+                import impact
+                try:
+                    gp.write_bytes(impact.dump(rebuild_compatible_receipt_graph(repo, src)))
+                except (impact.Refusal, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+                    result["checks"].append({"code": "CALLER_GRAPH_COMPATIBILITY_REFUSED", "verdict": "refuse",
+                                             "detail": str(exc)})
+                    result["reason_codes"] = sorted(set(result["reason_codes"] + ["CALLER_GRAPH_COMPATIBILITY_REFUSED"]))
+                    continue
+            else:
+                b = subprocess.run([sys.executable, str(tools / "tools/graph/build_graph.py"), str(repo),
+                                    "--rev", g["source_commit"], "--out", str(gp)], capture_output=True, text=True,
+                                   env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                if b.returncode != 0:
+                    result["checks"].append({"code": "GRAPH_BUILD_FAILED", "verdict": "not_measured",
+                                             "detail": (b.stderr or b.stdout).strip()[:300]})
+                    continue
             built = json.loads(gp.read_text())["manifest"]["graph_digest"]
             same = built == g["graph_digest"]
             result["checks"].append({"code": "GRAPH_REBUILT_MATCHES" if same else "GRAPH_DIGEST_MISMATCH",
@@ -915,6 +2186,14 @@ def cmd_run(a) -> int:
 
 
 # --------------------------------------------------------------------------------------- selftest
+def _selftest_arm_record(checks: list[dict]) -> str:
+    """Lossless diagnostic identity/outcome projection of collected root checks."""
+    return "SELFTEST_ARMS_JSON: " + json.dumps({
+        "schema": "GraphGateSelftestArms/v1",
+        "checks": [{"name": c.get("name"), "ok": c.get("ok")} for c in checks],
+    }, sort_keys=True)
+
+
 def selftest() -> int:
     """The mutation battery of the CI job: every mutant must FLIP the verdict of the conformant control.
 
@@ -1132,6 +2411,11 @@ def selftest() -> int:
     red += rot_red
     checks += rot_checks
     measured = [c for c in checks if c.get("ok") is not None]
+    # Preserve the actual root check identities before the final aggregate.
+    # A historical count/tail cannot reconstruct which eight checks failed;
+    # this machine record comes from the real collected checks, never that
+    # arithmetic difference. None remains unmeasured rather than false/pass.
+    print(_selftest_arm_record(checks))
     print(f"\nTOTAL {'PASS' if not red else 'FAIL'}: {len(measured) - red}/{len(measured)} checks across "
           f"eight batteries ({len(checks) - len(measured)} not_measured)")
     return 0 if not red else 1
@@ -1173,10 +2457,21 @@ def selftest_gate2a() -> tuple[list[dict], int]:
 
     g("init", "-q", "-b", "main")
     (repo / "src").mkdir()
-    (repo / "src/a.ts").write_text("export const a = 1;\n")
-    (repo / "src/b.ts").write_text("import { a } from './a';\nexport const b = a + 1;\n")
+    (repo / "src/a.js").write_text("export const a = 1;\n")
+    (repo / "src/b.js").write_text("import { a } from './a.js';\nexport const b = a + 1;\n")
     (repo / "package.json").write_text('{\n "name": "fixture",\n "dependencies": {"left-pad": "1.0.0"}\n}\n')
     (repo / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\npackages:\n  left-pad@1.0.0: {}\n")
+    (repo / ".arcana").mkdir()
+    (repo / ".arcana/verify.json").write_text(json.dumps({"schema": "VerifyProfile/v1",
+        "deployables": {".": {"full_test":
+            [sys.executable, "-m", "unittest", "discover", "-s", "test", "-v"]}}}))
+    (repo / "test").mkdir()
+    (repo / "test/test_source.py").write_text(
+        "import pathlib, unittest\n"
+        "class Source(unittest.TestCase):\n"
+        " def test_export(self): self.assertEqual(pathlib.Path('src/a.js').read_text(), 'export const a = 1;\\n')\n"
+        " def test_consumer(self): self.assertIn('export const b = a + 1;', pathlib.Path('src/b.js').read_text())\n")
+
     g("add", "-A"); g("commit", "-q", "-m", "base")
     base = g("rev-parse", "HEAD").strip()
 
@@ -1200,6 +2495,11 @@ def selftest_gate2a() -> tuple[list[dict], int]:
 
     DEPENDABOT = {"login": "dependabot[bot]", "id": 49699333, "type": "Bot"}
     HUMAN = {"login": "mallory", "id": 12345, "type": "User"}
+    readiness_body = "A bounded fixture measurement.\n\n```json\n" + json.dumps({
+        "schema": "ReadinessReceipt/v1",
+        "captured_at_utc": "2026-09-05T00:00:00Z",
+        "producer": "ci_gate.selftest_gate2a",
+    }, indent=2) + "\n```\n"
 
     def event(user: dict, head_ref: str) -> str:
         p = root / f"event-{user['login']}-{abs(hash(head_ref)) % 10 ** 6}.json"
@@ -1224,30 +2524,70 @@ def selftest_gate2a() -> tuple[list[dict], int]:
         doc["_rc"] = rc
         return doc
 
+    # Expired DEC-AUP-0062 makes an absent ReadinessReceipt/v1 not_measured again.
+    # Keep that behavior explicit while giving the positive author-control the valid
+    # readiness evidence it now needs; this does not synthesize a ChangeAdmissionReceipt.
+    missing_readiness: dict = {"checks": [], "reason_codes": []}
+    check_readiness_receipts(missing_readiness, "", repo, [], base,
+                             repo / ".github/graph-admission",
+                             now_utc=datetime(2026, 10, 12, tzinfo=timezone.utc))
+    missing_rows = [c for c in missing_readiness["checks"] if c.get("code") == "READINESS_RECEIPTS_NONE"]
+    check("(a0) an absent ReadinessReceipt/v1 after the DEC-AUP-0062 revisit remains not_measured",
+          missing_readiness.get("readiness_receipts", {}).get("count") == 0
+          and len(missing_rows) == 1 and missing_rows[0].get("verdict") == "not_measured",
+          rows=missing_rows)
+
     # ---------------------------------------------------------------- control (a)
     lock_head = commit({"pnpm-lock.yaml": "lockfileVersion: '9.0'\npackages:\n  left-pad@1.1.0: {}\n",
                         "package.json": '{\n "name": "fixture",\n "dependencies": {"left-pad": "1.1.0"}\n}\n'},
                        "build(deps): bump left-pad from 1.0.0 to 1.1.0", "mut-a")
     control = run(lock_head, event_file=event(DEPENDABOT, "dependabot/npm_and_yarn/left-pad-1.1.0"),
-                  conclusion="success")
+                  conclusion="success", body=readiness_body)
     au = control.get("automated_author") or {}
+    readiness_checks = [c for c in control.get("checks", [])
+                        if c.get("code") in {"READINESS_RECEIPT_CONFORMANT", "READINESS_RECEIPTS_NONE"}]
+    readiness_ok = (control.get("readiness_receipts", {}).get("count") == 1
+                    and any(c.get("code") == "READINESS_RECEIPT_CONFORMANT"
+                            and c.get("verdict") == "verified" for c in readiness_checks)
+                    and not any(c.get("code") == "READINESS_RECEIPTS_NONE" for c in readiness_checks))
     check("(a) dependabot pull request touching only dependency manifests → green with the typed exemption",
           control["_rc"] == 0 and control["verdict"] == "admitted_with_exemptions"
           and au.get("eligible") is True and au.get("exemption_code") == "AUTOMATED_DEPENDENCY_UPDATE"
-          and "AUTOMATED_AUTHOR_RECEIPT_ISSUED" in control["reason_codes"],
+          and "AUTOMATED_AUTHOR_RECEIPT_ISSUED" in control["reason_codes"] and readiness_ok,
           verdict=control["verdict"], rc=control["_rc"], codes=control["reason_codes"],
-          exemption=au.get("exemption_code"))
+          exemption=au.get("exemption_code"), readiness=readiness_checks)
+    # selftest() runs first and removes its temporary caller tree before this battery starts.
+    # The validator must be loaded from THIS fixture bundle, rather than a module cached from that
+    # removed tree, and its schema must resolve beside this bundle's tools/graph directory.
+    gate2a_bundle = repo / ".github/graph-admission"
+    gate2a_validator = importlib.util.spec_from_file_location(
+        "_aup_gate2a_readiness_check", gate2a_bundle / "tools/graph/readiness_check.py")
+    gate2a_schema_ok = False
+    if gate2a_validator is not None and gate2a_validator.loader is not None:
+        gate2a_module = importlib.util.module_from_spec(gate2a_validator)
+        gate2a_validator.loader.exec_module(gate2a_module)
+        gate2a_schema_ok = (Path(gate2a_module.__file__).resolve()
+                            == (gate2a_bundle / "tools/graph/readiness_check.py").resolve()
+                            and gate2a_module.SCHEMA_PATH.resolve()
+                            == (gate2a_bundle / "contracts/readiness-receipt-v1.schema.json").resolve()
+                            and isinstance(gate2a_module.load_schema(), dict))
+    check("(a1) gate2a loads its readiness validator and schema from its own bundle after the prior "
+          "selftest tree is removed",
+          gate2a_schema_ok and readiness_ok,
+          validator=str(gate2a_bundle / "tools/graph/readiness_check.py"),
+          schema=str(gate2a_bundle / "contracts/readiness-receipt-v1.schema.json"),
+          readiness=readiness_checks)
     check("(a2) the control's receipt states impact = whole_repository and is verified by the repository's "
           "own test job — the exemption never covers the repository entity",
-          au.get("eligible") is True and _receipt_shape_ok(root, au.get("receipt_path")),
-          receipt=au.get("receipt_path"))
+          au.get("eligible") is True and _receipt_shape_ok(root, au.get("receipt_path")) and readiness_ok,
+          receipt=au.get("receipt_path"), readiness=readiness_checks)
     check("(a3) the gate REBUILT the repository graph at the receipt's source commit and it matched",
           any(c["code"] == "GRAPH_REBUILT_MATCHES" for c in control["checks"]),
           codes=[c["code"] for c in control["checks"]])
 
     # ---------------------------------------------------------------- mutants
     src_head = commit({"pnpm-lock.yaml": "lockfileVersion: '9.0'\npackages:\n  left-pad@1.2.0: {}\n",
-                       "src/a.ts": "export const a = 99;\n"},
+                       "src/a.js": "export const a = 99;\n"},
                       "build(deps): bump left-pad, and quietly edit the source", "mut-b")
     mut_b = run(src_head, event_file=event(DEPENDABOT, "dependabot/npm_and_yarn/left-pad-1.2.0"),
                 conclusion="success")
@@ -1308,15 +2648,16 @@ def _receipt_shape_ok(root: Path, receipt_path: str | None) -> bool:
     gf = r["impact_set"]["global_fallback"]
     verdict_of = {v["entity"]: v["verdict"] for v in r["verdicts"]}
     exempt = {x["entity"] for x in r["exemptions"]}
-    repo_ent = next((e for e in verdict_of if e.startswith("repository:")), None)
+    repo_ent = next((e for e in verdict_of if e.startswith("deployable_unit:")), None)
     auth_ent = next((e for e in verdict_of if e.startswith("receipt_authorship:")), None)
     return bool(
-        gf.get("triggered") is True and gf.get("scope") == "whole_repository" and gf.get("total_nodes")
-        and r["impact_set"]["scope"] == "whole_repository"
+        gf.get("triggered") is True and gf.get("files")
         and repo_ent and verdict_of[repo_ent] == "verified" and repo_ent not in exempt
         and auth_ent and verdict_of[auth_ent] == "not_measured" and auth_ent in exempt
         and r["exemptions"][0]["owner"] and r["exemptions"][0]["expires_at_utc"]
-        and r["verifiers"][0]["kind"] == "other"
+        and any(v.get("scope") == "global_fallback_full_suite" and repo_ent in v.get("entities", [])
+                and v.get("exit_code") == 0 for v in r["verifiers"])
+        and r.get("head_graph") and r.get("revision_selection") and r.get("verify", {}).get("required_by_entity")
         and r["admission"]["verdict"] == "admitted_with_exemptions"
         and r["authored_by"]["path"] == "automated_author"
     )
@@ -1497,6 +2838,19 @@ def selftest_key_rotation() -> tuple[list[dict], int]:
                                 "-f", str(kd / name)], capture_output=True, text=True)
             keys.append(str(kd / name))
         prog_root, ref = fixture_program_repo(root / "fixture-program-real")
+
+        def commit_primary_key(key: str) -> str:
+            # This public key is itself bundled. Prepare genuine fixture source
+            # before capturing the ref, just as the production drift guard requires.
+            shutil.copyfile(Path(key + ".pub"), prog_root / PROGRAM_PUBKEY_PATH)
+            env = {**os.environ, **FIXTURE_GIT_ENV}
+            for args in (["add", "--", PROGRAM_PUBKEY_PATH],
+                         ["commit", "-q", "-m", "fixture primary public key"]):
+                subprocess.run(["git", "-C", str(prog_root), *args], env=env,
+                               capture_output=True, text=True, check=True)
+            return git(prog_root, "rev-parse", "HEAD").strip()
+
+        ref = commit_primary_key(keys[0])
         out = root / "real-dual"
         rc = cmd_bundle(argparse.Namespace(out=str(out), program_ref=ref, program_root=str(prog_root),
                                            workflow_out=None, sign_key=keys))
@@ -1507,6 +2861,7 @@ def selftest_key_rotation() -> tuple[list[dict], int]:
               rc == 0 and not problems and rec.get("key_fingerprints") == fps
               and json.loads((out / "BUNDLE.json").read_text()).get("signing_keys") == fps,
               rc=rc, problems=problems)
+        ref = commit_primary_key(keys[1])
         rc2 = cmd_bundle(argparse.Namespace(out=str(out), program_ref=ref, program_root=str(prog_root),
                                             workflow_out=None, sign_key=keys[1:]))
         _, problems2, rec2 = verify_bundle(out, ref, fps[1])
@@ -1655,6 +3010,9 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         (repo / "src").mkdir()
         (repo / "src/a.ts").write_text("export const a = 1;\n")
         (repo / "src/b.ts").write_text("import { a } from './a';\nexport const b = a + 1;\n")
+        (repo / "tsconfig.json").write_text(json.dumps({"compilerOptions": {
+            "strict": True, "noEmit": True}, "include": ["src/**/*.ts"]}))
+
         if with_bundle:
             (repo / ".github").mkdir(exist_ok=True)
             shutil.copytree(pristine, repo / ".github/graph-admission")
@@ -1664,7 +3022,7 @@ def selftest_gate4b() -> tuple[list[dict], int]:
             # change it is meant to constrain.
             (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
             (repo / ".github/workflows/ci.yml").write_text(
-                "jobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
+                "on: [push]\njobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
                 "    with:\n      program_ref: '" + "0" * 40 + "'\n"
                 "      signing_key_fingerprint: 'SHA256:fixture'\n")
             if extra_under_bundle:
@@ -1714,7 +3072,7 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         return rc, (json.loads(out.read_text()) if out.exists() else receipt)
 
     def run_ci(repo: Path, base: str, head: str, receipt: dict | None, *, pin: str | None = BASE_FP,
-               program_ref: str = "0" * 40, tag: str = "run") -> dict:
+               program_ref: str = "0" * 40, tag: str = "run", base_branch: str | None = None) -> dict:
         d = root / f"ci-{tag}-{head[:8]}"
         d.mkdir(parents=True, exist_ok=True)
         body = "" if receipt is None else "```json\n" + json.dumps(receipt, indent=1, sort_keys=True) + "\n```\n"
@@ -1724,7 +3082,8 @@ def selftest_gate4b() -> tuple[list[dict], int]:
             repo=str(repo), repo_name="Arcanada-one/fixture", tools=str(repo / ".github/graph-admission"),
             program_ref=program_ref, base=base, head=head, pr_body_file=str(d / "body.txt"),
             receipt_glob=["receipts/graph/*.json"], enforcement="off", build_graph=False,
-            workdir=str(d / "work"), out=str(out), summary=None, signing_key_fingerprint=pin))
+            workdir=str(d / "work"), out=str(out), summary=None, signing_key_fingerprint=pin,
+            base_branch=base_branch))
         doc = json.loads(out.read_text())
         doc["_rc"] = rc
         return doc
@@ -1739,7 +3098,10 @@ def selftest_gate4b() -> tuple[list[dict], int]:
     # built at base, where the file does not exist, so it has no node to name.
     files_a = [{"path": p, "status": "A", "kind": "code", "node_id": None}
                for p in ("src/new1.ts", "src/new2.ts")]
-    rc_ex, exempted = issue(repo, base, head_a, draft_receipt("Arcanada-one/fixture", base, head_a, files_a, [], True))
+    actual = admit_change.measured_change_receipt(repo, base, head_a, root / "measured-a")
+    if actual is None:
+        raise RuntimeError("the all-new fixture producer returned no measured receipt")
+    rc_ex, exempted = issue(repo, base, head_a, actual)
     check("(a) CONTROL: an all-new-files change is issued NO_IMPACT_BY_CONSTRUCTION by the gate "
           "(A1 all-added, A2 no pre-existing node references them at head, A3 no global fallback)",
           rc_ex == 0 and exempted["admission"]["verdict"] == "admitted_with_exemptions"
@@ -1818,18 +3180,11 @@ def selftest_gate4b() -> tuple[list[dict], int]:
         return repo_r, gr, base_r, gr("rev-parse", "HEAD").strip()
 
     def self_update_receipt(repo_r: Path, base_r: str, head_r: str) -> dict:
-        changed = [l.split("\t") for l in admit_change.git(repo_r, "diff", "--name-status", base_r, head_r).splitlines() if l]
-        files = [{"path": c[-1], "status": c[0][0], "kind": "config", "node_id": None} for c in changed]
-        tools_changed = [f["path"] for f in files if f["path"].endswith(".py")][:3]
-        verdicts = [{"entity": f"code_unit:{p}", "verdict": "not_measured",
-                     "reason": "vendored foreign code: this file is a byte-copy of the program repository at "
-                               "the bundle's program_ref, and it is the code that would do the measuring"}
-                    for p in tools_changed]
-        core = [{"entity": v["entity"], "depth": 1,
-                 "path": [{"from": v["entity"], "to": f"code_unit:{tools_changed[0]}",
-                           "edge_type": "imports", "provenance": "deterministic"}]}
-                for v in verdicts]
-        return draft_receipt("Arcanada-one/fixture", base_r, head_r, files, verdicts, False, core)
+        receipt = admit_change.measured_change_receipt(repo_r, base_r, head_r,
+                                                      root / f"measured-{head_r[:8]}")
+        if receipt is None:
+            raise RuntimeError("self-update fixture producer returned no measured receipt")
+        return receipt
 
     repo_c, gc, base_c, head_c = refresh("C-control")
     rc_su, su_receipt = issue(repo_c, base_c, head_c, self_update_receipt(repo_c, base_c, head_c))
@@ -1845,6 +3200,43 @@ def selftest_gate4b() -> tuple[list[dict], int]:
           and "BUNDLE_MODIFIED_BY_PR" not in ci_c["reason_codes"]
           and any(c["code"] == "SELF_UPDATE_CANDIDATE" for c in ci_c["checks"]),
           rc=ci_c["_rc"], verdict=ci_c["verdict"], codes=ci_c["reason_codes"])
+
+    # A hosted checkout fetches named remote refs but need not create origin/HEAD.
+    # Build the real Update-branch shape, issue through the maintained producer,
+    # then remove only the metadata the old wrapper mistakenly depended on.
+    gc("checkout", "-q", "-b", "refresh-hosted")
+    gc("checkout", "-q", "main")
+    (repo_c / "main-only.md").write_text("ordinary change brought in from the PR target\n")
+    gc("add", "-A"); gc("commit", "-q", "-m", "target moves")
+    gc("update-ref", "refs/remotes/origin/release", gc("rev-parse", "HEAD").strip())
+    gc("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release")
+    gc("checkout", "-q", "refresh-hosted")
+    gc("merge", "--no-edit", "--no-ff", "-q", "main")
+    hosted_head = gc("rev-parse", "HEAD").strip()
+    hosted_rc, hosted_receipt = issue(repo_c, base_c, hosted_head,
+                                     self_update_receipt(repo_c, base_c, hosted_head))
+    gc("symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+    old_hosted = run_ci(repo_c, base_c, hosted_head, hosted_receipt,
+                        program_ref="1" * 40, tag="hosted-missing")
+    check("(hosted) CONTROL: without origin/HEAD or an explicit PR target, B1M remains refused",
+          hosted_rc == 0 and old_hosted["_rc"] != 0
+          and {"BUNDLE_MODIFIED_BY_PR", "STRUCTURAL_EXEMPTION_UNSOUND"}
+          & set(old_hosted["reason_codes"]),
+          rc=old_hosted["_rc"], codes=old_hosted["reason_codes"])
+    named_hosted = run_ci(repo_c, base_c, hosted_head, hosted_receipt,
+                          program_ref="1" * 40, tag="hosted-named",
+                          base_branch="refs/remotes/origin/release")
+    check("(hosted) CONTROL: forwarding the fetched named PR target admits the genuine refresh",
+          named_hosted["_rc"] == 0 and named_hosted["verdict"] == "admitted_with_exemptions",
+          rc=named_hosted["_rc"], codes=named_hosted["reason_codes"])
+    missing_hosted = run_ci(repo_c, base_c, hosted_head, hosted_receipt,
+                            program_ref="1" * 40, tag="hosted-unknown",
+                            base_branch="refs/remotes/origin/unknown")
+    check("(hosted) MUTANT: an unknown explicit PR target stays refused; no guessed branch fallback",
+          missing_hosted["_rc"] != 0
+          and {"BUNDLE_MODIFIED_BY_PR", "STRUCTURAL_EXEMPTION_UNSOUND"}
+          & set(missing_hosted["reason_codes"]),
+          rc=missing_hosted["_rc"], codes=missing_hosted["reason_codes"])
 
     # ---- mutant (c): the refreshed bundle's own selftest FAILS
     def break_selftest(b: Path):
@@ -2058,13 +3450,18 @@ def selftest_gate5b() -> tuple[list[dict], int]:
         (repo / "src").mkdir()
         (repo / "src/a.ts").write_text("export const a = 1;\n")
         (repo / "src/b.ts").write_text("import { a } from './a';\nexport const b = a + 1;\n")
+        (repo / "tsconfig.json").write_text(json.dumps({"compilerOptions": {
+            "strict": True, "noEmit": True}, "include": ["src/**/*.ts"]}))
+
         (repo / "tools").mkdir()
         (repo / "tools/verify_derived.py").write_text(VERIFY_DERIVED_SRC)
         (repo / ".github").mkdir(exist_ok=True)
         shutil.copytree(pristine, repo / ".github/graph-admission")
         (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
         (repo / ".github/workflows/ci.yml").write_text(
-            "jobs:\n  graph-admission:\n    needs: lint-and-test\n"
+            "on: [push]\njobs:\n  lint-and-test:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: python3 tools/verify_derived.py\n"
+            "  graph-admission:\n    needs: lint-and-test\n"
             "    uses: ./.github/workflows/graph-admission.yml\n"
             "    with:\n      program_ref: '" + "0" * 40 + "'\n"
             "      verifier_job: 'lint-and-test'\n"
@@ -2104,40 +3501,11 @@ def selftest_gate5b() -> tuple[list[dict], int]:
         return repo, g, base, g("rev-parse", "HEAD").strip()
 
     def receipt_for(repo: Path, base: str, head: str) -> dict:
-        changed = [l.split("\t") for l in admit_change.git(repo, "diff", "--name-status", base, head).splitlines() if l]
-        files = [{"path": c[-1], "status": c[0][0], "kind": "config", "node_id": None} for c in changed]
-        tools_changed = [f["path"] for f in files if f["path"].endswith(".py")][:2]
-        verdicts = [{"entity": f"code_unit:{p}", "verdict": "not_measured", "reason": "vendored foreign code"}
-                    for p in tools_changed]
-        # A receipt whose impact set is empty must EXPLAIN it (schema_check EMPTY_IMPACT_WITHOUT_EXPLANATION)
-        # — the rule that «an empty impact set is a prediction, never an approval». The fixture obeys it the
-        # same way a real receipt does, rather than being handed a core it did not measure.
-        core = [{"entity": v["entity"], "depth": 1,
-                 "path": [{"from": v["entity"], "to": f"code_unit:{tools_changed[0]}",
-                           "edge_type": "imports", "provenance": "deterministic"}]}
-                for v in verdicts]
-        empty_expl = {} if core else {"empty_impact_explanation": {
-            "reason": "every changed path is either a new file or a declared derived artefact whose bytes are a "
-                      "function of the rest of the tree; the graph in --diff mode is built at base, where the "
-                      "new files do not exist, so no seed and no dependent can exist",
-            "graph_metadata": {"extractors": ["imports"], "language_coverage": ["typescript"],
-                               "changed_node_known_to_graph": False, "reverse_edges_of_changed_nodes": 0}}}
-        return {**empty_expl, "schema": "ChangeAdmissionReceipt/v1", "receipt_id": f"car-gate5b-{head[:8]}",
-                "captured_at_utc": "2026-09-06T12:00:00Z",
-                "producer": {"tool": "tools/graph/verify.py", "version": "1.0.0"},
-                "decision_ref": "DEC-AUP-0008", "repo": {"name": "Arcanada-one/fixture"},
-                "graph": {"source_commit": base, "graph_digest": "sha256:" + "a" * 64,
-                          "builder_version": "1.0.0", "built_at_utc": "2026-09-06T11:00:00Z"},
-                "tree": {"commit": head, "dirty": False},
-                "staleness": {"method": "graph.source_commit == change_set.base; clean tree",
-                              "verdict": "fresh", "checked_at_utc": "2026-09-06T12:00:00Z"},
-                "change_set": {"mode": "diff", "base": base, "head": head, "files": files},
-                "impact_set": {"method": "reverse traversal (dependents; seeds excluded)", "max_depth": 3,
-                               "deterministic_core": core, "inferred_tail": [],
-                               "global_fallback": {"triggered": False}},
-                "verifiers": [], "verdicts": verdicts, "exemptions": [],
-                "admission": {"verdict": "paused_safe", "rule": "admitted requires every verdict = verified"},
-                "work_item": {"system": "muneral", "id": "AUP-GRAPH-006"}}
+        receipt = admit_change.measured_change_receipt(repo, base, head,
+                                                      root / f"measured-{head[:8]}")
+        if receipt is None:
+            raise RuntimeError("derived fixture producer returned no measured receipt")
+        return receipt
 
     def issue(repo: Path, base: str, head: str, *, job="lint-and-test", concl="success") -> tuple[int, dict]:
         d = root / f"issue-{repo.parent.name}-{head[:8]}"
@@ -2750,7 +4118,7 @@ def selftest_b8() -> tuple[list[dict], int]:
         (repo / ".github/workflows").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(wf_src, repo / WF_REL)
         (repo / ".github/workflows/ci.yml").write_text(
-            "jobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
+            "on: [push]\njobs:\n  graph-admission:\n    uses: ./.github/workflows/graph-admission.yml\n"
             "    with:\n      program_ref: '" + "0" * 40 + "'\n"
             "      signing_key_fingerprint: 'SHA256:fixture'\n")
         if extra_under_bundle:
@@ -3251,7 +4619,7 @@ def selftest_gate2b() -> tuple[list[dict], int]:
         ok_stale, _, _ = sshsig.verify_detached(msg2.read_bytes(), (d / "m.sig").read_text(),
                                                 (d / "k.pub").read_text(), SIGNING_NAMESPACE)
         check("RE-SIGN TRAP: `ssh-keygen -Y sign` over an existing .sig exits 0 and keeps the STALE signature, "
-              "which then does NOT verify over the new bytes — the defect gate3a fixes", 
+              "which then does NOT verify over the new bytes — the defect gate3a fixes",
               r_noclean.returncode == 0 and kept_stale and not ok_stale,
               exit_code=r_noclean.returncode, kept_stale=kept_stale, stale_verifies=ok_stale)
         # (b) the fix: remove the target first, exactly as cmd_bundle now does
@@ -3278,6 +4646,15 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=False)
 
+    dependency_setup = sub.add_parser(
+        "candidate-dependency-setup-plan",
+        help="validate the fixed caller dependency setup subject and return its non-executing plan")
+    dependency_setup.add_argument("--repo", required=True)
+    dependency_setup.add_argument("--repository", required=True)
+    dependency_setup.add_argument("--base", required=True)
+    dependency_setup.add_argument("--head", required=True)
+    dependency_setup.set_defaults(fn=cmd_candidate_dependency_setup_plan)
+
     b = sub.add_parser("bundle", help="vendor the gate tools of a pinned program SHA into a caller repository")
     b.add_argument("--out", required=True)
     b.add_argument("--program-ref")
@@ -3296,8 +4673,39 @@ def main(argv=None) -> int:
     r.add_argument("--program-ref")
     r.add_argument("--base", required=True)
     r.add_argument("--head", required=True)
+    r.add_argument("--base-branch", help="named PR target ref for the maintained B1M merge-base check; "
+                                        "missing or unknown refs remain not_measured")
     r.add_argument("--pr-body-file")
     r.add_argument("--receipt-glob", action="append")
+    r.add_argument("--stage-evidence", help="explicit StageEvidence/v1 file for a finished-stage route")
+    r.add_argument("--stage-evidence-root", help="trusted workspace root containing the explicit stage result")
+    r.add_argument("--stage-evidence-required", action="store_true",
+                   help="refuse rather than discover unrelated receipts when the stage input is absent")
+    r.add_argument("--stage-userpath-result", help="captured ProgramStageUserpath/v1 result from this hosted run")
+    r.add_argument("--stage-userpath-root", help="run-temporary root containing the result and all referenced outputs")
+    r.add_argument("--stage-userpath-required", action="store_true",
+                   help="refuse rather than omit the Program-stage userpath execution")
+    r.add_argument("--stage-userpath-exit", type=int,
+                   help="outer process exit captured by the invoking hosted workflow")
+    r.add_argument("--candidate-receipt", help="exact current-range CAR produced by the hosted candidate workflow")
+    r.add_argument("--candidate-receipt-exit", type=int,
+                   help="captured exit from the hosted current-candidate CAR producer")
+    r.add_argument("--candidate-receipt-required", action="store_true",
+                   help="refuse without the exact hosted current-candidate CAR; never discover a historical receipt")
+    r.add_argument("--candidate-source-outcome-required", action="store_true",
+                   help="require ProgramStageUserpath to bind same-run current-source CLI captures to the selected CAR")
+    r.add_argument("--root-typecheck-ci-root", help="fresh external current-candidate GitHubTypecheckEvidence/v1 root")
+    r.add_argument("--current-evaluator-run-id", type=int)
+    r.add_argument("--current-evaluator-attempt", type=int)
+    r.add_argument("--current-evaluator-check-run-id", type=int)
+    r.add_argument("--current-evaluator-job-key")
+    r.add_argument("--current-evaluator-repository")
+    r.add_argument("--current-evaluator-caller-workflow-ref")
+    r.add_argument("--current-evaluator-caller-workflow-sha")
+    r.add_argument("--current-evaluator-workflow-repository")
+    r.add_argument("--current-evaluator-workflow-file-path")
+    r.add_argument("--current-evaluator-workflow-ref")
+    r.add_argument("--current-evaluator-workflow-sha")
     r.add_argument("--enforcement", default="off", choices=["off", "ledger", "muneral"])
     r.add_argument("--build-graph", action="store_true")
     r.add_argument("--workdir", default=os.environ.get("RUNNER_TEMP", "/tmp") + "/graph-admission")
@@ -3315,6 +4723,7 @@ def main(argv=None) -> int:
                                                      "a whitespace/comma-separated SET during a key rotation.")
     r.set_defaults(fn=cmd_run)
     a = ap.parse_args(argv)
+    a._github_token = os.environ.pop("GH_TOKEN", None)
     if a.selftest:
         return selftest()
     if not getattr(a, "fn", None):
