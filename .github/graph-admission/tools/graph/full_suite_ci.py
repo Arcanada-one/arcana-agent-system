@@ -5,6 +5,7 @@ The profile's explicit full_test remains the declaration; evidence never declare
 """
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -19,7 +20,16 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
-import canary_evidence
+# The hosted root-typecheck collector runs this file with `python3 -I`; isolated
+# mode excludes the script directory from sys.path. Load the sibling from the
+# already authenticated graph bundle by exact path, without restoring cwd or
+# ambient Python import paths.
+_canary_path = Path(__file__).resolve().with_name("canary_evidence.py")
+_canary_spec = importlib.util.spec_from_file_location("_graph_canary_evidence", _canary_path)
+if _canary_spec is None or _canary_spec.loader is None:
+    raise RuntimeError("canary_evidence module cannot be loaded from the graph bundle")
+canary_evidence = importlib.util.module_from_spec(_canary_spec)
+_canary_spec.loader.exec_module(canary_evidence)
 
 SCHEMA = "GitHubFullSuiteEvidence/v1"
 MAX_BYTES = 16 * 1024 * 1024

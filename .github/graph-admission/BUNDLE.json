@@ -1,5 +1,5 @@
 {
- "bundle_digest": "sha256:273125776126685f8bb82b6b01adfb8bf560627effd7bb321db40f011450d6bd",
+ "bundle_digest": "sha256:9f9f87051b736fcd9c4f60257706465b4309d81e0b5414a9e78e5f999c5f74c2",
  "files": [
   {
    "blob_oid": "0db7ddebbecb2b1d1cd2d5632fe7c520acd91601",
@@ -20,9 +20,9 @@
    "sha256": "sha256:50dab9d0c3d03ca52e3163f7c56edb61acab214adc548a5c533cdf248e9ae17e"
   },
   {
-   "blob_oid": "e045f49fa12dca67ef6528e4b6358b042abe1dd8",
+   "blob_oid": "4207cf8eec28fdfe6cf5ca6cb41984df99dbfa19",
    "path": "tools/graph/full_suite_ci.py",
-   "sha256": "sha256:278fe1cac7659c4901c4652ba01a604837c850a3f08a7d9ad08f1af991d01dec"
+   "sha256": "sha256:9a4eada85a289358faac962f696e8a0cefdd1575758ed4a0e7dc6ccf4f0519c8"
   },
   {
    "blob_oid": "aa9a890df8e76a608dbf60cf6434b869c0f46ded",
@@ -226,7 +226,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "6d3c4c8e8e12d900e7822de47363a46f5a8f61ce",
+ "program_ref": "85e57fe547ec0c69ee3baf1bf1068824cb21f297",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",
