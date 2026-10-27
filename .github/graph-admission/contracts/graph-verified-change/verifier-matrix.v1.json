@@ -109,6 +109,20 @@
    "selectable": [],
    "target_of_verification": "the document (edge from)"
   },
+  "declares_source_input": {
+   "mandatory": [
+    "source_input_contract"
+   ],
+   "selectable": [],
+   "target_of_verification": "the source-input contract, consumer, and explicitly pinned source/control files"
+  },
+  "reads_source_input": {
+   "mandatory": [
+    "source_input_contract"
+   ],
+   "selectable": [],
+   "target_of_verification": "the consumer's literal source read, exact input bytes, and declared positive/negative controls"
+  },
   "names": {
    "calibration": {
     "reason": "a bare textual mention carries no code mutation site at all: there is nothing at the work-item end for a mutant to break, so the class is not reachable by the mutation calibration and never will be",
@@ -249,8 +263,11 @@
     "targeted_test"
    ],
    "target_of_verification": "the spec / receipt (edge from)"
-  }
- },
+  },
+  "activates": {"mandatory":["systemd_unit_semantics"],"selectable":[],"target_of_verification":"systemd unit declaration"},
+  "orders_after": {"mandatory":["systemd_unit_semantics"],"selectable":[],"target_of_verification":"systemd unit declaration"},
+  "references": {"mandatory":["systemd_unit_semantics"],"selectable":[],"target_of_verification":"systemd unit declaration"}
+},
  "epic": "AUP-E29",
  "fitness_rules": {
   "FR-01": {
@@ -346,8 +363,11 @@
    "mandatory": [],
    "not_measured_reason": "no local verifier for a work item; GRAPH-006 links the admission receipt to the work item in Muneral",
    "selectable": []
-  }
- },
+  },
+  "systemd_unit": {"mandatory":["systemd_unit_semantics"],"selectable":[]},
+  "source_file": {"mandatory":["source_file_integrity"],"selectable":[]}
+},
+ "global_fallback_rule": "When global_fallback.triggered, preserve normal traversal obligations and additionally require full_fallback_test for every fallback unit; targeted spec evidence cannot discharge the full-suite obligation (verify producer 1.3.0).",
  "portion_id": "AUP-GRAPH-005:verify0",
  "principles": [
   "P1 every affected entity (deterministic core, inferred tail, changed nodes) receives exactly one tri-valued verdict verified | failed | not_measured; the runner may not drop an entity without a verdict (card failure condition)",
@@ -362,6 +382,16 @@
  "selection_rule": "required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (impact.py ImpactQuery/v1 path) ∪ node_types[type(entity)].mandatory; for a changed node (seed) required = node_types[type].mandatory. Selected selectable verifiers (--select) are added when applicable. verdict(entity) = failed if any verifier reports failed for it; not_measured if any required verifier is missing / disabled / not attributable; verified only when every required verifier reports verified for it (and, for inferred boundary entities, a canary lists it).",
  "status": "normative-draft — ratification by blind agent review (DEC-AUP-0010 reviewer_incarnation), not by a human gate",
  "verifiers": {
+  "full_fallback_test": {
+   "applies_to_nodes": [
+    "deployable_unit",
+    "code_unit"
+   ],
+   "kind": "targeted_test",
+   "tool": "tools/graph/verify.py (explicit profile full_test command; optional committed GitHubFullSuiteEvidence/v1 authenticated consumption)",
+   "verdict_rule": "mandatory for global fallback units only; only explicitly declared deployables.<unit>.full_test may run; scripts.test is never inferred; optional full_test_timeout_seconds is an integer 1..7200 (default 900), invalid or expired budgets are not_measured; verified requires exit zero and measured non-skipped tests; absent declaration/runner, empty or wholly skipped suite is not_measured; supplied committed CI evidence requires authentic exact repository/run/job/attempt/workflow command, complete successful step, original log byte parity and actual checkout tree equality, unchanged source under existing record-delta rules; refusal never triggers a duplicate suite",
+   "what": "complete fallback suite in addition to normal affected entity obligations; receipt row scope global_fallback_full_suite distinguishes this from selectable targeted tests"
+  },
   "canary": {
    "applies_to_nodes": [
     "code_unit",
@@ -445,6 +475,15 @@
    "verdict_rule": "verified when the model has no breaking change and prisma validate passes (or the CLI is absent and the schema-lite parse is clean: then not_measured for the validate half is recorded in the summary and the entity stays not_measured); failed when a breaking change lands on the model and a consumer (maps_model from a code unit) references the removed/changed field, or prisma validate fails; not_measured when breaking but consumer usage is not narrowable",
    "what": "Prisma schema-lite (models, fields, types, optionality, lists, enums) at base and head; breaking taxonomy MODEL_REMOVED / FIELD_REMOVED / FIELD_TYPE_CHANGED / FIELD_MADE_REQUIRED / NEW_REQUIRED_FIELD_WITHOUT_DEFAULT / ENUM_VALUE_REMOVED / RELATION_CHANGED; prisma validate of the head schema"
   },
+  "source_input_contract": {
+   "applies_to_nodes": [
+    "code_unit"
+   ],
+   "kind": "other",
+   "tool": "tools/graph/verify.py (built in, tools/graph/source_input_contract.py parser)",
+   "verdict_rule": "verified only when the explicit declaration is strict, every declared source/consumer/control byte pin matches, each pinned Python interpreter matches, and every exact positive/negative command exits with its declared result and output oracle; malformed, missing, unbound, unavailable, or timed-out inputs remain failed or not_measured",
+   "what": "integrity and behavior of explicitly declared source inputs and their named consumers; declaration alone grants no trust or deployment authority; no extension-based coverage inference"
+  },
   "targeted_test": {
    "applies_to_nodes": [
     "code_unit"
@@ -466,14 +505,72 @@
    "tool": "tsc --noEmit --incremental false -p <tsconfig> (per deployable; test tsconfig when a spec is affected; a config declared in VerifyProfile/v1 deployables.<dep>.tsconfig_postbuild is compiled inside a fresh git-archive tree of the measured revision after the declared build ran there — contracts/graph-verified-change/postbuild-type-check.v1.md, A2-444)",
    "verdict_rule": "verified when the project containing the entity compiles with 0 errors; failed when an error is reported in the entity's file; not_measured when the project fails only in other files (error not attributable) or tsc is unavailable; for a post-build config, not_measured with the reason when the build was not performed, wrote no declared output, or an output file was not produced by that build (never a build output found in the worktree)",
    "what": "compilation of the deployable that contains the affected caller / importer / controller / consumer at the head tree"
-  }
- },
+  },
+  "shell_syntax": {
+   "kind": "shell_syntax",
+   "applies_to_nodes": [
+    "code_unit"
+   ],
+   "tool": "tools/graph/shell_source.py",
+   "verdict_rule": "Exact hash-bound Bash syntax; Bats test declarations translated without execution. Missing/ambiguous helpers, dynamic alias/eval/load and unmeasured registration remain not_measured; no behavior/runtime proof."
+  },
+  "shell_behavior": {
+   "kind": "shell_behavior",
+   "applies_to_nodes": [
+    "code_unit"
+   ],
+   "tool": "tools/graph/verify.py --canary",
+   "verdict_rule": "Exact committed native CanaryResult/v2 process fixture row for this entity, independently source/plan bound; no local caller execution. Bats additionally requires complete nonempty unfiltered non-skipped literal test inventory in retained TAP. Unresolved dynamic closure stays not_measured."
+  },
+  "systemd_unit_semantics": {"applies_to_nodes":["systemd_unit"],"kind":"systemd_unit_semantics","tool":"tools/graph/verify.py (built in)","verdict_rule":"verified only for byte-bound owner-pinned declarations that satisfy every mapped policy predicate and have no unresolved controlling reference; failed for exact identity or semantic mismatch; not_measured for unavailable source binding or unresolved external/runtime references","what":"bounded systemd service/timer source declarations, same-tree references, owner-pinned policy and durable unresolved-reference evidence"},
+  "source_file_integrity": {"applies_to_nodes":["source_file"],"kind":"source_file_integrity","tool":"tools/graph/verify.py (built in)","verdict_rule":"verified only when exact same-tree regular blob identity, byte length and SHA-256 match; otherwise not_measured or failed on a measured mismatch","what":"integrity of a directly referenced source file node"}
+},
  "node_kinds": {
+  "native_patch_manifest": {
+   "mandatory": [
+    "config_schema"
+   ],
+   "note": "Additive independent Git/physical/native GET binding for BenchNativePatchset/v1; compiler other files remain not_measured."
+  },
+  "native_patch_payload": {
+   "mandatory": [
+    "config_schema"
+   ],
+   "note": "Physical manifest-bound patch payload; no prefix licensing, runtime authority or whole compiler verdict."
+  },
   "workflow_configuration": {
    "mandatory": [
     "config_schema"
    ],
    "note": "Additive obligations for code_unit workflow configuration; bounded YAML shape only, no hosted execution proof."
+  },
+  "bash_source": {
+   "mandatory": [
+    "shell_syntax",
+    "shell_behavior"
+   ]
+  },
+  "bats_test": {
+   "mandatory": [
+    "shell_syntax",
+    "shell_behavior"
+   ]
+  },
+  "source_input_contract": {
+   "mandatory": [
+    "source_input_contract"
+   ],
+   "note": "The declaration is a verification input only; it is not authority or a self-issued verdict."
+  },
+  "source_input_data": {
+   "mandatory": [
+    "source_input_contract"
+   ]
+  },
+  "source_input_control": {
+   "mandatory": [
+    "source_input_contract"
+   ]
   }
  }
 }
