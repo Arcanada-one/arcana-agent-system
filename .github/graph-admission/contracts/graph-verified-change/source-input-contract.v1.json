@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "SourceInputContract/v1",
+  "title": "SourceInputContract/v1",
+  "description": "An explicit repository declaration binding one source file to one consumer and to exact positive and negative controls. The declaration is not trust or deployment authority. Only listed paths are covered.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "inputs"],
+  "properties": {
+    "schema": {"const": "SourceInputContract/v1"},
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/input"}
+    }
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_path", "source_sha256", "consumer_path", "consumer_sha256", "control_sources", "controls"],
+      "properties": {
+        "source_path": {"$ref": "#/$defs/path"},
+        "source_sha256": {"$ref": "#/$defs/digest"},
+        "consumer_path": {"$ref": "#/$defs/path", "pattern": "\\.py$"},
+        "consumer_sha256": {"$ref": "#/$defs/digest"},
+        "control_sources": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 32,
+          "propertyNames": {"$ref": "#/$defs/path"},
+          "additionalProperties": {"$ref": "#/$defs/digest"}
+        },
+        "controls": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/control"}
+        }
+      }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "execution_path", "execution_sha256", "argv", "cwd", "interpreter", "interpreter_sha256", "environment", "timeout_seconds", "expected_exit_code", "expected_output_contains"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,47}$"},
+        "role": {"enum": ["positive", "negative"]},
+        "execution_path": {"$ref": "#/$defs/path", "pattern": "\\.py$"},
+        "execution_sha256": {"$ref": "#/$defs/digest"},
+        "argv": {"type": "array", "minItems": 2, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "cwd": {"type": "string", "minLength": 1, "maxLength": 512},
+        "interpreter": {"type": "string", "pattern": "^python3(?:\\.[0-9]+)?$"},
+        "interpreter_sha256": {"$ref": "#/$defs/digest"},
+        "environment": {"type": "object", "propertyNames": {"enum": ["CI", "PYTHONDONTWRITEBYTECODE", "PYTHONHASHSEED", "LC_ALL", "TZ"]}, "additionalProperties": {"type": "string", "maxLength": 256}},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+        "expected_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+        "expected_output_contains": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    }
+  }
+}

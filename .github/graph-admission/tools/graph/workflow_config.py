@@ -4,6 +4,22 @@ PyYAML is optional at verification time only. Graph construction stays stdlib-on
 No YAML constructors run: inspect the representation tree using BaseLoader.
 """
 import re
+import hashlib
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+
+def pr_job_guard(value):
+    """Closed PR-event condition; never evaluate expressions or event payloads."""
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    if value.startswith('${{') and value.endswith('}}'):
+        value = value[3:-2].strip()
+    return bool(re.fullmatch(
+        r"(?:always\(\)\s*&&\s*)?github\.event_name\s*==\s*'pull_request'", value))
 
 
 class OutOfScope(Exception):
@@ -141,11 +157,17 @@ def validate(raw):
                                   yaml.tokens.TagToken, yaml.tokens.DirectiveToken)):
                 raise ValueError('aliases, anchors, tags and directives are unsupported')
         node = yaml.compose(text, Loader=yaml.BaseLoader)
+        class Literal(str):
+            # Preserve quoting without changing the existing scalar-shape checker.
+            def __new__(cls, n):
+                value = super().__new__(cls, n.value)
+                value.style = n.style
+                return value
         def convert(n, depth=0):
             if depth > 40:
                 raise ValueError('YAML nesting exceeds supported depth')
             if isinstance(n, yaml.ScalarNode):
-                return n.value
+                return Literal(n)
             if isinstance(n, yaml.SequenceNode):
                 return [convert(v, depth + 1) for v in n.value]
             if isinstance(n, yaml.MappingNode):
@@ -165,6 +187,65 @@ def validate(raw):
         def scalar(value):
             if not isinstance(value, str):
                 raise ValueError('expected scalar')
+        unmeasured = []
+        def expression(value, context):
+            scalar(value)
+            if '${{' in value:
+                unmeasured.append(context + ' expression value/type unresolved')
+                return True
+            return False
+        def literal_type(value):
+            scalar(value)
+            if getattr(value, 'style', None) is not None:
+                return 'string'
+            if value in ('true', 'True', 'TRUE', 'false', 'False', 'FALSE'):
+                return 'boolean'
+            if re.fullmatch(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?', value):
+                return 'number'
+            if (re.fullmatch(r'0x[0-9a-fA-F]+|0o[0-7]+', value)
+                    or value in ('.inf', '.Inf', '.INF', '+.inf', '+.Inf', '+.INF',
+                                 '-.inf', '-.Inf', '-.INF', '.nan', '.NaN', '.NAN')):
+                return 'number'
+            if value in ('', 'null', 'Null', 'NULL', '~'):
+                return 'null'
+            return 'string'
+        def required_flag(spec):
+            if 'required' in spec and not expression(spec['required'], 'required'):
+                if literal_type(spec['required']) != 'boolean':
+                    raise ValueError('workflow_call required must be a boolean literal')
+        def workflow_call(cfg):
+            mapping(cfg, 'inputs secrets outputs')
+            for kind, declarations in cfg.items():
+                mapping(declarations)
+                for identifier, spec in declarations.items():
+                    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', identifier):
+                        raise ValueError('unsupported workflow_call declaration id')
+                    if kind == 'secrets' and spec == '' and getattr(spec, 'style', None) is None:
+                        continue
+                    allowed = {'inputs': 'description type required default',
+                               'secrets': 'description required',
+                               'outputs': 'description value'}[kind]
+                    mapping(spec, allowed)
+                    if 'description' in spec:
+                        scalar(spec['description'])
+                    if kind == 'inputs':
+                        if 'type' not in spec:
+                            raise ValueError('workflow_call input type required')
+                        dynamic_type = expression(spec['type'], 'workflow_call input type')
+                        if not dynamic_type and spec['type'] not in ('boolean', 'number', 'string'):
+                            raise ValueError('workflow_call input requires boolean/number/string type')
+                        required_flag(spec)
+                        if 'default' in spec and not expression(spec['default'], 'workflow_call default'):
+                            if not dynamic_type and literal_type(spec['default']) != spec['type']:
+                                raise ValueError('workflow_call default does not match declared type')
+                    elif kind == 'secrets':
+                        required_flag(spec)
+                    else:
+                        if 'value' not in spec:
+                            raise ValueError('workflow_call output value required')
+                        scalar(spec['value'])
+                        if not re.fullmatch(r'\$\{\{\s*jobs\.[A-Za-z_][A-Za-z0-9_-]*\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}', spec['value']):
+                            unmeasured.append('workflow_call output binding unresolved')
         def scalar_map(value):
             mapping(value)
             for v in value.values():
@@ -205,7 +286,7 @@ def validate(raw):
         if not doc.get('on') or not isinstance(doc['on'], (str, list, dict)):
             raise ValueError('nonempty on declaration required')
         trigger = doc['on']
-        events = {'push', 'pull_request', 'workflow_dispatch', 'workflow_run', 'schedule'}
+        events = {'push', 'pull_request', 'workflow_dispatch', 'workflow_run', 'schedule', 'workflow_call'}
         names = [trigger] if isinstance(trigger, str) else trigger
         if isinstance(trigger, list):
             string_list(trigger)
@@ -245,6 +326,9 @@ def validate(raw):
                     continue
                 if cfg == '':
                     continue
+                if event == 'workflow_call':
+                    workflow_call(cfg)
+                    continue
                 if event == 'workflow_dispatch':
                     # `inputs:` is ordinary GitHub syntax, and the allowed-key set was empty, so every
                     # workflow that declares one was reported `failed` — "malformed workflow" about 41
@@ -283,15 +367,80 @@ def validate(raw):
             # workflow: it has no `runs-on` and no `steps` — the called workflow supplies both.
             reusable = 'uses' in job
             if reusable:
-                mapping(job, 'name needs if permissions concurrency uses with secrets')
+                mapping(job, 'name needs if permissions concurrency uses with secrets strategy')
                 scalar(job['uses'])
+                if not expression(job['uses'], 'reusable workflow location'):
+                    if not re.fullmatch(r'(?:\./\.github/workflows/[^/@\s]+\.ya?ml|[^/\s]+/[^/\s]+/\.github/workflows/[^/@\s]+\.ya?ml@[^\s]+)', job['uses']):
+                        raise ValueError('unsupported reusable workflow location')
                 if 'with' in job:
                     mapping(job['with'])
                     for v in job['with'].values():
-                        if not isinstance(v, str):
-                            raise ValueError('reusable-workflow input must be a scalar')
-                if 'secrets' in job and not isinstance(job['secrets'], (str, dict)):
-                    raise ValueError('unsupported secrets shape')
+                        scalar(v)
+                        result_ref = re.fullmatch(r'\$\{\{\s*needs\.([A-Za-z_][A-Za-z0-9_-]*)\.result\s*\}\}', v)
+                        if result_ref:
+                            # GitHub declares needs.<job>.result as a string. This measures
+                            # the reference's type, never a successful job conclusion.
+                            needs = job.get('needs', [])
+                            needs = [needs] if isinstance(needs, str) else needs
+                            if result_ref[1] not in jobs or result_ref[1] not in needs:
+                                raise ValueError('reusable input result reference must name a declared needed job')
+                        elif (re.fullmatch(r'\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\}\}', v)
+                              and pr_job_guard(job.get('if'))):
+                            # The guarded PR payload declares head.sha as a string. This
+                            # measures only that input type, not the SHA value/authenticity,
+                            # callee interface, expression execution or hosted job outcome.
+                            pass
+                        elif not expression(v, 'reusable workflow input') and literal_type(v) == 'null':
+                            raise ValueError('reusable workflow input must be string, boolean or number')
+                if 'secrets' in job:
+                    secrets = job['secrets']
+                    if isinstance(secrets, str):
+                        if secrets != 'inherit':
+                            if not expression(secrets, 'reusable workflow secrets'):
+                                raise ValueError('reusable workflow secrets scalar must be inherit')
+                    else:
+                        scalar_map(secrets)
+                        for value in secrets.values():
+                            if '${{' in value and not re.fullmatch(r'\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}', value):
+                                unmeasured.append('reusable workflow secret expression unresolved')
+                if 'strategy' in job:
+                    mapping(job['strategy'], 'matrix fail-fast max-parallel')
+                    if 'matrix' not in job['strategy']:
+                        raise ValueError('strategy requires matrix')
+                    matrix = job['strategy']['matrix']
+                    if isinstance(matrix, str):
+                        unmeasured.append('reusable workflow matrix unresolved')
+                    else:
+                        mapping(matrix)
+                        for axis, values in matrix.items():
+                            if axis in ('include', 'exclude'):
+                                if not isinstance(values, list) or any(not isinstance(row, dict) for row in values):
+                                    raise ValueError('matrix include/exclude must be mapping lists')
+                            elif not isinstance(values, list) or not values:
+                                if isinstance(values, str) and '${{' in values:
+                                    unmeasured.append('reusable workflow matrix axis unresolved')
+                                else:
+                                    raise ValueError('matrix axis must be a nonempty list')
+                        for key in ('fail-fast', 'max-parallel'):
+                            if key in job['strategy'] and not expression(job['strategy'][key], 'reusable workflow strategy'):
+                                value = job['strategy'][key]
+                                if key == 'fail-fast' and literal_type(value) != 'boolean':
+                                    raise ValueError('strategy fail-fast must be boolean')
+                                if key == 'max-parallel':
+                                    if literal_type(value) != 'number':
+                                        raise ValueError('strategy max-parallel must be a numeric literal')
+                                    from decimal import Decimal, InvalidOperation
+                                    try:
+                                        if value.startswith(('0x', '0o')):
+                                            number = Decimal(int(value, 16 if value.startswith('0x') else 8))
+                                        elif 'inf' in value.lower() or 'nan' in value.lower():
+                                            raise ValueError('strategy max-parallel must be a finite positive integer')
+                                        else:
+                                            number = Decimal(value)
+                                        if not number.is_finite() or number <= 0 or number != number.to_integral_value():
+                                            raise ValueError('strategy max-parallel must be a positive integer')
+                                    except InvalidOperation:
+                                        unmeasured.append('strategy max-parallel numeric literal exceeds supported range')
             else:
                 # MEASURED 2026-09-19. `environment:` made every change to a
                 # workflow using it REFUSED — reproduced on the already-merged
@@ -415,8 +564,151 @@ def validate(raw):
                         mapping(step[field])
                         if any(not isinstance(v, str) for v in step[field].values()):
                             raise ValueError('env/with values must be scalars')
-        return 'verified', 'bounded workflow configuration shape valid; expressions, shell, actions and hosted execution NOT_MEASURED'
+        if unmeasured:
+            raise OutOfScope('; '.join(sorted(set(unmeasured))))
+        return 'verified', 'bounded workflow configuration shape valid; expressions, shell, actions, callee interface compatibility and hosted execution NOT_MEASURED'
     except OutOfScope as ex:
         return 'not_measured', 'workflow configuration not measured: ' + str(ex)
     except (ValueError, UnicodeError, yaml.YAMLError, RecursionError) as ex:
         return 'failed', 'unsupported/malformed workflow configuration: ' + str(ex)
+
+
+ACTIONLINT_VERSION = '1.7.12'
+ACTIONLINT_SHA256 = 'c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4'
+# Current authenticated runner inventory (2026-10-18); keep the allowlist
+# aligned with the organization labels used by supported Program workflows.
+ACTIONLINT_CONFIG = (b'self-hosted-runner:\n  labels:\n    - ci-general\n'
+                     b'    - arcana-ci-general-host\n    - arcana-ai\n    - ci-broad\n    - ci-nodocker\n'
+                     b'    - arcana-devs\n    - deploy-gate\n    - docker\n'
+                     b'    - arcana-prd-host\n    - arcana-prod-ci\n')
+
+
+def native_fitness(path, raw, executable=None):
+    """Run pinned actionlint and bounded workflow safety rules over exact bytes."""
+    binding = {'path': path, 'source_sha256': hashlib.sha256(raw).hexdigest()}
+    binary = executable or shutil.which('actionlint')
+    if not binary or not Path(binary).is_file():
+        return 'not_measured', {**binding, 'reason': 'pinned actionlint binary unavailable'}
+    try:
+        identity = {'path': str(Path(binary).resolve()),
+                    'sha256': hashlib.sha256(Path(binary).read_bytes()).hexdigest()}
+        version = subprocess.run([binary, '-version'], capture_output=True, timeout=5, check=False)
+        version_text = (version.stdout + version.stderr).decode('utf-8', 'replace')
+        if (identity['sha256'] != ACTIONLINT_SHA256 or version.returncode != 0 or
+                not re.search(rf'(?m)^{re.escape(ACTIONLINT_VERSION)}$', version_text)):
+            return 'not_measured', {**binding, 'reason': 'actionlint binary identity is not the pinned release',
+                                    'identity': identity, 'version_output': version_text[:1000]}
+        args = [binary]
+        with tempfile.TemporaryDirectory(prefix='graph-actionlint-') as td:
+            config = Path(td) / 'actionlint.yaml'
+            config.write_bytes(ACTIONLINT_CONFIG)
+            args += ['-config-file', str(config)]
+            run = subprocess.run([*args, '-'], input=raw, capture_output=True, timeout=15, check=False)
+        output = (run.stdout + run.stderr).decode('utf-8', 'replace')
+        if run.returncode:
+            return 'failed', {**binding, 'reason': 'actionlint rejected workflow', 'identity': identity,
+                              'version': ACTIONLINT_VERSION, 'exit_code': run.returncode,
+                              'output': output[:4000]}
+        policy_verdict, policy = fitness_policy(raw)
+        if policy_verdict != 'verified':
+            return policy_verdict, {**binding, 'reason': '; '.join(policy), 'identity': identity,
+                                    'version': ACTIONLINT_VERSION, 'exit_code': 0, 'output': output}
+        return 'verified', {**binding, 'reason': 'actionlint and bounded workflow safety rules passed',
+                            'identity': identity, 'version': ACTIONLINT_VERSION,
+                            'exit_code': 0, 'output': output}
+    except (OSError, subprocess.SubprocessError) as ex:
+        return 'not_measured', {**binding, 'reason': 'actionlint execution not complete: ' + type(ex).__name__,
+                                'identity': identity if 'identity' in locals() else None}
+
+
+def fitness_policy(raw):
+    """Conservative static rules; expressions are not evaluated."""
+    try:
+        import yaml
+        doc = yaml.safe_load(raw.decode('utf-8'))
+    except Exception as ex:
+        return 'not_measured', ['workflow safety rules could not parse input: ' + type(ex).__name__]
+    if not isinstance(doc, dict):
+        return 'failed', ['workflow root is not a mapping']
+    failures = []
+    unknown = []
+    if 'permissions' not in doc:
+        failures.append('workflow must declare explicit token permissions')
+    def permissions_bad(value, label):
+        if isinstance(value, str):
+            if value in ('write-all', 'read-all'):
+                failures.append(label + ' grants broad ' + value)
+            elif value != 'none':
+                unknown.append(label + ' uses unresolved permission expression')
+        elif isinstance(value, dict):
+            for permission, mode in value.items():
+                if isinstance(mode, str) and '${{' in mode:
+                    unknown.append(label + ' permission ' + str(permission) + ' is expression-dependent')
+                elif mode not in ('read', 'write', 'none'):
+                    failures.append(label + ' permission ' + str(permission) + ' has invalid mode')
+        elif value is not None:
+            failures.append(label + ' is not a supported permission map')
+    permissions_bad(doc.get('permissions'), 'workflow permissions')
+    jobs = doc.get('jobs')
+    if not isinstance(jobs, dict):
+        return 'failed', failures + ['workflow jobs is not a mapping']
+    events = doc.get('on', doc.get(True, {}))
+    if isinstance(events, str):
+        event_names = {events}
+    elif isinstance(events, list):
+        event_names = {event for event in events if isinstance(event, str)}
+    elif isinstance(events, dict):
+        event_names = set(events)
+    else:
+        event_names = set()
+    is_pr_target = 'pull_request_target' in event_names
+
+    def pinned_action(reference):
+        if reference.startswith('docker://'):
+            return bool(re.search(r'@sha256:[0-9a-f]{64}$', reference))
+        return bool(re.search(r'@[0-9a-fA-F]{40}$', reference))
+
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        job_uses = job.get('uses')
+        if isinstance(job_uses, str) and job_uses and not job_uses.startswith('./'):
+            if '${{' in job_uses:
+                unknown.append(f'job {job_name} reusable workflow reference is expression-dependent')
+            elif not pinned_action(job_uses):
+                failures.append(f'job {job_name} reusable workflow is not pinned to a full commit SHA')
+        if 'permissions' in job:
+            permissions_bad(job['permissions'], f'job {job_name} permissions')
+        steps = job.get('steps', [])
+        if not isinstance(steps, list):
+            continue
+        checkout_state = 'none'
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            uses = str(step.get('uses', ''))
+            if uses and not uses.startswith('./'):
+                if '${{' in uses:
+                    unknown.append(f'job {job_name} action reference is expression-dependent')
+                elif not pinned_action(uses):
+                    failures.append(f'job {job_name} action reference is not pinned to a full commit SHA')
+            if uses.startswith('actions/checkout@') and is_pr_target:
+                checkout_with = step.get('with') if isinstance(step.get('with'), dict) else {}
+                ref = checkout_with.get('ref')
+                repository = checkout_with.get('repository')
+                if isinstance(ref, str) and ('github.event.pull_request.head' in ref or
+                                             'github.head_ref' in ref):
+                    checkout_state = 'untrusted'
+                    failures.append(f'pull_request_target job {job_name} checks out pull-request content')
+                elif ref or repository:
+                    checkout_state = 'unknown'
+                    unknown.append(f'pull_request_target job {job_name} checkout ref/repository is not classified')
+                else:
+                    checkout_state = 'trusted_base'
+            executes_checkout_content = bool(step.get('run')) or uses.startswith('./')
+            if is_pr_target and checkout_state == 'untrusted' and executes_checkout_content:
+                failures.append(f'pull_request_target job {job_name} runs commands after untrusted checkout')
+            elif is_pr_target and checkout_state == 'unknown' and executes_checkout_content:
+                unknown.append(f'pull_request_target job {job_name} runs after unresolved checkout')
+    return ('failed', sorted(set(failures))) if failures else (
+        ('not_measured', sorted(set(unknown))) if unknown else ('verified', []))

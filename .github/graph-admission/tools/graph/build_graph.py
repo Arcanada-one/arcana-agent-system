@@ -61,13 +61,40 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import workflow_config
 import nest_bootstrap
+import python_search_path
 import schema_check  # noqa: E402  (tools/graph/schema_check.py — the validator of GRAPH-001)
+import shell_source
+import nest_fixture_scope
+import fixture_contracts
+import native_projection  # noqa: E402
+import source_input_contract  # noqa: E402
 
-VERSION = "1.0.1"
+VERSION = "1.0.6"  # Bounded Python caller contexts remain explicitly inferred.
 BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
-CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+EXTRACTORS.append("systemd")
+# `.mts` / `.cts` are TypeScript's ESM / CommonJS module flavours. impact.py and verify.py have always
+# counted them as code (their CODE_EXTS), so a producer that did not left every such file — and every
+# `.d.mts` / `.d.cts` declaration — without a node, and a change to one was refused as UNKNOWN_NODE
+# (control-arcana #122, `scripts/check-bundle-budget.d.mts`). The two extension sets must agree.
+CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
+# The code extensions module resolution accepted before 1.0.2; the first resolution pass uses exactly these.
+LEGACY_RESOLVE_CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+# Declaration files carry types only, no runtime code: still a code_unit (the compiler checks them and
+# importers' types depend on them), marked `kind=type_declaration`. Whether a TypeScript project
+# actually type-checks one is NOT decided here and not by extension: as for every other code unit it is
+# the consumer's measurement (verify.py: the attributed tsconfig, then the compiler's --listFiles).
+DECL_EXT = (".d.ts", ".d.mts", ".d.cts")
+# TypeScript NodeNext: an import written with the RUNTIME extension resolves to the source / declaration
+# of the same flavour (`./a.mjs` → a.mts, a.d.mts; `./a.cjs` → a.cts, a.d.cts; `./a.js` → a.d.ts).
+# These candidates, and `.mts` / `.cts` targets at all, belong to a SECOND resolution pass that runs only
+# when the whole pre-1.0.2 resolution (relative, dist→src fallback, every tsconfig `paths` target,
+# workspace packages) found nothing — so no resolution that existed before 1.0.2 can move (Builder.resolve).
+# Consequence, kept on purpose and consistent with the older `.js`/`.ts` rule: with a.mjs, a.mts and a.d.mts
+# all present, `./a.mjs` resolves to the literal a.mjs (plus an edge to its declaration sibling a.d.mts),
+# not to a.mts as the TypeScript compiler would.
+TS_SPEC_EXT = {".js": (".ts", ".tsx", ".d.ts"), ".mjs": (".mts", ".d.mts"), ".cjs": (".cts", ".d.cts")}
 RUST_EXT = (".rs",)
 PY_EXT = (".py",)
 ADAPTER_CLASS_RE = re.compile(r"\bclass\s+\w+\s+extends\s+(\w*Adapter)\b")
@@ -77,8 +104,8 @@ RUST_USE_RE = re.compile(r"\buse\s+((?:crate|self|super)(?:::[A-Za-z_][A-Za-z0-9
                           r"|[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)")
 RUST_ENV_RE = re.compile(r"\b(?:std::)?env::var(?:_os)?\(\s*\"([A-Za-z_][A-Za-z0-9_]*)\"")
 RUST_SERVICE_DEPS = {"axum", "actix-web", "warp", "tonic", "hyper"}
-PY_FROM_RE = re.compile(r"(?m)^from[ \t]+(\.*)([\w.]*)[ \t]+import\b")
-PY_IMPORT_RE = re.compile(r"(?m)^import[ \t]+([\w.]+)")
+PY_FROM_RE = re.compile(r"(?m)^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import\b")
+PY_IMPORT_RE = re.compile(r"(?m)^[ \t]*import[ \t]+([\w.]+)")
 PY_ENV_RE = re.compile(r"""os\.environ\[\s*['"]([A-Z_][A-Z0-9_]*)['"]\s*\]"""
                         r"""|os\.environ\.get\(\s*['"]([A-Z_][A-Z0-9_]*)['"]"""
                         r"""|os\.getenv\(\s*['"]([A-Z_][A-Z0-9_]*)['"]""")
@@ -98,6 +125,21 @@ ROOT_APP_EXPECTED_PATH = ROOT_APP_FIXTURE_DIR / "EXPECTED.json"
 FIXED_BUILT_AT = "2026-09-05T00:00:00Z"
 VENDORED_BUNDLE_FIXTURE_DIR = ROOT / "contracts" / "graph-verified-change" / "fixtures" / "vendored-bundle-mini"
 VENDORED_BUNDLE_EXPECTED_PATH = VENDORED_BUNDLE_FIXTURE_DIR / "EXPECTED.json"
+SYSTEMD_SOURCE_FIXTURE_DIR = ROOT / "tools" / "graph" / "fixtures" / "prime-source" / "source"
+SYSTEMD_SOURCE_EXPECTED = {
+    "nodes": [
+        "systemd_unit:deploy/systemd-user/prime-collect.service",
+        "systemd_unit:deploy/systemd-user/prime-collect.timer",
+        "systemd_unit:deploy/systemd-user/prime-daily-sample.service",
+        "systemd_unit:deploy/systemd-user/prime-daily-sample.timer",
+    ],
+    "edges": [
+        ["systemd_unit:deploy/systemd-user/prime-collect.timer", "activates",
+         "systemd_unit:deploy/systemd-user/prime-collect.service", "deterministic"],
+        ["systemd_unit:deploy/systemd-user/prime-daily-sample.timer", "activates",
+         "systemd_unit:deploy/systemd-user/prime-daily-sample.service", "deterministic"],
+    ],
+}
 
 # AUP-GRAPH-006:gate3b (hole H7) — a directory that carries a `GraphAdmissionBundle/v1` manifest holds a
 # VENDORED copy of another repository's code. The files exist in this tree, so they get nodes; they are not
@@ -410,6 +452,18 @@ def load_tree_git(repo: Path, rev: str, subdir: str) -> Tree:
         pos += size + 1
     meta = {"source_repo": source_repo_name(repo), "source_commit": commit, "source_tree": "git-objects", "dirty": False,
             "subdir": prefix.rstrip("/") or None, "rev": rev}
+    modes = git(["ls-tree", "-r", "-z", commit], repo)
+    meta["file_modes"] = {p[len(prefix):]: info.split()[0] for entry in modes.split("\0") if "\t" in entry
+                          for info, p in [entry.split("\t", 1)] if p.startswith(prefix)}
+    meta["file_entries"] = {}
+    for entry in modes.split("\0"):
+        if "\t" not in entry:
+            continue
+        info, p = entry.split("\t", 1)
+        mode, obj_type, oid = info.split()
+        if p.startswith(prefix):
+            meta["file_entries"][p[len(prefix):]] = {"mode": mode, "type": obj_type, "oid": oid}
+    meta["source_tree_oid"] = git(["rev-parse", f"{commit}^{{tree}}"], repo).strip()
     return Tree(files, meta)
 
 
@@ -429,7 +483,224 @@ def load_tree_worktree(root: Path) -> Tree:
     dirty = bool(git(["status", "--porcelain", "--", "."], root).strip())
     meta = {"source_repo": source_repo_name(top), "source_commit": commit, "source_tree": "worktree", "dirty": dirty,
             "subdir": rel or None, "rev": "HEAD"}
+    meta["file_modes"] = {p: "100755" if (root / p).stat().st_mode & 0o111 else "100644"
+                          for p in files if not (root / p).is_symlink()}
+    meta["file_entries"] = {}
+    meta["source_tree_oid"] = None
     return Tree(files, meta)
+
+
+SYSTEMD_SUFFIX_KIND = {".service": "service", ".timer": "timer"}
+SYSTEMD_ALLOWED = {
+    "Unit": {"Description", "Documentation", "After", "Before", "Requires", "Wants", "PartOf",
+             "ConditionPathExists", "ConditionPathIsDirectory"},
+    "Service": {"Type", "ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop", "User", "Group",
+                 "WorkingDirectory", "EnvironmentFile", "Restart", "RestartSec", "TimeoutStartSec", "Nice",
+                 "CPUWeight", "IOWeight", "Environment", "StandardOutput", "StandardError", "ProtectSystem",
+                 "NoNewPrivileges", "PrivateTmp", "ProtectHome", "ProtectKernelTunables",
+                 "ProtectKernelModules", "ProtectControlGroups", "RestrictSUIDSGID", "LockPersonality",
+                 "RestrictRealtime", "SystemCallArchitectures", "ReadOnlyPaths", "ReadWritePaths"},
+    "Timer": {"OnCalendar", "Persistent", "RandomizedDelaySec", "Unit"},
+    "Install": {"WantedBy", "RequiredBy"},
+}
+SYSTEMD_REPEATABLE = {
+    ("Unit", "ConditionPathExists"),
+    ("Unit", "ConditionPathIsDirectory"),
+    ("Service", "Environment"),
+    ("Service", "ReadOnlyPaths"),
+    ("Service", "ReadWritePaths"),
+}
+
+SYSTEMD_BOOLEAN_VALUES = {"1", "yes", "true", "on", "0", "no", "false", "off"}
+SYSTEMD_BOOLEAN_DIRECTIVES = {
+    "NoNewPrivileges", "ProtectKernelTunables", "ProtectKernelModules", "RestrictSUIDSGID",
+    "LockPersonality", "RestrictRealtime",
+}
+SYSTEMD_ARCHITECTURES = {
+    "x86", "x86-64", "ppc", "ppc-le", "ppc64", "ppc64-le", "ia64", "parisc", "parisc64",
+    "s390", "s390x", "sparc", "sparc64", "mips", "mips-le", "mips64", "mips64-le",
+    "alpha", "arm", "arm-be", "arm64", "arm64-be", "sh", "sh64", "m68k", "tilegx", "cris",
+    "arc", "arc-be", "x32", "mips64-n32", "mips64-le-n32", "native",
+}
+
+
+_SYSTEMD_C_ESCAPES = {
+    "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+    "t": "\t", "v": "\v", "\\": "\\", '"': '"', "'": "'", "s": " ",
+}
+
+
+def _systemd_decode_escape(value: str, index: int) -> tuple[str, int] | None:
+    """Decode one documented systemd C escape, returning its value and next offset."""
+    if index + 1 >= len(value):
+        return None
+    marker = value[index + 1]
+    if marker in _SYSTEMD_C_ESCAPES:
+        return _SYSTEMD_C_ESCAPES[marker], index + 2
+    widths = {"x": (2, 16), "u": (4, 16), "U": (8, 16)}
+    if marker in widths:
+        width, base = widths[marker]
+        digits = value[index + 2:index + 2 + width]
+        if len(digits) != width:
+            return None
+        try:
+            codepoint = int(digits, base)
+            decoded = chr(codepoint)
+        except (ValueError, OverflowError):
+            return None
+        if 0xD800 <= codepoint <= 0xDFFF:
+            return None
+        return decoded, index + 2 + width
+    if marker in "01234567":
+        digits = value[index + 1:index + 4]
+        if len(digits) != 3 or any(digit not in "01234567" for digit in digits):
+            return None
+        return chr(int(digits, 8)), index + 4
+    return None
+
+
+def _systemd_path_list_tokens(value: str) -> list[str] | None:
+    """Tokenize systemd whole-item quoting/escapes without shell concatenation."""
+    tokens: list[str] = []
+    index = 0
+    while index < len(value):
+        while index < len(value) and value[index].isspace():
+            index += 1
+        if index == len(value):
+            break
+
+        quote = value[index] if value[index] in "\"'" else None
+        if quote is not None:
+            index += 1
+        token: list[str] = []
+        closed_quote = quote is None
+        while index < len(value):
+            char = value[index]
+            if quote is not None and char == quote:
+                index += 1
+                closed_quote = True
+                break
+            if quote is None and char.isspace():
+                break
+            if char in "\"'" and quote is None:
+                # systemd permits quotes only around a whole item, not shell-style
+                # concatenation of adjacent quoted and unquoted fragments.
+                return None
+            if char == "\\":
+                escaped = _systemd_decode_escape(value, index)
+                if escaped is None:
+                    return None
+                decoded, index = escaped
+                token.append(decoded)
+                continue
+            token.append(char)
+            index += 1
+        if not closed_quote:
+            return None
+        if quote is not None and index < len(value) and not value[index].isspace():
+            return None
+        tokens.append("".join(token))
+    return tokens
+
+
+def _systemd_path_list_is_valid(value: str) -> bool:
+    """Validate the finite lexical path grammar without consulting the host filesystem."""
+    # systemd path lists are whitespace-separated, whole-item quoted, and support
+    # documented C escapes. This never resolves paths on the host filesystem.
+    tokens = _systemd_path_list_tokens(value)
+    if not tokens:
+        return False
+    for token in tokens:
+        if "\x00" in token:
+            return False
+        path = token
+        if path.startswith("-"):
+            path = path[1:]
+            if path.startswith("+"):
+                path = path[1:]
+        elif path.startswith("+"):
+            path = path[1:]
+        if not path.startswith("/") or any(part == ".." for part in path.split("/")):
+            return False
+    return True
+
+
+def _systemd_value_is_valid(section: str, key: str, value: str) -> bool:
+    if section != "Service":
+        return True
+    lowered = value.lower()
+    if key in SYSTEMD_BOOLEAN_DIRECTIVES:
+        return lowered in SYSTEMD_BOOLEAN_VALUES
+    if key == "PrivateTmp":
+        return lowered in SYSTEMD_BOOLEAN_VALUES or value == "disconnected"
+    if key == "ProtectHome":
+        return lowered in SYSTEMD_BOOLEAN_VALUES or value in {"read-only", "tmpfs"}
+    if key == "ProtectSystem":
+        return lowered in SYSTEMD_BOOLEAN_VALUES or value in {"full", "strict"}
+    if key == "ProtectControlGroups":
+        return lowered in SYSTEMD_BOOLEAN_VALUES or value in {"private", "strict"}
+    if key == "SystemCallArchitectures":
+        values = value.split()
+        return bool(values) and all(architecture in SYSTEMD_ARCHITECTURES for architecture in values)
+    if key in {"ReadOnlyPaths", "ReadWritePaths"}:
+        return _systemd_path_list_is_valid(value)
+    return True
+
+
+class SystemdParseError(ValueError):
+    pass
+
+
+def parse_systemd_unit(path: str, raw: bytes) -> dict:
+    """Fail-closed parser for the finite systemd key grammar used by the pinned source packets."""
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise SystemdParseError(f"SYSTEMD_UTF8_INVALID:{exc.start}") from exc
+    sections: dict[str, dict[str, list[dict]]] = {}
+    section = None
+    for line_no, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        if stripped.endswith("\\"):
+            raise SystemdParseError(f"SYSTEMD_CONTINUATION_UNSUPPORTED:{line_no}")
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1]
+            if section not in SYSTEMD_ALLOWED:
+                raise SystemdParseError(f"SYSTEMD_SECTION_UNKNOWN:{line_no}:{section}")
+            sections.setdefault(section, {})
+            continue
+        if section is None or "=" not in line:
+            raise SystemdParseError(f"SYSTEMD_LINE_INVALID:{line_no}")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in SYSTEMD_ALLOWED[section]:
+            raise SystemdParseError(f"SYSTEMD_KEY_UNKNOWN:{line_no}:{section}.{key}")
+        if not value or value.startswith((" ", "\t")):
+            value = value.strip()
+        if value == "" and (section, key) in {
+                ("Service", "ReadOnlyPaths"), ("Service", "ReadWritePaths")}:
+            sections[section].setdefault(key, []).clear()
+            continue
+        if value == "":
+            raise SystemdParseError(f"SYSTEMD_EMPTY_RESET:{line_no}:{section}.{key}")
+        if not _systemd_value_is_valid(section, key, value):
+            reason = ("SYSTEMD_PATH_LIST_INVALID" if key in {"ReadOnlyPaths", "ReadWritePaths"}
+                      else "SYSTEMD_VALUE_INVALID")
+            raise SystemdParseError(f"{reason}:{line_no}:{section}.{key}")
+        if section == "Unit" and key in {"ConditionPathExists", "ConditionPathIsDirectory"}:
+            condition_path = value[1:] if value.startswith("!") else value
+            if not condition_path.startswith("/") or "\x00" in condition_path:
+                raise SystemdParseError(f"SYSTEMD_CONDITION_PATH_INVALID:{line_no}:Unit.{key}")
+        rows = sections[section].setdefault(key, [])
+        if rows and (section, key) not in SYSTEMD_REPEATABLE:
+            raise SystemdParseError(f"SYSTEMD_DUPLICATE_KEY:{line_no}:{section}.{key}")
+        rows.append({"value": value, "line": line_no})
+    if not sections:
+        raise SystemdParseError("SYSTEMD_NO_SECTIONS")
+    return {s: {k: rows[0] if len(rows) == 1 else rows for k, rows in values.items() if rows}
+            for s, values in sections.items()}
 
 
 # ----------------------------------------------------------------------------------------------- graph
@@ -544,16 +815,23 @@ class TsFile:
 
 # ----------------------------------------------------------------------------------------------- builder
 class Builder:
-    def __init__(self, tree: Tree, disabled: set[str], work_item_pattern: str):
+    def __init__(self, tree: Tree, disabled: set[str], work_item_pattern: str, *, source_repo=None, python_identity_consumers=()):
         unknown = disabled - set(EXTRACTORS)
         if unknown:
             raise SystemExit(f"unknown extractor(s): {sorted(unknown)}; known: {EXTRACTORS}")
         self.tree = tree
+        self.source_repo = source_repo
+        if (not isinstance(python_identity_consumers, (tuple, list))
+                or any(not isinstance(p, str) or p not in tree.files or not p.endswith('.py')
+                       for p in python_identity_consumers)):
+            raise ValueError('Python identity consumers require exact existing Git source paths')
+        self.python_identity_consumers = frozenset(python_identity_consumers)
         self.disabled = disabled
         self.g = Graph()
         self.work_item_re = re.compile(work_item_pattern)
         self.work_item_pattern = work_item_pattern
         self.ts: dict[str, TsFile] = {}
+        self._nodenext = False                    # resolution pass 2 in progress (Builder.resolve)
         self.tsconfigs: dict[str, dict] = {}      # dir → {"paths": {...}, "baseUrl": dir}
         self.packages: dict[str, str] = {}        # package name → dir
         self.package_dirs: list[str] = []
@@ -577,17 +855,250 @@ class Builder:
     def on(self, name: str) -> bool:
         return name not in self.disabled
 
+    def x_systemd(self):
+        """Extract byte-bound service/timer declarations; never resolve a runtime or host path."""
+        unit_paths = [p for p in self.tree.paths if Path(p).suffix in SYSTEMD_SUFFIX_KIND]
+        by_path = {p: f"systemd_unit:{p}" for p in unit_paths}
+        by_name: dict[str, list[str]] = {}
+        parsed_units: dict[str, dict] = {}
+        for path in unit_paths:
+            by_name.setdefault(Path(path).name, []).append(path)
+            data = self.tree.files[path]
+            entry = self.tree.meta.get("file_entries", {}).get(path, {})
+            mode = entry.get("mode", self.tree.meta.get("file_modes", {}).get(path))
+            source_ok = (self.tree.meta.get("source_tree_oid") and entry.get("type") == "blob"
+                         and mode in {"100644", "100755"})
+            origin = {"repo": self.tree.meta.get("source_repo"), "commit": self.tree.meta.get("source_commit"),
+                      "tree": self.tree.meta.get("source_tree_oid"), "path": path, "mode": mode,
+                      "type": entry.get("type"), "oid": entry.get("oid"), "bytes": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(), "bound": bool(source_ok)}
+            nid = self.g.node(by_path[path], "systemd_unit", sha_bytes(data), path=path,
+                              kind=SYSTEMD_SUFFIX_KIND[Path(path).suffix], attrs={"source_origin": origin})
+            try:
+                parsed = parse_systemd_unit(path, data)
+                parsed_units[path] = parsed
+                self.g.nodes[nid]["attrs"]["parse_status"] = "parsed"
+            except SystemdParseError as exc:
+                self.g.nodes[nid]["attrs"]["parse_status"] = "refused"
+                self.g.nodes[nid]["attrs"]["parse_error"] = str(exc)
+
+        paths_with_nodes: dict[str, list[str]] = {}
+        for nid, node in self.g.nodes.items():
+            if node.get("path"):
+                paths_with_nodes.setdefault(node["path"], []).append(nid)
+
+        def clean_target(raw: str) -> bool:
+            if (not raw or raw.startswith(("/", "~", "\\")) or "://" in raw or "%" in raw
+                    or "$" in raw or "*" in raw or "?" in raw or "\\" in raw):
+                return False
+            parts = raw.split("/")
+            return all(part not in ("", ".", "..") for part in parts)
+
+        def unresolved(path: str, data: bytes, section: str, key: str, line: int, occurrence: int, raw: str,
+                       reason: str, status: str = "not_measured"):
+            origin = self.g.nodes[by_path[path]]["attrs"]["source_origin"]
+            seed = [origin.get("repo"), origin.get("commit"), path, origin.get("sha256"), section + "." + key,
+                    line, occurrence, raw]
+            rid = "systemd_ref:" + hashlib.sha256(canonical(seed).encode("utf-8")).hexdigest()
+            row = {"reference_id": rid, "unit_entity": by_path[path], "source_unit_path": path,
+                   "source_unit_blob_sha256": origin.get("sha256"), "directive": section + "." + key,
+                   "raw_value": raw, "line": line, "occurrence": occurrence,
+                   "normalized_target": raw if clean_target(raw) else None,
+                   "status": status, "reason_code": reason}
+            self.g.nodes[by_path[path]]["attrs"].setdefault("unresolved_references", []).append(row)
+
+        for path in unit_paths:
+            node = self.g.nodes[by_path[path]]
+            origin = node["attrs"]["source_origin"]
+            if not origin["bound"]:
+                unresolved(path, self.tree.files[path], "Source", "origin", 1, 1, path, "SOURCE_TREE_MEMBER_UNBOUND")
+            try:
+                parsed = parse_systemd_unit(path, self.tree.files[path])
+            except SystemdParseError as exc:
+                unresolved(path, self.tree.files[path], "Source", "parse", 1, 1, str(exc), "SYSTEMD_PARSE_REFUSED")
+                continue
+            for section, values in parsed.items():
+                for key, item in values.items():
+                    if (section, key) in SYSTEMD_REPEATABLE:
+                        continue
+                    raw, line = item["value"], item["line"]
+                    tokens = raw.split()
+                    if key in {"After", "Before", "Requires", "Wants", "PartOf"}:
+                        for token in tokens:
+                            matches = by_name.get(token, []) if clean_target(token) else []
+                            if len(matches) == 1:
+                                target_path = matches[0]
+                                if key == "After":
+                                    self.g.edge(by_path[path], "orders_after", by_path[target_path], "deterministic",
+                                                via="systemd-unit-name-after", symbol=str(line))
+                                elif key == "Before":
+                                    self.g.edge(by_path[target_path], "orders_after", by_path[path], "deterministic",
+                                                via="systemd-unit-name-before-reversed", symbol=str(line))
+                                else:
+                                    unresolved(path, self.tree.files[path], section, key, line, 1, token,
+                                               "SYSTEMD_RELATION_KIND_NOT_MODELED")
+                            else:
+                                unresolved(path, self.tree.files[path], section, key, line, 1, token,
+                                           "EXTERNAL_OR_AMBIGUOUS_UNIT_REFERENCE")
+                    elif key == "Unit" and section == "Timer":
+                        matches = by_name.get(raw, [])
+                        if len(matches) == 1 and Path(matches[0]).suffix == ".service":
+                            self.g.edge(by_path[path], "activates", by_path[matches[0]], "deterministic",
+                                        via="systemd-explicit-timer-unit", symbol=str(line))
+                        else:
+                            unresolved(path, self.tree.files[path], section, key, line, 1, raw,
+                                       "TIMER_UNIT_TARGET_NOT_UNIQUE")
+                    elif key == "OnCalendar":
+                        continue
+                    elif key in {"Documentation", "WorkingDirectory", "EnvironmentFile", "ExecStart",
+                                 "ExecStartPre", "ExecStartPost", "ExecStop"}:
+                        refs = []
+                        if key.startswith("ExecStart") or key == "ExecStop":
+                            if any(c in raw for c in "'\"\\"):
+                                unresolved(path, self.tree.files[path], section, key, line, 1, raw,
+                                           "EXECSTART_QUOTING_OR_ESCAPE_UNSUPPORTED")
+                                continue
+                            refs = [(i, token) for i, token in enumerate(tokens)]
+                        else:
+                            refs = [(0, raw)]
+                        resolved = False
+                        for index, token in refs:
+                            if not clean_target(token):
+                                if (key.startswith("ExecStart") or key == "ExecStop") and (
+                                        token.startswith(("/", "%", "~", "file://", "$")) or index == 0):
+                                    unresolved(path, self.tree.files[path], section, key, line, index + 1, token,
+                                               "RUNTIME_EXECUTABLE_OR_PATH_UNRESOLVED")
+                                continue
+                            if token not in self.tree.files:
+                                if "/" in token:
+                                    unresolved(path, self.tree.files[path], section, key, line, index + 1, token,
+                                               "DIRECT_TARGET_MISSING", "failed")
+                                elif (key.startswith("ExecStart") or key == "ExecStop") and index == 0:
+                                    unresolved(path, self.tree.files[path], section, key, line, index + 1, token,
+                                               "EXECUTABLE_PATH_LOOKUP_UNRESOLVED")
+                                continue
+                            target_entry = self.tree.meta.get("file_entries", {}).get(token, {})
+                            if target_entry.get("type") != "blob" or target_entry.get("mode") not in {"100644", "100755"}:
+                                unresolved(path, self.tree.files[path], section, key, line, index + 1, token,
+                                           "DIRECT_TARGET_NOT_REGULAR", "failed")
+                                continue
+                            target_ids = paths_with_nodes.get(token, [])
+                            if not target_ids:
+                                target_id = self.g.node(f"source_file:{token}", "source_file", sha_bytes(self.tree.files[token]),
+                                                        path=token, attrs={"source_origin": {"repo": origin.get("repo"),
+                                                        "commit": origin.get("commit"), "tree": origin.get("tree"),
+                                                        "path": token, "mode": target_entry.get("mode"),
+                                                        "type": target_entry.get("type"), "oid": target_entry.get("oid"),
+                                                        "bytes": len(self.tree.files[token]),
+                                                        "sha256": hashlib.sha256(self.tree.files[token]).hexdigest(), "bound": True}})
+                                target_ids = [target_id]
+                                paths_with_nodes[token] = target_ids
+                            self.g.edge(by_path[path], "references", target_ids[0], "deterministic",
+                                        via="systemd-same-tree-literal", symbol=f"{line}:{index}")
+                            if index == 0 and target_ids[0].startswith("code_unit:") and target_entry.get("mode") == "100755":
+                                self.g.edge(by_path[path], "calls", target_ids[0], "deterministic",
+                                            via="systemd-literal-executable", symbol=str(line))
+                            resolved = True
+                        if not resolved and not any(r["directive"] == section + "." + key and r["line"] == line
+                                                     for r in node["attrs"].get("unresolved_references", [])):
+                            unresolved(path, self.tree.files[path], section, key, line, 1, raw,
+                                       "RUNTIME_OR_EXTERNAL_REFERENCE_UNRESOLVED")
+
+        for timer in (p for p in unit_paths if p.endswith(".timer")):
+            if "Timer" in parsed_units.get(timer, {}):
+                explicit = parsed_units[timer]["Timer"].get("Unit", {}).get("value")
+                if explicit is None:
+                    candidate = timer[:-6] + ".service"
+                    if candidate in by_path:
+                        self.g.edge(by_path[timer], "activates", by_path[candidate], "deterministic",
+                                    via="systemd-same-name-timer-service")
+
     # ---- always: file nodes, tsconfig/package maps ----------------------------------------------------------
     def base(self):
         t = self.tree
+        for path, kind in native_projection.graph_inputs(t):
+            self.g.node(f"code_unit:{path}", "code_unit", sha_bytes(t.files[path]), path=path, kind=kind)
+            if kind == "native_patch_manifest":
+                payload = str(Path(path).parent / Path(native_projection.INPUTS[2]).name)
+                if payload in t.files:
+                    self.g.edge(f"code_unit:{path}", "imports", f"code_unit:{payload}",
+                                "deterministic", via="BenchNativePatchset/v1-physical-sibling")
         for p in t.paths:
+            shell_kind = shell_source.kind(p, t.files[p], t.meta.get("file_modes", {}).get(p))
+            if shell_kind:
+                analysis = shell_source.analyse(p, t.files[p], t.paths)
+                self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p, kind=shell_kind,
+                            attrs={"shell_unknown": analysis["unknown"], "shell_test_inventory": analysis["tests"]})
             if workflow_config.is_workflow(p):
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]),
                             path=p, kind="workflow_configuration")
-            if p.endswith(CODE_EXT) or p.endswith(".prisma") or p.endswith(RUST_EXT) or p.endswith(PY_EXT):
+            if p.endswith(DECL_EXT):
+                self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p, kind="type_declaration")
+            elif p.endswith(CODE_EXT) or p.endswith(".prisma") or p.endswith(RUST_EXT) or p.endswith(PY_EXT):
                 self.g.node(f"code_unit:{p}", "code_unit", sha_bytes(t.files[p]), path=p)
             if p.endswith(CODE_EXT):
                 self.ts[p] = TsFile(p, t.text(p))
+        self._source_input_bindings()
+        # Literal source/load/call edges exist in each revision, including reverse CI callers.
+        # Dynamic references are named at the source node, never guessed into deterministic edges.
+        for p in t.paths:
+            is_shell = shell_source.kind(p, t.files[p], t.meta.get("file_modes", {}).get(p))
+            if not is_shell and not workflow_config.is_workflow(p):
+                continue
+            if workflow_config.is_workflow(p):
+                analysis = shell_source.workflow(p, t.files[p], t.paths)
+                self.g.nodes[f"code_unit:{p}"]["attrs"] = {"shell_unknown": analysis["unknown"]}
+                if analysis["unknown"]:
+                    # An unresolved cwd/dynamic command may target any Bash/Bats
+                    # file. Retain callers as inferred, never silently omit them.
+                    for target in t.paths:
+                        if shell_source.kind(target, t.files[target], t.meta.get("file_modes", {}).get(target)):
+                            self.g.edge(f"code_unit:{p}", "calls", f"code_unit:{target}",
+                                        "inferred", via="unresolved-workflow-shell-closure",
+                                        inferred_by="bounded-workflow-unknown-shell-candidate")
+            else:
+                analysis = shell_source.analyse(p, t.files[p], t.paths)
+            for ref in analysis["references"]:
+                target = ref["path"]
+                if f"code_unit:{target}" not in self.g.nodes and ref["type"] == "imports":
+                    target_kind = shell_source.kind(target, t.files[target], t.meta.get("file_modes", {}).get(target))
+                    if target_kind:
+                        loaded = shell_source.analyse(target, t.files[target], t.paths)
+                        self.g.node(f"code_unit:{target}", "code_unit", sha_bytes(t.files[target]), path=target,
+                                    kind="bash_source", attrs={"shell_unknown": loaded["unknown"] +
+                                        ["loaded helper dialect/recursive closure requires explicit source attribution"],
+                                        "shell_test_inventory": loaded["tests"]})
+                    else:
+                        self.g.node(f"code_unit:{target}", "code_unit", sha_bytes(t.files[target]),
+                                    path=target, kind="data_file")
+                self.g.edge(f"code_unit:{p}", ref["type"], f"code_unit:{ref['path']}", ref["provenance"],
+                            via=ref.get("via", "literal-shell-reference"), symbol=str(ref["line"]),
+                            **({"inferred_by": "bounded-shell-unknown-cwd-candidate"}
+                               if ref["provenance"] == "inferred" else {}))
+            if workflow_config.is_workflow(p):
+                for line in t.text(p).splitlines():
+                    m = re.fullmatch(r"\s*(?:-\s*)?uses:\s*['\"]?(\./\.github/workflows/[^'\" #]+)['\"]?\s*(?:#.*)?", line)
+                    if m and m[1][2:] in t.files:
+                        self.g.edge(f"code_unit:{p}", "calls", f"code_unit:{m[1][2:]}",
+                                    "deterministic", via="literal-local-workflow")
+        # Function references reuse literal source include resolution. They add
+        # physical caller/provider obligations; source binding is not behavior.
+        shell_contexts = shell_source.workflow_script_contexts(t.files)
+        for p in t.paths:
+            if not shell_source.kind(p, t.files[p], t.meta.get("file_modes", {}).get(p)):
+                continue
+            contexts = shell_contexts.get(p, set())
+            cwd = next(iter(contexts)) if len(contexts) == 1 else None
+            facts = shell_source.function_bindings(p, t.files, cwd=cwd)
+            if facts["unknown"]:
+                if facts["candidate_names"]:
+                    attrs = self.g.nodes[f"code_unit:{p}"].setdefault("attrs", {})
+                    attrs["shell_unknown"] = sorted(set(attrs.get("shell_unknown", []) +
+                        ["sourced function contract not measured: " + x for x in facts["unknown"]]))
+                continue
+            for call in facts["bindings"]:
+                self.g.edge(f"code_unit:{p}", "calls", f"code_unit:{call['provider']}",
+                            "deterministic", via="literal-sourced-function", symbol=call["name"])
         for p in t.paths:
             if p.endswith("tsconfig.json") or re.search(r"(^|/)tsconfig\.[\w.-]+\.json$", p):
                 try:
@@ -607,6 +1118,7 @@ class Builder:
                     continue
                 if isinstance(pj, dict) and isinstance(pj.get("name"), str):
                     self.packages[pj["name"]] = os.path.dirname(p)
+
         ws = "pnpm-workspace.yaml"
         globs: list[str] = []
         if t.exists(ws):
@@ -644,17 +1156,73 @@ class Builder:
                 self.global_prefix = resolved[0].prefix
                 self.global_prefix_exclude = [p for p, method in resolved[0].exclusions if method is None]
 
+    def _source_input_bindings(self):
+        """Project only explicit SourceInputContract/v1 paths into the graph.
+
+        The edges describe what the committed declaration claims. The mandatory
+        verifier independently checks the file pins and executes its exact controls.
+        No extension or filename pattern creates an input relationship.
+        """
+        raw = self.tree.files.get(source_input_contract.MANIFEST_PATH)
+        if raw is None:
+            return
+        entries = source_input_contract.parse(
+            raw, files=self.tree.files, file_modes=self.tree.meta.get("file_modes", {}))
+        manifest = source_input_contract.MANIFEST_PATH
+        self.g.node(f"code_unit:{manifest}", "code_unit", sha_bytes(raw),
+                    path=manifest, kind="source_input_contract")
+        for entry in entries:
+            consumer = entry["consumer_path"]
+            consumer_id = f"code_unit:{consumer}"
+            if consumer not in self.tree.files:
+                continue
+            if consumer_id not in self.g.nodes:
+                self.g.node(consumer_id, "code_unit", sha_bytes(self.tree.files[consumer]), path=consumer)
+            self.g.edge(consumer_id, "declares_source_input", f"code_unit:{manifest}", "deterministic",
+                        via="SourceInputContract/v1", symbol=entry["source_path"])
+            source = entry["source_path"]
+            if source in self.tree.files:
+                source_id = f"code_unit:{source}"
+                if source_id not in self.g.nodes:
+                    self.g.node(source_id, "code_unit", sha_bytes(self.tree.files[source]),
+                                path=source, kind="source_input_data")
+                self.g.edge(consumer_id, "declares_source_input", source_id, "deterministic",
+                            via="SourceInputContract/v1", symbol=source)
+                self.g.edge(consumer_id, "reads_source_input", source_id, "deterministic",
+                            via="source_input_contract.literal_read", symbol=source)
+            for control_path in entry["control_sources"]:
+                if control_path not in self.tree.files or control_path == consumer:
+                    continue
+                control_id = f"code_unit:{control_path}"
+                if control_id not in self.g.nodes:
+                    self.g.node(control_id, "code_unit", sha_bytes(self.tree.files[control_path]),
+                                path=control_path, kind="source_input_control")
+                self.g.edge(consumer_id, "declares_source_input", control_id, "deterministic",
+                            via="SourceInputContract/v1-control", symbol=control_path)
+
     # ---- module resolution -----------------------------------------------------------------------------
     def _try_file(self, base: str) -> str | None:
         base = norm_path(base)
         cands = [base] + [base + e for e in RESOLVE_EXT] + [base + "/index" + e for e in (".ts", ".tsx", ".js", ".jsx")]
-        if re.search(r"\.[cm]?js$", base):
-            stem = re.sub(r"\.[cm]?js$", "", base)
+        m = re.search(r"\.[cm]?js$", base)
+        if m:
+            stem = base[:m.start()]
             cands += [stem + ".ts", stem + ".tsx"]
+            if self._nodenext:
+                cands += [stem + e for e in TS_SPEC_EXT[m.group(0)] if stem + e not in cands]
+        accept = CODE_EXT if self._nodenext else LEGACY_RESOLVE_CODE_EXT
         for c in cands:
-            if self.tree.exists(c) and (c.endswith(CODE_EXT) or c.endswith((".json", ".d.ts", ".prisma"))):
+            if self.tree.exists(c) and (c.endswith(accept) or c.endswith((".json", ".d.ts", ".prisma"))):
                 return c
         return None
+
+    def _declaration_sibling(self, path: str) -> str | None:
+        """The declaration file TypeScript reads for a JavaScript module of the same flavour, if present."""
+        m = re.search(r"\.([cm]?)js$", path)
+        if not m:
+            return None
+        d = path[:m.start()] + ".d." + m.group(1) + "ts"
+        return d if self.tree.exists(d) else None
 
     def _try_file_dist_fallback(self, base: str) -> tuple[str | None, str | None]:
         r = self._try_file(base)
@@ -677,7 +1245,21 @@ class Builder:
             d = os.path.dirname(d)
 
     def resolve(self, frm: str, spec: str) -> tuple[str | None, str | None]:
-        """→ (repo path or None, via)."""
+        """→ (repo path or None, via). Pass 1 is the pre-1.0.2 resolution, unchanged; pass 2 (NodeNext
+        `.mts`/`.cts`/declaration targets, see TS_SPEC_EXT) runs only when pass 1 resolved nothing."""
+        self._nodenext = False
+        r, via = self._resolve_pass(frm, spec)
+        if r is None:
+            self._nodenext = True
+            try:
+                r, via = self._resolve_pass(frm, spec)
+            finally:
+                self._nodenext = False
+            if r is not None:
+                via = f"{via}(nodenext)"
+        return r, via
+
+    def _resolve_pass(self, frm: str, spec: str) -> tuple[str | None, str | None]:
         if spec.startswith("."):
             r, via = self._try_file_dist_fallback(os.path.join(os.path.dirname(frm), spec))
             return r, ("relative" if r and not via else via)
@@ -770,6 +1352,15 @@ class Builder:
                 r = f.resolved.get(imp["spec"])
                 if r and f"code_unit:{r}" in self.g.nodes and r != f.path:
                     self.g.edge(f"code_unit:{f.path}", "imports", f"code_unit:{r}", "deterministic", via=imp.get("via"))
+                    # A TypeScript importer of a JavaScript module is type-checked against that module's
+                    # declaration sibling (a.mjs → a.d.mts, a.cjs → a.d.cts, a.js → a.d.ts), so a change
+                    # to the declaration reaches the importer too. Added, never substituted: the runtime
+                    # edge stays. A JavaScript importer is not type-checked against it and gets no such edge.
+                    # This is also the whole story for `./a.mjs` when a.mjs, a.mts and a.d.mts all exist:
+                    # the literal a.mjs + the a.d.mts sibling, not a.mts (see TS_SPEC_EXT).
+                    d = self._declaration_sibling(r) if f.path.endswith((".ts", ".tsx", ".mts", ".cts")) else None
+                    if d and d != f.path and f"code_unit:{d}" in self.g.nodes:
+                        self.g.edge(f"code_unit:{f.path}", "imports", f"code_unit:{d}", "deterministic", via="declaration-sibling")
 
     def x_contracts(self):
         t = self.tree
@@ -812,6 +1403,13 @@ class Builder:
 
     def x_routes(self):
         t = self.tree
+        projections = {}
+        if self.source_repo and t.meta.get('source_tree') == 'git-objects':
+            for dep, bootstrap in self.bootstraps.items():
+                projections[dep] = nest_fixture_scope.project_inline_harness(
+                    t, repo=self.source_repo, commit=t.meta['source_commit'],
+                    root_module_file=bootstrap.root_file,
+                    compiler_library=nest_fixture_scope.compiler_library_for(self.source_repo, t.meta.get('subdir', '')))
         dec_arg = r"\(\s*(?:['\"]([^'\"]*)['\"]|\[\s*['\"]([^'\"]*)['\"][^\]]*\]|\{[^}]*path\s*:\s*['\"]([^'\"]*)['\"][^}]*\})?\s*[^)]*\)"
         for f in self.ts.values():
             code = f.code
@@ -837,8 +1435,20 @@ class Builder:
                     except ValueError:
                         effective, route_complete = None, False
                     rid = f"route:{method} {route_path}"
+                    projection = projections.get(nest_bootstrap.deployable_of(f.path, self.package_dirs), {})
+                    facts = nest_fixture_scope.controller_at(projection, f.path, len(t.text(f.path)[:m.start()].encode('utf-8')))
+                    route_attrs = {"global_prefix": effective} if effective else {}
+                    if facts and facts['scope'] == 'fixture':
+                        rid = 'route:' + fixture_contracts.sample_namespace(facts['class_name'], f.path, 'head', rid)
+                        route_attrs['inline_harness'] = nest_fixture_scope.graph_identity(facts)
+                        for dependency in facts['physical_dependencies']:
+                            if dependency != f.path:
+                                self.g.node(f"code_unit:{dependency}", "code_unit", sha_bytes(t.files[dependency]),
+                                            path=dependency, kind="compiler_configuration" if dependency.endswith('.json') else None)
+                                self.g.edge(f"code_unit:{f.path}", "imports", f"code_unit:{dependency}",
+                                            "deterministic", via="inline-harness-compiler-dependency")
                     self.g.node(rid, "route", h, path=f.path,
-                                attrs={"global_prefix": effective} if effective else None)
+                                attrs=route_attrs or None)
                     previous = [r for r in self.routes if r['id'] == rid and r['file'] != f.path]
                     if previous:
                         # Route IDs are logical (not deployment-qualified). Keep
@@ -848,7 +1458,8 @@ class Builder:
                         attrs['nest_route_sources'] = sorted({r['file'] for r in previous} | {f.path})
                     self.g.edge(f"code_unit:{f.path}", "provides_route", rid, "deterministic", via="nest-decorator", site=f"L{code.count(chr(10), 0, m.start()) + 1}")
                     self.routes.append({"method": method, "path": route_path, "prefix": effective,
-                                        "bootstrap_complete": route_complete, "file": f.path, "id": rid})
+                                        "bootstrap_complete": route_complete, "file": f.path, "id": rid,
+                                        "fixture": bool(facts and facts["scope"] == "fixture")})
                     # handler signature → DTO parameter types
                     sig_start = code.find("(", m.end())
                     depth, j = 0, sig_start
@@ -1021,7 +1632,7 @@ class Builder:
 
     def x_python(self):
         """AUP-GRAPH-009: pyproject.toml/setup.py (tomllib for pyproject) → deployable_unit; absolute imports matched
-        against every discovered src root, relative imports resolved from the importing file's directory;
+        against bounded explicit per-file search roots followed by discovered src roots, relative imports resolved from the importing file's directory;
         os.environ/os.getenv → config_key; `@app.get(...)`-style decorators → route (same node forms as the TS
         stack). Star imports, importlib-dynamic imports and bare `from . import x` (no module name to anchor a
         file) are not resolved — recorded in limitations."""
@@ -1060,12 +1671,17 @@ class Builder:
             py_roots.add(norm_path((d + "/" if d else "") + "src"))
         py_roots_sorted = sorted(py_roots, key=len, reverse=True)
 
-        def resolve_absolute(module: str) -> str | None:
+        def resolve_absolute(module: str, local_roots: list[str] | None = ()) -> str | None:
+            if local_roots is None:
+                return None
             rel = module.replace(".", "/")
-            for root in py_roots_sorted:
+            for root in list(local_roots) + py_roots_sorted:
                 target = norm_path((root + "/" if root else "") + rel)
-                for cand in (target + ".py", target + "/__init__.py"):
+                for cand in (target + "/__init__.py", target + ".py"):
                     if t.exists(cand):
+                        # Explicit Path.resolve claims cannot treat a Git symlink as regular source.
+                        if local_roots and t.meta.get("file_modes", {}).get(cand) == "120000":
+                            return None
                         return cand
             return None
 
@@ -1076,7 +1692,7 @@ class Builder:
             for _ in range(dots - 1):
                 d = os.path.dirname(d)
             target = norm_path((d + "/" if d else "") + module.replace(".", "/"))
-            for cand in (target + ".py", target + "/__init__.py"):
+            for cand in (target + "/__init__.py", target + ".py"):
                 if t.exists(cand):
                     return cand
             return None
@@ -1096,7 +1712,20 @@ class Builder:
         is_test = lambda p: bool(re.search(r"(^|/)(test_\w+|\w+_test)\.py$", p) or "/tests/" in p or p.startswith("tests/"))  # noqa: E731
         resolved_of: dict[str, list[str]] = {}
         for p in py_files:
+            if p in self.python_identity_consumers:
+                attrs = self.g.nodes[f"code_unit:{p}"].setdefault('attrs', {})
+                attrs['python_import_source_sha256'] = hashlib.sha256(t.files[p]).hexdigest()
+                try:
+                    if t.meta.get('file_modes', {}).get(p) == '120000':
+                        raise ValueError('symlink consumer is not regular Git source')
+                    attrs['python_import_occurrences'] = python_search_path.import_occurrences(t.files[p])
+                except ValueError as exc:
+                    attrs['python_import_identity_unknown'] = str(exc)
+                    self.limitations.append(f'python: import occurrence identity unresolved at {p}: {exc}')
             code, literals = scan_python(t.text(p))
+            local_by_line, path_limitations = python_search_path.import_roots(t.text(p), p)
+            self.limitations.extend(path_limitations)
+            roots_for = lambda m: local_by_line.get(code.count("\n", 0, m.start()) + 1, [])
             # A construct QUOTED inside a string is an example, not a declaration. The guard is on the
             # match start, so the decorator's own path argument and the key of an `os.environ[...]`
             # read — both of which are literals themselves — stay readable. See scan_python.
@@ -1106,7 +1735,7 @@ class Builder:
                 if not source(m):
                     continue
                 dots, module = m.group(1), m.group(2)
-                r = resolve_relative(p, len(dots), module) if dots else (resolve_absolute(module) if module else None)
+                r = resolve_relative(p, len(dots), module) if dots else (resolve_absolute(module, roots_for(m)) if module else None)
                 if r and r != p and f"code_unit:{r}" in self.g.nodes:
                     self.g.edge(f"code_unit:{p}", "imports", f"code_unit:{r}", "deterministic",
                                 via="python-relative-import" if dots else "python-absolute-import")
@@ -1114,7 +1743,7 @@ class Builder:
             for m in PY_IMPORT_RE.finditer(code):
                 if not source(m):
                     continue
-                r = resolve_absolute(m.group(1))
+                r = resolve_absolute(m.group(1), roots_for(m))
                 if r and r != p and f"code_unit:{r}" in self.g.nodes:
                     self.g.edge(f"code_unit:{p}", "imports", f"code_unit:{r}", "deterministic", via="python-import")
                     targets.append(r)
@@ -1131,6 +1760,17 @@ class Builder:
                 rid = f"route:{m.group(1).upper()} {m.group(2)}"
                 self.g.node(rid, "route", sha_bytes(t.files[p]), path=p, kind="fastapi")
                 self.g.edge(f"code_unit:{p}", "provides_route", rid, "deterministic", via="fastapi-decorator")
+        contextual, context_limitations = python_search_path.contextual_imports(
+            {p: t.text(p) for p in py_files}, t.meta.get("file_modes", {}), py_roots_sorted)
+        self.limitations.extend(context_limitations)
+        for row in contextual:
+            frm, to = f"code_unit:{row['from']}", f"code_unit:{row['to']}"
+            if frm in self.g.nodes and to in self.g.nodes:
+                self.g.edge(frm, "imports", to, "inferred", via="python-caller-context",
+                            inferred_by="bounded-python-caller-context", site=row["contexts"])
+                if is_test(row["from"]) and not is_test(row["to"]):
+                    self.g.edge(frm, "verifies", to, "inferred", via="python-caller-context-test-import",
+                                inferred_by="bounded-python-caller-context", site=row["contexts"])
         for p in py_files:
             if not is_test(p):
                 continue
@@ -1138,8 +1778,9 @@ class Builder:
                 if not is_test(r):
                     self.g.edge(f"code_unit:{p}", "verifies", f"code_unit:{r}", "deterministic", via="python-test-import")
         if pkgs or py_files:
-            self.limitations.append("python: absolute imports are matched against every discovered src root (no per-file "
-                                     "sys.path modelling); star imports, importlib-dynamic imports and bare `from . import x` "
+            self.limitations.append("python: absolute imports use bounded explicit per-file insertions and discovered src roots (no "
+                                     "dynamic sys.path modelling; explicit bounded per-file Path(__file__) insertions are supported); "
+                                     "star imports, importlib-dynamic imports and bare `from . import x` "
                                      "are not resolved")
 
     def x_config(self):
@@ -1215,7 +1856,7 @@ class Builder:
     def x_http_client(self):
         served = {}
         for r in self.routes:
-            if r["method"] != "WS":
+            if r["method"] != "WS" and not r.get("fixture"):
                 # Match wire URLs against each route's own effective prefix; never strip
                 # another deployment's prefix from a client URL.
                 # Logical paths remain inferred candidates (clients may supply a
@@ -1411,7 +2052,8 @@ class Builder:
         order = [("contracts", self.x_contracts), ("routes", self.x_routes), ("prisma", self.x_prisma), ("imports", self.x_imports),
                  ("config", self.x_config), ("reuse", self.x_reuse), ("di", self.x_di), ("queue", self.x_queue), ("tests", self.x_tests),
                  ("http_client", self.x_http_client), ("deployables", self.x_deployables), ("rust", self.x_rust),
-                 ("python", self.x_python), ("docs", self.x_docs), ("work_items", self.x_work_items), ("receipts", self.x_receipts)]
+                 ("python", self.x_python), ("docs", self.x_docs), ("work_items", self.x_work_items),
+                 ("receipts", self.x_receipts), ("systemd", self.x_systemd)]
         for name, fn in order:
             if self.on(name):
                 fn()
@@ -1443,6 +2085,7 @@ class Builder:
         for p in self.tree.paths:
             ext = os.path.splitext(p)[1] or "(none)"
             if not (p.endswith(CODE_EXT) or p.endswith(RUST_EXT) or p.endswith(PY_EXT)
+                    or shell_source.kind(p, self.tree.files[p], self.tree.meta.get("file_modes", {}).get(p))
                     or p.endswith((".prisma", ".md", ".markdown", ".json", ".yaml", ".yml", ".toml"))):
                 uncovered[ext] = uncovered.get(ext, 0) + 1
         limitations = sorted(set(self.limitations))
@@ -1476,7 +2119,7 @@ class Builder:
                            "work_item_pattern": self.work_item_pattern, "parser": "regex-ast-lite", "typescript_compiler": False},
             "node_count": len(nodes),
             "edge_count": len(edges),
-            "language_coverage": ["typescript", "javascript", "prisma", "markdown", "json-receipts", "rust", "python"],
+            "language_coverage": ["typescript", "javascript", "prisma", "markdown", "json-receipts", "rust", "python", "bash", "bats"],
             "limitations": limitations,
             "stats": {"files": len(self.tree.paths), "ts_files": len(self.ts), "nodes_by_type": by_node, "edges_by_type_provenance": by_edge,
                       "dropped_dangling_edges": len(self.g.dropped_dangling), "unresolved_relative_imports": self.unresolved_imports,
@@ -1512,7 +2155,7 @@ def digest_of(doc: dict) -> str:
 def build(repo: Path, *, rev="HEAD", subdir="", worktree=False, built_at=None, disabled=frozenset(),
           work_item_pattern=DEFAULT_WORK_ITEM_PATTERN) -> dict:
     tree = load_tree_worktree(repo) if worktree else load_tree_git(repo, rev, subdir)
-    return Builder(tree, set(disabled), work_item_pattern).build(built_at or now_iso())
+    return Builder(tree, set(disabled), work_item_pattern, source_repo=repo if not worktree else None).build(built_at or now_iso())
 
 
 GRAPH_AUTO = "auto"
@@ -1614,8 +2257,19 @@ def selftest(receipt_out: Path | None, pilot: Path | None, pilot_graph_out: Path
     check(f"every expected node/edge of ts-mini is present ({n_exp} expectations over {len(expected['extractors'])} extractors)", not missing, missing=missing)
     forbidden = [e for e in expected.get("forbidden_edges", []) if tuple(e) in edges]
     check("no forbidden edge is emitted (negative fixtures: external package, self-import, test file as provider)", not forbidden, present=forbidden)
-    check("every extractor is exercised by ≥ 1 expectation", set(expected["extractors"]) == set(EXTRACTORS),
-          unexercised=sorted(set(EXTRACTORS) - set(expected["extractors"])), unknown=sorted(set(expected["extractors"]) - set(EXTRACTORS)))
+    check("every extractor has an explicit expectation set", set(expected["extractors"]) | {"systemd"} == set(EXTRACTORS),
+          unexercised=sorted(set(EXTRACTORS) - (set(expected["extractors"]) | {"systemd"})),
+          unknown=sorted((set(expected["extractors"]) | {"systemd"}) - set(EXTRACTORS)))
+    systemd_graph = build(SYSTEMD_SOURCE_FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT)
+    systemd_nodes = {node["id"] for node in systemd_graph["nodes"] if node["type"] == "systemd_unit"}
+    systemd_edges = _edge_set(systemd_graph)
+    systemd_missing = (["node " + node for node in SYSTEMD_SOURCE_EXPECTED["nodes"] if node not in systemd_nodes]
+                       + ["edge " + str(edge) for edge in SYSTEMD_SOURCE_EXPECTED["edges"]
+                          if tuple(edge) not in systemd_edges])
+    systemd_classification = _classify(systemd_graph, ignore_dirty=True)
+    check("pinned PRIME source fixture: systemd nodes, timer pairs and graph schema",
+          not systemd_missing and systemd_classification["verdict"] == "conformant",
+          missing=systemd_missing, schema=systemd_classification["verdict"])
     psi = _provider_side_inferred(full)
     check("fixture: 0 inferred among provider-side contract/route edges (provides_route, implements_contract, consumes_contract→contract)", not psi, offending=psi[:5])
     cons = _consumer_route_bindings(full)
@@ -1630,9 +2284,14 @@ def selftest(receipt_out: Path | None, pilot: Path | None, pilot_graph_out: Path
     # mutation battery
     survived = []
     for ext in EXTRACTORS:
-        mut = build(FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT, disabled={ext})
-        m_edges, m_nodes = _edge_set(mut), {n["id"] for n in mut["nodes"]}
-        exp = expected["extractors"].get(ext, {})
+        if ext == "systemd":
+            mut = build(SYSTEMD_SOURCE_FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT, disabled={ext})
+            m_edges, m_nodes = _edge_set(mut), {n["id"] for n in mut["nodes"]}
+            exp = SYSTEMD_SOURCE_EXPECTED
+        else:
+            mut = build(FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT, disabled={ext})
+            m_edges, m_nodes = _edge_set(mut), {n["id"] for n in mut["nodes"]}
+            exp = expected["extractors"].get(ext, {})
         lost = [f"node {n}" for n in exp.get("nodes", []) if n not in m_nodes] + [f"edge {e}" for e in exp.get("edges", []) if tuple(e) not in m_edges]
         cls_m = _classify(mut, ignore_dirty=True)
         res["mutation_battery"][ext] = {"expectations": len(exp.get("nodes", [])) + len(exp.get("edges", [])), "lost_when_disabled": len(lost),

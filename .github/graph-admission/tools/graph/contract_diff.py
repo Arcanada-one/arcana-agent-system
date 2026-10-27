@@ -78,7 +78,7 @@ TAXONOMY = sorted(BREAKING_ALWAYS | BREAKING_UNLESS_INPUT | COMPATIBLE | INFO)
 RULES = ["field_removed", "field_renamed", "new_required", "made_required", "required_to_optional", "type_changed",
          "type_narrowed", "type_widened", "enum_removed", "enum_added", "error_code", "contract_removed",
          "direction", "nested_diff", "constraints", "nullable", "consumer_keys", "consumer_required", "consumer_values",
-         "consumer_incomplete", "x_zod", "x_class_validator", "x_union", "x_enum", "decl_hash"]
+         "consumer_incomplete", "x_zod", "zod_shorthand", "x_class_validator", "x_union", "x_enum", "decl_hash"]
 
 ERROR_CODE_RE = re.compile(r"(?i)(error|err|failure|fault)[_-]?(code|kind|type|reason|name)s?$|(?<![a-z])codes?$")
 IDENT = r"[A-Za-z_$][\w$]*"
@@ -279,7 +279,7 @@ class Extractor:
         # Keep the runtime contract: replacing it with this alias loses the schema
         # and makes existing graph consumer edges uncheckable.
         if (prior and prior.kind == "zod" and d.kind == "type_alias"
-                and re.fullmatch(r"z\.infer\s*<\s*typeof\s+" + re.escape(d.symbol) + r"\s*>", d.body)):
+                and re.fullmatch(r"z\s*\.\s*infer\s*<\s*typeof\s+" + re.escape(d.symbol) + r"\s*>", d.body)):
             return
         self.decls.setdefault(d.path, {})[d.symbol] = d
         self.by_symbol.setdefault(d.symbol, []).append(d)
@@ -579,6 +579,10 @@ class Extractor:
                 continue
             m = re.match(r"^\s*(?:(" + IDENT + r")|['\"]([^'\"]+)['\"]|\[([^\]]+)\])\s*:\s*", item)
             if not m:
+                shorthand = re.fullmatch(r"\s*(" + IDENT + r")\s*", item)
+                if shorthand and self.on("zod_shorthand"):
+                    key = shorthand.group(1)
+                    props[key] = self.zod(key, path, stack)
                 continue
             key = m.group(1) or m.group(2) or m.group(3)
             props[key] = self.zod(item[m.end():], path, stack)
@@ -1259,9 +1263,10 @@ def strip_flags(s: dict) -> dict:
 
 
 # ----------------------------------------------------------------------------------------------- consumer projection
-def _executable_text(code, issues=None):
+def _executable_text(code, issues=None, literals=None):
     """Keep executable template expressions, masking only inert text at identical offsets."""
     issues = issues if issues is not None else []
+    literals = literals if literals is not None else []
     out = list(code)
 
     def mask(start, end):
@@ -1276,8 +1281,11 @@ def _executable_text(code, issues=None):
                 i += 2
                 continue
             if code[i] == code[start]:
+                literals.append((start, i + 1))
                 mask(start, i + 1)
                 return i + 1
+            if code[i] in '\r\n':
+                break
             i += 1
         mask(start, len(code))
         issues.append('unterminated quoted text')
@@ -1288,14 +1296,17 @@ def _executable_text(code, issues=None):
             mask(start, len(code))
             issues.append('template nesting exceeds bounded scan')
             return len(code)
-        i, text = start + 1, start
+        i, text, interpolated = start + 1, start, False
         while i < len(code):
             if code[i] == '\\':
                 i += 2
             elif code[i] == '`':
+                if not interpolated:
+                    literals.append((start, i + 1))
                 mask(text, i + 1)
                 return i + 1
             elif code[i:i + 2] == '${':
+                interpolated = True
                 mask(text, i + 2)
                 i = scan(i + 2, True, depth + 1)
                 text = i
@@ -1305,38 +1316,221 @@ def _executable_text(code, issues=None):
         issues.append('unterminated template literal')
         return len(code)
 
+    def regexp(start):
+        i, character_class = start + 1, False
+        while i < len(code) and code[i] not in '\r\n':
+            if code[i] == '\\':
+                i += 2
+                continue
+            if code[i] == '[':
+                character_class = True
+            elif code[i] == ']':
+                character_class = False
+            elif code[i] == '/' and not character_class:
+                i += 1
+                flags = re.match(r'[A-Za-z]*', code[i:]).group()
+                if len(set(flags)) != len(flags) or set(flags) - set('dgimsuy'):
+                    issues.append('unsupported regexp flags')
+                i += len(flags)
+                mask(start, i)
+                return i
+            i += 1
+        issues.append('unterminated regexp literal')
+        mask(start, len(code))
+        return len(code)
+
+    def generic_arrow(start):
+        # Recognize only unambiguous TS parameter lists: a nested type argument
+        # or a top-level comma cannot be a valid JSX opening tag. Simple <T>
+        # remains ambiguous without a source-language binding. Never mask the
+        # value parameter defaults or arrow body, which may consume contracts.
+        bounded_header = code[start:start + 1025]
+        relative_end = match_close(bounded_header, 0, angle=True)
+        if relative_end >= len(bounded_header):
+            return None
+        end = start + relative_end
+        header = code[start + 1:end]
+        if not re.fullmatch(r'[\w$\s.,<>\[\]]+', header):
+            return None
+        level, comma, nested = 0, False, False
+        for ch in header:
+            if ch == '<':
+                nested = True
+                level += 1
+            elif ch == '>':
+                level -= 1
+            elif ch == ',' and level == 0:
+                comma = True
+            if level < 0 or level > 8:
+                return None
+        if level or not (comma or nested):
+            return None
+
+        def type_ref(text, depth=0):
+            if depth > 8:
+                return False
+            text = text.strip()
+            while text.endswith('[]'):
+                text = text[:-2].rstrip()
+            name = re.match(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*', text)
+            if not name:
+                return False
+            rest = text[name.end():].strip()
+            if not rest:
+                return True
+            if not rest.startswith('<') or match_close(rest, 0, angle=True) != len(rest) - 1:
+                return False
+            args = split_top(rest[1:-1], ',', angle=True)
+            return bool(args) and all(type_ref(arg, depth + 1) for arg in args)
+
+        parameters = split_top(header, ',', angle=True)
+        if not parameters:
+            return None
+        for parameter in parameters:
+            declaration = re.fullmatch(r'([A-Za-z_$][\w$]*)(?:\s+extends\s+(.+))?', parameter.strip())
+            if not declaration or (declaration.group(2) and not type_ref(declaration.group(2))):
+                return None
+        value_start = end + 1
+        while value_start < len(code) and code[value_start].isspace():
+            value_start += 1
+        if value_start >= len(code) or code[value_start] != '(':
+            return None
+        bounded_values = code[value_start:start + 2049]
+        relative_value_end = match_close(bounded_values, 0)
+        if relative_value_end >= len(bounded_values):
+            return None
+        value_end = value_start + relative_value_end
+        tail = code[value_end + 1:value_end + 1025]
+        arrow = re.match(r'\s*(?::([^;={}]*?))?\s*=>', tail)
+        if not arrow or (arrow.group(1) and not type_ref(arrow.group(1))):
+            return None
+        return end + 1
+
+    def jsx(start, depth):
+        # Tags/text are inert; braces retain executable expressions at their
+        # original offsets. Unsupported TS assertions and malformed JSX stay NM.
+        def unknown(reason):
+            issues.append(reason)
+            mask(start, len(code))
+            return len(code)
+
+        if depth > 16:
+            return unknown('JSX nesting exceeds bounded scan')
+        opening = re.match(r'<([A-Za-z_$][\w$.:\-]*|)(?=[\s/>])', code[start:])
+        if not opening:
+            return unknown('unsupported JSX opening')
+        name = opening.group(1)
+        i = start + opening.end()
+        mask(start, i)
+        while i < len(code):
+            if code[i:i + 2] == '/>':
+                mask(i, i + 2)
+                return i + 2
+            if code[i] == '>':
+                mask(i, i + 1)
+                i += 1
+                break
+            if code[i] in "'\"":
+                count = len(literals)
+                i = quoted(i)
+                del literals[count:]  # JSX string attributes never become uses.
+            elif code[i] == '{':
+                mask(i, i + 1)
+                i = scan(i + 1, True, depth + 1)
+            elif code[i] == '<':
+                return unknown('unsupported JSX attribute')
+            else:
+                mask(i, i + 1)
+                i += 1
+        else:
+            return unknown('unterminated JSX opening')
+        while i < len(code):
+            if code[i:i + 2] == '</':
+                closing_tag = re.match(r'</' + re.escape(name) + r'\s*>', code[i:])
+                if not closing_tag:
+                    return unknown('mismatched JSX closing')
+                end = i + closing_tag.end()
+                mask(i, end)
+                return end
+            if code[i] == '<':
+                i = jsx(i, depth + 1)
+            elif code[i] == '{':
+                mask(i, i + 1)
+                i = scan(i + 1, True, depth + 1)
+            else:
+                mask(i, i + 1)
+                i += 1
+        return unknown('unterminated JSX element')
+
     def scan(start, interpolation=False, depth=0):
-        i, braces = start, []
+        i, braces, parens, previous, operand = start, [], [], None, True
         closing = {'(': ')', '[': ']', '{': '}'}
         while i < len(code):
             if code[i] in "'\"":
                 i = quoted(i)
+                operand, previous = False, 'literal'
             elif code[i] == '`':
                 i = template(i, depth)
+                operand, previous = False, 'literal'
             elif code[i:i + 2] in ('//', '/*'):
                 marker = '\n' if code[i:i + 2] == '//' else '*/'
                 end = code.find(marker, i + 2)
+                if end < 0 and marker == '*/':
+                    issues.append('unterminated block comment')
                 end = len(code) if end < 0 else end + (0 if marker == '\n' else 2)
                 mask(i, end)
                 i = end
-            elif interpolation and code[i] == '/' and code[i:i + 2] not in ('//', '/*'):
-                # Division versus regexp requires grammar beyond this lexical proof.
-                issues.append('slash expression in template interpolation unresolved')
-                mask(i, len(code))
-                return len(code)
-            elif interpolation and code[i] in closing:
-                braces.append(closing[code[i]])
+            elif code[i] == '<' and operand is True and re.match(r'<(?:[A-Za-z_$]|>)', code[i:]):
+                generic_end = generic_arrow(i)
+                if generic_end is not None:
+                    mask(i, generic_end)
+                    i, operand, previous = generic_end, True, None
+                else:
+                    i = jsx(i, depth + 1)
+                    operand, previous = False, 'literal'
+            elif code[i] == '/':
+                if operand is None:
+                    issues.append('ambiguous slash expression')
+                    mask(i, len(code))
+                    return len(code)
+                if operand:
+                    i = regexp(i)
+                    operand, previous = False, 'literal'
+                else:
+                    i += 2 if code[i:i + 2] == '/=' else 1
+                    operand, previous = True, '/'
+            elif code[i] in closing:
+                if interpolation:
+                    braces.append(closing[code[i]])
+                if code[i] == '(':
+                    parens.append(previous in ('if', 'while', 'for', 'with', 'switch', 'catch'))
+                operand, previous = True, code[i]
                 i += 1
-            elif interpolation and code[i] in ')]}':
-                if code[i] == '}' and not braces:
+            elif code[i] in ')]}':
+                if interpolation and code[i] == '}' and not braces:
                     mask(i, i + 1)
                     return i + 1
-                if not braces or braces.pop() != code[i]:
+                if interpolation and (not braces or braces.pop() != code[i]):
                     issues.append('unbalanced template interpolation')
                     mask(i, len(code))
                     return len(code)
+                control = parens.pop() if code[i] == ')' and parens else False
+                operand = None if control or code[i] == '}' else False
+                previous = code[i]
                 i += 1
+            elif code[i].isspace():
+                i += 1
+            elif re.match(r'[A-Za-z_$]', code[i]):
+                word = re.match(r'[A-Za-z_$][\w$]*', code[i:]).group()
+                operand = word in ('return', 'throw', 'case', 'delete', 'void', 'typeof', 'yield', 'await', 'in', 'of')
+                previous, i = word, i + len(word)
+            elif code[i].isdigit():
+                number = re.match(r'[\w.]+', code[i:]).group()
+                operand, previous, i = False, number, i + len(number)
+            elif code[i:i + 2] in ('++', '--'):
+                previous, i = code[i:i + 2], i + 2
             else:
+                operand, previous = True, code[i]
                 i += 1
         if interpolation:
             issues.append('unterminated template interpolation')
@@ -1351,6 +1545,9 @@ def _shadow_ranges(code, name):
     for m in re.finditer(r"\b(?:const|let|var|class|function)\s+" + re.escape(name) + r"\b", code):
         ranges.append(enclosing_block(code, m.start()))
     for m in re.finditer(r"\(([^()]*)\)\s*(?::[^{};=]*)?(?:=>)?\s*\{", code):
+        # A control expression has uses, never parameter declarations.
+        if re.search(r"\b(?:if|while|for|with|switch)\s*$", code[:m.start()]):
+            continue
         if '=>' not in m.group(1) and any(re.match(r"\s*" + re.escape(name) + r"\s*(?:[?:=]|$)", p) for p in m.group(1).split(',')):
             ranges.append((m.start(), match_close(code, m.end() - 1) + 1))
     for m in re.finditer(r"\b" + re.escape(name) + r"\s*=>\s*", code):
@@ -1374,12 +1571,103 @@ def _shadow_ranges(code, name):
     return ranges
 
 
-def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None = None, *, known_zod=False, runtime_names=None) -> dict:
+def _union_guard_variants(code: str, executable: str, binding: str, pos: int, variants: list[dict]) -> list[int]:
+    """Narrow only a positive literal discriminator in an enclosing braced if.
+
+    No else/switch inference, disjunction, calls, or computed predicates. A
+    dependent union with repeated discriminator values stays ambiguous.
+    """
+    candidates = list(range(len(variants)))
+    for m in re.finditer(r'\bif\s*\(', executable):
+        op = m.end() - 1
+        cp = match_close(executable, op)
+        body = re.match(r'\s*\{', executable[cp + 1:])
+        if not body:
+            continue
+        ob = cp + body.end()
+        cb = match_close(executable, ob)
+        if not ob < pos < cb:
+            continue
+        if re.search(r'\bfunction\b|=>', executable[ob + 1:pos]):
+            # Creation inside a branch does not prove later callback execution.
+            return list(range(len(variants)))
+        condition = code[op + 1:cp].strip()
+        guard = re.fullmatch(re.escape(binding) + r'\s*\.\s*data\s*\.\s*(' + IDENT
+            + r')\s*===\s*(true|false|[\'\"][^\'\"\n]*[\'\"])'
+            + r'(?:\s*&&\s*' + IDENT + r'(?:\.' + IDENT + r')*)*', condition)
+        if not guard:
+            continue
+        field, value = guard.group(1), parse_literal(guard.group(2))
+        selected = []
+        for i in candidates:
+            prop = variants[i].get('properties', {}).get(field, {})
+            if (prop.get('kind') != 'enum' or field not in variants[i].get('required', [])
+                    or prop.get('nullable') or prop.get('optional')):
+                # One variant with a non-literal discriminator invalidates narrowing.
+                return candidates
+            if value in prop.get('values', []):
+                selected.append(i)
+        if selected:
+            candidates = selected
+    return candidates
+
+
+def _union_safeparse_projection(code: str, executable: str, schema: dict, wrappers: list[tuple[str, int, int]]) -> dict:
+    """Attribute each payload field read to its own branch, never a merged object.
+
+    Whole payloads, aliases, computed use and any writes remain unknown. Runtime
+    validation establishes the payload type, not downstream consumer behavior.
+    """
+    reads, reasons = [], []
+    variants = schema.get('variants', [])
+    if not wrappers or not variants or any(v.get('kind') != 'object' for v in variants):
+        return {'union_reads': [], 'incomplete_reasons': ['union requires bound safeParse and object variants'],
+                'safeparse_unresolved': True}
+    for binding, start, end in wrappers:
+        shadows = [(a, z) for a, z in _shadow_ranges(executable, binding) if start <= a and z <= end]
+        seg = ''.join(' ' if any(a <= start + i < z for a, z in shadows) else ch
+                      for i, ch in enumerate(executable[start:end]))
+        # Mutation of the wrapper or payload can invalidate a previously observed guard.
+        mutation = re.search(r'\b' + re.escape(binding)
+            + r'(?:\s*\.\s*' + IDENT + r'|\s*\[[^]\n]*\])*\s*'
+            + r'(?:=(?!=)|[+*/%&|^\-]=|\?\?=|&&=|\|\|=|<<=|>>=|\+\+|--)', seg)
+        mutation = mutation or re.search(r'(?:\bdelete\s+|\+\+\s*|--\s*)' + re.escape(binding) + r'\b', seg)
+        if mutation:
+            reasons.append('union safeParse result/payload reassigned')
+            continue
+        for use in re.finditer(r'\b' + re.escape(binding) + r'\b', seg):
+            tail = seg[use.end():]
+            member = re.match(r'\s*\??\.\s*(' + IDENT + r')', tail)
+            if member and member.group(1) in ('success', 'error'):
+                continue
+            payload = re.match(r'\s*\.\s*data\s*\.\s*(' + IDENT + r')', tail)
+            if not payload:
+                reasons.append('union result/payload usage unresolved')
+                continue
+            key = payload.group(1)
+            pos = start + use.start()
+            selected = _union_guard_variants(code, executable, binding, pos, variants)
+            reads.append({'key': key, 'variants': selected})
+            available = [key in variants[i].get('properties', {}) for i in selected]
+            if any(available) and not all(available):
+                reasons.append('dependent union field requires an unambiguous positive discriminator: ' + key)
+    return {'union_reads': reads, 'incomplete_reasons': sorted(set(reasons)), 'safeparse_unresolved': bool(reasons)}
+
+
+def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None = None, *, known_zod=False, runtime_names=None,
+               enum_literal_values=None) -> dict:
     """What the consumer file uses of the contract: keys read, keys sent (object literals), enum values used."""
     disabled = disabled or set()
-    code = build_graph.strip_comments(code)
     lexical_issues = []
-    executable = _executable_text(code, lexical_issues)
+    literals = []
+    executable = _executable_text(code, lexical_issues, literals)
+    # Keep literal keys/comparison operands but never regexp bodies, comments,
+    # or template text. All views preserve offsets for scope attribution.
+    literal_code = list(executable)
+    for start, end in literals:
+        if code[start] != '`':
+            literal_code[start:end] = code[start:end]
+    code = ''.join(literal_code)
     keys_read: set[str] = set()
     keys_sent: set[str] = set()
     literals_sent = 0
@@ -1390,14 +1678,28 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
     type_ref = r"(?:z\.(?:infer|input|output)\s*<\s*typeof\s+)?(?:Readonly<|Partial<|Omit<|Pick<)?\s*" + sym + r"\b(?:\s*>)*"
     literal_bindings: set[str] = set()
     scoped: list[tuple[str, int, int]] = []  # (name, scope_start, scope_end) — a binding is read only inside its own function body
+    array_scoped: set[tuple[str, int, int]] = set()
+    array_declarations = []
     wrappers: list[tuple[str, int, int]] = []
     wrapper_unresolved = False
-    for m in re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + type_ref + r"(?:\[\])?", code):
+    enum_runtime_unresolved = False
+    binding_code = executable if schema.get("kind") == "enum" else code
+    typed_ref = (r"(?:(?P<array_wrapper>(?:ReadonlyArray|Array))\s*<\s*" + type_ref + r"\s*>|"
+                 + type_ref + r"(?P<array_suffix>\s*\[\s*\])?)")
+    for m in re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + typed_ref, binding_code):
         bindings.add(m.group(1))
-        scoped.append((m.group(1), *scope_of(code, m.start(), m.end())))
-    for m in re.finditer(r"\b(" + IDENT + r")\s*=\s*(?:new\s+" + sym + r"\(|plainToInstance\(\s*" + sym + r"\b|" + sym + r"\.(?:parse|parseAsync)\(|[^;\n]*\bas\s+" + sym + r"\b)", code):
+        scope = (m.group(1), *scope_of(binding_code, m.start(), m.end()))
+        scoped.append(scope)
+        if m.group('array_wrapper') or m.group('array_suffix'):
+            array_scoped.add(scope)
+            array_declarations.append(m)
+    for m in re.finditer(r"\b(" + IDENT + r")\s*=\s*(?:new\s+" + sym + r"\(|plainToInstance\(\s*" + sym + r"\b|" + sym + r"\.(?:parse|parseAsync)\(|[^;\n]*\bas\s+" + typed_ref + r")", binding_code):
         bindings.add(m.group(1))
-        scoped.append((m.group(1), *enclosing_block(code, m.start())))
+        scope = (m.group(1), *enclosing_block(binding_code, m.start()))
+        scoped.append(scope)
+        if m.group('array_wrapper') or m.group('array_suffix'):
+            array_scoped.add(scope)
+            array_declarations.append(m)
     if known_zod:
         # safeParse returns a discriminated result, NOT the contract payload.
         # Only a declaration bound directly to the extracted runtime Zod schema
@@ -1418,10 +1720,61 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
             if m.end() - 1 not in proven_calls:
                 wrapper_unresolved = True
                 incomplete.append('safeParse result has no proven local binding')
-        if wrappers and schema.get('kind') != 'object':
+        if wrappers and schema.get('kind') not in ('object', 'union'):
             wrapper_unresolved = True
             incomplete.append('safeParse payload projection requires an object schema')
+    if schema.get("kind") == "union":
+        union = _union_safeparse_projection(code, executable, schema, wrappers)
+        incomplete.extend(union['incomplete_reasons'])
+        if scoped:
+            incomplete.append('non-safeParse union binding usage unresolved')
+        wrapper_unresolved = wrapper_unresolved or union['safeparse_unresolved'] or bool(scoped)
+        keys_read.update(read['key'] for read in union['union_reads'])
+        return {"bindings": sorted(bindings), "keys_read": sorted(keys_read), "keys_sent": [], "literals_sent": 0,
+                "values_used": [], "complete": not incomplete, "incomplete_reasons": sorted(set(incomplete)),
+                "safeparse_unresolved": wrapper_unresolved, "lexical_projection_unresolved": bool(lexical_issues),
+                "enum_runtime_unresolved": False, "union_reads": union['union_reads']}
     if schema.get("kind") == "object":
+        def array_unresolved(reason):
+            incomplete.append(reason)
+            # The executable projection cannot determine the element usage.
+            # Keep the existing fail-first/NM protocol; never certify opacity
+            # just because this revision did not change the provider schema.
+            lexical_issues.append(reason)
+
+        def array_payload_literal(expr):
+            nonlocal literals_sent
+            expr = expr.strip()
+            if not expr.startswith('{') or match_close(expr, 0) != len(expr) - 1:
+                array_unresolved('array element payload is not a bounded literal')
+                return
+            literals_sent += 1
+            for item in split_top(expr[1:-1], ','):
+                if not item.strip():
+                    continue
+                key = re.match(r"^\s*(?:(" + IDENT + r")|['\"]([^'\"]+)['\"])\s*(?::|$)", item)
+                if item.startswith('...') or not key:
+                    array_unresolved('array element spread/computed key unresolved')
+                else:
+                    keys_sent.add(key.group(1) or key.group(2))
+
+        for declaration in array_declarations:
+            tail = re.match(r'\s*=\s*\[', code[declaration.end():])
+            if tail:
+                ob = declaration.end() + tail.end() - 1
+                cb = match_close(code, ob)
+                for item in split_top(code[ob + 1:cb], ','):
+                    if item.strip():
+                        array_payload_literal(item)
+            elif re.search(r'\bas\s+', declaration.group(0)):
+                rhs = declaration.group(0).split('=', 1)[1].strip()
+                if rhs.startswith('['):
+                    cb = match_close(rhs, 0)
+                    for item in split_top(rhs[1:cb], ','):
+                        if item.strip():
+                            array_payload_literal(item)
+                else:
+                    array_unresolved('asserted array initial payload unresolved')
         # destructured parameters typed with the symbol
         for m in re.finditer(r"\(\s*\{([^{}]*)\}\s*:\s*" + type_ref, code):
             keys_read.update(destructured_keys(m.group(1), incomplete))
@@ -1442,6 +1795,41 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
                     keys_sent.add(km.group(1) or km.group(2))
             literals_sent += 1
         for b, s0, s1 in sorted(scoped):
+            if (b, s0, s1) in array_scoped:
+                # T[] / Array<T> bind a CONTAINER. Its members are not fields
+                # of T; only actual element payloads contribute provider keys.
+                shadowed = [(a, z) for a, z in _shadow_ranges(executable, b)
+                            if s0 <= a and z <= s1 and (a, z) != (s0, s1)]
+                seg = ''.join(' ' if any(a <= s0 + i < z for a, z in shadowed) else ch
+                              for i, ch in enumerate(code[s0:s1]))
+                seg_exec = ''.join(' ' if any(a <= s0 + i < z for a, z in shadowed) else ch
+                                   for i, ch in enumerate(executable[s0:s1]))
+                for member in re.finditer(r"\b" + re.escape(b) + r"\s*\??\.\s*(" + IDENT + r")", seg_exec):
+                    name = member.group(1)
+                    if name == 'length':
+                        continue
+                    call = re.match(r'\s*\(', seg_exec[member.end():])
+                    if name in ('push', 'unshift') and call:
+                        ob = member.end() + call.end() - 1
+                        cb = match_close(seg, ob)
+                        for arg in split_top(seg[ob + 1:cb], ','):
+                            if arg.strip():
+                                array_payload_literal(arg)
+                    else:
+                        array_unresolved(f'array container {b}.{name} element projection unresolved')
+                for index in re.finditer(r"\b" + re.escape(b) + r"\s*\[", seg_exec):
+                    ob = index.end() - 1
+                    cb = match_close(seg, ob)
+                    key = re.match(r"\s*\??\.\s*(" + IDENT + r")", seg_exec[cb + 1:])
+                    if key:
+                        keys_read.add(key.group(1))
+                    if not key or not re.fullmatch(r'\s*\d+\s*', seg[ob + 1:cb]):
+                        array_unresolved(f'array container {b} computed/whole element use unresolved')
+                if re.search(r'[(,]\s*' + re.escape(b) + r'\s*[,)]|\breturn\s+' + re.escape(b) + r'\s*[;}]', seg_exec):
+                    array_unresolved(f'array container {b} forwarded as a whole')
+                if re.search(r'\.\.\.\s*' + re.escape(b) + r'\b|\bfor\s*\([^)]*\b(?:in|of)\s+' + re.escape(b) + r'\b', seg_exec):
+                    array_unresolved(f'array container {b} spread/iteration unresolved')
+                continue
             seg = executable[s0:s1]
             for m in re.finditer(r"\b" + re.escape(b) + r"\s*\??\.\s*(" + IDENT + r")", seg):
                 keys_read.add(m.group(1))
@@ -1470,6 +1858,7 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
                 incomplete.append(f"safeParse binding {b} reassigned")
                 wrapper_unresolved = True
                 seg = seg[:reassignment.start()]
+            aliases = _safeparse_payload_aliases(seg, b)
             for m in re.finditer(r"\b" + re.escape(b) + r"\b", seg):
                 tail = seg[m.end():]
                 member = re.match(r"\s*\??\.\s*(" + IDENT + r")", tail)
@@ -1481,28 +1870,106 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
                     if key:
                         keys_read.add(key.group(1))
                         continue
+                    # A local alias of the payload is projected below. Do not
+                    # mistake the result's `.data` wrapper member for a payload
+                    # key or mark this bounded alias as opaque.
+                    alias_init = re.search(r"\b(?:const|let|var)\s+(" + IDENT + r")\s*=\s*$", seg[:m.start()])
+                    if alias_init and alias_init.group(1) in aliases[2]:
+                        continue
                 # Whole result/payload forwarding, computed access and aliases
                 # require a downstream projection we have not proven locally.
                 incomplete.append(f"safeParse result/payload {b} usage unresolved")
                 wrapper_unresolved = True
+            for alias_key in aliases[0]:
+                keys_read.add(alias_key)
+            if aliases[1]:
+                incomplete.extend(aliases[1])
+                wrapper_unresolved = True
         if not bindings and not keys_read and not keys_sent:
             incomplete.append("no binding of the contract type found in the consumer")
     elif schema.get("kind") == "enum":
-        vals = {canonical(v): v for v in schema.get("values", [])}
-        for m in re.finditer(r"(['\"`])([^'\"`\n]*)\1", code):
-            if canonical(m.group(2)) in vals:
-                values.add(m.group(2))
+        # A matching literal elsewhere in the file is not evidence about this
+        # contract. Attribute comparisons/initializers to its unshadowed bindings,
+        # and retain incomplete usage when the value escapes that bounded surface.
+        symbol_shadows = [enclosing_block(executable, m.start())
+                          for m in re.finditer(r"\b(?:type|interface|enum|class|const|let|var|function)\s+" + sym + r"\b", executable)]
+        if known_zod:
+            symbol_shadows += schema_shadows
+            imports = [(m.start(), m.end()) for m in re.finditer(r'\bimport\b[^;]*;', executable)]
+            # Passing the schema itself to a helper is a runtime boundary whose
+            # inputs/results are not projected here. Type-only references and
+            # imported names do not establish runtime use.
+            for m in re.finditer(r'[(,=]\s*(' + sym + r')\b(?!\s*\.)', executable):
+                pos = m.start(1)
+                if not any(a <= pos < z for a, z in imports + symbol_shadows):
+                    incomplete.append('enum runtime schema forwarding unresolved')
+                    enum_runtime_unresolved = True
+        declarations = list(re.finditer(r"\b(" + IDENT + r")\s*\??\s*:\s*" + type_ref + r"(?:\[\])?", executable))
         for m in re.finditer(r"\b" + sym + r"\s*\.\s*(" + IDENT + r")", code):
-            values.add(m.group(1))
-        # values the consumer compares a typed binding against (also catches values the provider never declared)
+            if (known_zod and executable[m.start():m.start() + len(m.group(0))] == m.group(0)
+                    and m.group(1) in ('parse', 'parseAsync', 'safeParse', 'safeParseAsync', 'options')
+                    and any(a <= m.start() < z for a, z in symbol_shadows)):
+                incomplete.append('runtime Zod enum schema binding shadowed')
+                enum_runtime_unresolved = True
+            if executable[m.start():m.start() + len(m.group(0))] == m.group(0) and not any(a <= m.start() < z for a, z in symbol_shadows):
+                if known_zod and m.group(1) in ('parse', 'parseAsync', 'safeParse', 'safeParseAsync', 'options'):
+                    incomplete.append('enum runtime options/iteration unresolved' if m.group(1) == 'options'
+                                      else 'enum runtime parsing input/result unresolved')
+                    enum_runtime_unresolved = True
+                else:
+                    values.add(m.group(1))
+        for m in re.finditer(r"\b(?:const|let)\s+" + IDENT + r"\s*:\s*(?:Readonly<)?Record<\s*" + sym + r"\s*,", executable):
+            if any(a <= m.start() < z for a, z in symbol_shadows):
+                continue
+            # Only literal keys of an explicitly contract-keyed Record count.
+            # Computed keys/spreads or an initializer we cannot delimit stay NM.
+            tail = re.match(r"[^;=]*=\s*\{", code[m.end():])
+            if not tail:
+                incomplete.append("enum Record initializer unresolved")
+                continue
+            ob = m.end() + tail.end() - 1
+            cb = match_close(code, ob)
+            for item in split_top(code[ob + 1:cb], ","):
+                key = re.match(r"\s*(?:([\w$]+)|(['\"])([^'\"]+)\2)\s*:", item)
+                if key:
+                    values.add(key.group(1) or key.group(3))
+                elif item.strip():
+                    incomplete.append("enum Record key unresolved")
         for b, s0, s1 in sorted(scoped):
+            owned = [m for m in declarations if m.group(1) == b and scope_of(binding_code, m.start(), m.end()) == (s0, s1)]
+            if owned and all(any(a <= m.start() < z for a, z in symbol_shadows) for m in owned):
+                continue
             seg = code[s0:s1]
+            shadowed = [(a, z) for a, z in _shadow_ranges(executable, b)
+                        if s0 <= a and z <= s1 and (a, z) != (s0, s1)]
+            shadowed += symbol_shadows
+            attributed = []
+            for m in owned:
+                attributed.append((m.start(), m.end()))
+                init = re.match(r"\s*=\s*(['\"])([^'\"]+)\1", code[m.end():])
+                if init and not any(a <= m.start() < z for a, z in symbol_shadows):
+                    values.add(init.group(2))
+                    if not re.match(r"\s*(?:[;,]|$)", code[m.end() + init.end():]):
+                        incomplete.append(f"enum binding {b} initializer unresolved")
             for m in re.finditer(r"\b" + re.escape(b) + r"\s*[!=]==?\s*(['\"])([^'\"]+)\1|(['\"])([^'\"]+)\3\s*[!=]==?\s*" + re.escape(b) + r"\b", seg):
+                binding_start = s0 + (m.start() if m.group(1) else m.end() - len(b))
+                if executable[binding_start:binding_start + len(b)] != b or any(a <= binding_start < z for a, z in shadowed):
+                    continue
                 values.add(m.group(2) or m.group(4))
+                attributed.append((binding_start, binding_start + len(b)))
             for m in re.finditer(r"switch\s*\(\s*" + re.escape(b) + r"\s*\)\s*\{", seg):
+                binding_start = s0 + seg.index(b, m.start(), m.end())
+                if any(a <= binding_start < z for a, z in shadowed):
+                    continue
                 cb = match_close(seg, m.end() - 1)
                 for cm in re.finditer(r"\bcase\s+(['\"])([^'\"]+)\1", seg[m.end():cb]):
                     values.add(cm.group(2))
+                attributed.append((binding_start, binding_start + len(b)))
+            for m in re.finditer(r"\b" + re.escape(b) + r"\b", executable[s0:s1]):
+                pos = s0 + m.start()
+                if any(a <= pos < z for a, z in shadowed + attributed):
+                    continue
+                incomplete.append(f"enum binding {b} usage unresolved")
         if not values:
             incomplete.append("no literal of the enum used in the consumer (exhaustiveness unknown)")
     else:
@@ -1511,7 +1978,67 @@ def projection(code: str, symbol: str, schema: dict, disabled: set[str] | None =
         incomplete = []
     return {"bindings": sorted(bindings), "keys_read": sorted(keys_read), "keys_sent": sorted(keys_sent), "literals_sent": literals_sent,
             "values_used": sort_values(values), "complete": not incomplete, "incomplete_reasons": sorted(set(incomplete)),
-            "safeparse_unresolved": wrapper_unresolved, "lexical_projection_unresolved": bool(lexical_issues)}
+            "safeparse_unresolved": wrapper_unresolved, "lexical_projection_unresolved": bool(lexical_issues),
+            "enum_runtime_unresolved": enum_runtime_unresolved}
+
+
+def _safeparse_payload_aliases(segment: str, result_name: str) -> tuple[set[str], list[str], set[str]]:
+    """Project bounded local aliases of a proven safeParse result's `.data` payload."""
+    aliases = set()
+    keys = set()
+    incomplete = []
+    declarations = []
+    for declaration in re.finditer(
+            r"\b(?:const|let|var)\s+(" + IDENT + r")\s*=\s*" + re.escape(result_name) + r"\s*\.\s*data\b",
+            segment):
+        name = declaration.group(1)
+        after_data = segment[declaration.end():]
+        # Only a bare `.data` initializer terminated as a statement is a direct
+        # alias. Fallbacks (`||`, `??`), assertions (`as T`), and chained or
+        # computed values can change which payload is observed, so do not
+        # attribute later reads to the safeParse schema. Semicolonless and
+        # compound initializers are conservatively outside this projection.
+        if not re.match(r"\s*;", after_data):
+            incomplete.append(f"safeParse payload alias {name} initializer unresolved")
+            continue
+        aliases.add(name)
+        declarations.append(declaration)
+    for name in aliases:
+        shadowed = [(a, z) for a, z in _shadow_ranges(segment, name)
+                    if a < len(segment) and z > 0
+                    and not any(a <= d.start(1) < z for d in declarations if d.group(1) == name)]
+        view = ''.join(' ' if any(a <= i < z for a, z in shadowed) else ch
+                       for i, ch in enumerate(segment))
+        declaration_ranges = [(m.start(1), m.end(1)) for m in re.finditer(
+            r"\b(?:const|let|var)\s+(" + re.escape(name) + r")\s*=\s*" + re.escape(result_name) + r"\s*\.\s*data\b",
+            view)]
+        for member in re.finditer(r"\b" + re.escape(name) + r"\s*\??\.\s*(" + IDENT + r")", view):
+            keys.add(member.group(1))
+            if re.match(r"\s*=(?!=)", view[member.end():]):
+                incomplete.append(f"safeParse payload alias {name} field mutation unresolved")
+        for destructure in re.finditer(r"\{([^{}]*)\}\s*=\s*" + re.escape(name) + r"\b", view):
+            keys.update(destructured_keys(destructure.group(1), incomplete))
+        for occurrence in re.finditer(r"\b" + re.escape(name) + r"\b", view):
+            pos = occurrence.start()
+            if any(a <= pos < z for a, z in declaration_ranges):
+                continue
+            tail = view[occurrence.end():]
+            if re.match(r"\s*\??\.\s*" + IDENT, tail):
+                continue
+            if re.match(r"\s*\[", tail):
+                incomplete.append(f"safeParse payload alias {name} computed/indexed use unresolved")
+                continue
+            if re.search(r"\{[^{}]*\}\s*=\s*$", view[:pos]):
+                continue  # fields were added from a bounded destructuring pattern above
+            previous = view[:pos]
+            if re.search(r"\.\.\.\s*$", previous):
+                incomplete.append(f"safeParse payload alias {name} spread unresolved")
+            else:
+                # Any bare payload value escapes the field projection (assignment,
+                # conditional, container, assertion, return, or call). Do not
+                # certify a schema change when downstream reads are unknown.
+                incomplete.append(f"safeParse payload alias {name} escapes bounded field projection")
+    return keys, incomplete, aliases
 
 
 def scope_of(code: str, start: int, end: int) -> tuple[int, int]:
@@ -1602,6 +2129,13 @@ def edge_verdict(proj: dict, head: dict | None, contract_diff: dict, provenance:
             if top and top in used:
                 failed = True
                 reasons.append(f"breaking change {c['code']} at `{c['path']}` sits on a key the consumer uses")
+    elif schema.get("kind") == "union":
+        variants = schema.get('variants', [])
+        for read in proj.get('union_reads', []):
+            selected = read['variants']
+            if selected and all(read['key'] not in variants[i].get('properties', {}) for i in selected):
+                failed = True
+                reasons.append(f"consumer reads key `{read['key']}` absent from every applicable union variant")
     elif schema.get("kind") == "enum":
         vals = {canonical(v) for v in schema.get("values", [])}
         members = set(schema.get("members", {}))
@@ -1619,6 +2153,10 @@ def edge_verdict(proj: dict, head: dict | None, contract_diff: dict, provenance:
         return 'not_measured', ['executable consumer projection unresolved: ' + '; '.join(proj['incomplete_reasons'])]
     if proj.get("safeparse_unresolved"):
         return "not_measured", ["safeParse result/payload usage not proven: " + "; ".join(proj["incomplete_reasons"])]
+    if proj.get("enum_runtime_unresolved"):
+        return "not_measured", ["enum runtime parsing usage not proven: " + "; ".join(proj["incomplete_reasons"])]
+    if schema.get('kind') == 'union' and breaking:
+        return 'not_measured', ['union provider changed; variant exhaustiveness and downstream handling unresolved']
     if not breaking:
         if provenance != "deterministic" and not proj["complete"]:
             return "not_measured", ["inferred edge and consumer usage not narrowable: " + "; ".join(proj["incomplete_reasons"])]
@@ -1660,7 +2198,8 @@ def discover_edges(ex_h: Extractor, ch: dict, ex_b: Extractor, cb: dict) -> list
 
 
 def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph: dict | None = None, directions: dict | None = None,
-             consumer_keys: dict | None = None, disabled: set[str] | None = None, repo_name: str = "", only: set[str] | None = None) -> dict:
+             consumer_keys: dict | None = None, disabled: set[str] | None = None, repo_name: str = "", only: set[str] | None = None,
+             metadata_root: Path | None = None, metadata_git_repo: Path | None = None) -> dict:
     disabled = disabled or set()
     ex_b, ex_h = Extractor(base_tree, disabled), Extractor(head_tree, disabled)
     cb, ch = ex_b.contracts(), ex_h.contracts()
@@ -1687,6 +2226,24 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
         contracts[cid] = {"kind": (o or n)["kind"], "path": (o or n)["path"], "symbol": sym, "status": res["status"], "direction": res["direction"],
                           "decl_hash_base": o and o["decl_hash"], "decl_hash_head": n and n["decl_hash"], "changes": res["changes"],
                           "error_code": bool((o or n).get("error_code"))}
+    # Native compiler evidence applies to this internal metadata transport only.
+    # No caller-supplied proof, direction override or generic enum exception enters here.
+    metadata_proof, metadata_covered = None, set()
+    if metadata_root is not None:
+        import metadata_contract_proof
+        target = metadata_contract_proof.CONTRACT
+        changed = contracts.get(target, {}).get("changes", [])
+        if changed and all(c["code"] == "ENUM_VALUE_ADDED" for c in changed):
+            metadata_proof = metadata_contract_proof.observe(head_tree, metadata_root, git_repo=metadata_git_repo)
+            observation = (metadata_proof.get("observation") or {}).get("observation", {})
+            values = ch.get(target, {}).get("schema", {}).get("values", [])
+            if (metadata_proof.get("source_observation_closed") and not metadata_proof["errors"]
+                    and set(values) == set(observation.get("union", []))):
+                metadata_covered = set(observation.get("covered_consumers", []))
+                for change in changed:
+                    change["severity"] = "compatible"
+                    change["compatibility_basis"] = "native source-bound metadata input and closed consumers"
+                contracts[target]["native_metadata_proof"] = metadata_proof
     breaking = [{"contract": cid, **c} for cid, c in contracts.items() for c in c["changes"] if c["severity"] == "breaking"]
     # edges
     edges_in = edges_from_graph(graph) if graph else discover_edges(ex_h, ch, ex_b, cb)
@@ -1721,12 +2278,25 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
                 declaration = ex_h.resolve(path, local)
                 if declaration and declaration.path == cd['path'] and declaration.symbol == cd['symbol']:
                     local_names.append(local)
-            proj = projection(head_tree.text(path), cd["symbol"], (headc or cb[cid])["schema"], disabled,
-                              known_zod=(headc or cb[cid])["kind"] == "zod", runtime_names=local_names or None)
+            schema = (headc or cb[cid])["schema"]
+            # A removed literal remains a consumer obligation: head-only values
+            # must not erase its use before edge_verdict checks the head schema.
+            enum_literals = sort_values(
+                value for candidate in (schema, cb.get(cid, {}).get('schema', {}))
+                if candidate.get('kind') == 'enum' for value in candidate.get('values', []))
+            proj = projection(head_tree.text(path), cd["symbol"], schema, disabled,
+                              known_zod=(headc or cb[cid])["kind"] == "zod", runtime_names=local_names or None,
+                              enum_literal_values=enum_literals)
         else:
             proj = {"bindings": [], "keys_read": [], "keys_sent": [], "literals_sent": 0, "values_used": [], "complete": False,
                     "incomplete_reasons": ["consumer file absent at head"]}
         v, reasons = edge_verdict(proj, headc, cd, e.get("provenance", "deterministic"), disabled)
+        if metadata_proof and cd.get("native_metadata_proof") is metadata_proof:
+            if path in metadata_covered and v != "failed":
+                v, reasons = "verified", ["native compiler proved this metadata consumer's symbol-bound handling and closure"]
+                proj["native_metadata_observation_sha256"] = metadata_proof["observation_sha256"]
+            elif path not in metadata_covered and v != "failed":
+                v, reasons = "not_measured", ["metadata consumer is outside the native compiler's proven symbol closure"]
         rec = {"edge": e, "verdict": v, "reasons": reasons, "projection": proj}
         if e.get("provenance") != "deterministic":
             rec["requires_canary"] = True
@@ -1761,6 +2331,7 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
             "graph": {"source_commit": graph["manifest"]["source_commit"], "graph_digest": graph["manifest"].get("graph_digest")} if graph else None,
             "edge_source": "graph" if graph else "discovered-by-import",
             "contracts": contracts, "breaking": breaking, "edges": edges_out,
+            **({"native_metadata_proof": metadata_proof} if metadata_proof is not None else {}),
             "limitations": sorted(set(ex_b.limitations + ex_h.limitations)),
             "summary": {"contracts_base": len(cb), "contracts_head": len(ch), "statuses": dict(sorted(statuses.items())), "codes": dict(sorted(codes.items())),
                         "breaking": len(breaking), "edges": len(edges_out), "edge_verdicts": dict(sorted(verdicts.items())),
@@ -1825,6 +2396,74 @@ def fixture_battery(disabled: set[str]) -> list[dict]:
             gv = got[0]["verdict"] if got else None
             checks.append({"name": f"{pair['dir']}: edge {key} verdict {want}", "ok": gv == want, "got": gv,
                            "reasons": got[0]["reasons"] if got else ["edge not found"], "label": label})
+    checks.extend(zod_shorthand_checks(disabled))
+    return checks
+
+
+def zod_shorthand_checks(disabled: set[str]) -> list[dict]:
+    """Keep the Prime frame's declared shorthand field and nested consumer path measurable."""
+    provider = """import { z } from 'zod';
+const candidate = z.object({
+  identity: z.object({ seq: z.string() }).strict(),
+}).strict();
+export const primeKernelNotificationFrameSchema = z.object({
+  schema: z.literal('PrimeKernelNotificationCandidate/v1'),
+  candidate,
+}).strict();
+"""
+    consumer = """import { primeKernelNotificationFrameSchema } from './page-event-stream';
+export function handle(request: { body: unknown }) {
+  const parsed = primeKernelNotificationFrameSchema.safeParse(request.body);
+  if (!parsed.success) return undefined;
+  const frame = parsed.data;
+  return frame.candidate.identity.seq;
+}
+"""
+    provider_path = "apps/control-bff/src/prime/page-event-stream.ts"
+    consumer_path = "apps/control-bff/src/prime/page-socket-route.ts"
+    source = build_graph.Tree(
+        {provider_path: provider.encode(), consumer_path: consumer.encode()},
+        {"source_commit": "base", "source_tree": "prime-shorthand", "source_repo": "prime-shorthand-fixture"},
+    )
+    unchanged = build_graph.Tree(source.files, {**source.meta, "source_commit": "head", "source_tree": "prime-shorthand-head"})
+    contract_id = f"contract:{provider_path}#primeKernelNotificationFrameSchema"
+    edge_id = f"code_unit:{consumer_path}→{contract_id}"
+    try:
+        intact = run_diff(source, unchanged, disabled=disabled)
+        extracted = Extractor(unchanged, disabled).contracts().get(contract_id, {}).get("schema", {})
+    except Refusal as refusal:
+        return [{
+            "name": "Prime safeParse frame.candidate.identity.seq: shorthand regression fixture extracts a contract",
+            "ok": False,
+            "refusal": refusal.code,
+            "detail": refusal.detail,
+        }]
+    intact_edges = [e for e in intact["edges"] if e["edge"]["from"] == f"code_unit:{consumer_path}"]
+    intact_verdict = intact_edges[0]["verdict"] if intact_edges else None
+    checks = [{
+        "name": "Prime safeParse frame.candidate.identity.seq: declared Zod shorthand field remains verified",
+        "ok": intact_verdict == "verified" and "candidate" in extracted.get("properties", {}),
+        "got": intact_verdict,
+        "edge": edge_id,
+    }]
+
+    broken_provider = provider.replace("identity: z.object({ seq: z.string() }).strict(),",
+                                       "identity: z.object({}).strict(),")
+    broken = build_graph.Tree(
+        {provider_path: broken_provider.encode(), consumer_path: consumer.encode()},
+        {"source_commit": "nested-break", "source_tree": "prime-shorthand-break", "source_repo": "prime-shorthand-fixture"},
+    )
+    changed = run_diff(source, broken, disabled=disabled)
+    changed_edges = [e for e in changed["edges"] if e["edge"]["from"] == f"code_unit:{consumer_path}"]
+    changed_verdict = changed_edges[0]["verdict"] if changed_edges else None
+    changed_codes = sorted({c["code"] for c in changed["breaking"]})
+    checks.append({
+        "name": "Prime safeParse nested removal: undeclared identity.seq remains failed",
+        "ok": "FIELD_REMOVED" in changed_codes and changed_verdict == "failed",
+        "got": changed_verdict,
+        "breaking": changed_codes,
+        "edge": edge_id,
+    })
     return checks
 
 

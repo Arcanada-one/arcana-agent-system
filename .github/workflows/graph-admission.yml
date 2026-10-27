@@ -45,6 +45,62 @@ on:
           receipts/graph/**/*.json
           receipts/**/change-admission-*.json
         type: string
+      stage_evidence_path:
+        description: >-
+          Optional explicit StageEvidence/v1 file in the caller checkout. When supplied, the adapter
+          selects only the raw CAR whose exact bytes are named by that document; native gate then
+          validates repository, base/head, execution, review, CI and coverage. This input grants no
+          authority and never changes the raw CAR.
+        required: false
+        default: ''
+        type: string
+      stage_evidence_root:
+        description: 'Root directory containing the explicit StageEvidence/v1 file and its committed run evidence.'
+        required: false
+        default: ''
+        type: string
+      stage_evidence_required:
+        description: 'Refuse instead of discovering unrelated receipts if this finished-stage input is absent.'
+        required: false
+        default: false
+        type: boolean
+      stage_userpath_required:
+        description: 'Run the Program-owned SharedVerifierV1 userpath on a temporary fixture and require its exact hosted result in the gate report.'
+        required: false
+        default: false
+        type: boolean
+      candidate_receipt_required:
+        description: 'Produce and select a raw CAR for this exact hosted base..head candidate before the ordinary native gate.'
+        required: false
+        default: false
+        type: boolean
+      candidate_source_outcome_required:
+        description: 'Require the ProgramStageUserpath result to bind the same-run candidate build/verify process captures to the exact raw CAR selected by the native gate.'
+        required: false
+        default: false
+        type: boolean
+      candidate_dependency_setup:
+        description: >-
+          Optional CallerDependencySetup/v1 subject-and-digest manifest for the fixed MUN web typecheck
+          dependency profile. It binds repository/base/head, policy pnpm-frozen-web-typecheck/v1, scope apps/web,
+          cwd ., and blob_oid/sha256/bytes for the seven fixed source inputs. It accepts no command, script,
+          registry, or filesystem path from the caller.
+        required: false
+        default: ''
+        type: string
+      candidate_dependency_setup_required:
+        description: 'Refuse before candidate verification if the fixed caller dependency setup manifest is absent.'
+        required: false
+        default: false
+        type: boolean
+      empty_impact_explanation:
+        description: >-
+          Optional exact EmptyImpactExplanation/v1 JSON claim for the current candidate range and its
+          paired graph digests. The claim is captured as a fixed same-run input file and passed to the
+          native verifier; an empty value supplies no explanation and grants no admission.
+        required: false
+        default: ''
+        type: string
       enforcement:
         description: 'Work-item evidence enforcement of the gate: off | ledger | muneral. The evidence ledger lives in the program repository, so a caller repository uses `off` and the local gate enforces it.'
         required: false
@@ -105,7 +161,10 @@ jobs:
   graph-admission:
     name: graph-admission
     runs-on: ${{ inputs.runs_on }}
-    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 90
     steps:
       - name: Check out the pull-request head (full history — the gate needs base..head)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -114,10 +173,429 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Python 3.12 (the gate tools are stdlib-only)
+      # The reusable workflow is loaded from the caller-pinned Program ref. Before it invokes any
+      # vendored code, independently authenticate the complete bundle with the caller's pin and the
+      # runner's native OpenSSH verifier. In particular, never import the bundle's ci_gate.py or
+      # sshsig.py to decide whether that same bundle is trusted. The Program repository is the
+      # deliberate self-source exception: its tools are the checked-out Program source and its
+      # ephemeral self-bundle remains explicitly unpinned / not_measured below.
+      - name: Authenticate the vendored bundle before payload execution
+        id: bundle_preflight
+        if: github.repository != 'Arcanada-one/arcanada-universal-program'
+        env:
+          TOOLS_PATH: ${{ inputs.tools_path }}
+          PROGRAM_REF: ${{ inputs.program_ref }}
+          SIGNING_KEY_FINGERPRINT: ${{ inputs.signing_key_fingerprint }}
+          ACTIVE_WORKFLOW_CONTEXT: ${{ toJSON(job) }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_SHA: ${{ github.sha }}
+          CALLER_EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY'
+          import hashlib
+          import base64
+          import json
+          import os
+          import re
+          import stat
+          import subprocess
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path, PurePosixPath
+
+          WORKFLOW_PATH = ".github/workflows/graph-admission.yml"
+          MANIFEST_NAME = "BUNDLE.json"
+          NAMESPACE = "graph-admission-bundle"
+          PROGRAM_REPO = "Arcanada-one/arcanada-universal-program"
+          API_BASE = "https://api.github.com"
+          MAX_ACTIVE_WORKFLOW_BYTES = 1024 * 1024
+          MAX_SIGNERS = 4
+
+          def refuse(message):
+              raise ValueError(message)
+
+          def regular_file(path, label):
+              try:
+                  mode = path.lstat().st_mode
+              except OSError as exc:
+                  refuse(f"{label} is unavailable: {exc}")
+              if not stat.S_ISREG(mode):
+                  refuse(f"{label} is not a regular non-symlink file")
+              return path
+
+          def safe_path(root, relative, label):
+              if not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative:
+                  refuse(f"{label} has an invalid relative path")
+              if any(part in ("", ".", "..") for part in relative.split("/")):
+                  refuse(f"{label} has an unsafe relative path: {relative!r}")
+              path = PurePosixPath(relative)
+              if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+                  refuse(f"{label} has an unsafe relative path: {relative!r}")
+              current = root
+              for part in path.parts:
+                  current = current / part
+                  if current.is_symlink():
+                      refuse(f"{label} crosses a symlink: {relative!r}")
+              return current
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      refuse(f"manifest repeats key {key!r}")
+                  result[key] = value
+              return result
+
+          def file_digests(path):
+              sha256 = hashlib.sha256()
+              try:
+                  size = path.stat().st_size
+                  with path.open("rb") as stream:
+                      while True:
+                          block = stream.read(1024 * 1024)
+                          if not block:
+                              break
+                          sha256.update(block)
+              except OSError as exc:
+                  refuse(f"cannot read {path}: {exc}")
+              return "sha256:" + sha256.hexdigest(), size
+
+          def git_blob_oid(path, size, expected):
+              if not isinstance(expected, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected):
+                  refuse(f"{path} has no valid manifest blob_oid")
+              algorithm = hashlib.sha1 if len(expected) == 40 else hashlib.sha256
+              digest = algorithm()
+              digest.update(f"blob {size}\0".encode("ascii"))
+              with path.open("rb") as stream:
+                  while True:
+                      block = stream.read(1024 * 1024)
+                      if not block:
+                          break
+                      digest.update(block)
+              return digest.hexdigest()
+
+          def main():
+              workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve(strict=True)
+              raw_tools = os.environ.get("TOOLS_PATH", ".github/graph-admission")
+              if not raw_tools or raw_tools.startswith("/") or "\\" in raw_tools:
+                  refuse("TOOLS_PATH must be a non-empty workspace-relative path")
+              bundle = safe_path(workspace, raw_tools, "TOOLS_PATH")
+              if not bundle.is_dir():
+                  refuse("TOOLS_PATH is not a directory")
+              bundle = bundle.resolve(strict=True)
+              pin_text = os.environ.get("SIGNING_KEY_FINGERPRINT", "").strip()
+              pins = [item for item in re.split(r"[\s,]+", pin_text) if item]
+              if not pins:
+                  refuse("BUNDLE_SIGNATURE_UNPINNED: not_measured; refusing to execute unauthenticated payload")
+              if len(set(pins)) != len(pins) or any(
+                      not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", pin) for pin in pins):
+                  refuse("caller signing-key fingerprint pin is malformed or duplicated")
+              program_ref = os.environ.get("PROGRAM_REF", "")
+              if not re.fullmatch(r"[0-9a-f]{40}", program_ref):
+                  refuse("caller program_ref is not an exact lowercase commit id")
+
+              # GitHub's job context identifies the reusable workflow GitHub loaded. A remote
+              # Program call is bound by its exact immutable Program SHA. A local caller route is
+              # bound independently to that caller's exact event SHA/ref and authenticated file
+              # bytes from the immutable commit GitHub loaded.
+              try:
+                  active_job = json.loads(os.environ.get("ACTIVE_WORKFLOW_CONTEXT", ""))
+              except (TypeError, json.JSONDecodeError) as exc:
+                  refuse(f"BUNDLE_ACTIVE_WORKFLOW_UNBOUND: GitHub job context is unavailable: {exc}")
+              if not isinstance(active_job, dict):
+                  refuse("BUNDLE_ACTIVE_WORKFLOW_UNBOUND: GitHub job context is not an object")
+              active_repository = active_job.get("workflow_repository", "")
+              active_path = active_job.get("workflow_file_path", "")
+              active_sha = active_job.get("workflow_sha", "")
+              active_ref = active_job.get("workflow_ref", "")
+              if (not isinstance(active_repository, str)
+                      or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", active_repository)
+                      or not isinstance(active_path, str) or active_path != WORKFLOW_PATH):
+                  refuse("BUNDLE_ACTIVE_WORKFLOW_UNBOUND: repository/path is unavailable or noncanonical")
+              if (not isinstance(active_sha, str)
+                      or not re.fullmatch(r"[0-9a-f]{40}", active_sha)
+                      or not isinstance(active_ref, str) or "@" not in active_ref):
+                  refuse("BUNDLE_ACTIVE_WORKFLOW_UNBOUND: immutable workflow SHA/ref is unavailable")
+              active_source, _, loaded_ref = active_ref.rpartition("@")
+              remote_source = f"{PROGRAM_REPO}/{WORKFLOW_PATH}"
+              caller_repository = os.environ.get("CALLER_REPOSITORY", "")
+              caller_source = f"{caller_repository}/{WORKFLOW_PATH}"
+              loaded_workflow_bytes = None
+
+              if active_source == remote_source:
+                  if (active_repository != PROGRAM_REPO
+                          or active_path != WORKFLOW_PATH
+                          or active_sha != program_ref or loaded_ref != program_ref):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_REF_MISMATCH: remote workflow is not the exact caller-pinned Program SHA")
+              else:
+                  if (not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", caller_repository)
+                          or active_repository != caller_repository
+                          or active_path != WORKFLOW_PATH
+                          or active_source != caller_source
+                          or caller_repository != os.environ.get("GITHUB_REPOSITORY", "")):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_UNBOUND: local workflow repository/path is not the exact caller source")
+                  caller_ref = os.environ.get("CALLER_REF", "")
+                  caller_sha = os.environ.get("CALLER_SHA", "")
+                  caller_event = os.environ.get("CALLER_EVENT_NAME", "")
+                  if (not caller_ref or not isinstance(loaded_ref, str) or loaded_ref != caller_ref
+                          or caller_ref != os.environ.get("GITHUB_REF", "")
+                          or not re.fullmatch(r"[0-9a-f]{40}", caller_sha)
+                          or active_sha != caller_sha
+                          or caller_sha != os.environ.get("GITHUB_SHA", "")
+                          or not re.fullmatch(r"[A-Za-z0-9_]+", caller_event)
+                          or caller_event != os.environ.get("GITHUB_EVENT_NAME", "")):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_REF_MISMATCH: local workflow SHA/ref/event does not match the caller event context")
+                  token = os.environ.get("GH_TOKEN", "")
+                  if not token:
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_UNBOUND: explicit GitHub contents-read token is unavailable")
+                  api_path = "/repos/" + "/".join(
+                      urllib.parse.quote(part, safe="") for part in caller_repository.split("/")
+                  ) + "/contents/" + "/".join(
+                      urllib.parse.quote(part, safe="") for part in WORKFLOW_PATH.split("/")
+                  )
+                  api_url = API_BASE + api_path + "?" + urllib.parse.urlencode({"ref": active_sha})
+                  request = urllib.request.Request(api_url, headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": "Bearer " + token,
+                      "User-Agent": "AUP-graph-admission-active-workflow",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  })
+
+                  class NoRedirect(urllib.request.HTTPRedirectHandler):
+                      def redirect_request(self, req, fp, code, msg, headers, newurl):
+                          return None
+
+                  try:
+                      with urllib.request.build_opener(NoRedirect).open(request, timeout=20) as response:
+                          if response.status != 200:
+                              refuse(f"BUNDLE_ACTIVE_WORKFLOW_SOURCE_UNAVAILABLE: GitHub API returned HTTP {response.status}")
+                          api_bytes = response.read(MAX_ACTIVE_WORKFLOW_BYTES + 1)
+                  except urllib.error.HTTPError as exc:
+                      refuse(f"BUNDLE_ACTIVE_WORKFLOW_SOURCE_UNAVAILABLE: GitHub API returned HTTP {exc.code}")
+                  except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                      refuse(f"BUNDLE_ACTIVE_WORKFLOW_SOURCE_UNAVAILABLE: GitHub API request failed ({type(exc).__name__})")
+                  if len(api_bytes) > MAX_ACTIVE_WORKFLOW_BYTES:
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: API response exceeds the 1 MiB limit")
+                  try:
+                      api_document = json.loads(api_bytes.decode("utf-8"))
+                  except (UnicodeDecodeError, json.JSONDecodeError):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API response is not JSON")
+                  if not isinstance(api_document, dict):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API response is not an object")
+                  encoded = api_document.get("content")
+                  if (api_document.get("path") != WORKFLOW_PATH
+                          or api_document.get("type") != "file"
+                          or api_document.get("encoding") != "base64"
+                          or isinstance(api_document.get("size"), bool)
+                          or not isinstance(api_document.get("size"), int)
+                          or not isinstance(encoded, str)):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API path/encoding/size is invalid")
+                  compact = encoded.replace("\r", "").replace("\n", "")
+                  if not re.fullmatch(r"[A-Za-z0-9+/]*={0,2}", compact):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API content is not canonical base64")
+                  try:
+                      loaded_workflow_bytes = base64.b64decode(compact, validate=True)
+                  except (ValueError, base64.binascii.Error):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API content cannot be decoded")
+                  if (len(loaded_workflow_bytes) != api_document["size"]
+                          or api_document["size"] > MAX_ACTIVE_WORKFLOW_BYTES):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API content size is inconsistent")
+                  active_blob_oid = api_document.get("sha")
+                  if (not isinstance(active_blob_oid, str)
+                          or not re.fullmatch(r"[0-9a-f]{40}", active_blob_oid)):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API blob id is invalid")
+                  actual_active_blob = hashlib.sha1(
+                      b"blob " + str(len(loaded_workflow_bytes)).encode("ascii")
+                      + b"\0" + loaded_workflow_bytes).hexdigest()
+                  if actual_active_blob != active_blob_oid:
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_SOURCE_INVALID: GitHub API bytes do not match its blob id")
+
+              manifest_path = regular_file(bundle / MANIFEST_NAME, MANIFEST_NAME)
+              if manifest_path.stat().st_size > 16 * 1024 * 1024:
+                  refuse("BUNDLE.json exceeds the 16 MiB preflight limit")
+              manifest_bytes = manifest_path.read_bytes()
+              pairs = [("BUNDLE.json.sig", "SIGNING-KEY.pub")]
+              for number in range(2, MAX_SIGNERS + 1):
+                  signature = f"BUNDLE.json.{number}.sig"
+                  public_key = f"SIGNING-KEY.{number}.pub"
+                  sig_exists = (bundle / signature).exists() or (bundle / signature).is_symlink()
+                  key_exists = (bundle / public_key).exists() or (bundle / public_key).is_symlink()
+                  if sig_exists != key_exists:
+                      refuse(f"signature pair is incomplete: {signature} / {public_key}")
+                  if sig_exists:
+                      pairs.append((signature, public_key))
+
+              signer_fingerprints = []
+              for signature_name, key_name in pairs:
+                  signature_path = regular_file(bundle / signature_name, signature_name)
+                  key_path = regular_file(bundle / key_name, key_name)
+                  key_lines = key_path.read_text(encoding="utf-8").splitlines()
+                  if len(key_lines) != 1 or not key_lines[0].startswith("ssh-ed25519 "):
+                      refuse(f"{key_name} must contain exactly one Ed25519 public key")
+                  fingerprint_result = subprocess.run(
+                      ["ssh-keygen", "-lf", str(key_path), "-E", "sha256"],
+                      capture_output=True, text=True, timeout=20, check=False)
+                  if fingerprint_result.returncode != 0:
+                      refuse(f"cannot fingerprint {key_name}: {fingerprint_result.stderr.strip()[:300]}")
+                  fields = fingerprint_result.stdout.split()
+                  fingerprint = fields[1] if len(fields) >= 2 else ""
+                  if not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint):
+                      refuse(f"{key_name} did not produce an Ed25519 SHA256 fingerprint")
+                  signer_fingerprints.append(fingerprint)
+              if not any(fingerprint in pins for fingerprint in signer_fingerprints):
+                  refuse("no bundle signature is made by a caller-pinned key")
+
+              # Verify every carried signature, not just the pinned one; rotation bundles bind their
+              # complete signer set in the signed manifest and a stray/bad secondary signature refuses.
+              for signature_name, key_name in pairs:
+                  signature_path = regular_file(bundle / signature_name, signature_name)
+                  key_path = regular_file(bundle / key_name, key_name)
+                  key_line = key_path.read_text(encoding="utf-8").strip()
+                  allowed = f"bundle-preflight {key_line}\n".encode("utf-8")
+                  # `ssh-keygen -Y verify` accepts the allowed-signers FILE path, never its contents.
+                  # Use a private temporary file outside the bundle, then feed the exact manifest bytes.
+                  import tempfile
+                  with tempfile.TemporaryDirectory(prefix="graph-bundle-preflight-") as temp_dir:
+                      allowed_path = Path(temp_dir) / "allowed_signers"
+                      allowed_path.write_bytes(allowed)
+                      verify = subprocess.run(
+                          ["ssh-keygen", "-Y", "verify", "-f", str(allowed_path),
+                           "-I", "bundle-preflight", "-n", NAMESPACE, "-s", str(signature_path)],
+                          input=manifest_bytes, capture_output=True, timeout=20, check=False)
+                  if verify.returncode != 0:
+                      refuse(f"{signature_name} failed OpenSSH namespace/signature verification: "
+                             f"{verify.stderr.decode('utf-8', 'replace').strip()[:300]}")
+
+              try:
+                  manifest = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=unique_object)
+              except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                  refuse(f"BUNDLE_MALFORMED: {exc}")
+              if not isinstance(manifest, dict) or manifest.get("schema") != "GraphAdmissionBundle/v1":
+                  refuse("manifest schema is not GraphAdmissionBundle/v1")
+              if manifest.get("program_repo") != PROGRAM_REPO:
+                  refuse("manifest program_repo is not the canonical Program repository")
+              if manifest.get("program_ref") != program_ref:
+                  refuse("BUNDLE_REF_MISMATCH: manifest program_ref differs from caller-pinned ref")
+              if len(set(signer_fingerprints)) != len(signer_fingerprints):
+                  refuse("manifest signature pairs repeat a public-key fingerprint")
+              attested = manifest.get("signing_keys")
+              if attested is not None:
+                  if (not isinstance(attested, list)
+                          or any(not isinstance(item, str) for item in attested)
+                          or sorted(attested) != sorted(signer_fingerprints)):
+                      refuse("manifest signing_keys does not match the complete detached-signature set")
+              if attested is None and len(signer_fingerprints) > 1:
+                  refuse("manifest omits signing_keys for a multi-signature bundle")
+
+              files = manifest.get("files")
+              if not isinstance(files, list) or not files:
+                  refuse("manifest files must be a non-empty list")
+              digest = "sha256:" + hashlib.sha256(
+                  json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+              if manifest.get("bundle_digest") != digest:
+                  refuse("manifest bundle_digest does not match its signed files list")
+
+              payload_paths = set()
+              manifest_paths = set()
+              workflow_entries = []
+              metadata_names = {MANIFEST_NAME}
+              for number in range(1, MAX_SIGNERS + 1):
+                  metadata_names.add("BUNDLE.json.sig" if number == 1 else f"BUNDLE.json.{number}.sig")
+                  metadata_names.add("SIGNING-KEY.pub" if number == 1 else f"SIGNING-KEY.{number}.pub")
+              for entry in files:
+                  if not isinstance(entry, dict):
+                      refuse("manifest file entry is not an object")
+                  relative = entry.get("path")
+                  if not isinstance(relative, str) or relative in manifest_paths:
+                      refuse("manifest repeats or omits a file path")
+                  manifest_paths.add(relative)
+                  candidate = PurePosixPath(relative)
+                  if (candidate.is_absolute() or "\\" in relative or "\x00" in relative
+                          or any(part in ("", ".", "..") for part in relative.split("/"))):
+                      refuse(f"manifest has an unsafe file path: {relative!r}")
+                  if relative in metadata_names:
+                      refuse(f"manifest payload collides with bundle metadata: {relative!r}")
+                  if entry.get("verified_by_the_job") is False:
+                      if relative != WORKFLOW_PATH:
+                          refuse("verified_by_the_job=false is reserved for the canonical workflow entry")
+                      workflow_entries.append(entry)
+                      continue
+                  payload_paths.add(relative)
+                  path = safe_path(bundle, relative, "manifest payload path")
+                  regular_file(path, f"manifest payload {relative}")
+                  actual_sha, size = file_digests(path)
+                  if entry.get("sha256") != actual_sha:
+                      refuse(f"BUNDLE_DIGEST_MISMATCH: {relative}")
+                  if git_blob_oid(path, size, entry.get("blob_oid")) != entry.get("blob_oid"):
+                      refuse(f"BUNDLE_BLOB_OID_MISMATCH: {relative}")
+              if len(workflow_entries) != 1:
+                  refuse("BUNDLE_WORKFLOW_ENTRY_MISSING_OR_REPEATED: manifest must contain exactly one canonical workflow entry")
+              workflow_entry = workflow_entries[0]
+              if loaded_workflow_bytes is not None:
+                  actual_loaded_sha = "sha256:" + hashlib.sha256(loaded_workflow_bytes).hexdigest()
+                  actual_loaded_blob = hashlib.sha1(
+                      b"blob " + str(len(loaded_workflow_bytes)).encode("ascii")
+                      + b"\0" + loaded_workflow_bytes).hexdigest()
+                  if (actual_loaded_sha != workflow_entry.get("sha256")
+                          or actual_loaded_blob != workflow_entry.get("blob_oid")):
+                      refuse("BUNDLE_ACTIVE_WORKFLOW_BYTES_MISMATCH: authenticated loaded caller workflow differs from the signed canonical workflow entry")
+              workflow_path = safe_path(workspace, WORKFLOW_PATH, "vendored workflow")
+              regular_file(workflow_path, "vendored workflow")
+              actual_sha, size = file_digests(workflow_path)
+              if actual_sha != workflow_entry.get("sha256"):
+                  refuse("BUNDLE_WORKFLOW_DIGEST_MISMATCH: executing workflow differs from signed manifest")
+              blob_oid = workflow_entry.get("blob_oid")
+              if git_blob_oid(workflow_path, size, blob_oid) != blob_oid:
+                  refuse("BUNDLE_WORKFLOW_BLOB_OID_MISMATCH: executing workflow differs from signed manifest")
+
+              metadata_paths = {MANIFEST_NAME}
+              for signature_name, key_name in pairs:
+                  metadata_paths.update((signature_name, key_name))
+              actual_paths = set()
+              for current, directories, names in os.walk(bundle, topdown=True, followlinks=False):
+                  current_path = Path(current)
+                  for directory in directories:
+                      if (current_path / directory).is_symlink():
+                          refuse("bundle contains a symlink directory")
+                  for name in names:
+                      path = current_path / name
+                      if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+                          refuse("bundle contains a non-regular or symlink file")
+                      actual_paths.add(path.relative_to(bundle).as_posix())
+              expected_paths = payload_paths | metadata_paths
+              if actual_paths != expected_paths:
+                  missing = sorted(expected_paths - actual_paths)
+                  unlisted = sorted(actual_paths - expected_paths)
+                  refuse(f"BUNDLE_INVENTORY_MISMATCH: missing={missing[:4]} unlisted={unlisted[:4]}")
+              print("BUNDLE_PREPAYLOAD_VERIFIED: signature, namespace, caller pin, active workflow ref, hashes, blob ids and inventory")
+
+          try:
+              main()
+          except (OSError, ValueError, subprocess.SubprocessError) as exc:
+              print("BUNDLE_PREPAYLOAD_REFUSED: " + str(exc), file=sys.stderr)
+              raise SystemExit(2)
+          PY
+
+      - name: Python 3.12
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.12'
+
+      # tools/graph/workflow_config.py imports yaml. The gate tools are NOT stdlib-only: without PyYAML
+      # every workflow file in the checked-out repository is recorded as 'workflow shell context not
+      # measured: No module named yaml', so a caller's workflow entities stay not_measured and the graph
+      # this job rebuilds differs from the one a receipt was built against on a host that has PyYAML
+      # (measured on scrutator PR128 / PR129, 2026-10-08). Same pin as ci.yml.
+      - name: PyYAML for the workflow-configuration verifier
+        # -I: isolated mode puts neither the working directory nor user site on sys.path. The checkout is
+        # the pull request's own tree, so a planted ./pip package would otherwise run inside this required
+        # gate before it measures anything (FRONTEND review of PR399).
+        run: python3 -I -m pip install --disable-pip-version-check --no-input 'pyyaml==6.0.2'
 
       # AUP-GRAPH-006:gate5b (B6). A DECLARED DERIVED ARTEFACT is admitted only if the gate can RUN the
       # caller's own verifier — accept the honest tree, then REFUSE it with one byte corrupted. That needs
@@ -173,30 +651,642 @@ jobs:
           corepack enable --install-directory "${RUNNER_TEMP}/corepack-bin"
           echo "${RUNNER_TEMP}/corepack-bin" >> "$GITHUB_PATH"
 
+      - name: Node for the pinned admission-selftest compiler
+        if: steps.derived.outputs.declared != 'yes'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '24.20.0'
+
+      - name: Install and qualify the pinned admission-selftest compiler
+        env:
+          NODE_DISABLE_COMPILE_CACHE: '1'
+          TOOLS_PATH: ${{ inputs.tools_path }}
+        run: |
+          set -euo pipefail
+          compiler_root=$(mktemp -d "${RUNNER_TEMP}/aup-graph-tsc.XXXXXX")
+          cat > "$compiler_root/package.json" <<'AUP_PACKAGE_JSON'
+          {
+            "name": "aup-graph-selftest-compiler",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@types/node": "24.19.2",
+              "typescript": "5.9.3"
+            }
+          }
+          AUP_PACKAGE_JSON
+          cat > "$compiler_root/package-lock.json" <<'AUP_PACKAGE_LOCK_JSON'
+          {
+            "name": "aup-graph-selftest-compiler",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "requires": true,
+            "packages": {
+              "": {
+                "name": "aup-graph-selftest-compiler",
+                "version": "1.0.0",
+                "private": true,
+                "dependencies": {
+                  "@types/node": "24.19.2",
+                  "typescript": "5.9.3"
+                }
+              },
+              "node_modules/@types/node": {
+                "version": "24.19.2",
+                "resolved": "https://registry.npmjs.org/@types/node/-/node-24.19.2.tgz",
+                "integrity": "sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==",
+                "license": "MIT",
+                "dependencies": {
+                  "undici-types": ">=7.24.0 <7.24.7"
+                }
+              },
+              "node_modules/typescript": {
+                "version": "5.9.3",
+                "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+                "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+                "bin": {
+                  "tsc": "bin/tsc",
+                  "tsserver": "bin/tsserver"
+                },
+                "engines": {
+                  "node": ">=14.17"
+                }
+              },
+              "node_modules/undici-types": {
+                "version": "7.24.6",
+                "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.24.6.tgz",
+                "integrity": "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==",
+                "license": "MIT"
+              }
+            }
+          }
+          AUP_PACKAGE_LOCK_JSON
+          cat > "$compiler_root/qualify-tsc.py" <<'AUP_QUALIFY_TSC_PY'
+          #!/usr/bin/env python3
+          import json, pathlib, subprocess, sys, tempfile
+
+          def qualify(root, executable):
+              root = pathlib.Path(root).resolve()
+              executable = pathlib.Path(executable)
+              expected = root / "node_modules/typescript/bin/tsc"
+              if executable.resolve() != expected:
+                  raise ValueError("TSC_EXECUTABLE_OUTSIDE_PINNED_PACKAGE")
+              package = json.loads((root / "node_modules/typescript/package.json").read_text())
+              if package["version"] != "5.9.3":
+                  raise ValueError("TSC_PACKAGE_VERSION_MISMATCH")
+              result = subprocess.run([str(executable), "--version"], capture_output=True, text=True, timeout=20)
+              if result.returncode != 0 or result.stdout.strip() != "Version 5.9.3":
+                  raise ValueError("TSC_EXECUTABLE_VERSION_MISMATCH")
+              with tempfile.TemporaryDirectory(prefix="aup-tsc-controls-") as scratch:
+                  path = pathlib.Path(scratch)
+                  for filename, contents, expected_success in [
+                      ("valid.ts", "const value: number = 1;\n", True),
+                      ("invalid.ts", "const value: number = 'wrong';\n", False),
+                  ]:
+                      source = path / filename
+                      source.write_text(contents)
+                      result = subprocess.run([str(executable), "--noEmit", "--strict", "--skipLibCheck", str(source)], capture_output=True, text=True, timeout=30)
+                      if (result.returncode == 0) != expected_success:
+                          raise ValueError("TSC_SEMANTIC_CONTROL_FAILED:" + filename)
+              return {"version": "5.9.3", "executable": str(executable.resolve()), "valid_input": "PASS", "invalid_input": "REFUSED"}
+
+          if __name__ == "__main__":
+              print(json.dumps(qualify(sys.argv[1], sys.argv[2]), sort_keys=True))
+          AUP_QUALIFY_TSC_PY
+          : > "$compiler_root/user.npmrc"
+          : > "$compiler_root/global.npmrc"
+          npm ci --prefix "$compiler_root" --ignore-scripts --no-audit --no-fund --cache "$compiler_root/npm-cache" --userconfig "$compiler_root/user.npmrc" --globalconfig "$compiler_root/global.npmrc" --registry https://registry.npmjs.org
+          # In the Program repository, the workflow tests the source tools in tools/graph.
+          # Callers run the pinned vendored copy under inputs.tools_path (normally
+          # .github/graph-admission), so installing beside the Program source path would leave
+          # that copy unable to resolve its compiler.
+          if [ "$GITHUB_REPOSITORY" = "Arcanada-one/arcanada-universal-program" ]; then
+            graph_tools_rel="tools/graph"
+          else
+            tools_rel="${TOOLS_PATH:-.github/graph-admission}"
+            case "$tools_rel" in
+              ''|/*|*/|.)
+                echo "::error::invalid relative tools_path for the vendored admission tools" >&2
+                exit 2
+                ;;
+            esac
+            case "/$tools_rel/" in
+              *"/../"*|*"/./"*|*//*|*\\*)
+                echo "::error::unsafe relative tools_path for the vendored admission tools" >&2
+                exit 2
+                ;;
+            esac
+            graph_tools_rel="$tools_rel/tools/graph"
+          fi
+          workspace_real="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          graph_tools_path="$workspace_real/$graph_tools_rel"
+          if [ ! -d "$graph_tools_path" ]; then
+            echo "::error::admission tools directory is missing: $graph_tools_rel" >&2
+            exit 2
+          fi
+          graph_tools_real="$(realpath -e -- "$graph_tools_path")"
+          if [ "$graph_tools_real" != "$graph_tools_path" ]; then
+            echo "::error::admission tools directory resolves through a symlink" >&2
+            exit 2
+          fi
+          graph_modules="$graph_tools_real/node_modules"
+          if [ -e "$graph_modules" ] || [ -L "$graph_modules" ]; then
+            echo "::error::$graph_tools_rel/node_modules already exists; refusing to replace it" >&2
+            exit 2
+          fi
+          printf '/%s/node_modules\n' "$graph_tools_rel" >> .git/info/exclude
+          ln -s "$compiler_root/node_modules" "$graph_modules"
+          python3 "$compiler_root/qualify-tsc.py" "$compiler_root" "$compiler_root/node_modules/.bin/tsc"
+          printf '%s\n' "$compiler_root/node_modules/.bin" >> "$GITHUB_PATH"
+
       - name: Resolve the change range
         id: range
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          BASE_BRANCH=""
           if [ -n "${PR_BASE:-}" ]; then
+            if [ -n "${PR_BASE_REF:-}" ]; then BASE_BRANCH="refs/remotes/origin/${PR_BASE_REF}"; fi
             BASE="$(git merge-base "$PR_BASE" "$PR_HEAD")"
             HEAD_SHA="$PR_HEAD"
           else
             BASE="$(git rev-parse HEAD~1)"
             HEAD_SHA="$(git rev-parse HEAD)"
           fi
-          echo "base=$BASE" >> "$GITHUB_OUTPUT"
-          echo "head=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "base=$BASE"
+            echo "head=$HEAD_SHA"
+            echo "base_branch=$BASE_BRANCH"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Write the pull-request body to a file (never interpolated into a shell command)
+      # The prior bundle_preflight step is the trust boundary for callers. Only after it succeeds may
+      # this job import the pinned native structural classifier. The classifier sees GitHub's exact
+      # checked-out range; it does not consume caller-authored eligibility or branch names.
+      - name: Classify the authenticated current range for native self-update issuance
+        id: self_update_classifier
+        if: github.repository != 'Arcanada-one/arcanada-universal-program'
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          TOOLS_PATH: ${{ inputs.tools_path }}
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+          RANGE_BASE_BRANCH: ${{ steps.range.outputs.base_branch }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/graph-admission"
-          printf '%s' "${PR_BODY:-}" > "${RUNNER_TEMP}/graph-admission/pr-body.txt"
+          export PYTHONDONTWRITEBYTECODE=1
+          python3 -I -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          repo = Path(os.environ["GITHUB_WORKSPACE"]).resolve(strict=True)
+          bundle_rel = os.environ["TOOLS_PATH"]
+          base, head = os.environ["RANGE_BASE"], os.environ["RANGE_HEAD"]
+          if not re.fullmatch(r"[0-9a-f]{40}", base) or not re.fullmatch(r"[0-9a-f]{40}", head):
+              raise SystemExit("SELF_UPDATE_CLASSIFICATION_REFUSED: exact GitHub range is unavailable")
+          bundle = (repo / bundle_rel).resolve(strict=True)
+          if repo not in bundle.parents or not (bundle / "tools/graph/admit_change.py").is_file():
+              raise SystemExit("SELF_UPDATE_CLASSIFICATION_REFUSED: authenticated Program tools path is unsafe")
+          sys.path.insert(0, str(bundle / "tools/graph"))
+          import admit_change
+
+          files = admit_change.range_files(repo, base, head)
+          base_branch = os.environ.get("RANGE_BASE_BRANCH") or None
+          case, evidence = admit_change.structural_case(repo, base, head, files, bundle_rel, base_branch)
+          if case == "gate_self_update" and not base_branch:
+              raise SystemExit("SELF_UPDATE_CLASSIFICATION_REFUSED: exact pull-request base branch is unavailable")
+          if case not in (None, "gate_self_update"):
+              case = ""
+          print("case=" + (case or ""))
+          print("native_classifier=admit_change.structural_case")
+          print("range=" + base + ".." + head)
+          PY
+
+      - name: Prepare canonical Scrutator contract verifier dependencies
+        if: github.repository == 'Arcanada-one/scrutator' && steps.self_update_classifier.outputs.case == 'gate_self_update'
+        env:
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+        run: |
+          set -euo pipefail
+          test -f contracts/http/package.json && test ! -L contracts/http/package.json
+          test -f contracts/http/tsconfig.json && test ! -L contracts/http/tsconfig.json
+          git diff --quiet "$RANGE_BASE" "$RANGE_HEAD" -- contracts/http/package.json contracts/http/tsconfig.json
+          contract_root=$(mktemp -d "${RUNNER_TEMP}/scrutator-contract-ts.XXXXXX")
+          cat > "$contract_root/package.json" <<'SCRUTATOR_PACKAGE_JSON'
+          {"name":"scrutator-contract-graph-verifier","version":"1.0.0","private":true,"dependencies":{"typescript":"5.9.3","zod":"4.6.5"}}
+          SCRUTATOR_PACKAGE_JSON
+          cat > "$contract_root/package-lock.json" <<'SCRUTATOR_PACKAGE_LOCK_JSON'
+          {
+            "name":"scrutator-contract-graph-verifier","version":"1.0.0","lockfileVersion":3,"requires":true,
+            "packages":{
+              "":{"name":"scrutator-contract-graph-verifier","version":"1.0.0","dependencies":{"typescript":"5.9.3","zod":"4.6.5"}},
+              "node_modules/typescript":{"version":"5.9.3","resolved":"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz","integrity":"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==","bin":{"tsc":"bin/tsc","tsserver":"bin/tsserver"},"engines":{"node":">=14.17"}},
+              "node_modules/zod":{"version":"4.6.5","resolved":"https://registry.npmjs.org/zod/-/zod-4.6.5.tgz","integrity":"sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="}
+            }
+          }
+          SCRUTATOR_PACKAGE_LOCK_JSON
+          : > "$contract_root/user.npmrc"
+          : > "$contract_root/global.npmrc"
+          npm ci --prefix "$contract_root" --ignore-scripts --no-audit --no-fund --cache "$contract_root/npm-cache" --userconfig "$contract_root/user.npmrc" --globalconfig "$contract_root/global.npmrc" --registry https://registry.npmjs.org
+          export CONTRACT_ROOT="$contract_root"
+          python3 -I -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          package = json.loads(Path('contracts/http/package.json').read_text(encoding='utf-8'))
+          if package.get('name') != '@arcanada/scrutator-http-contract' or package.get('devDependencies') != {'typescript': '5.9.3', 'zod': '4.6.5'}:
+              raise SystemExit('SCRUTATOR_CONTRACT_DEPENDENCY_SUBJECT_REFUSED')
+          root = Path(os.environ['CONTRACT_ROOT']).resolve(strict=True)
+          for name, version in (('typescript', '5.9.3'), ('zod', '4.6.5')):
+              installed = json.loads((root / 'node_modules' / name / 'package.json').read_text(encoding='utf-8'))
+              if installed.get('version') != version:
+                  raise SystemExit('SCRUTATOR_CONTRACT_PINNED_PACKAGE_MISMATCH:' + name)
+          PY
+          contract_modules="$GITHUB_WORKSPACE/contracts/http/node_modules"
+          if [ -e "$contract_modules" ] || [ -L "$contract_modules" ]; then
+            echo "::error::contracts/http/node_modules already exists; refusing to replace it" >&2
+            exit 2
+          fi
+          printf '/contracts/http/node_modules\n' >> .git/info/exclude
+          ln -s "$contract_root/node_modules" "$contract_modules"
+
+      # A caller may opt into the one fixed MUN web-typecheck setup policy. The signed bundle validates
+      # exact repository/range/package/lock/blob pins before Node or pnpm executes; the caller input
+      # contains data only and cannot choose commands, paths, registries, or environment variables.
+      - name: Validate fixed caller dependency setup subject and source pins
+        id: candidate_dependency_setup
+        if: inputs.candidate_dependency_setup_required || inputs.candidate_dependency_setup != ''
+        env:
+          CANDIDATE_DEPENDENCY_SETUP: ${{ inputs.candidate_dependency_setup }}
+          TOOLS_PATH: ${{ inputs.tools_path }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CANDIDATE_DEPENDENCY_SETUP:-}" ]; then
+            echo "::error::required caller dependency setup manifest is absent" >&2
+            exit 2
+          fi
+          if [ "$GITHUB_REPOSITORY" = "Arcanada-one/arcanada-universal-program" ]; then
+            GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE"
+          else
+            GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE/$TOOLS_PATH"
+          fi
+          PLAN_ROOT="$RUNNER_TEMP/graph-admission/candidate-dependency-setup"
+          mkdir -p "$PLAN_ROOT"
+          PLAN_PATH="$PLAN_ROOT/plan.json"
+          set -C
+          python3 -I -B "$GRAPH_TOOLS_ROOT/tools/graph/ci_gate.py" candidate-dependency-setup-plan \
+            --repo "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" \
+            --base "$RANGE_BASE" --head "$RANGE_HEAD" > "$PLAN_PATH"
+          NODE_VERSION="$(python3 -I -B -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["node_version"])' "$PLAN_PATH")"
+          printf 'node_version=%s\nplan_path=%s\n' "$NODE_VERSION" "$PLAN_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Node for the fixed caller dependency setup
+        if: inputs.candidate_dependency_setup_required || inputs.candidate_dependency_setup != ''
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: ${{ steps.candidate_dependency_setup.outputs.node_version }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Corepack for the fixed caller dependency setup
+        if: inputs.candidate_dependency_setup_required || inputs.candidate_dependency_setup != ''
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/corepack-bin"
+          corepack enable --install-directory "${RUNNER_TEMP}/corepack-bin"
+          echo "${RUNNER_TEMP}/corepack-bin" >> "$GITHUB_PATH"
+
+      - name: Prepare frozen caller dependencies before candidate verification
+        if: inputs.candidate_dependency_setup_required || inputs.candidate_dependency_setup != ''
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          PLAN_PATH="$RUNNER_TEMP/graph-admission/candidate-dependency-setup/plan.json"
+          pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile
+          pnpm --filter @muneral/types build
+          cat "$PLAN_PATH" >> "$GITHUB_STEP_SUMMARY"
+
+      # The canonical Model Connector self-update is the only caller admitted by the narrow
+      # B1 pin/permission grammar. Its current-candidate TypeScript verifiers need the same
+      # frozen dependencies and generated Prisma client as its ordinary CI job. Keep this
+      # source-fixed setup separate from caller-controlled dependency-setup inputs.
+      - name: Prepare canonical Model Connector self-update verifier dependencies
+        if: github.repository == 'Arcanada-one/model-connector' && steps.self_update_classifier.outputs.case == 'gate_self_update'
+        env:
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+          DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
+        run: |
+          set -euo pipefail
+          test -f package.json && test ! -L package.json
+          test -f pnpm-lock.yaml && test ! -L pnpm-lock.yaml
+          git diff --quiet "$RANGE_BASE" "$RANGE_HEAD" -- package.json pnpm-lock.yaml prisma
+          python3 -I -B - <<'PY'
+          import json
+          from pathlib import Path
+          package = json.loads(Path('package.json').read_text(encoding='utf-8'))
+          if package.get('name') != 'model-connector' or package.get('packageManager') != 'pnpm@10.30.3':
+              raise SystemExit('MODEL_SELF_UPDATE_DEPENDENCY_SUBJECT_REFUSED')
+          PY
+          corepack pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile
+          corepack pnpm exec prisma generate
+
+      - name: jsonschema 4.23.0 for candidate and stage source-input controls
+        if: inputs.stage_userpath_required || inputs.candidate_receipt_required || steps.self_update_classifier.outputs.case == 'gate_self_update'
+        run: python3 -I -m pip install --disable-pip-version-check --no-input 'jsonschema==4.23.0'
+
+      - name: Produce the exact current Program candidate CAR
+        id: candidate_receipt
+        if: inputs.candidate_receipt_required || steps.self_update_classifier.outputs.case == 'gate_self_update'
+        env:
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+          RANGE_BASE_BRANCH: ${{ steps.range.outputs.base_branch }}
+          CANDIDATE_ROOT: ${{ runner.temp }}/graph-admission/stage-userpath/current-candidate
+          TOOLS_PATH: ${{ inputs.tools_path }}
+          SELF_UPDATE_CASE: ${{ steps.self_update_classifier.outputs.case }}
+          CANDIDATE_SOURCE_OUTCOME_REQUIRED: ${{ inputs.candidate_source_outcome_required }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VERIFIER_JOB: ${{ inputs.verifier_job }}
+          VERIFIER_CONCLUSION: ${{ inputs.verifier_conclusion }}
+          EMPTY_IMPACT_EXPLANATION: ${{ inputs.empty_impact_explanation }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          TYPECHECK_TOKEN="${GH_TOKEN:-}"
+          unset GH_TOKEN
+          if [ "$GITHUB_REPOSITORY" = "Arcanada-one/arcanada-universal-program" ]; then
+            GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE"
+          else
+            GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE/$TOOLS_PATH"
+          fi
+          if [ ! -f "$GRAPH_TOOLS_ROOT/tools/graph/build_graph.py" ] || [ -L "$GRAPH_TOOLS_ROOT/tools/graph/build_graph.py" ] \
+             || [ ! -f "$GRAPH_TOOLS_ROOT/tools/graph/verify.py" ] || [ -L "$GRAPH_TOOLS_ROOT/tools/graph/verify.py" ]; then
+            echo "::error::candidate producer source is missing from the selected Program source" >&2
+            exit 2
+          fi
+          mkdir -p "$(dirname "$CANDIDATE_ROOT")"
+          if ! mkdir "$CANDIDATE_ROOT"; then
+            echo "::error::current-source capture root already exists or cannot be created"
+            exit 2
+          fi
+          mkdir -p "$CANDIDATE_ROOT/work" "$CANDIDATE_ROOT/verifier-out"
+          EMPTY_IMPACT_PATH="$CANDIDATE_ROOT/empty-impact-explanation.json"
+          if [ -n "${EMPTY_IMPACT_EXPLANATION:-}" ]; then
+            if [ "$CANDIDATE_SOURCE_OUTCOME_REQUIRED" != "true" ]; then
+              echo "::error::empty-impact explanation requires same-run current-source outcome capture" >&2
+              exit 2
+            fi
+            if ! (umask 077; set -C; printf '%s' "$EMPTY_IMPACT_EXPLANATION" > "$EMPTY_IMPACT_PATH"); then
+              echo "::error::empty-impact explanation input could not be captured safely" >&2
+              exit 2
+            fi
+            if ! (umask 077; set -C; sha256sum "$EMPTY_IMPACT_PATH" | cut -d ' ' -f 1 > "$CANDIDATE_ROOT/empty-impact-explanation.sha256"); then
+              echo "::error::empty-impact explanation input digest could not be captured safely" >&2
+              exit 2
+            fi
+          fi
+          export PYTHONDONTWRITEBYTECODE=1
+          if [ "$GITHUB_REPOSITORY" = "Arcanada-one/auth-arcana" ]; then
+            TYPECHECK_ARGV=(python3 -I -B "$GRAPH_TOOLS_ROOT/tools/graph/full_suite_ci.py" collect-root-typecheck
+              --repo "$GITHUB_WORKSPACE" --repo-name "$GITHUB_REPOSITORY"
+              --source "$RANGE_HEAD" --base "$RANGE_BASE"
+              --event-file "$GITHUB_EVENT_PATH"
+              --evidence-root "$CANDIDATE_ROOT/ci-typecheck")
+            if [ -n "$TYPECHECK_TOKEN" ]; then
+              GH_TOKEN="$TYPECHECK_TOKEN" "${TYPECHECK_ARGV[@]}"
+            else
+              "${TYPECHECK_ARGV[@]}"
+            fi
+            TYPECHECK_RESULT=$?
+            if [ "$TYPECHECK_RESULT" -ne 0 ]; then
+              echo "::error::root typecheck evidence collection failed closed" >&2
+              exit 2
+            fi
+          fi
+          BUILD_ARGV=(python3 "$GRAPH_TOOLS_ROOT/tools/graph/build_graph.py" . --rev "$RANGE_BASE" --out "$CANDIDATE_ROOT/base-graph.json")
+          printf '%s\0' "${BUILD_ARGV[@]}" > "$CANDIDATE_ROOT/build.argv.nul"
+          pwd -P > "$CANDIDATE_ROOT/build.cwd"
+          date -u +%FT%T.%NZ > "$CANDIDATE_ROOT/build-start.utc"
+          set +e
+          "${BUILD_ARGV[@]}" > "$CANDIDATE_ROOT/build.stdout" 2> "$CANDIDATE_ROOT/build.stderr" &
+          BUILD_PID=$!
+          printf '%s\n' "$BUILD_PID" > "$CANDIDATE_ROOT/build.pid"
+          wait "$BUILD_PID"
+          BUILD_RC=$?
+          date -u +%FT%T.%NZ > "$CANDIDATE_ROOT/build-end.utc"
+          printf '%s\n' "$BUILD_RC" > "$CANDIDATE_ROOT/build.exit"
+          VERIFY_RC=$BUILD_RC
+          if [ "$BUILD_RC" = "0" ]; then
+            VERIFY_ARGV=(python3 "$GRAPH_TOOLS_ROOT/tools/graph/verify.py" --repo . --diff "$RANGE_BASE..$RANGE_HEAD"
+              --graph "$CANDIDATE_ROOT/base-graph.json" --out "$CANDIDATE_ROOT/receipt.json" --json
+              --workdir "$CANDIDATE_ROOT/work" --verifier-out "$CANDIDATE_ROOT/verifier-out"
+              --phase-log "$CANDIDATE_ROOT/phase.jsonl")
+            if [ -n "${EMPTY_IMPACT_EXPLANATION:-}" ]; then
+              VERIFY_ARGV+=(--empty-impact-explanation "$EMPTY_IMPACT_PATH")
+            fi
+            if [ "$GITHUB_REPOSITORY" = "Arcanada-one/auth-arcana" ]; then
+              VERIFY_ARGV+=(--root-typecheck-ci-root "$CANDIDATE_ROOT/ci-typecheck")
+            fi
+            printf '%s\0' "${VERIFY_ARGV[@]}" > "$CANDIDATE_ROOT/verify.argv.nul"
+            pwd -P > "$CANDIDATE_ROOT/verify.cwd"
+            date -u +%FT%T.%NZ > "$CANDIDATE_ROOT/verify-start.utc"
+            if [ "$GITHUB_REPOSITORY" = "Arcanada-one/auth-arcana" ] && [ -n "$TYPECHECK_TOKEN" ]; then
+              GH_TOKEN="$TYPECHECK_TOKEN" "${VERIFY_ARGV[@]}" > "$CANDIDATE_ROOT/verify.stdout" 2> "$CANDIDATE_ROOT/verify.stderr" &
+            else
+              "${VERIFY_ARGV[@]}" > "$CANDIDATE_ROOT/verify.stdout" 2> "$CANDIDATE_ROOT/verify.stderr" &
+            fi
+            VERIFY_PID=$!
+            printf '%s\n' "$VERIFY_PID" > "$CANDIDATE_ROOT/verify.pid"
+            wait "$VERIFY_PID"
+            VERIFY_RC=$?
+            date -u +%FT%T.%NZ > "$CANDIDATE_ROOT/verify-end.utc"
+            printf '%s\n' "$VERIFY_RC" > "$CANDIDATE_ROOT/verify.exit"
+          fi
+          RECEIPT=""
+          if [ -f "$CANDIDATE_ROOT/receipt.json" ] && [ ! -L "$CANDIDATE_ROOT/receipt.json" ]; then
+            RECEIPT="$CANDIDATE_ROOT/receipt.json"
+          fi
+          CANDIDATE_RC="$VERIFY_RC"
+          # A self-update is issued only after the authenticated native classifier selected exactly
+          # gate_self_update. Keep verify.py's raw draft immutable and distinct from the native
+          # issuer's derived receipt; C16 in the final ordinary gate remeasures that same-job result.
+          if [ "$SELF_UPDATE_CASE" = "gate_self_update" ] && [ "$CANDIDATE_SOURCE_OUTCOME_REQUIRED" != "true" ]; then
+            RAW_RECEIPT="$CANDIDATE_ROOT/receipt.json"
+            ISSUED_RECEIPT="$CANDIDATE_ROOT/issued-receipt.json"
+            EXEMPTION_EVIDENCE="$CANDIDATE_ROOT/exemption-evidence.json"
+            EXEMPTION_WORK="$CANDIDATE_ROOT/exemption-work"
+            RECEIPT=""
+            CANDIDATE_RC=3
+            RAW_BEFORE=""
+            if [ -f "$RAW_RECEIPT" ] && [ ! -L "$RAW_RECEIPT" ]; then
+              RAW_BEFORE="$(sha256sum "$RAW_RECEIPT" | cut -d ' ' -f 1)"
+            fi
+            RAW_VALID=false
+            if [ -n "$RAW_BEFORE" ] && python3 -I -B - "$GRAPH_TOOLS_ROOT/tools/graph" "$RAW_RECEIPT" "$GITHUB_REPOSITORY" "$RANGE_BASE" "$RANGE_HEAD" "$VERIFY_RC" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          tools, raw_path = Path(sys.argv[1]), Path(sys.argv[2])
+          repo, base, head, exit_text = sys.argv[3:]
+          sys.path.insert(0, str(tools))
+          import schema_check
+
+          try:
+              receipt = json.loads(raw_path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeError, json.JSONDecodeError):
+              raise SystemExit(1)
+          change = receipt.get("change_set") if isinstance(receipt, dict) else None
+          if (schema_check.classify(receipt).get("verdict") != "conformant"
+                  or receipt.get("schema") != "ChangeAdmissionReceipt/v1"
+                  or (receipt.get("repo") or {}).get("name") != repo
+                  or not isinstance(change, dict) or change.get("mode") != "diff"
+                  or change.get("base") != base or change.get("head") != head):
+              raise SystemExit(1)
+          rows = receipt.get("verdicts")
+          if not isinstance(rows, list) or not rows:
+              raise SystemExit(1)
+          counts = {name: sum(isinstance(row, dict) and row.get("verdict") == name for row in rows)
+                    for name in ("verified", "not_measured", "failed")}
+          if sum(counts.values()) != len(rows):
+              raise SystemExit(1)
+          admission = (receipt.get("admission") or {}).get("verdict")
+          exit_code = int(exit_text)
+          valid = ((exit_code == 0 and admission == "admitted" and counts["verified"] == len(rows))
+                   or (exit_code == 1 and admission == "paused_safe" and counts["verified"] > 0
+                       and counts["not_measured"] > 0 and counts["failed"] == 0))
+          raise SystemExit(0 if valid else 1)
+          PY
+            then
+              RAW_VALID=true
+            fi
+            printf '%s\n' "$RAW_VALID" > "$CANDIDATE_ROOT/raw-draft-eligible.txt"
+            if [ "$RAW_VALID" = "true" ]; then
+            EXEMPT_ARGV=(python3 "$GRAPH_TOOLS_ROOT/tools/graph/admit_change.py" exempt
+              --repo "$GITHUB_WORKSPACE" --range "$RANGE_BASE..$RANGE_HEAD"
+              --base-branch "$RANGE_BASE_BRANCH" --receipt "$RAW_RECEIPT" --out "$ISSUED_RECEIPT"
+              --evidence-out "$EXEMPTION_EVIDENCE" --bundle-dir "$TOOLS_PATH"
+              --repo-name "$GITHUB_REPOSITORY" --workdir "$EXEMPTION_WORK")
+            if [ -n "${VERIFIER_JOB:-}" ]; then EXEMPT_ARGV+=(--verifier-job "$VERIFIER_JOB"); fi
+            if [ -n "${VERIFIER_CONCLUSION:-}" ]; then EXEMPT_ARGV+=(--verifier-conclusion "$VERIFIER_CONCLUSION"); fi
+            printf '%s\0' "${EXEMPT_ARGV[@]}" > "$CANDIDATE_ROOT/exempt.argv.nul"
+            pwd -P > "$CANDIDATE_ROOT/exempt.cwd"
+            date -u +%FT%T.%NZ > "$CANDIDATE_ROOT/exempt-start.utc"
+            "${EXEMPT_ARGV[@]}" > "$CANDIDATE_ROOT/exempt.stdout" 2> "$CANDIDATE_ROOT/exempt.stderr" &
+            EXEMPT_PID=$!
+            printf '%s\n' "$EXEMPT_PID" > "$CANDIDATE_ROOT/exempt.pid"
+            wait "$EXEMPT_PID"
+            EXEMPT_RC=$?
+            date -u +%FT%T.%NZ > "$CANDIDATE_ROOT/exempt-end.utc"
+            printf '%s\n' "$EXEMPT_RC" > "$CANDIDATE_ROOT/exempt.exit"
+            RAW_AFTER=""
+            if [ -f "$RAW_RECEIPT" ] && [ ! -L "$RAW_RECEIPT" ]; then
+              RAW_AFTER="$(sha256sum "$RAW_RECEIPT" | cut -d ' ' -f 1)"
+            fi
+            if [ "$EXEMPT_RC" = "0" ] && [ -n "$RAW_BEFORE" ] && [ "$RAW_BEFORE" = "$RAW_AFTER" ]; then
+              if python3 -I - "$EXEMPTION_EVIDENCE" "$ISSUED_RECEIPT" "$GITHUB_REPOSITORY" "$RANGE_BASE" "$RANGE_HEAD" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          evidence_path, receipt_path = map(Path, sys.argv[1:3])
+          repo, base, head = sys.argv[3:]
+          try:
+              evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+              receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeError, json.JSONDecodeError):
+              raise SystemExit(1)
+          change = receipt.get("change_set") if isinstance(receipt, dict) else None
+          exemptions = receipt.get("exemptions") if isinstance(receipt, dict) else None
+          binding = (evidence.get("evidence") or {}).get("change_binding") if isinstance(evidence, dict) else None
+          if (not isinstance(evidence, dict) or evidence.get("repo") != repo
+                  or evidence.get("case") != "gate_self_update" or evidence.get("eligible") is not True
+                  or evidence.get("range") != {"base": base, "head": head}
+                  or not isinstance(binding, dict) or binding.get("base") != base or binding.get("head") != head
+                  or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(binding.get("digest", "")))
+                  or not isinstance(change, dict) or receipt.get("schema") != "ChangeAdmissionReceipt/v1"
+                  or (receipt.get("repo") or {}).get("name") != repo
+                  or change.get("mode") != "diff" or change.get("base") != base or change.get("head") != head
+                  or not isinstance(exemptions, list) or not exemptions
+                  or any(item.get("code") != "GATE_SELF_UPDATE" for item in exemptions if isinstance(item, dict))
+                  or any(not isinstance(item, dict) for item in exemptions)):
+              raise SystemExit(1)
+          PY
+              then
+                RECEIPT="$ISSUED_RECEIPT"
+                CANDIDATE_RC=0
+              fi
+            fi
+            fi
+          fi
+          {
+            echo "receipt=$RECEIPT"
+            echo "exit=$CANDIDATE_RC"
+          } >> "$GITHUB_OUTPUT"
+          # The native gate consumes this exact candidate output and refuses a missing file or
+          # nonzero producer result; this step's success cannot turn a refused CAR into a pass.
+          exit 0
+
+      - name: Run the Program-stage SharedVerifierV1 userpath
+        id: stage_userpath
+        if: inputs.stage_userpath_required
+        env:
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+          REPO_NAME: ${{ github.repository }}
+          STAGE_ROOT: ${{ runner.temp }}/graph-admission/stage-userpath
+          CANDIDATE_ROOT: ${{ runner.temp }}/graph-admission/stage-userpath/current-candidate
+          CANDIDATE_SOURCE_OUTCOME_REQUIRED: ${{ inputs.candidate_source_outcome_required }}
+          TOOLS_PATH: ${{ inputs.tools_path }}
+        run: |
+          set -uo pipefail
+          set +e
+          if [ "$GITHUB_REPOSITORY" = "Arcanada-one/arcanada-universal-program" ]; then
+            GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE"
+          else
+            GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE/$TOOLS_PATH"
+          fi
+          mkdir -p "$STAGE_ROOT/work"
+          date -u +%FT%TZ > "$STAGE_ROOT/outer-start.utc"
+          ARGS=()
+          if [ "$CANDIDATE_SOURCE_OUTCOME_REQUIRED" = "true" ]; then
+            ARGS+=(--candidate-root "$CANDIDATE_ROOT")
+          fi
+          python3 "$GRAPH_TOOLS_ROOT/tools/ci/stage_userpath.py" \
+            --repo "$GITHUB_WORKSPACE" \
+            --repo-name "$REPO_NAME" \
+            --base "$RANGE_BASE" \
+            --head "$RANGE_HEAD" \
+            --out "$STAGE_ROOT/result.json" \
+            --workdir "$STAGE_ROOT/work" \
+            --tools-root "$GRAPH_TOOLS_ROOT" \
+            "${ARGS[@]}" \
+            > "$STAGE_ROOT/runner.stdout" 2> "$STAGE_ROOT/runner.stderr"
+          RC=$?
+          date -u +%FT%TZ > "$STAGE_ROOT/outer-end.utc"
+          printf '%s\n' "$RC" > "$STAGE_ROOT/outer-exit.txt"
+          {
+            echo "result=$STAGE_ROOT/result.json"
+            echo "root=$STAGE_ROOT"
+            echo "exit=$RC"
+            echo "candidate_receipt=$STAGE_ROOT/current-candidate/receipt.json"
+            echo "candidate_receipt_exit=$(cat "$STAGE_ROOT/current-candidate/verify.exit" 2>/dev/null || cat "$STAGE_ROOT/current-candidate/build.exit" 2>/dev/null || echo 127)"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
 
       # A2-108. THE PROGRAM REPOSITORY GATES ITSELF, and it is the one caller that cannot use a
       # vendored bundle: the tools it would vendor are the tools it ships, so a committed copy would
@@ -236,6 +1326,66 @@ jobs:
           git diff --quiet -- "$committed"
           echo "path=${RUNNER_TEMP}/self-bundle" >> "$GITHUB_OUTPUT"
 
+      - name: Write the pull-request body from the GitHub event file
+        env:
+          PR_BODY_FILE: ${{ runner.temp }}/graph-admission/pr-body.txt
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/graph-admission"
+          python3 - <<'PY'
+          import json, os, stat, sys
+
+          MAX_EVENT_BYTES = 16 * 1024 * 1024
+          event_path = os.environ.get("GITHUB_EVENT_PATH")
+          output_path = os.environ["PR_BODY_FILE"]
+          if not event_path:
+              raise SystemExit("GRAPH_ADMISSION_EVENT_FILE_MISSING: GITHUB_EVENT_PATH is unset")
+          try:
+              fd = os.open(event_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              try:
+                  info = os.fstat(fd)
+                  if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_EVENT_BYTES:
+                      raise ValueError("event file is not a bounded regular file")
+                  chunks, total = [], 0
+                  while True:
+                      chunk = os.read(fd, min(65536, MAX_EVENT_BYTES + 1 - total))
+                      if not chunk:
+                          break
+                      chunks.append(chunk)
+                      total += len(chunk)
+                      if total > MAX_EVENT_BYTES:
+                          raise ValueError("event file grew beyond the input limit")
+              finally:
+                  os.close(fd)
+              event = json.loads(b"".join(chunks).decode("utf-8"))
+              if not isinstance(event, dict):
+                  raise ValueError("event payload must be a JSON object")
+              pull_request = event.get("pull_request")
+              if pull_request is None:
+                  body = ""
+              elif not isinstance(pull_request, dict):
+                  raise ValueError("pull_request must be an object")
+              else:
+                  body = pull_request.get("body")
+                  if body is None:
+                      body = ""
+                  if not isinstance(body, str):
+                      raise ValueError("pull_request.body must be a string or null")
+              output_fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+              try:
+                  if not stat.S_ISREG(os.fstat(output_fd).st_mode):
+                      raise ValueError("body output is not a regular file")
+                  data = body.encode("utf-8")
+                  offset = 0
+                  while offset < len(data):
+                      offset += os.write(output_fd, data[offset:])
+              finally:
+                  os.close(output_fd)
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+              print("GRAPH_ADMISSION_EVENT_FILE_INVALID: " + str(exc), file=sys.stderr)
+              raise SystemExit(2)
+          PY
+
       - name: Run the admission gate from the pinned program SHA
         id: gate
         # EVERY value this step needs arrives through `env:`, never through a `${{ }}` expansion
@@ -253,6 +1403,7 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           RANGE_BASE: ${{ steps.range.outputs.base }}
           RANGE_HEAD: ${{ steps.range.outputs.head }}
+          RANGE_BASE_BRANCH: ${{ steps.range.outputs.base_branch }}
           # AUP-GRAPH-006:gate2a — the automated-author path. GITHUB_EVENT_PATH is the payload GitHub
           # itself delivered; it is the ONLY source of author identity the gate consults. The head
           # branch name is never consulted: anyone who can open a pull request can name their branch
@@ -262,13 +1413,40 @@ jobs:
           VERIFIER_CONCLUSION: ${{ inputs.verifier_conclusion }}
           VERIFIER_OUTPUT_REF: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SIGNING_KEY_FINGERPRINT: ${{ inputs.signing_key_fingerprint }}
+          STAGE_EVIDENCE_PATH: ${{ inputs.stage_evidence_path }}
+          STAGE_EVIDENCE_ROOT: ${{ inputs.stage_evidence_root }}
+          STAGE_EVIDENCE_REQUIRED: ${{ inputs.stage_evidence_required }}
+          CURRENT_EVALUATOR_RUN_ID: ${{ github.run_id }}
+          CURRENT_EVALUATOR_ATTEMPT: ${{ github.run_attempt }}
+          CURRENT_EVALUATOR_CHECK_RUN_ID: ${{ job.check_run_id }}
+          CURRENT_EVALUATOR_JOB_KEY: ${{ github.job }}
+          CURRENT_EVALUATOR_REPOSITORY: ${{ github.repository }}
+          CURRENT_EVALUATOR_CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CURRENT_EVALUATOR_CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          CURRENT_EVALUATOR_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          CURRENT_EVALUATOR_WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          CURRENT_EVALUATOR_WORKFLOW_REF: ${{ job.workflow_ref }}
+          CURRENT_EVALUATOR_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          STAGE_USERPATH_RESULT: ${{ steps.stage_userpath.outputs.result }}
+          STAGE_USERPATH_ROOT: ${{ steps.stage_userpath.outputs.root }}
+          STAGE_USERPATH_REQUIRED: ${{ inputs.stage_userpath_required }}
+          STAGE_USERPATH_EXIT: ${{ steps.stage_userpath.outputs.exit }}
+          CANDIDATE_RECEIPT: ${{ steps.candidate_receipt.outputs.receipt }}
+          CANDIDATE_RECEIPT_EXIT: ${{ steps.candidate_receipt.outputs.exit }}
+          CANDIDATE_ROOT: ${{ runner.temp }}/graph-admission/stage-userpath/current-candidate
+          CANDIDATE_RECEIPT_REQUIRED: ${{ inputs.candidate_receipt_required || steps.self_update_classifier.outputs.case == 'gate_self_update' }}
+          CANDIDATE_SOURCE_OUTCOME_REQUIRED: ${{ inputs.candidate_source_outcome_required }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
+          TYPECHECK_TOKEN="${GH_TOKEN:-}"
+          unset GH_TOKEN
           # NOT `set -e`: the gate's non-zero exit is a VERDICT, not a crash. The step must still
           # write the summary, upload the result and hand the verdict to the last step, which is the
           # single place the check turns red (GitHub starts this shell with -e; it is cleared here).
           set +e
           ARGS=()
+          if [ -n "${RANGE_BASE_BRANCH:-}" ]; then ARGS+=(--base-branch "$RANGE_BASE_BRANCH"); fi
           while IFS= read -r g; do [ -n "$g" ] && ARGS+=(--receipt-glob "$g"); done <<< "$RECEIPT_GLOBS"
           if [ "$BUILD_GRAPH" = "true" ]; then ARGS+=(--build-graph); fi
           if [ -n "${EVENT_PATH:-}" ] && [ -f "$EVENT_PATH" ]; then ARGS+=(--event-file "$EVENT_PATH"); fi
@@ -276,19 +1454,48 @@ jobs:
           if [ -n "${VERIFIER_CONCLUSION:-}" ]; then ARGS+=(--verifier-conclusion "$VERIFIER_CONCLUSION"); fi
           ARGS+=(--verifier-output-ref "$VERIFIER_OUTPUT_REF")
           if [ -n "${SIGNING_KEY_FINGERPRINT:-}" ]; then ARGS+=(--signing-key-fingerprint "$SIGNING_KEY_FINGERPRINT"); fi
-          python3 "${TOOLS_PATH}/tools/graph/ci_gate.py" run \
-            --repo . \
-            --repo-name "$REPO_NAME" \
-            --tools "$TOOLS_PATH" \
-            --program-ref "$PROGRAM_REF" \
-            --base "$RANGE_BASE" \
-            --head "$RANGE_HEAD" \
-            --pr-body-file "${RUNNER_TEMP}/graph-admission/pr-body.txt" \
-            --enforcement "$ENFORCEMENT" \
-            --workdir "${RUNNER_TEMP}/graph-admission" \
-            --out "${RUNNER_TEMP}/graph-admission/graph-admission-result.json" \
-            --summary "${GITHUB_STEP_SUMMARY}" \
-            "${ARGS[@]}"
+          if [ -n "${STAGE_EVIDENCE_PATH:-}" ]; then ARGS+=(--stage-evidence "$STAGE_EVIDENCE_PATH"); fi
+          if [ -n "${STAGE_EVIDENCE_ROOT:-}" ]; then ARGS+=(--stage-evidence-root "$STAGE_EVIDENCE_ROOT"); fi
+          if [ "${STAGE_EVIDENCE_REQUIRED:-false}" = "true" ]; then ARGS+=(--stage-evidence-required); fi
+          if [ -n "${STAGE_EVIDENCE_PATH:-}" ]; then
+            ARGS+=(--current-evaluator-run-id "$CURRENT_EVALUATOR_RUN_ID"
+              --current-evaluator-attempt "$CURRENT_EVALUATOR_ATTEMPT"
+              --current-evaluator-check-run-id "$CURRENT_EVALUATOR_CHECK_RUN_ID"
+              --current-evaluator-job-key "$CURRENT_EVALUATOR_JOB_KEY"
+              --current-evaluator-repository "$CURRENT_EVALUATOR_REPOSITORY"
+              --current-evaluator-caller-workflow-ref "$CURRENT_EVALUATOR_CALLER_WORKFLOW_REF"
+              --current-evaluator-caller-workflow-sha "$CURRENT_EVALUATOR_CALLER_WORKFLOW_SHA"
+              --current-evaluator-workflow-repository "$CURRENT_EVALUATOR_WORKFLOW_REPOSITORY"
+              --current-evaluator-workflow-file-path "$CURRENT_EVALUATOR_WORKFLOW_FILE_PATH"
+              --current-evaluator-workflow-ref "$CURRENT_EVALUATOR_WORKFLOW_REF"
+              --current-evaluator-workflow-sha "$CURRENT_EVALUATOR_WORKFLOW_SHA")
+          fi
+          if [ -n "${STAGE_USERPATH_RESULT:-}" ]; then ARGS+=(--stage-userpath-result "$STAGE_USERPATH_RESULT"); fi
+          if [ -n "${STAGE_USERPATH_ROOT:-}" ]; then ARGS+=(--stage-userpath-root "$STAGE_USERPATH_ROOT"); fi
+          if [ "${STAGE_USERPATH_REQUIRED:-false}" = "true" ]; then ARGS+=(--stage-userpath-required); fi
+          if [ "${CANDIDATE_SOURCE_OUTCOME_REQUIRED:-false}" = "true" ]; then ARGS+=(--candidate-source-outcome-required); fi
+          if [ -n "${STAGE_USERPATH_EXIT:-}" ]; then ARGS+=(--stage-userpath-exit "$STAGE_USERPATH_EXIT"); fi
+          if [ "${CANDIDATE_RECEIPT_REQUIRED:-false}" = "true" ]; then
+            ARGS+=(--candidate-receipt-required)
+            if [ -n "${CANDIDATE_RECEIPT:-}" ]; then ARGS+=(--candidate-receipt "$CANDIDATE_RECEIPT"); fi
+            if [ -n "${CANDIDATE_RECEIPT_EXIT:-}" ]; then ARGS+=(--candidate-receipt-exit "$CANDIDATE_RECEIPT_EXIT"); fi
+          fi
+          if [ "$REPO_NAME" = "Arcanada-one/auth-arcana" ] && [ -n "$TYPECHECK_TOKEN" ] \
+             && [ -d "${CANDIDATE_ROOT:-}" ]; then
+            ARGS+=(--root-typecheck-ci-root "$CANDIDATE_ROOT/ci-typecheck")
+          fi
+          GATE_ARGV=(python3 "${TOOLS_PATH}/tools/graph/ci_gate.py" run
+            --repo . --repo-name "$REPO_NAME" --tools "$TOOLS_PATH"
+            --program-ref "$PROGRAM_REF" --base "$RANGE_BASE" --head "$RANGE_HEAD"
+            --pr-body-file "${RUNNER_TEMP}/graph-admission/pr-body.txt"
+            --enforcement "$ENFORCEMENT" --workdir "${RUNNER_TEMP}/graph-admission"
+            --out "${RUNNER_TEMP}/graph-admission/graph-admission-result.json"
+            --summary "${GITHUB_STEP_SUMMARY}" "${ARGS[@]}")
+          if [ -n "$TYPECHECK_TOKEN" ] && { [ "$REPO_NAME" = "Arcanada-one/auth-arcana" ] || [ -n "${STAGE_EVIDENCE_PATH:-}" ]; }; then
+            GH_TOKEN="$TYPECHECK_TOKEN" "${GATE_ARGV[@]}"
+          else
+            "${GATE_ARGV[@]}"
+          fi
           RC=$?
           echo "rc=$RC" >> "$GITHUB_OUTPUT"
           exit 0
@@ -298,7 +1505,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: graph-admission-result
-          path: ${{ runner.temp }}/graph-admission/*.json
+          path: |
+            ${{ runner.temp }}/graph-admission/*.json
+            ${{ runner.temp }}/graph-admission/stage-userpath/
+            ${{ runner.temp }}/graph-admission/current-candidate/
           if-no-files-found: warn
 
       - name: Fail the check on a red verdict
