@@ -5621,7 +5621,8 @@ def cmd_gate(a) -> int:
     actual_repo_name = getattr(a, "repo_name", None) or repo_remote_name(Path(a.repo).resolve())
     if (any(value is not None for value in current_values)
             and actual_repo_name != "Arcanada-one/arcanada-universal-program"
-            and not all(isinstance(value, str) and value for value in current_program_values)):
+            and not (isinstance(current_program_values[0], Path)
+                     and all(isinstance(value, str) and value for value in current_program_values[1:]))):
         raise UsageError("external current-source stage requires the pinned Program bundle, program_ref, and signer fingerprint")
     if (actual_repo_name == "Arcanada-one/arcanada-universal-program"
             and any(value is not None for value in current_program_values)):
@@ -5807,7 +5808,7 @@ def current_source_stage_outcome_for_receipt(receipt_path: Path, receipt: dict, 
             authority_row = authority_rows[0]
             if (authority_path.is_symlink() or not authority_path.is_file()
                     or _stage_sha256(authority_path.read_bytes()) != STAGE_AUTHORITY_SHA256
-                    or authority_row.get("sha256") != hashlib.sha256(authority_path.read_bytes()).hexdigest()
+                    or authority_row.get("sha256") != _stage_sha256(authority_path.read_bytes())
                     or not isinstance(authority_row.get("blob_oid"), str)
                     or not re.fullmatch(r"[0-9a-f]{40,64}", authority_row["blob_oid"])):
                 return {}, ["signed Program bundle DEC-AUP-0167 source does not match the pinned authority bytes"]

@@ -151,7 +151,35 @@ def _command(words, bindings):
     return words
 
 
-def analyse(path, raw, paths, *, cwd=None):
+# `python -m <tool>` is treated like the bare external utility `<tool>` only for these package tools,
+# whose bare commands the analyser already accepts as external utilities (pip, build, twine). Modules that
+# discover or execute repository-selected code by argument (unittest, pytest, http.server, ...) stay held.
+_PYTHON_TOOL_MODULES = frozenset({"pip", "build", "twine"})
+_PYTHON_ENV = re.compile(r"\bPYTHON[A-Z0-9_]*\b")
+
+
+def _external_python_tool(words, original, bindings, cwd, paths, env_safe):
+    """True only when `python -m <tool>` provably resolves to an installed package, not a repository module.
+
+    `-m` puts the working directory first on sys.path, so a repository `<tool>.py`, `<tool>/` or `<tool>.*`
+    at that directory would shadow the installed tool. Any Python search-path/environment control in the
+    statement, the run body, or the workflow env keeps the dispatch unknown.
+    """
+    if not env_safe or cwd is None or len(words) < 3 or words[1] != "-m":
+        return False
+    module = _literal(words[2], bindings)
+    if module not in _PYTHON_TOOL_MODULES:
+        return False
+    if any(_PYTHON_ENV.search(w) for w in original) or any(str(k).startswith("PYTHON") for k in bindings):
+        return False
+    prefix = "" if cwd == "." else cwd.rstrip("/") + "/"
+    for candidate in paths:
+        if candidate.startswith(prefix) and candidate[len(prefix):].split("/", 1)[0].split(".", 1)[0] == module:
+            return False
+    return True
+
+
+def analyse(path, raw, paths, *, cwd=None, python_env_safe=False):
     refs, unknown, bindings = [], [], {}
     text = raw.decode("utf-8", errors="replace")
     if text.encode("utf-8") != raw:
@@ -234,6 +262,9 @@ def analyse(path, raw, paths, *, cwd=None):
         if re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?|node(?:js)?|ruby|perl", command):
             if len(words) == 2 and _literal(words[1], bindings) in ("--version", "--help"):
                 continue  # Informational options do not dispatch a script.
+            if (command.startswith("python") and not _PYTHON_ENV.search(text)
+                    and _external_python_tool(words, original, bindings, cwd, paths, python_env_safe)):
+                continue  # installed package tool, not a repository caller
             unknown.append(prefix + "unsupported interpreter script/module/stdin dispatch closure")
             continue
         loader = command in _LOADERS
