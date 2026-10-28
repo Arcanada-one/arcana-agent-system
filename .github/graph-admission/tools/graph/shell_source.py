@@ -273,6 +273,10 @@ def workflow(path, raw, paths):
             if not isinstance(env, dict):
                 return False
             return not any(key in shell_workflow.SOURCE_ENVIRONMENT for key in env)
+        def python_free(scope):
+            # Python search-path/startup controls (PYTHONPATH, PYTHONHOME, ...) can redirect `python -m`.
+            env = scope.get("env", {})
+            return isinstance(env, dict) and not any(str(key).upper().startswith("PYTHON") for key in env)
         root = defaults(data)
         for name, job in data["jobs"].items():
             if not isinstance(job, dict) or "uses" in job or not isinstance(job.get("steps"), list):
@@ -328,7 +332,11 @@ def workflow(path, raw, paths):
                 # source-only projection cannot establish their resulting value.
                 if "GITHUB_ENV" in run or "GITHUB_PATH" in run:
                     prior_env_write = True
-                analysis = shell_workflow.analyse(path, run.encode("utf-8"), paths, cwd=cwd)
+                python_env_safe = (inherited_env_safe and environment(step) and not prior_env_write
+                                   and not checkout_unknown
+                                   and all(python_free(scope) for scope in (data, job, step)))
+                analysis = shell_workflow.analyse(path, run.encode("utf-8"), paths, cwd=cwd,
+                                                  python_env_safe=python_env_safe)
                 if cwd is None or analysis["unknown"]:
                     for ref in analysis["references"]:
                         ref["provenance"] = "inferred"
