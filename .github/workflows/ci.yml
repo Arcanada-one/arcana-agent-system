@@ -100,7 +100,7 @@ jobs:
       runner_labels: '["ubuntu-24.04"]'
 
   network-exposure-lint:
-    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@5800861ad1e1a75f7e3ad986212a0faeaa1bfc98
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@4225a082c3f341d907abca5b6610807314605a9d
     with:
       compose_paths: ''
       datarim_ref: '5800861ad1e1a75f7e3ad986212a0faeaa1bfc98'
