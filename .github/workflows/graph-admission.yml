@@ -635,7 +635,7 @@ jobs:
 
       - name: Node toolchain for the declared verifier (B6)
         if: steps.derived.outputs.declared == 'yes'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: ${{ steps.derived.outputs.node_version || inputs.derived_artefact_node_version }}
 
@@ -653,7 +653,7 @@ jobs:
 
       - name: Node for the pinned admission-selftest compiler
         if: steps.derived.outputs.declared != 'yes'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: '24.20.0'
 
@@ -952,7 +952,7 @@ jobs:
 
       - name: Node for the fixed caller dependency setup
         if: inputs.candidate_dependency_setup_required || inputs.candidate_dependency_setup != ''
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: ${{ steps.candidate_dependency_setup.outputs.node_version }}
           cache: pnpm
