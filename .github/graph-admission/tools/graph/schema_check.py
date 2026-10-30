@@ -104,8 +104,161 @@ def traversal_entities(rows) -> set[str]:
                    for p in e.get("revision_paths", [e]))}
 
 
-def fallback_evidence_problems(doc: dict, units: set[str]) -> list[str]:
+ARMS_SCHEMA = "FullSuiteArmEvidence/v1"
+ARM_BACKENDS = {"real_disposable", "real_external", "stub", "none"}
+ARM_REQUIRES = {"real_disposable", "real_external", "stub_ok"}
+ARM_DEFINITION_PATH = ".arcana/verify.json"
+# The canonical arm set and each arm's slot come ONLY from the committed definition at the verified head
+# (`deployables["."].full_test_arms`), never from the evidence. A backend satisfies a slot only if it is the
+# slot's own kind; a stub satisfies only a slot the DEFINITION marks stub_ok.
+_ARM_SATISFIES = {"real_disposable": {"real_disposable"}, "real_external": {"real_external"},
+                  "stub_ok": {"real_disposable", "real_external", "stub"}}
+_EVIDENCE_KEYS = {"schema", "head", "definition", "arms", "not_run"}
+_ARM_KEYS = {"name", "backend", "counts", "head", "control", "verdict", "probes"}
+
+
+def _is_sha40(value) -> bool:
+    return isinstance(value, str) and len(value) == 40 and all(ch in "0123456789abcdef" for ch in value)
+
+
+def _count(counts, key):
+    value = counts.get(key) if isinstance(counts, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def arm_definition(raw: bytes | None) -> dict | None:
+    """Canonical arm definition from the committed profile bytes: {path, sha256, arms: {name: slot}} or None.
+
+    None means no verifiable canonical definition (missing, unreadable, malformed, empty, duplicate names,
+    unknown slot): every row that carries `arms` is then not_measured."""
+    if not raw:
+        return None
+    try:
+        profile = json.loads(raw)
+        entries = ((profile.get("deployables") or {}).get(".") or {}).get("full_test_arms")
+    except (ValueError, AttributeError, UnicodeDecodeError):
+        return None
+    if not isinstance(entries, list) or not entries:
+        return None
+    arms = {}
+    for e in entries:
+        if (not isinstance(e, dict) or set(e) != {"name", "requires"} or not isinstance(e["name"], str)
+                or not e["name"] or e["requires"] not in ARM_REQUIRES or e["name"] in arms):
+            return None
+        arms[e["name"]] = e["requires"]
+    return {"path": ARM_DEFINITION_PATH, "sha256": hashlib.sha256(raw).hexdigest(), "arms": arms}
+
+
+ARM_DEFINITION_CODES = ("ARM_DEFINITION_BASE_MISSING_OR_INVALID", "ARM_DEFINITION_CHANGED_IN_RANGE",
+                        "ARM_DEFINITION_BASE_UNTRUSTED")
+
+
+def arm_definition_for_range(base_raw: bytes | None, head_raw: bytes | None) -> dict:
+    """The definition the gate may trust for a verified range: the BASE definition, and only if the range left it alone.
+
+    Returns the base `arm_definition` (its sha256 is over the BASE bytes), or `{"refused": code, "reason": text}`.
+    A range that changes `full_test_arms` in any way (names, slots, presence, validity) cannot also be admitted on
+    it, and the first range that introduces the field cannot self-certify: that change lands in its own range first."""
+    base_def = arm_definition(base_raw)
+    if base_def is None:
+        return {"refused": ARM_DEFINITION_CODES[0],
+                "reason": "the BASE commit has no valid " + ARM_DEFINITION_PATH + " full_test_arms (adoption range cannot self-certify)"}
+    head_def = arm_definition(head_raw)
+    if head_def is None or head_def["arms"] != base_def["arms"]:
+        return {"refused": ARM_DEFINITION_CODES[1],
+                "reason": "the verified range changes full_test_arms in " + ARM_DEFINITION_PATH + "; land the definition change in a separate range first"}
+    return base_def
+
+
+def arm_verdict(arm, head, slot) -> tuple[str, str]:
+    """One arm against its DEFINED slot: (`verified` | `not_measured` | `failed`, reason)."""
+    if not isinstance(arm, dict) or not isinstance(arm.get("name"), str) or not arm["name"]:
+        return "not_measured", "arm without a name"
+    name = arm["name"]
+    if set(arm) - _ARM_KEYS:
+        return "not_measured", f"{name}: unknown keys " + ", ".join(sorted(set(arm) - _ARM_KEYS))
+    counts = arm.get("counts")
+    if not isinstance(counts, dict) or set(counts) != {"total", "passed", "failed", "skipped"}:
+        return "not_measured", f"{name}: counts must be exactly total, passed, failed, skipped"
+    total, passed, failed, skipped = (_count(counts, k) for k in ("total", "passed", "failed", "skipped"))
+    if None in (total, passed, failed, skipped):
+        return "not_measured", f"{name}: counts are not non-negative integers"
+    if passed + failed + skipped != total:
+        return "not_measured", f"{name}: passed+failed+skipped != total"
+    if failed > 0 or arm.get("verdict") == "failed":
+        return "failed", f"{name}: {failed} failed test(s)"
+    if arm.get("head") != head:
+        return "not_measured", f"{name}: evidence not bound to the receipt head"
+    if total == 0 or skipped > 0 or passed != total:
+        return "not_measured", f"{name}: run={total} passed={passed} skipped={skipped} (needs run>0, skipped=0, all passed)"
+    backend = arm.get("backend")
+    if backend not in ARM_BACKENDS:
+        return "not_measured", f"{name}: unknown backend"
+    if backend not in _ARM_SATISFIES[slot]:
+        return "not_measured", f"{name}: backend {backend} does not satisfy defined slot {slot} (a stub is not a real provider)"
+    control = arm.get("control")
+    if backend != "stub" and not (isinstance(control, dict) and control.get("result") == "PASS_RED"):
+        return "not_measured", f"{name}: no retained PASS_RED control"
+    return "verified", f"{name}: {passed}/{total}"
+
+
+def arms_verdict(evidence, head, definition=None) -> tuple[str, list[str]]:
+    """Whole-suite verdict from per-arm evidence, judged against the canonical DEFINITION.
+
+    `definition` is `arm_definition_for_range(...)`: the BASE definition of the verified range, derived by the caller from Git.
+    Without one nothing can be verified. The evidence must name exactly the defined arms (missing, extra or
+    renamed arm => not_measured), carry the definition's sha256, and every arm must pass its defined slot.
+    A partial pass is never `verified`; any failed arm makes it `failed`.
+    """
+    if isinstance(definition, dict) and definition.get("refused"):
+        return "not_measured", [f"{definition['refused']}: {definition.get('reason', '')}"]
+    if not isinstance(definition, dict) or not isinstance(definition.get("arms"), dict) or not definition["arms"]:
+        return "not_measured", ["no verifiable canonical arm definition for the range (" + ARM_DEFINITION_PATH + " full_test_arms)"]
+    if not isinstance(evidence, dict) or evidence.get("schema") != ARMS_SCHEMA:
+        return "not_measured", ["arms evidence has no " + ARMS_SCHEMA + " schema"]
+    if set(evidence) - _EVIDENCE_KEYS:
+        return "not_measured", ["arms evidence has unknown keys: " + ", ".join(sorted(set(evidence) - _EVIDENCE_KEYS))]
+    if not _is_sha40(head) or evidence.get("head") != head:
+        return "not_measured", ["arms evidence is not bound to the receipt head"]
+    ref = evidence.get("definition")
+    if not (isinstance(ref, dict) and set(ref) == {"path", "sha256"} and ref["path"] == definition.get("path")
+            and ref["sha256"] == definition.get("sha256")):
+        return "not_measured", ["arms evidence definition path/sha256 does not match the BASE definition recomputed from Git"]
+    arms, not_run = evidence.get("arms"), evidence.get("not_run")
+    if not isinstance(arms, list) or not arms:
+        return "not_measured", ["arms evidence lists no arm"]
+    if not isinstance(not_run, list):
+        return "not_measured", ["arms evidence does not declare not_run"]
+    names = [a.get("name") if isinstance(a, dict) else None for a in arms]
+    reasons = []
+    if len(set(names)) != len(names):
+        reasons.append("duplicate arm names")
+    defined = set(definition["arms"])
+    if set(n for n in names if isinstance(n, str)) != defined or any(not isinstance(n, str) for n in names):
+        missing, extra = sorted(defined - set(names)), sorted(set(n for n in names if isinstance(n, str)) - defined)
+        reasons.append(f"arm set differs from the definition (missing {missing}, extra {extra})")
+    results = [arm_verdict(a, head, definition["arms"].get(n, "real_disposable")) for a, n in zip(arms, names)]
+    failed = [why for v, why in results if v == "failed"]
+    if failed:
+        return "failed", failed
+    reasons += [why for v, why in results if v != "verified"]
+    if not_run:
+        reasons.append("declared not run: " + ", ".join(str(n) for n in not_run))
+    return ("not_measured", reasons) if reasons else ("verified", [])
+
+
+def fallback_evidence_problems(doc: dict, units: set[str], arm_definition=None) -> list[str]:
     """A targeted spec row cannot discharge the repository-wide fallback measurement."""
+    head = (doc.get("change_set") or {}).get("head")
+    arm_problems, arm_verdicts = [], {}
+    for row in doc.get("verifiers", []):
+        if row.get("scope") == "global_fallback_full_suite" and "arms" in row:
+            verdict, why = arms_verdict(row.get("arms"), head, arm_definition)
+            if verdict != "verified" and any((row.get("entity_verdicts") or {}).get(u) == "verified" for u in units):
+                arm_problems.append(f"ARMS_VERDICT_MISMATCH {row.get('id')}: row claims verified, arms are {verdict}: " + "; ".join(why))
+            arm_verdicts[row.get("id")] = verdict
+    if arm_problems:
+        return arm_problems
     if (doc.get("admission") or {}).get("verdict") not in {"admitted", "admitted_with_exemptions"}:
         return []
     records = {v.get("entity"): v for v in doc.get("verdicts", [])}
@@ -116,6 +269,7 @@ def fallback_evidence_problems(doc: dict, units: set[str]) -> list[str]:
         if not any(v.get("scope") == "global_fallback_full_suite" and v.get("kind") == "targeted_test"
                    and eid in v.get("entities", []) and v.get("exit_code") == 0
                    and v.get("entity_verdicts", {}).get(eid) == "verified" and v.get("output_ref")
+                   and ("arms" not in v or arm_verdicts.get(v.get("id")) == "verified")
                    for v in referenced):
             why = absent_suite_problems(doc, eid) if ABSENT_SUITE_CLASS_ENABLED else None
             if why == []:
@@ -470,7 +624,7 @@ def check_verifier_selection(c: Ctx, doc: dict, F: dict) -> None:
             c.add("VERIFIER_SELECTION_CONTRADICTS_NOTES", f"notes say {sorted(said)}, verifier_selection.requested {sorted(req)}")
 
 
-def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
+def check_receipt(doc: dict, schema: dict, disabled=frozenset(), arm_definition=None) -> list[dict]:
     c = Ctx(doc, schema, disabled)
     F = schema["fields"]
     if doc.get("schema") != schema["document_schema_name"]:
@@ -651,7 +805,7 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
         modern = producer.get("tool") == "tools/graph/verify.py" and _version(producer.get("version")) >= (1, 3, 0)
         scoped = any(v.get("scope") == "global_fallback_full_suite" for v in doc.get("verifiers", []))
         if modern or scoped:
-            for problem in fallback_evidence_problems(doc, fallback_units(core + tail)):
+            for problem in fallback_evidence_problems(doc, fallback_units(core + tail), arm_definition):
                 c.add("FULL_FALLBACK_TEST_NOT_MEASURED", problem)
         if isinstance(seeds, list):
             fallback_selection |= {s for s in seeds if isinstance(s, str)}
@@ -903,14 +1057,14 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset()) -> list[dict]:
 
 
 # -------------------------------------------------------------------------------- dispatch
-def classify(doc, gschema=None, rschema=None, disabled=frozenset()) -> dict:
+def classify(doc, gschema=None, rschema=None, disabled=frozenset(), arm_definition=None) -> dict:
     gschema = gschema or load_schema(GRAPH_SCHEMA_PATH)
     rschema = rschema or load_schema(RECEIPT_SCHEMA_PATH)
     if not isinstance(doc, dict):
         return {"verdict": "violation", "kind": "unknown", "findings": [{"code": "UNREADABLE", "detail": "document is not an object"}]}
     s = doc.get("schema")
     if s == rschema["document_schema_name"] or (isinstance(s, str) and s.startswith("ChangeAdmissionReceipt")) or "impact_set" in doc:
-        findings, kind = check_receipt(doc, rschema, disabled), "receipt"
+        findings, kind = check_receipt(doc, rschema, disabled, arm_definition), "receipt"
     else:
         findings, kind = check_graph(doc, gschema, disabled), "graph"
     codes = sorted({f["code"] for f in findings})

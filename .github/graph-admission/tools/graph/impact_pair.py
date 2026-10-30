@@ -525,6 +525,62 @@ def blocking_query_events(q):
     return [e for e in q.get("events", []) if not (bound and e.get("code") == "EMPTY_IMPACT_REQUIRES_EXPLANATION")]
 
 
+def _committed_regular_profile(repo, rev: str):
+    """Bytes of the committed arm-definition file at `rev`, only if it is a regular committed blob (never a symlink)."""
+    rel = schema_check.ARM_DEFINITION_PATH
+    try:
+        row = impact.git(["ls-tree", rev, "--", repo.prefix + rel], repo.top).strip()
+        if not row or row.split()[0] not in {"100644", "100755"} or row.split()[1] != "blob":
+            return None
+        return repo.read_at(rev, [rel]).get(rel)
+    except (impact.Refusal, ValueError, OSError, subprocess.SubprocessError, IndexError):
+        return None
+
+
+def arm_definition_from_git(repo, base: str, head: str) -> dict:
+    """Arm definition for the range base..head, re-derived from COMMITTED bytes; a refusal dict if not trustworthy.
+
+    The producer controls the evidence and the PR controls the head tree; only the BASE definition is trusted,
+    and only when the range does not change it."""
+    return schema_check.arm_definition_for_range(_committed_regular_profile(repo, base),
+                                                 _committed_regular_profile(repo, head))
+
+
+def _base_untrusted(repo, base: str, head: str, trusted_base):
+    """None if `base` is the caller's own trusted base and a proper ancestor of `head`; else a refusal dict.
+
+    The receipt names its own base, so it can never vouch for itself: the CALLER (the gate's own range, in CI the
+    event/merge base) supplies `trusted_base` explicitly and nothing defaults to the receipt value."""
+    code = schema_check.ARM_DEFINITION_CODES[2]
+
+    def refuse(why):
+        return {"refused": code, "reason": why}
+
+    if not isinstance(trusted_base, str) or not trusted_base:
+        return refuse("no trusted base was supplied by the caller; the receipt's own base cannot vouch for itself")
+    try:
+        trusted = repo.rev(trusted_base)
+        ancestor = subprocess.run(["git", "-C", str(repo.top), "merge-base", "--is-ancestor", base, head],
+                                  capture_output=True, timeout=60).returncode == 0
+    except (impact.Refusal, ValueError, OSError, subprocess.SubprocessError):
+        return refuse("the trusted base does not resolve in this repository")
+    if trusted != base:
+        return refuse("the receipt base differs from the trusted base supplied by the caller")
+    if base == head or not ancestor:
+        return refuse("the trusted base is not a proper ancestor of the verified head")
+    return None
+
+
+def fallback_arm_problems(repo, base: str, head: str, doc: dict, units: set[str], trusted_base=None) -> list[str]:
+    """Full-fallback evidence problems, with the arm definition re-derived from Git when a row has arms.
+
+    `trusted_base` has no default to the receipt value: without it every arms row stays not_measured."""
+    arm_def = None
+    if any(isinstance(v, dict) and "arms" in v and v.get("scope") == "global_fallback_full_suite" for v in doc.get("verifiers", [])):
+        arm_def = _base_untrusted(repo, base, head, trusted_base) or arm_definition_from_git(repo, base, head)
+    return schema_check.fallback_evidence_problems(doc, units, arm_def)
+
+
 def absent_suite_repo_problems(repo, head: str, doc: dict, units: set[str]) -> list[str]:
     """Re-derive from Git at HEAD that a claimed absent suite is really absent and really declared.
 
@@ -567,7 +623,8 @@ def absent_suite_repo_problems(repo, head: str, doc: dict, units: set[str]) -> l
     return out
 
 
-def receipt_problems(repo_path: Path, doc: dict, *, origin_binding: dict | None = None) -> list[str]:
+def receipt_problems(repo_path: Path, doc: dict, *, origin_binding: dict | None = None,
+                     trusted_base: str | None = None) -> list[str]:
     """Rebuild from Git, never from receipt node_ids or declared revision selections.
 
 Legacy receipts stay readable, but cannot omit workflow verifier obligations
@@ -630,7 +687,7 @@ A paired receipt must match both graph digests and the complete dual selection.
     enforce_mandatory = paired or workflow_selected or q["impact_set"].get("global_fallback", {}).get("triggered", False) or "binding" in (doc.get("empty_impact_explanation") or {})
     if not enforce_mandatory and not new_required and not selection["unmeasured_head_files"]:
         return []
-    problems = schema_check.fallback_evidence_problems(doc, fallback_units(q)) if q["impact_set"].get("global_fallback", {}).get("triggered") else []
+    problems = fallback_arm_problems(repo, base, head, doc, fallback_units(q), trusted_base) if q["impact_set"].get("global_fallback", {}).get("triggered") else []
     if schema_check.ABSENT_SUITE_CLASS_ENABLED and isinstance(doc.get("test_suite"), dict) and q["impact_set"].get("global_fallback", {}).get("triggered"):
         problems.extend(absent_suite_repo_problems(repo, head, doc, fallback_units(q)))
     explanation = doc.get("empty_impact_explanation") or {}
