@@ -3767,12 +3767,27 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
     all_codes: list[str] = []
     for rec in bound:
         doc = rec["_doc"]
-        cls = schema_check.classify(doc)
+        # Arms rows are judged against the BASE definition re-derived from Git for the gate's own range
+        # (the same trusted base C18 uses); rows without arms never reach Git here.
+        arm_def = None
+        if any(isinstance(v, dict) and "arms" in v and v.get("scope") == "global_fallback_full_suite"
+               for v in doc.get("verifiers", [])):
+            try:
+                irepo = impact_pair.impact.Repo(repo)
+                rbase, rhead = irepo.rev(base), irepo.rev(head)
+                arm_def = (impact_pair._base_untrusted(irepo, rbase, rhead, base)
+                           or impact_pair.arm_definition_from_git(irepo, rbase, rhead))
+            except (impact_pair.impact.Refusal, ValueError, OSError):
+                arm_def = {"refused": schema_check.ARM_DEFINITION_CODES[2],
+                           "reason": "the gate range does not resolve in this repository"}
+        cls = schema_check.classify(doc, arm_definition=arm_def)
         rec["schema_verdict"] = cls["verdict"]
         rec["schema_codes"] = cls.get("codes", [])
         all_codes += rec["schema_codes"]
         if cls["verdict"] != "conformant":
-            add("C04", f"{Path(rec['path']).name}: " + ", ".join(cls["codes"][:8]))
+            arm_why = "; ".join(str(f.get("detail", ""))[:300] for f in cls.get("findings", [])
+                                if f.get("code") == "FULL_FALLBACK_TEST_NOT_MEASURED" and "ARM_DEFINITION_" in str(f.get("detail", "")))
+            add("C04", f"{Path(rec['path']).name}: " + ", ".join(cls["codes"][:8]) + (f" ({arm_why})" if arm_why else ""))
 
         cs = doc.get("change_set") or {}
         for f in cs.get("files") or []:
@@ -3854,7 +3869,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
                 origin_binding = origin_binding_at_base(repo, base, bundle_rel, origin_association_path,
                                                        rec["digest"], enforcement)
             with impact_pair.trace_phase("admission-C18-paired-coverage"):
-                coverage_problems = impact_pair.receipt_problems(repo, doc, origin_binding=origin_binding)
+                coverage_problems = impact_pair.receipt_problems(repo, doc, origin_binding=origin_binding,
+                                                                trusted_base=base)
                 coverage_problems += full_suite_ci.receipt_errors(
                     repo, head, impact_pair.build_graph.source_repo_name(repo), doc.get("verifiers", []))
                 coverage_problems += full_suite_ci.root_typecheck_receipt_errors(

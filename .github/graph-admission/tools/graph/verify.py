@@ -55,6 +55,7 @@ import re
 import shutil
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -618,6 +619,55 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict | None = None, timeout: int = 9
         return p.returncode, out, round(time.monotonic() - t0, 2)
     except FileNotFoundError as ex:
         return 127, f"NOT FOUND: {ex}", round(time.monotonic() - t0, 2)
+
+
+HARNESS_EVIDENCE_LINE = re.compile(r"^Full-suite evidence: (/[^\n]+)$", re.M)
+HARNESS_DOC_SCHEMA = "MaintainedFullSuiteExecution/v1"
+HARNESS_DOC_MAX_BYTES = 4 * 1024 * 1024
+HARNESS_ARMS_MAX_BYTES = 1024 * 1024
+
+
+def carry_harness_arms(out: str, dep: str, head: str) -> dict:
+    """KCP-0027: extra fields for the global_fallback_full_suite row from the harness's own execution document.
+
+    Data only. `arms` / `arms_refused` are copied VERBATIM; this function never reads a verdict out of them,
+    never touches entity_verdicts, and never raises anything: the gate recomputes the arms verdict from the
+    committed BASE definition. Nothing is added when the harness named no document or the document holds
+    neither key; a document that cannot be trusted as THIS run's carries a reason instead of the data."""
+    found = HARNESS_EVIDENCE_LINE.findall(out or "")
+    if not found:
+        return {}
+    path = Path(found[-1].strip())
+    try:
+        info = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_size > HARNESS_DOC_MAX_BYTES:
+            raise ValueError
+        doc = json.loads(path.read_text())
+    except (ValueError, OSError, RecursionError):
+        return {"arms_not_carried": "harness execution document unreadable"}
+    if not isinstance(doc, dict) or ("arms" not in doc and "arms_refused" not in doc):
+        return {}
+    if doc.get("schema") != HARNESS_DOC_SCHEMA or doc.get("unit") != dep or doc.get("head") != head:
+        return {"arms_not_carried": "harness execution document is not bound to this run (schema/unit/head)"}
+    extra: dict = {}
+    if "arms_refused" in doc:
+        refused = doc["arms_refused"]
+        if isinstance(refused, str):
+            extra["arms_refused"] = refused
+        else:
+            extra["arms_not_carried"] = "arms_refused is not a string"
+    if "arms" in doc:
+        arms = doc["arms"]
+        try:
+            fits = (isinstance(arms, dict) and arms.get("schema") == schema_check.ARMS_SCHEMA
+                    and len(json.dumps(arms)) <= HARNESS_ARMS_MAX_BYTES)
+        except RecursionError:
+            fits = False
+        if fits:
+            extra["arms"] = arms
+        else:
+            extra["arms_not_carried"] = "arms is not a " + str(schema_check.ARMS_SCHEMA) + " object within the size bound"
+    return extra
 
 
 def rel_ref(p: Path, root: Path = ROOT) -> str:
@@ -3436,6 +3486,9 @@ class Verify:
                         {eid: (verdict, "complete fallback suite: " + verdict) for eid in entities})
             self.verifiers[-1]["scope"] = "global_fallback_full_suite"
             self.verifiers[-1]["timeout_seconds"] = timeout
+            if not absent and cmd:
+                self.verifiers[-1].update(carry_harness_arms(
+                    out, dep, self.head if self.mode == "diff" else self.repo.head()))
             if absent and rc == 0 and dep == "." and not self.test_suite:
                 v = self.verifiers[-1]
                 self.test_suite = {
