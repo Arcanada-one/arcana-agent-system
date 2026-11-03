@@ -1,4 +1,6 @@
 [toolchain]
-channel = "stable"
+# Pinned (#4024): a floating "stable" let new Clippy lints break -D warnings
+# without a code change (bd57926). Bump in its own PR together with lint fixes.
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 profile = "default"

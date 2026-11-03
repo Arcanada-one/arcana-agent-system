@@ -2829,10 +2829,15 @@ No other markup is executed, whatever your training says. \
     /// Budget still available to the next connector request. The tracker uses
     /// integer micro-USD, so repeated requests cannot receive a fresh copy of
     /// the original allowance.
-    #[allow(clippy::cast_precision_loss)]
     fn remaining_cost_budget(&self) -> Option<f64> {
         self.config.max_cost_usd.map(|cap| {
-            let spent = self.cost.snapshot().total_cost_usd_micros as f64 / 1_000_000.0;
+            // Lossless u64 -> f64 without a cast lint allowance: whole dollars
+            // saturate at u32::MAX (~$4.3e9, far above any cap) and the
+            // micro-dollar remainder is always below 1_000_000.
+            let micros = self.cost.snapshot().total_cost_usd_micros;
+            let dollars = u32::try_from(micros / 1_000_000).unwrap_or(u32::MAX);
+            let remainder = u32::try_from(micros % 1_000_000).unwrap_or(0);
+            let spent = f64::from(dollars) + f64::from(remainder) / 1_000_000.0;
             (cap - spent).max(0.0)
         })
     }

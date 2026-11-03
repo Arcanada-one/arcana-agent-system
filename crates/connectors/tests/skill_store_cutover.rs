@@ -28,7 +28,6 @@ impl EnvScope {
         let keys = [
             "ARCANA_SKILLS_SOURCE",
             "ARCANA_SCRUTATOR_URL",
-            "ARCANA_AUTH_TOKEN_URL",
             "ARCANA_KB_CLIENT_SECRET_FILE",
             "CREDENTIALS_DIRECTORY",
         ];

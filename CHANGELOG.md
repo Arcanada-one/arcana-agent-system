@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `ARCANA_AUTH_TOKEN_URL` is no longer read. The KB-reader token endpoint was
+  already pinned to `https://auth.arcanada.ai/oidc/token` and any other value
+  was refused; a stale value in the environment is now ignored instead of
+  failing configuration.
+- `arcana-core` no longer exports the bootstrap `skeleton_marker()` function.
+- The Rust toolchain is pinned to 1.99.1 (`rust-toolchain.toml`) so new Clippy
+  lints cannot break the build without a code change; bump it in its own PR.
+- `deny.toml` now rejects `*` version requirements on registry crates
+  (workspace path dependencies stay allowed).
+- `arcana-tools` uses `jsonschema` only in tests, without default features, so
+  normal builds no longer pull its HTTP `$ref` resolver; `arcana-core` drops the
+  unused `tracing-appender` dependency.
+
 ### Fixed
 
 - Task-run admission rejects self-issuers even when an authority adapter omits

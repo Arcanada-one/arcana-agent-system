@@ -102,7 +102,7 @@ fn main() {
             save_transcript,
             read_only,
         }) => {
-            std::process::exit(run_headless(
+            std::process::exit(run_headless(HeadlessArgs {
                 cwd,
                 prompt,
                 work_item,
@@ -117,7 +117,7 @@ fn main() {
                 tool_result_budget,
                 save_transcript,
                 read_only,
-            ));
+            }));
         }
         Some(Cmd::Mcp {
             command: McpCmd::Serve { bind },
@@ -130,9 +130,9 @@ fn main() {
     }
 }
 
-/// Resolve the task text and hand the run to `arcana_cli::run`.
-#[allow(clippy::too_many_arguments)]
-fn run_headless(
+/// The parsed `arcana run` flags, passed as one value instead of fourteen
+/// positional arguments.
+struct HeadlessArgs {
     cwd: PathBuf,
     prompt: Option<String>,
     work_item: Option<String>,
@@ -147,7 +147,26 @@ fn run_headless(
     tool_result_budget: Option<usize>,
     save_transcript: Option<PathBuf>,
     read_only: bool,
-) -> i32 {
+}
+
+/// Resolve the task text and hand the run to `arcana_cli::run`.
+fn run_headless(args: HeadlessArgs) -> i32 {
+    let HeadlessArgs {
+        cwd,
+        prompt,
+        work_item,
+        contract_file,
+        ground_truth,
+        prompt_stdin,
+        max_turns,
+        max_cost_usd,
+        model,
+        request_timeout,
+        context_budget,
+        tool_result_budget,
+        save_transcript,
+        read_only,
+    } = args;
     let expect_effect = if read_only {
         arcana_cli::effect::EffectExpectation::ReadOnly
     } else {

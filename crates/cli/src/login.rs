@@ -5,7 +5,7 @@
 //! because this CLI is normally used over SSH on a remote host: there is no
 //! local browser to open and binding a callback port helps nobody. The user
 //! reads a short code off the terminal and approves it wherever they already
-//! have a browser. enables the matching grant on the provider.
+//! have a browser.
 //!
 //! ## Fail-closed
 //!
@@ -13,8 +13,8 @@
 //! what was wrong — never a panic, and never a partial success that leaves a
 //! half-written credential behind. In particular, an identity provider that
 //! does not offer the device grant is reported as exactly that, because at the
-//! time of writing that is the live state of `auth.arcanada.*` until
-//! is rolled out: discovery advertises no `device_authorization_endpoint`.
+//! time of writing that is the live state of `auth.arcanada.*`: discovery
+//! advertises no `device_authorization_endpoint`.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -26,8 +26,8 @@ use serde::Deserialize;
 /// integration tests point at a mock provider.
 const DEFAULT_ISSUER: &str = "https://auth.arcanada.ai";
 
-/// The public client registered by. A CLI cannot hold a secret, so
-/// this client is registered with `token_endpoint_auth_method: none`.
+/// The public client. A CLI cannot hold a secret, so this client is
+/// registered with `token_endpoint_auth_method: none`.
 const CLIENT_ID: &str = "arcana";
 
 /// Scopes requested. `offline_access` buys a refresh token, so the operator is
@@ -261,7 +261,10 @@ async fn poll_for_token(
     device: &DeviceAuth,
     issuer: String,
 ) -> i32 {
-    let mut interval = Duration::from_secs(device.interval.unwrap_or(5).max(1));
+    let mut interval = device
+        .interval
+        .map_or(DEFAULT_INTERVAL, Duration::from_secs)
+        .max(Duration::from_secs(1));
     let budget = device
         .expires_in
         .map_or(MAX_POLL, |secs| Duration::from_secs(secs).min(MAX_POLL));
