@@ -66,16 +66,13 @@ pub struct ClientCredentialsConfig {
 
 impl ClientCredentialsConfig {
     /// Resolve the fixed KB-reader token profile and credential file from the
-    /// process environment.
+    /// process environment. The token endpoint is pinned to
+    /// [`DEFAULT_TOKEN_URL`]; no environment variable overrides it.
     ///
     /// # Errors
-    /// Returns [`AuthTokenError::Configuration`] when the token URL or
-    /// credential path is missing or malformed.
+    /// Returns [`AuthTokenError::Configuration`] when the credential path is
+    /// missing.
     pub fn from_env() -> Result<Self, AuthTokenError> {
-        let token_url = std::env::var("ARCANA_AUTH_TOKEN_URL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_TOKEN_URL.to_owned());
         let secret_file = match std::env::var("ARCANA_KB_CLIENT_SECRET_FILE") {
             Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
             _ => {
@@ -87,15 +84,8 @@ impl ClientCredentialsConfig {
                 PathBuf::from(directory).join(DEFAULT_CREDENTIAL_NAME)
             }
         };
-        let token_url = Url::parse(&token_url)
-            .map_err(|_| AuthTokenError::Configuration("token URL is malformed".into()))?;
-        let approved = Url::parse(DEFAULT_TOKEN_URL)
+        let token_url = Url::parse(DEFAULT_TOKEN_URL)
             .map_err(|_| AuthTokenError::Configuration("approved token URL is invalid".into()))?;
-        if token_url != approved {
-            return Err(AuthTokenError::Configuration(
-                "production token URL is not approved".into(),
-            ));
-        }
         Ok(Self {
             token_url,
             client_id: KB_READER_CLIENT_ID.into(),

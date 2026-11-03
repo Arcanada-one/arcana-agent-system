@@ -12,7 +12,7 @@
 confidence-threshold = 0.8
 
 # SPDX identifiers that are explicitly allowed.
-# BSL-1.0 added 2026-05-17 для clipboard-win → rustyline 14 (ARAS-0006 Phase 4):
+# BSL-1.0 added 2026-05-17 for clipboard-win, a rustyline dependency:
 # Boost Software License 1.0 is OSI-approved and FSF Free/Libre, semantically
 # equivalent to MIT/BSD-2-Clause (permissive, no copyleft, attribution-only).
 allow = [
@@ -48,8 +48,10 @@ yanked = "deny"
 [bans]
 # Warn on duplicate versions of direct dependencies.
 multiple-versions = "warn"
-# workspace path dependencies have no version — allow them.
-wildcards = "allow"
+# Reject `*` version requirements on registry crates. Workspace path
+# dependencies carry no version of their own, so paths stay allowed.
+wildcards = "deny"
+allow-wildcard-paths = true
 
 [sources]
 # Only allow crates.io and local path sources.

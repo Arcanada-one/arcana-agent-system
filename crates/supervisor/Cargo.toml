@@ -29,7 +29,6 @@ tracing = "0.1"
 nix = { version = "0.31", default-features = false, features = ["signal", "process"] }
 
 [dev-dependencies]
-serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = [
     "macros",
@@ -39,9 +38,6 @@ tokio = { version = "1", features = [
     "io-util",
     "sync",
 ] }
-
-[target.'cfg(unix)'.dev-dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal", "process"] }
 
 [lints]
 workspace = true

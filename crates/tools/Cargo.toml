@@ -21,10 +21,12 @@ tokio-util = { version = "0.7", default-features = false }
 tracing = "0.1"
 regex = "1.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots"] }
-jsonschema = "0.53"
 url = "2"
 
 [dev-dependencies]
+# Tests validate tool schemas; default features would pull HTTP $ref
+# resolution (reqwest) into the workspace through feature unification.
+jsonschema = { version = "0.53", default-features = false }
 secrecy = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 wiremock = "0.6"

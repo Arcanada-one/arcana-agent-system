@@ -153,42 +153,27 @@ async fn token_mint_does_not_follow_redirects() {
 }
 
 #[test]
-fn production_config_rejects_unapproved_https_token_endpoint() {
+fn production_config_pins_the_ai_issuer_token_endpoint() {
+    // #4022: the endpoint is a constant; a stale ARCANA_AUTH_TOKEN_URL in the
+    // environment (arbitrary host or the incompatible .one issuer) is ignored
+    // rather than read, so it can neither redirect nor break the reader.
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::set_var(
-        "ARCANA_AUTH_TOKEN_URL",
-        "https://other.example.test/oidc/token",
-    );
     std::env::set_var("ARCANA_KB_CLIENT_SECRET_FILE", "/tmp/unused-reader-secret");
-    let result = ClientCredentialsConfig::from_env();
-    std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
+    for stale in [
+        None,
+        Some("https://other.example.test/oidc/token"),
+        Some("https://auth.arcanada.one/oidc/token"),
+    ] {
+        match stale {
+            Some(url) => std::env::set_var("ARCANA_AUTH_TOKEN_URL", url),
+            None => std::env::remove_var("ARCANA_AUTH_TOKEN_URL"),
+        }
+        let config = ClientCredentialsConfig::from_env();
+        std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
+        assert_eq!(
+            config.unwrap().token_url.as_str(),
+            "https://auth.arcanada.ai/oidc/token"
+        );
+    }
     std::env::remove_var("ARCANA_KB_CLIENT_SECRET_FILE");
-    assert!(
-        result.is_err(),
-        "production config accepted an arbitrary HTTPS endpoint"
-    );
-}
-
-#[test]
-fn production_config_pins_the_ai_issuer_token_endpoint_and_rejects_one() {
-    let _guard = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
-    std::env::set_var("ARCANA_KB_CLIENT_SECRET_FILE", "/tmp/unused-reader-secret");
-    let default_config = ClientCredentialsConfig::from_env().unwrap();
-    assert_eq!(
-        default_config.token_url.as_str(),
-        "https://auth.arcanada.ai/oidc/token"
-    );
-
-    std::env::set_var(
-        "ARCANA_AUTH_TOKEN_URL",
-        "https://auth.arcanada.one/oidc/token",
-    );
-    let one_issuer = ClientCredentialsConfig::from_env();
-    std::env::remove_var("ARCANA_AUTH_TOKEN_URL");
-    std::env::remove_var("ARCANA_KB_CLIENT_SECRET_FILE");
-    assert!(
-        one_issuer.is_err(),
-        "production config accepted the incompatible .one issuer endpoint"
-    );
 }

@@ -70,8 +70,12 @@ pub fn run_mcp_serve(bind: Option<&str>) -> i32 {
     }
 }
 
-/// Block on the stdio server, mapping the outcome to an exit code.
-fn run_stdio() -> i32 {
+/// Build a multi-thread runtime, block on `server`, and map the outcome to an
+/// exit code. Shared by both transports.
+fn block_on_server<F>(server: F) -> i32
+where
+    F: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -82,7 +86,7 @@ fn run_stdio() -> i32 {
             return 1;
         }
     };
-    match runtime.block_on(serve_stdio()) {
+    match runtime.block_on(server) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("arcana mcp serve: {err}");
@@ -91,27 +95,16 @@ fn run_stdio() -> i32 {
     }
 }
 
+/// Block on the stdio server, mapping the outcome to an exit code.
+fn run_stdio() -> i32 {
+    block_on_server(serve_stdio())
+}
+
 /// Loopback HTTP transport entrypoint. The address is already guarded by
 /// [`bind_guard::guard_loopback`]; full streamable-HTTP serving is wired via
-/// the optional `transport-streamable-http-server` feature.
+/// the crate's optional `http` feature.
 fn run_http(addr: std::net::SocketAddr) -> i32 {
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(err) => {
-            eprintln!("arcana mcp serve: runtime initialization failed: {err}");
-            return 1;
-        }
-    };
-    match runtime.block_on(serve_http(addr)) {
-        Ok(()) => 0,
-        Err(err) => {
-            eprintln!("arcana mcp serve: {err}");
-            1
-        }
-    }
+    block_on_server(serve_http(addr))
 }
 
 #[cfg(feature = "http")]
