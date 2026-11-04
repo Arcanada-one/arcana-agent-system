@@ -11,13 +11,12 @@ impl Driver<'_> {
     /// Decide what a failed connector attempt means for the run: another
     /// dispatch, or the end of it.
     ///
-    /// Retrying is safe here because a `/execute` dispatch has no local side
-    /// effect — the tools run on this side of the wire, and the only thing a
-    /// second attempt can spend twice is money, which the cost cap already
-    /// bounds. It is NOT a guarantee about the upstream: a connector that runs
-    /// tools server-side could act twice on a request whose answer never
-    /// arrived, which is why the retry is bounded and the upstream's own
-    /// `retryable` flag is respected rather than second-guessed.
+    /// Retrying is safe because a `/execute` dispatch has no local side
+    /// effect: the tools run on this side of the wire, and a second attempt can
+    /// only spend money twice, which the cost cap bounds. It is NOT a guarantee
+    /// about the upstream: a connector that runs tools server-side could act
+    /// twice, so the retry is bounded and the upstream's `retryable` flag is
+    /// respected rather than second-guessed.
     pub(super) async fn recover_or_stop(
         &self,
         state: &mut RunState,
@@ -28,59 +27,43 @@ impl Driver<'_> {
         if first_dispatch {
             state.first_dispatch_observation = failure.first_dispatch_observation().cloned();
         }
-        // The clock the terminal verdict reports. Started at the first failure
-        // of the streak, not at the start of the run: "94 turns" and "three
-        // 502s over four seconds" are different facts and the second one is
-        // what says whether the retry policy was a serious attempt.
-        //
-        // Hoisted above the loop, so a second lap — the in-flight wait handing
-        // back a refusal of a different class — measures the same streak rather
-        // than starting a new one.
+        // The clock the terminal verdict reports, started at the first failure
+        // of the streak, not of the run: "three 502s over four seconds" says
+        // whether the retry policy was a serious attempt, "94 turns" does not.
+        // Hoisted above the loop so a second lap measures the same streak.
         let started = *state
             .connector_failure_since
             .get_or_insert_with(Instant::now);
-        // The loop exists for exactly one transition: the in-flight wait owns
-        // its own re-dispatches (A2-245), so when a poll is refused by
-        // something that is NOT "still in flight", that refusal has to be
-        // judged here, by the counters that belong to it, without going back
-        // out through `step()` and rebuilding the request to be told the same
-        // thing again.
+        // The loop exists for one transition: the in-flight wait owns its own
+        // re-dispatches, so a poll refused by something that is NOT "still in
+        // flight" is judged here, by its own counters, without going back
+        // through `step()` and rebuilding the request.
         let mut polled: Option<ConnectorError> = None;
         loop {
             let error = polled.as_ref().unwrap_or(failure);
-            // The connector's own message is the diagnosis — `ConnectorError`
-            // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
-            // "arcana-repl" not found`. Mapping to `ConnectorFatal` without it left
-            // the operator a verdict and no evidence, and cost a four-commit bisect
-            // and two wrong root causes to recover what this one line says.
-            // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
-            // a log line here is discarded.
+            // The connector's own message (`HTTP {status}: {message}`) is the
+            // diagnosis; the verdict needs it as evidence. `eprintln!` rather
+            // than `tracing`: the CLI installs no subscriber.
             eprintln!("arcana: connector dispatch failed: {error}");
-            // A size refusal is not a connector failure: the request was ours and
-            // it was too big. Retrying sends the same oversized body again, and
-            // reporting `ConnectorFatal` points the operator at a service that did
-            // exactly what its contract says.
+            // A size refusal is not a connector failure: the request was ours.
+            // Retrying resends the same oversized body, and `ConnectorFatal`
+            // would blame a service that honoured its contract.
             if error.is_request_too_large() {
                 return Recovered::Step(StepResult::Terminal(
                     TerminalReason::RequestTooLarge,
                     None,
                 ));
             }
-            // Not a transient failure, whatever the envelope's `retryable`
-            // flag says (A2-290). The upstream was aborted for spending the
-            // WHOLE per-attempt budget this client itself stated, and a
-            // re-dispatch of this turn sends byte-identical bytes under that
-            // identical budget — the same experiment, not a second chance.
+            // Not transient, whatever the envelope's `retryable` flag says: the
+            // upstream was aborted for spending the WHOLE per-attempt budget this
+            // client stated, and a re-dispatch sends the same bytes under the
+            // same budget.
             //
-            // Stopping here rather than after the class's re-dispatches is the
-            // money decision. Model Connector reports an aborted attempt as
-            // `usage: 0` while the provider has already been fed the whole
-            // prompt, so `max_cost_usd` cannot see this class at all: measured
-            // on A2-278 run 5 (deepseek-v4-pro, a ~37 000-token turn), the run
-            // ended `ConnectorFatal` after 15 attempts having spent two more
-            // full 120 s budgets of provider compute that the cost tracker
-            // recorded as $0. The verdict names the budget and the model
-            // because those are the two things an operator changes.
+            // Stopping before the class's re-dispatches is a money decision:
+            // Model Connector reports an aborted attempt as `usage: 0` while the
+            // provider already consumed the whole prompt, so `max_cost_usd`
+            // cannot see this class. The verdict names the budget and the model
+            // because those are what an operator changes.
             if error.is_upstream_attempt_timeout() {
                 let turn_attempts = state.turn_attempts();
                 state.terminal_detail = Some(connector_fatal_detail(
@@ -100,18 +83,15 @@ impl Driver<'_> {
             } else {
                 self.config.connector_retry_limit
             };
-            // Attempts of THIS turn, the failed first dispatch included — the
+            // Attempts of THIS turn, the failed first dispatch included: the
             // number an operator counts in the log, not either retry counter.
             let attempts = state.turn_attempts();
-            // The key belongs to a DIFFERENT payload, so nothing of ours was
-            // dispatched or charged under it, and sending it again can only be
-            // refused again. Model Connector marks this non-retryable and says in
-            // the same breath what the recovery is — "Use a fresh key for a new
-            // request" — so dropping the key and re-dispatching is the upstream's
-            // own instruction rather than a second-guess of its flag. It should
-            // never fire: `TurnIntentSeries::stamp` compares the payload itself
-            // and mints a new key before the server has to. This is the backstop
-            // for the case that comparison failed to predict, and it says so.
+            // The key belongs to a DIFFERENT payload: nothing of ours was
+            // dispatched under it and resending is refused again. Model
+            // Connector marks this non-retryable and instructs "Use a fresh key
+            // for a new request", so dropping the key follows the upstream's
+            // own instruction. `TurnIntentSeries::stamp` should mint a new key
+            // first; this is the backstop for a missed prediction.
             let reused_key = error.is_idempotency_key_reused();
             if reused_key {
                 eprintln!(
@@ -131,9 +111,8 @@ impl Driver<'_> {
                 return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
             }
             // A turn whose answer is still being produced upstream is not a
-            // failed request at all, and it is not bounded by a count. It leaves
-            // here for a wait with its own counter, its own clock and — since
-            // A2-245 — its own re-dispatches.
+            // failed request and is not bounded by a count: it leaves for a
+            // wait with its own counter, clock and re-dispatches.
             if class == RetryClass::InFlight {
                 match self
                     .wait_out_in_flight(state, error, started, dispatch)
@@ -165,8 +144,7 @@ impl Driver<'_> {
             if !wait.is_zero() {
                 tokio::time::sleep(wait).await;
             }
-            // The next step re-checks it too, but an operator who pressed Ctrl-C
-            // during the pause should not then watch another dispatch go out.
+            // Ctrl-C during the pause must not let another dispatch go out.
             if self.cancel.is_cancelled() {
                 return Recovered::Step(StepResult::Terminal(
                     TerminalReason::AbortedByOperator,
@@ -181,7 +159,7 @@ impl Driver<'_> {
     /// say how long to sleep first — or refuse, with the verdict that says why.
     ///
     /// Split out of [`Self::recover_or_stop`] so the counted schedule and the
-    /// in-flight deadline read as the two separate policies they are.
+    /// in-flight deadline read as two separate policies.
     ///
     /// # Errors
     /// The terminal step when the sleep budget is spent.
@@ -235,10 +213,9 @@ impl Driver<'_> {
 /// Which clock a transient failure heals on, which decides how patiently the
 /// loop waits for it.
 ///
-/// Three classes, and the split is about WHO is not answering, not about
-/// severity — see [`ConnectorError::is_edge_gateway_failure`] for the first
-/// half of the argument and [`ConnectorError::is_idempotency_conflict`] for
-/// the second.
+/// Three classes; the split is about WHO is not answering, not severity — see
+/// [`ConnectorError::is_edge_gateway_failure`] and
+/// [`ConnectorError::is_idempotency_conflict`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RetryClass {
     /// Model Connector authored the refusal. It has already spent its own
@@ -252,11 +229,10 @@ pub(super) enum RetryClass {
     /// The first attempt of THIS turn is still running upstream, and Model
     /// Connector is refusing to start a second one under the same key.
     ///
-    /// The most patient class of the three, and the cheapest: the answer is
-    /// being produced and already paid for, and the alternative to waiting is
-    /// abandoning a turn that was bought. Model Connector's own message is
-    /// explicit that the wrong recovery is a new key — "do not reissue it
-    /// under a new key or it will be dispatched and charged twice."
+    /// The most patient and cheapest class: the answer is being produced and
+    /// already paid for. Model Connector's own message says the wrong recovery
+    /// is a new key: "do not reissue it under a new key or it will be
+    /// dispatched and charged twice."
     InFlight,
 }
 
@@ -288,15 +264,14 @@ impl RetryClass {
 
 /// How long to wait before re-dispatching a transient failure.
 ///
-/// An upstream that named a `retryAfter` knows better than we do — up to
-/// [`MAX_RETRY_AFTER`], past which an unattended run would be parked for
-/// longer than any operator expects a single turn to take. It wins over both
-/// schedules below, because it is the only one of the three that is a
-/// statement about this particular upstream at this particular moment.
+/// An upstream-named `retryAfter` wins over both schedules below, up to
+/// [`MAX_RETRY_AFTER`]: it is the only one that is a statement about this
+/// upstream right now, and a longer park would exceed what an operator expects
+/// of a single turn.
 ///
 /// Failing that: a gateway failure gets the exponential schedule, and anything
-/// else keeps the flat `fallback` it has always had. `retry` is 1-based — the
-/// first re-dispatch of the turn is 1.
+/// else the flat `fallback`. `retry` is 1-based — the first re-dispatch of the
+/// turn is 1.
 pub(super) fn retry_pause(
     error: &ConnectorError,
     retry: u32,
@@ -319,23 +294,20 @@ pub(super) fn retry_pause(
 /// across the five re-dispatches [`DEFAULT_EDGE_RETRY_LIMIT`] allows, which is
 /// the worst-case wall time this schedule adds to a turn.
 ///
-/// Jitter only ever SHORTENS a pause (the factor is `0.5 ..= 1.0` of nominal),
-/// so the worst case above is a real ceiling rather than an average. Jitter is
-/// not decoration: an edge that drops a burst of requests hands every client
-/// the same failure at the same instant, and a fleet of runs that all wake at
-/// exactly 2 s re-creates the burst that took the edge down. `permille` is the
-/// randomness, passed in so the schedule is a pure function and can be pinned.
+/// Jitter only ever SHORTENS a pause (`0.5 ..= 1.0` of nominal), so the worst
+/// case above is a real ceiling. It spreads a fleet that failed on the same
+/// edge burst instead of re-creating the burst. `permille` is the randomness,
+/// passed in so the schedule is a pure function and can be pinned.
 pub(super) fn edge_backoff_pause(retry: u32, base: Duration, permille: u32) -> Duration {
     backoff_pause(retry, base, MAX_EDGE_RETRY_PAUSE, permille)
 }
 
 /// One pause of the in-flight poll schedule.
 ///
-/// The same doubling with the same jitter, on its own base and its own
-/// ceiling: **2, 4, 8, 15, 15, …** seconds nominal. It has no count limit
-/// because the count is not what bounds it — see
-/// [`Driver::wait_out_in_flight`] — so the ceiling is what decides how stale
-/// an already-settled answer may get, and 15 s is that answer.
+/// The same doubling with the same jitter, on its own base and ceiling:
+/// **2, 4, 8, 15, 15, …** seconds nominal. A deadline, not a count, bounds it
+/// (see [`Driver::wait_out_in_flight`]), so the ceiling decides how stale an
+/// already-settled answer may get.
 pub(super) fn in_flight_poll_pause(poll: u32, permille: u32) -> Duration {
     backoff_pause(
         poll,
@@ -359,11 +331,10 @@ pub(super) fn backoff_pause(retry: u32, base: Duration, cap: Duration, permille:
 
 /// Jitter source: the sub-second part of the wall clock.
 ///
-/// Deliberately not a `rand` dependency. The property needed here is that two
-/// runners failing on the same edge burst do not wake together, and the
-/// nanosecond the process reaches this line is already uncorrelated between
-/// them. A clock that refuses to answer yields the full pause, which is the
-/// conservative direction.
+/// Deliberately not a `rand` dependency: runners failing on the same edge burst
+/// only need to not wake together, and the nanosecond they reach this line is
+/// already uncorrelated. A clock that refuses to answer yields the full pause,
+/// the conservative direction.
 pub(super) fn jitter_permille() -> u32 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -397,8 +368,7 @@ pub(super) enum FatalCause<'a> {
     /// The turn has slept as long as it may.
     PauseBudgetSpent { budget: Duration },
     /// The upstream attempt was aborted for consuming the whole per-attempt
-    /// budget this client sent, and a re-dispatch could only repeat it
-    /// (A2-290).
+    /// budget this client sent, and a re-dispatch could only repeat it.
     UpstreamAttemptBudgetExhausted {
         /// What one attempt was allowed, when the connector states it.
         attempt_budget: Option<Duration>,
@@ -407,7 +377,7 @@ pub(super) enum FatalCause<'a> {
         model: &'a str,
     },
     /// The answer was still being produced upstream when the time that
-    /// request may legitimately take ran out (A2-241).
+    /// request may legitimately take ran out.
     InFlightWaitSpent {
         /// Since the request first left this client.
         waited: Duration,
@@ -425,12 +395,8 @@ pub(super) enum FatalCause<'a> {
 /// The line a run that died on the connector leaves behind, in the marker's
 /// `error` field and on stderr.
 ///
-/// Pilot A2-204c5 ended `ConnectorFatal` with `"error": null` and the single
-/// stderr line `the Model Connector could not complete the request` — which
-/// named neither the status, nor how many times it had been tried, nor over
-/// how long. Three 502s in four seconds and an upstream down for an hour read
-/// identically, and only one of them is a retry policy that was too short.
-/// A2-225 gave denials this treatment; this is the connector's half.
+/// It names the status, the attempt count and the elapsed time: three 502s in
+/// four seconds and an upstream down for an hour must not read identically.
 pub(super) fn connector_fatal_detail(
     error: &ConnectorError,
     attempts: u32,
@@ -470,11 +436,9 @@ pub(super) fn connector_fatal_detail(
                  Model Connector reports as usage 0"
             )
         }
-        // Both budgets, deliberately. The one that ran out is a clock, and an
-        // operator who reads "re-dispatches are spent" would go looking for a
-        // limit to raise that has nothing to do with why the turn was
-        // abandoned — which is exactly the wrong lesson A2-240's own verdict
-        // taught.
+        // Both budgets, deliberately: the one that ran out is a clock, and
+        // "re-dispatches are spent" would send the operator to raise a limit
+        // unrelated to why the turn was abandoned.
         FatalCause::InFlightWaitSpent {
             waited,
             budget,
@@ -504,12 +468,10 @@ separate budget of {redispatch_limit} re-dispatch(es) for a FAILED request is un
 /// fact an operator reconciling a bill at 3 a.m. needs and no layer above will
 /// tell them: what this re-dispatch costs.
 ///
-/// A2-230 could only say the bad half of that — Model Connector settles the
-/// charge before the response reaches the socket, `arcana` sent no
-/// `Idempotency-Key`, so a re-dispatch of a cut request "may be a paid
-/// duplicate". Since A2-234 the same key goes out with every attempt of a
-/// turn, so the sentence states the outcome instead of the risk: a request
-/// that was executed and billed comes back as a replay.
+/// Model Connector settles the charge before the response reaches the socket,
+/// and the same `Idempotency-Key` goes out with every attempt of a turn, so
+/// the sentence states the outcome, not the risk: a request that was executed
+/// and billed comes back as a replay.
 pub(super) fn retry_line(
     error: &ConnectorError,
     wait: Duration,
@@ -543,10 +505,8 @@ re-dispatch carries the same Idempotency-Key and is replayed rather than charged
 
 /// Which budget the parenthetical in [`retry_line`] is reporting against.
 ///
-/// Two shapes because there are two bounds, and A2-240 printed the wrong one:
-/// every conflict said "n of 5" while the thing that would end the wait was a
-/// clock, so the log answered a question nobody had asked and hid the one that
-/// mattered.
+/// Two shapes because there are two bounds; an in-flight wait is ended by a
+/// clock, so reporting it as "n of 5" would hide the bound that matters.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum RetryBudget {
     /// Re-dispatches of a failed request: `2 of 5`.

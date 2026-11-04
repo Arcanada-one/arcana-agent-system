@@ -14,8 +14,7 @@ impl Driver<'_> {
     /// Asked of the connector rather than configured here: the number that
     /// matters is the one the CALLER already told the upstream it may spend
     /// (`ExecuteRequest.timeout`, widened by the server's own attempts and
-    /// queue), and a second copy of it in `DriverConfig` could only drift from
-    /// the first.
+    /// queue), and a second copy in `DriverConfig` could only drift.
     fn in_flight_budget(&self) -> Duration {
         self.connector
             .upstream_dispatch_budget()
@@ -26,50 +25,30 @@ impl Driver<'_> {
     /// Wait out a turn Model Connector is still computing, under the key it
     /// was dispatched with.
     ///
-    /// This is the patient path, and A2-240 is what it is for: a 144k-token
-    /// turn, cut by Cloudflare at its ~100 s origin timeout while the
-    /// Connector went on producing the answer. `arcana` did the expensive part
-    /// right — it re-dispatched under the SAME `Idempotency-Key`, so no second
-    /// charge — and then threw the answer away after 41 s, because the wait
-    /// was five sleeps out of a counter it shared with the edge schedule.
-    ///
-    /// Three things are therefore deliberate here:
+    /// Three things are deliberate here:
     ///
     /// * The counter is `RunState::in_flight_polls`, not
-    ///   `RunState::connector_retries`. The edge re-dispatch that PRECEDED the
-    ///   conflict — the 524 — must not subtract from the wait for the answer
-    ///   that same 524 interrupted. They are different facts about different
-    ///   upstreams.
-    /// * The bound is a deadline, not a count. It runs from the moment the
-    ///   request first left this client ([`TurnIntentSeries::dispatched_at`],
-    ///   which a re-dispatch under the same key does not move) and lasts as
-    ///   long as that request may legitimately run plus
-    ///   [`IN_FLIGHT_SETTLE_MARGIN`]. A count cannot express that: it is
-    ///   whatever the schedule happens to add up to, and jitter shortened
-    ///   A2-240's nominal 60 s to 41 s.
-    /// * The wait owns its re-dispatches. It used to return
-    ///   [`ContinueReason::ConnectorRetry`] after every pause, so every poll
-    ///   re-entered [`Self::step`]: the prompt rebuilt from the history, a
-    ///   block appended to the operator's transcript and a `dispatch` event to
-    ///   the audit log — for a request that is not being re-asked but
-    ///   collected. Measured on the `CutThenStillComputing` fixture with a
-    ///   turn of 80 000 characters: **13 prompt builds and 1 040 782 bytes of
-    ///   transcript for one waited turn**, against two dispatches' worth
-    ///   (A2-245). A poll now re-sends the bytes the dispatch already built
-    ///   ([`Dispatch`]) — which is also the only way they are guaranteed to be
-    ///   the same bytes, and the key replays only while they are.
+    ///   `RunState::connector_retries`: the edge re-dispatch that preceded the
+    ///   conflict must not subtract from the wait for the answer it interrupted.
+    /// * The bound is a deadline from the first dispatch
+    ///   ([`TurnIntentSeries::dispatched_at`], which a re-dispatch under the
+    ///   same key does not move), lasting as long as that request may
+    ///   legitimately run plus [`IN_FLIGHT_SETTLE_MARGIN`]. A count shrinks with
+    ///   jitter and can drop an answer the turn already paid for.
+    /// * The wait owns its re-dispatches instead of returning
+    ///   [`ContinueReason::ConnectorRetry`] per pause, which would re-enter
+    ///   [`Self::step`] on every poll (prompt rebuild, transcript block, audit
+    ///   `dispatch` event) for a request that is collected, not re-asked. A poll
+    ///   re-sends the bytes the dispatch already built ([`Dispatch`]); the key
+    ///   replays only while they are identical.
     ///
-    /// Waiting is also the cheap choice, and that is measured rather than
-    /// assumed: the hold that makes the retry a replay rather than a second
-    /// dispatch lives 30 minutes (`src/billing/intent.ts:36`), so every wait
-    /// this method can schedule is far inside the window where a retry is
-    /// free. The expensive choice is the one this replaces — abandoning a turn
-    /// that was bought.
+    /// Waiting is the cheap choice: the idempotency hold lives 30 minutes
+    /// (`src/billing/intent.ts:36`), so every scheduled wait is far inside the
+    /// window where a retry is a replay, not a second charge.
     ///
-    /// The pauses here are NOT charged to `connector_retry_pause_budget`: that
-    /// budget bounds how long a turn may sleep between attempts at a FAILED
-    /// request, and spending it here would put a second, shorter and unrelated
-    /// bound on a wait that already has one.
+    /// The pauses are NOT charged to `connector_retry_pause_budget`, which
+    /// bounds sleeps between attempts at a FAILED request; spending it here
+    /// would add a second, unrelated bound to a wait that already has one.
     pub(super) async fn wait_out_in_flight(
         &self,
         state: &mut RunState,
@@ -78,17 +57,13 @@ impl Driver<'_> {
         dispatch: &Dispatch<'_>,
     ) -> Polled {
         let budget = self.in_flight_budget();
-        // The most recent conflict, once this loop has collected one of its
-        // own. The verdict has to quote the refusal that ENDED the wait, not
-        // the one that started it.
+        // The most recent conflict this loop has collected itself; the verdict
+        // must quote the refusal that ENDED the wait, not the one that started it.
         let mut latest: Option<ConnectorError> = None;
         loop {
             let error = latest.as_ref().unwrap_or(refusal);
-            // `started` (the first failure of the streak) is the fallback, not
-            // the preference: it is later than the dispatch and so can only
-            // shorten the wait, which is the safe direction for a bound that
-            // must not be a guess. In practice the key is always in force here
-            // — the conflict is an answer TO it.
+            // `started` is only the fallback: it is later than the dispatch, so
+            // it can only shorten the wait, the safe direction.
             let dispatched = state.intent.dispatched_at().unwrap_or(started);
             let waited = Instant::now().saturating_duration_since(dispatched);
             let Some(remaining) = budget
@@ -111,9 +86,7 @@ impl Driver<'_> {
             };
             state.in_flight_polls = state.in_flight_polls.saturating_add(1);
             state.in_flight_polls_total = state.in_flight_polls_total.saturating_add(1);
-            // Clamped to what is left, so the last poll lands ON the deadline
-            // rather than past it: an answer that settles in the final second
-            // is still an answer this turn paid for.
+            // Clamped so the last poll lands ON the deadline, not past it.
             let wait =
                 in_flight_poll_pause(state.in_flight_polls, jitter_permille()).min(remaining);
             eprintln!(
@@ -132,23 +105,21 @@ impl Driver<'_> {
             if !wait.is_zero() {
                 tokio::time::sleep(wait).await;
             }
-            // The step-level check cannot see this loop any more, and an
-            // operator who pressed Ctrl-C during a poll must not then watch
-            // another request go out.
+            // The step-level cancel check cannot see this loop; Ctrl-C during
+            // a poll must not let another request go out.
             if self.cancel.is_cancelled() {
                 return Polled::Stop(StepResult::Terminal(
                     TerminalReason::AbortedByOperator,
                     None,
                 ));
             }
-            // The poll itself: the same bytes under the same key, and nothing
-            // else. `first_dispatch` is `false` because it is not one — the
-            // measurement metadata belongs to the attempt that opened the key,
-            // exactly as it did when a poll was a whole `step()`.
+            // The poll: the same bytes under the same key. `first_dispatch` is
+            // `false` because the measurement metadata belongs to the attempt
+            // that opened the key.
             //
-            // `attempts` is still incremented, so `RunOutput::turns` keeps
-            // reporting every poll: what A2-241 exempted from `max_turns` is
-            // what the run is ALLOWED, never what it did.
+            // `attempts` is still incremented so `RunOutput::turns` reports
+            // every poll; the `max_turns` exemption bounds what the run is
+            // allowed, not what it did.
             state.attempts = state.attempts.saturating_add(1);
             match self
                 .call_connector(
@@ -161,8 +132,7 @@ impl Driver<'_> {
             {
                 Ok(resp) => return Polled::Answered(Box::new(resp)),
                 Err(next) if RetryClass::of(&next) == RetryClass::InFlight => {
-                    // The same line a poll printed when it was a step of its
-                    // own: the wait got quieter in cost, not in evidence.
+                    // Same line a poll printed when it was a step of its own.
                     eprintln!("arcana: connector dispatch failed: {next}");
                     latest = Some(next);
                 }
