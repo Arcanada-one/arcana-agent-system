@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: connector-error recovery and the in-flight wait moved from
+  `agent_loop.rs` into `agent_loop/recovery.rs` and `agent_loop/in_flight.rs`,
+  and the module's narrative comments were cut to the reasons the code relies
+  on. No behaviour change.
+
 ### Fixed
 
 - Task-run admission rejects self-issuers even when an authority adapter omits
