@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Internal: `Driver::run` invalid-config and stop-path assembly moved into
+  `invalid_run_output` and `finish_run`. No behaviour change.
 - Internal: `Driver::step` early refusals and post-dispatch reply settlement
   moved into `refuse_before_ask` and `settle_reply`. No behaviour change.
 - Internal: connector-error recovery and the in-flight wait moved from
