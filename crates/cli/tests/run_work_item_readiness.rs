@@ -285,7 +285,7 @@ async fn a_verdict_that_contradicts_itself_is_unknown() {
     unknown(ResponseTemplate::new(200).set_body_json(readiness_body(TASK, false, 2, 0))).await;
 }
 
-/// The real timeout (the client's request budget is 30 s): run with `cargo test -p arcana-cli --test
+/// The real timeout (the client's request budget is 30 s): run with `cargo test -p arcana-agent --test
 /// run_work_item_readiness -- --ignored`. Takes ~30 s.
 #[tokio::test]
 #[ignore = "waits out the 30 s request budget"]
