@@ -27,7 +27,7 @@ use crate::connector::{
 };
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
-use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
+use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor, CapabilityOutput};
 use crate::hooks::HookContext;
 use crate::prompt_budget::{
     self, DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
@@ -2616,49 +2616,53 @@ same call again, unchanged, ends the run."
     /// results into `history`. A dispatch error folds back as a tool-result
     /// string (recoverable, bounded by `max_turns`) rather than terminating,
     /// and so does a denial at one of the [`RECOVERABLE_DENIAL_LAYERS`].
-    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
-        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
-        // The call as the model wrote it, kept for the refusal fingerprint.
-        // The executor consumes the value, and a denial has to be able to say
-        // whether this is the same call the model already sent.
-        let attempted = input.clone();
-        // Counted before the attempt, not after it: this is the number that
-        // says what the model tried, and a call that is about to be refused
-        // was still a call.
-        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
-        let capability = match self.executor.execute(&ctx, name, input).await {
-            Ok(capability) => capability,
-            Err(CapabilityError::Cancelled) => {
-                return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
+    /// Map a capability-executor failure onto the step outcome for this turn.
+    fn fold_capability_error(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        err: CapabilityError,
+        attempted: &Value,
+    ) -> StepResult {
+        match err {
+            CapabilityError::Cancelled => {
+                StepResult::Terminal(TerminalReason::AbortedByOperator, None)
             }
-            Err(CapabilityError::Denied { layer, reason }) => {
-                return self.fold_denial(state, name, layer, &reason, &attempted);
+            CapabilityError::Denied { layer, reason } => {
+                self.fold_denial(state, name, layer, &reason, attempted)
             }
-            Err(CapabilityError::HookAborted) => {
+            CapabilityError::HookAborted => {
                 // A refusal by operator-owned code, audited as `Denied` at the
                 // `hook` layer, so counted as one. No file: the abort reaches
                 // this loop without the hook's reason, and an invented `reason`
                 // would be worse than no record.
                 state.denied = state.denied.saturating_add(1);
-                return StepResult::Terminal(TerminalReason::AbortedByHook, None);
+                StepResult::Terminal(TerminalReason::AbortedByHook, None)
             }
-            Err(
-                CapabilityError::AuditFailure {
-                    phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
-                    ..
-                }
-                | CapabilityError::AuditLatched,
-            ) => {
-                return StepResult::Terminal(TerminalReason::AuditFatal, None);
+            CapabilityError::AuditFailure {
+                phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
+                ..
             }
-            Err(CapabilityError::Tool(err)) => {
+            | CapabilityError::AuditLatched => {
+                StepResult::Terminal(TerminalReason::AuditFatal, None)
+            }
+            CapabilityError::Tool(err) => {
                 state.history.push(HistoryEntry::ToolResult {
                     name: name.to_owned(),
                     content: format!("dispatch error: {err}"),
                 });
-                return StepResult::Continue(ContinueReason::ToolResultsReady);
+                StepResult::Continue(ContinueReason::ToolResultsReady)
             }
-        };
+        }
+    }
+
+    /// Fold a successful capability into history and continue the run.
+    fn accept_tool_capability(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        capability: CapabilityOutput,
+    ) -> StepResult {
         // Counted here and nowhere else: the executor returned, so the tool
         // ran. A denied or hook-aborted call left through an arm above, and a
         // dispatch error folds back as a tool result without reaching this
@@ -2685,6 +2689,22 @@ same call again, unchanged, ends the run."
             StepResult::Continue(ContinueReason::HookContinuation)
         } else {
             StepResult::Continue(ContinueReason::ToolResultsReady)
+        }
+    }
+
+    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
+        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
+        // The call as the model wrote it, kept for the refusal fingerprint.
+        // The executor consumes the value, and a denial has to be able to say
+        // whether this is the same call the model already sent.
+        let attempted = input.clone();
+        // Counted before the attempt, not after it: this is the number that
+        // says what the model tried, and a call that is about to be refused
+        // was still a call.
+        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
+        match self.executor.execute(&ctx, name, input).await {
+            Ok(capability) => self.accept_tool_capability(state, name, capability),
+            Err(err) => self.fold_capability_error(state, name, err, &attempted),
         }
     }
 }

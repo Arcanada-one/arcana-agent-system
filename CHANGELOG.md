@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Internal: `Driver::run_tool_turn` executor error and success folding moved
+  into `fold_capability_error` and `accept_tool_capability`. No behaviour change.
 - Internal: `Driver::run` invalid-config and stop-path assembly moved into
   `invalid_run_output` and `finish_run`. No behaviour change.
 - Internal: `Driver::step` early refusals and post-dispatch reply settlement
