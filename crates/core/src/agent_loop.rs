@@ -1964,28 +1964,40 @@ impl<'a> Driver<'a> {
         Ok(prompt)
     }
 
+    /// Refuse a step that must not spend another connector ask.
+    ///
+    /// `max_turns` caps the QUESTIONS this run may ask. A poll under a key
+    /// already in flight asks nothing: it collects an answer that has been
+    /// bought, and the 409 it gets back is not charged. Counting polls would
+    /// make the wait eat the budget it is waiting inside (one wait can span
+    /// two dozen polls), trading `ConnectorFatal` for `MaxTurns` and
+    /// abandoning the same paid-for answer.
+    ///
+    /// `RunOutput::turns` still reports `attempts` in full: the exemption is
+    /// about what the run is ALLOWED, not about hiding what it did.
+    fn refuse_before_ask(&self, state: &RunState) -> Option<StepResult> {
+        if self.cancel.is_cancelled() {
+            return Some(StepResult::Terminal(
+                TerminalReason::AbortedByOperator,
+                None,
+            ));
+        }
+        if state.attempts.saturating_sub(state.in_flight_polls_total) >= self.config.max_turns {
+            return Some(StepResult::Terminal(TerminalReason::MaxTurns, None));
+        }
+        if self.cost.check_budget(self.config.max_cost_usd).is_err() {
+            return Some(StepResult::Terminal(TerminalReason::MaxCostUsd, None));
+        }
+        None
+    }
+
     /// One step: guards → select model → connector attempt → interpret → (tool
     /// turn | final). `attempts` is the shared connector-attempt counter that
     /// enforces `max_turns`; `selected` accumulates the ordered per-step model
     /// ids.
     async fn step(&self, state: &mut RunState) -> StepResult {
-        if self.cancel.is_cancelled() {
-            return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
-        }
-        // `max_turns` caps the QUESTIONS this run may ask. A poll under a key
-        // already in flight asks nothing: it collects an answer that has been
-        // bought, and the 409 it gets back is not charged. Counting polls would
-        // make the wait eat the budget it is waiting inside (one wait can span
-        // two dozen polls), trading `ConnectorFatal` for `MaxTurns` and
-        // abandoning the same paid-for answer.
-        //
-        // `RunOutput::turns` still reports `attempts` in full: the exemption is
-        // about what the run is ALLOWED, not about hiding what it did.
-        if state.attempts.saturating_sub(state.in_flight_polls_total) >= self.config.max_turns {
-            return StepResult::Terminal(TerminalReason::MaxTurns, None);
-        }
-        if self.cost.check_budget(self.config.max_cost_usd).is_err() {
-            return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
+        if let Some(step) = self.refuse_before_ask(state) {
+            return step;
         }
         if let Some(step) = self.fit_request(state) {
             return step;
@@ -2036,7 +2048,16 @@ impl<'a> Driver<'a> {
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
             return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
         }
-        match interpret(&resp) {
+        self.settle_reply(state, &resp).await
+    }
+
+    /// Turn a connector reply into the step's continue/terminal outcome.
+    ///
+    /// Owns the post-dispatch branches that used to sit inline in [`Self::step`]:
+    /// truncation recovery, final text (with abort delivery and the no-action
+    /// nudge), tool admission, and malformed-tool correction.
+    async fn settle_reply(&self, state: &mut RunState, resp: &ConnectorResponse) -> StepResult {
+        match interpret(resp) {
             // Handled before the history is written: the fragment is
             // deliberately NOT kept. Feeding a half-emitted call back would put
             // words in the model's mouth, and it is large by construction, so
