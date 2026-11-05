@@ -141,3 +141,56 @@ async fn no_error_this_client_produces_can_carry_the_key() {
     let rendered = format!("{err:?} {err}");
     assert!(!rendered.contains("mun_sk_test"), "leaked: {rendered}");
 }
+
+#[tokio::test]
+async fn readiness_is_a_verdict_only_under_http_200() {
+    let body = json!({"taskId": TASK, "ready": true, "dependencyCount": 2, "blockedBy": []});
+    for (status, accepted) in [(200_u16, true), (201, false), (202, false), (204, false)] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v1/tasks/{TASK}/readiness")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(&body))
+            .mount(&server)
+            .await;
+        let result = client(&server).readiness(TASK).await;
+        if accepted {
+            let verdict = result.expect("200 carries the verdict");
+            assert!(verdict.ready && verdict.is_consistent());
+            assert_eq!(verdict.dependency_count, 2);
+        } else {
+            assert!(
+                matches!(result, Err(MuneralError::Status { status: s, .. }) if s == status),
+                "{status}: {result:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_task_row_is_still_accepted_under_any_2xx() {
+    // The strict status rule is scoped to readiness; the task read is unchanged.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v1/tasks/{TASK}")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": TASK})))
+        .mount(&server)
+        .await;
+    assert_eq!(client(&server).work_item(TASK).await.unwrap().id, TASK);
+}
+
+#[tokio::test]
+async fn a_self_contradicting_verdict_is_not_consistent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v1/tasks/{TASK}/readiness")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"taskId": TASK, "ready": true, "dependencyCount": 1, "blockedBy": [{}]}),
+        ))
+        .mount(&server)
+        .await;
+    assert!(!client(&server)
+        .readiness(TASK)
+        .await
+        .unwrap()
+        .is_consistent());
+}

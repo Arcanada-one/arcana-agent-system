@@ -168,6 +168,23 @@ async fn missing_malformed_wrong_item_and_inconsistent_readiness_stay_unknown() 
 }
 
 #[tokio::test]
+async fn a_201_readiness_with_a_valid_looking_verdict_stays_unknown() {
+    let (code, stdout, _) = run_fixture(
+        ResponseTemplate::new(200).set_body_json(row()),
+        Some(ResponseTemplate::new(201).set_body_json(
+            json!({"taskId": TASK, "ready": true, "dependencyCount": 0, "blockedBy": []}),
+        )),
+    )
+    .await;
+    assert_eq!(code, 3);
+    let v: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        v["dependency_readiness"],
+        json!({"state":"unknown", "ready":null})
+    );
+}
+
+#[tokio::test]
 async fn readiness_outage_is_not_an_empty_dependency_set() {
     let (code, stdout, _) = run_fixture(
         ResponseTemplate::new(200).set_body_json(row()),

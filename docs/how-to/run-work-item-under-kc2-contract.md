@@ -103,6 +103,25 @@ computation ran.  This makes it possible to debug a stale or mis-linked
 contract without needing the contract body.  Again, no model call has been made
 at this point: the digest check is pure local arithmetic.
 
+### Readiness refusals
+
+After the contract digest is verified and before the authority check, the run
+asks Muneral for the item's dependency readiness (`GET /tasks/<id>/readiness`).
+The task row is not readiness: the dedicated call is always made. A missing or
+corrupt contract is refused first and makes no readiness request.
+
+- `WORK_ITEM_NOT_READY` — Muneral answered `ready: false`; the message gives the
+  blocking and total dependency counts.
+- `WORK_ITEM_READINESS_UNKNOWN` — readiness could not be established: a non-200
+  status (a 201 with plausible JSON included), 401/403/404/5xx, a timeout, an
+  incomplete or malformed body, an answer about another task, or a verdict that
+  contradicts itself. 403 does not mean an empty dependency graph.
+
+Both happen before the first model call. `ready: true` (with any dependency
+count, fulfilled dependencies included) is printed as
+`readiness: ready=true dependencies=<n> blocked_by=0` and the run proceeds to the
+authority check below. Readiness is not authorization.
+
 ### Authority refusals
 
 `CONTRACT_SUBJECT_MISMATCH`, `CONTRACT_ISSUER_UNVERIFIED`,

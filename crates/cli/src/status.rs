@@ -101,18 +101,12 @@ pub(crate) async fn observe(id: &str) -> Result<(Value, i32), ObservationError> 
         return Err("STATUS_INVALID_RESPONSE".into());
     }
     let (readiness, code) = match client.readiness(id).await {
-        Ok(value)
-            if value.task_id == id
-                && value.ready == value.blocked_by.is_empty()
-                && value.blocked_by.len() as u64 <= value.dependency_count =>
-        {
-            (
-                json!({"state": "observed", "ready": value.ready,
+        Ok(value) if value.task_id == id && value.is_consistent() => (
+            json!({"state": "observed", "ready": value.ready,
                     "dependency_count": value.dependency_count,
                     "blocked_count": value.blocked_by.len(), "observed_at": now()?}),
-                0,
-            )
-        }
+            0,
+        ),
         Err(error) if error_code(&error) == "STATUS_NOT_ACCESSIBLE" => {
             // Access can be revoked between reads. Suppress the earlier row too.
             return Err("STATUS_NOT_ACCESSIBLE".into());
