@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `arcana run --work-item` asks Muneral for dependency readiness after the contract
+  binding is verified and before the authority gate. `ready: false` refuses with
+  `WORK_ITEM_NOT_READY`; unavailable, non-200 (including 201), malformed,
+  self-contradicting or foreign-task readiness refuses with
+  `WORK_ITEM_READINESS_UNKNOWN`; both before any model call. `ready: true` only lets
+  the run reach the unchanged authority gate (still
+  `CONTRACT_AUTHORITY_UNAVAILABLE`). `MuneralClient::readiness` now accepts only
+  HTTP 200, which also tightens `arcana status` (a 201 verdict is unknown).
+
 - Internal: `Driver::step` early refusals and post-dispatch reply settlement
   moved into `refuse_before_ask` and `settle_reply`. No behaviour change.
 - Internal: connector-error recovery and the in-flight wait moved from
