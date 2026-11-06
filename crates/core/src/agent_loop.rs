@@ -27,7 +27,7 @@ use crate::connector::{
 };
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
-use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
+use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor, CapabilityOutput};
 use crate::hooks::HookContext;
 use crate::prompt_budget::{
     self, DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
@@ -1809,23 +1809,65 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Empty output for a config that must not start a run.
+    fn invalid_run_output(&self, reason: TerminalReason) -> RunOutput {
+        RunOutput {
+            reason,
+            final_text: None,
+            turns: 0,
+            tool_calls: 0,
+            executed_tools: Vec::new(),
+            tool_calls_attempted: 0,
+            tool_calls_denied: 0,
+            cost: self.cost.snapshot(),
+            selected_models: Vec::new(),
+            first_dispatch_observation: None,
+            compactions: 0,
+            terminal_detail: None,
+        }
+    }
+
+    /// Build the terminal [`RunOutput`] once the loop has decided to stop.
+    ///
+    /// An operator abort is recorded here (not in the step that noticed it), so
+    /// a Ctrl-C during a connector call still leaves an audit line even when no
+    /// tool ran.
+    fn finish_run(
+        &self,
+        mut state: RunState,
+        step: StepResult,
+        reason: TerminalReason,
+    ) -> RunOutput {
+        let final_text = match step {
+            StepResult::Terminal(_, text) => text,
+            StepResult::Continue(_) => None,
+        };
+        let cost = self.cost.snapshot();
+        let reason = if reason == TerminalReason::AbortedByOperator {
+            self.record_abort(state.attempts, &state.selected, &cost)
+        } else {
+            reason
+        };
+        RunOutput {
+            reason,
+            final_text,
+            turns: state.attempts,
+            tool_calls: state.tool_calls,
+            executed_tools: std::mem::take(&mut state.executed_tools),
+            tool_calls_attempted: state.tool_calls_attempted,
+            tool_calls_denied: state.denied,
+            cost,
+            selected_models: state.selected,
+            first_dispatch_observation: state.first_dispatch_observation,
+            compactions: state.compactions,
+            terminal_detail: state.terminal_detail.take(),
+        }
+    }
+
     /// Drive `task` to a terminal outcome — the single public entrypoint.
     pub async fn run(&self, task: &str) -> RunOutput {
         if let Some(reason) = self.config.invalid_reason() {
-            return RunOutput {
-                reason,
-                final_text: None,
-                turns: 0,
-                tool_calls: 0,
-                executed_tools: Vec::new(),
-                tool_calls_attempted: 0,
-                tool_calls_denied: 0,
-                cost: self.cost.snapshot(),
-                selected_models: Vec::new(),
-                first_dispatch_observation: None,
-                compactions: 0,
-                terminal_detail: None,
-            };
+            return self.invalid_run_output(reason);
         }
         let mut state = RunState::new(task);
         loop {
@@ -1837,30 +1879,7 @@ impl<'a> Driver<'a> {
             match reduce(outcome) {
                 LoopControl::Reloop => {}
                 LoopControl::Stop(reason) => {
-                    let final_text = match step {
-                        StepResult::Terminal(_, text) => text,
-                        StepResult::Continue(_) => None,
-                    };
-                    let cost = self.cost.snapshot();
-                    let reason = if reason == TerminalReason::AbortedByOperator {
-                        self.record_abort(state.attempts, &state.selected, &cost)
-                    } else {
-                        reason
-                    };
-                    return RunOutput {
-                        reason,
-                        final_text,
-                        turns: state.attempts,
-                        tool_calls: state.tool_calls,
-                        executed_tools: std::mem::take(&mut state.executed_tools),
-                        tool_calls_attempted: state.tool_calls_attempted,
-                        tool_calls_denied: state.denied,
-                        cost,
-                        selected_models: state.selected,
-                        first_dispatch_observation: state.first_dispatch_observation,
-                        compactions: state.compactions,
-                        terminal_detail: state.terminal_detail.take(),
-                    };
+                    return self.finish_run(state, step, reason);
                 }
             }
         }
@@ -2597,49 +2616,53 @@ same call again, unchanged, ends the run."
     /// results into `history`. A dispatch error folds back as a tool-result
     /// string (recoverable, bounded by `max_turns`) rather than terminating,
     /// and so does a denial at one of the [`RECOVERABLE_DENIAL_LAYERS`].
-    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
-        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
-        // The call as the model wrote it, kept for the refusal fingerprint.
-        // The executor consumes the value, and a denial has to be able to say
-        // whether this is the same call the model already sent.
-        let attempted = input.clone();
-        // Counted before the attempt, not after it: this is the number that
-        // says what the model tried, and a call that is about to be refused
-        // was still a call.
-        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
-        let capability = match self.executor.execute(&ctx, name, input).await {
-            Ok(capability) => capability,
-            Err(CapabilityError::Cancelled) => {
-                return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
+    /// Map a capability-executor failure onto the step outcome for this turn.
+    fn fold_capability_error(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        err: CapabilityError,
+        attempted: &Value,
+    ) -> StepResult {
+        match err {
+            CapabilityError::Cancelled => {
+                StepResult::Terminal(TerminalReason::AbortedByOperator, None)
             }
-            Err(CapabilityError::Denied { layer, reason }) => {
-                return self.fold_denial(state, name, layer, &reason, &attempted);
+            CapabilityError::Denied { layer, reason } => {
+                self.fold_denial(state, name, layer, &reason, attempted)
             }
-            Err(CapabilityError::HookAborted) => {
+            CapabilityError::HookAborted => {
                 // A refusal by operator-owned code, audited as `Denied` at the
                 // `hook` layer, so counted as one. No file: the abort reaches
                 // this loop without the hook's reason, and an invented `reason`
                 // would be worse than no record.
                 state.denied = state.denied.saturating_add(1);
-                return StepResult::Terminal(TerminalReason::AbortedByHook, None);
+                StepResult::Terminal(TerminalReason::AbortedByHook, None)
             }
-            Err(
-                CapabilityError::AuditFailure {
-                    phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
-                    ..
-                }
-                | CapabilityError::AuditLatched,
-            ) => {
-                return StepResult::Terminal(TerminalReason::AuditFatal, None);
+            CapabilityError::AuditFailure {
+                phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
+                ..
             }
-            Err(CapabilityError::Tool(err)) => {
+            | CapabilityError::AuditLatched => {
+                StepResult::Terminal(TerminalReason::AuditFatal, None)
+            }
+            CapabilityError::Tool(err) => {
                 state.history.push(HistoryEntry::ToolResult {
                     name: name.to_owned(),
                     content: format!("dispatch error: {err}"),
                 });
-                return StepResult::Continue(ContinueReason::ToolResultsReady);
+                StepResult::Continue(ContinueReason::ToolResultsReady)
             }
-        };
+        }
+    }
+
+    /// Fold a successful capability into history and continue the run.
+    fn accept_tool_capability(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        capability: CapabilityOutput,
+    ) -> StepResult {
         // Counted here and nowhere else: the executor returned, so the tool
         // ran. A denied or hook-aborted call left through an arm above, and a
         // dispatch error folds back as a tool result without reaching this
@@ -2666,6 +2689,22 @@ same call again, unchanged, ends the run."
             StepResult::Continue(ContinueReason::HookContinuation)
         } else {
             StepResult::Continue(ContinueReason::ToolResultsReady)
+        }
+    }
+
+    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
+        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
+        // The call as the model wrote it, kept for the refusal fingerprint.
+        // The executor consumes the value, and a denial has to be able to say
+        // whether this is the same call the model already sent.
+        let attempted = input.clone();
+        // Counted before the attempt, not after it: this is the number that
+        // says what the model tried, and a call that is about to be refused
+        // was still a call.
+        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
+        match self.executor.execute(&ctx, name, input).await {
+            Ok(capability) => self.accept_tool_capability(state, name, capability),
+            Err(err) => self.fold_capability_error(state, name, err, &attempted),
         }
     }
 }
