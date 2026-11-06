@@ -1,0 +1,53 @@
+{
+  "schema": "FI10SyntheticControls/v1",
+  "synthetic_only": true,
+  "now": 1800000000,
+  "local": {
+    "selection_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contract_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "store_snapshot_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "knowledge_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "generation": "synthetic-fi10-generation"
+  },
+  "valid_standing": {
+    "issuer_verdict": "mock_verified",
+    "revocation_state": "clear",
+    "withdrawal_state": "clear",
+    "valid_from": 1799999900,
+    "expires_at": 1800000100,
+    "consent": {
+      "state": "current",
+      "expires_at": 1800000100
+    }
+  },
+  "positive_class_a": {
+    "trusted_effect": {
+      "operation": "synthetic_local_rehearsal",
+      "channel": "local-mock",
+      "disclosure": "none",
+      "payload_text": "synthetic-only",
+      "trusted_effect_class": "A",
+      "discloses_private_address": false,
+      "official_letter": false
+    },
+    "request_effect": {
+      "operation": "synthetic_local_rehearsal",
+      "submitter_class": "A"
+    }
+  },
+  "positive_class_b": {
+    "trusted_effect": {
+      "operation": "synthetic_local_rehearsal_b",
+      "channel": "local-mock",
+      "disclosure": "none",
+      "payload_text": "synthetic-only-b",
+      "trusted_effect_class": "B",
+      "discloses_private_address": false,
+      "official_letter": false
+    },
+    "request_effect": {
+      "operation": "synthetic_local_rehearsal_b",
+      "submitter_class": "B"
+    }
+  }
+}
