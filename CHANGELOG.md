@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CONTRACT_AUTHORITY_UNAVAILABLE`). `MuneralClient::readiness` now accepts only
   HTTP 200, which also tightens `arcana status` (a 201 verdict is unknown).
 
+- Internal: `Driver::run_tool_turn` executor error and success folding moved
+  into `fold_capability_error` and `accept_tool_capability`. No behaviour change.
+- Internal: `Driver::run` invalid-config and stop-path assembly moved into
+  `invalid_run_output` and `finish_run`. No behaviour change.
 - Internal: `Driver::step` early refusals and post-dispatch reply settlement
   moved into `refuse_before_ask` and `settle_reply`. No behaviour change.
 - Internal: connector-error recovery and the in-flight wait moved from
