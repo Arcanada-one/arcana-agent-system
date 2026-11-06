@@ -318,9 +318,10 @@ async fn bind_contract(
         .await
         .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
     println!(
-        "contract verified: {} re-hashed over its {}; tools {:?} (from {})",
+        "contract verified: {} re-hashed over its {}; policy {}; tools {:?} (from {})",
         binding.digest(),
         binding.preimage().as_str(),
+        binding.policy_binding().as_str(),
         binding.allowlist(),
         binding.allowlist_source().as_str(),
     );

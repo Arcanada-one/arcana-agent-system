@@ -22,7 +22,7 @@ use arcana_core::agent_loop::RunOutput;
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, Usage,
 };
-use arcana_core::contract::{digest_of, verify, ContractBinding, ContractDocument, ContractTools};
+use arcana_core::contract::{digest_of, verify, ContractBinding, ContractDocument};
 use async_trait::async_trait;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -79,14 +79,14 @@ fn tool_call(name: &str, input: serde_json::Value) -> String {
 }
 
 fn binding(tools: &[&str]) -> ContractBinding {
-    let projection = "Role: reviewer. Deliverable: one review note.";
+    let bytes = format!(
+        "{{\"role\":\"reviewer\",\"tools\":{{\"allow\":{}}}}}{{\"revisions\":[]}}",
+        serde_json::json!(tools)
+    );
     let document = ContractDocument {
-        digest: digest_of(projection.as_bytes()),
-        projection: serde_json::json!(projection),
+        digest: digest_of(bytes.as_bytes()),
+        canonical_bytes: Some(bytes),
         kc2_revision: Some("kc2-role-reviewer@r7".to_owned()),
-        tools: Some(ContractTools {
-            allow: tools.iter().map(|t| (*t).to_owned()).collect(),
-        }),
         ..ContractDocument::default()
     };
     verify(&document.digest.clone(), &document).expect("the fixture binds")

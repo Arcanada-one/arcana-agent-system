@@ -470,7 +470,7 @@ fn file_stamp(trace_id: &str) -> String {
 mod tests {
     use super::*;
     use arcana_core::agent_loop::TerminalReason;
-    use arcana_core::contract::{verify, ContractDocument, ContractTools};
+    use arcana_core::contract::{verify, ContractDocument};
     use arcana_core::cost::CostSnapshot;
     use arcana_core::hooks::audit::OUTCOME_TOOL_ERROR;
 
@@ -479,14 +479,14 @@ mod tests {
     use crate::effect::{Effect, EffectExpectation};
 
     fn binding(allow: &[&str]) -> ContractBinding {
-        const BYTES: &str = "the contract under test";
-        let digest = digest_of(BYTES.as_bytes());
+        let bytes = format!(
+            "{{\"role\":\"under-test\",\"tools\":{{\"allow\":{}}}}}{{\"revisions\":[]}}",
+            serde_json::json!(allow)
+        );
+        let digest = digest_of(bytes.as_bytes());
         let document = ContractDocument {
             digest: digest.clone(),
-            canonical_bytes: Some(BYTES.to_owned()),
-            tools: Some(ContractTools {
-                allow: allow.iter().map(|name| (*name).to_owned()).collect(),
-            }),
+            canonical_bytes: Some(bytes),
             ..Default::default()
         };
         verify(&digest, &document).expect("the fixture contract verifies")

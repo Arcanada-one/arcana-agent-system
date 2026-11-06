@@ -249,6 +249,31 @@ impl DigestPreimage {
     }
 }
 
+/// How the effective policy (projection text, tool allowlist) was tied to the
+/// digested bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolicyBinding {
+    /// The preimage parsed as `canonical(body) ‖ canonical(closure_manifest)`;
+    /// the projection shown to the model and the allowlist were DERIVED from
+    /// those bytes, and any envelope copy had to equal the derived value.
+    DerivedFromCanonicalBytes,
+    /// The preimage is opaque text (no body/manifest structure). The model is
+    /// shown that text itself, and the envelope may carry no `tools`: an
+    /// allowlist outside the digested bytes has no authenticated binding.
+    OpaquePreimageText,
+}
+
+impl PolicyBinding {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DerivedFromCanonicalBytes => "derived-from-canonical-bytes",
+            Self::OpaquePreimageText => "opaque-preimage-text",
+        }
+    }
+}
+
 /// A verified binding: this digest, these tools, this preimage.
 ///
 /// Only [`verify`] constructs one, so holding a `ContractBinding` is itself the
@@ -261,10 +286,16 @@ pub struct ContractBinding {
     allowlist: BTreeSet<String>,
     allowlist_source: AllowlistSource,
     preimage: DigestPreimage,
+    policy_binding: PolicyBinding,
     projection: String,
 }
 
 impl ContractBinding {
+    /// How the effective policy was tied to the digested bytes.
+    #[must_use]
+    pub fn policy_binding(&self) -> PolicyBinding {
+        self.policy_binding
+    }
     #[must_use]
     pub fn digest(&self) -> &str {
         &self.digest
@@ -320,6 +351,10 @@ pub enum ContractRefusal {
     Unverifiable { digest: String, detail: String },
     /// The source could not be reached or answered unusably.
     Unavailable { detail: String },
+    /// The digest verified, but an envelope field that sets the effective policy
+    /// (`projection`, `tools`) is not what the verified bytes say, or cannot be
+    /// tied to them at all. The envelope is not covered by the digest.
+    PolicyUnbound { digest: String, detail: String },
 }
 
 impl ContractRefusal {
@@ -333,6 +368,7 @@ impl ContractRefusal {
             Self::DigestMismatch { .. } => "CONTRACT_DIGEST_MISMATCH",
             Self::Unverifiable { .. } => "CONTRACT_UNVERIFIABLE",
             Self::Unavailable { .. } => "CONTRACT_SOURCE_UNAVAILABLE",
+            Self::PolicyUnbound { .. } => "CONTRACT_POLICY_UNBOUND",
         }
     }
 }
@@ -372,6 +408,11 @@ impl fmt::Display for ContractRefusal {
             Self::Unavailable { detail } => {
                 write!(f, "{code}: the contract source is unavailable: {detail}")
             }
+            Self::PolicyUnbound { digest, detail } => write!(
+                f,
+                "{code}: the envelope returned for {digest} sets policy that the digested bytes do \
+                 not carry ({detail}); refused before the first model call"
+            ),
         }
     }
 }
@@ -406,7 +447,9 @@ pub fn verify(
         });
     }
 
-    let (allowlist, allowlist_source) = match document.tools.as_ref() {
+    let policy = derive_policy(expected, &bytes, document)?;
+
+    let (allowlist, allowlist_source) = match policy.tools.as_ref() {
         Some(tools) => (
             tools.allow.iter().cloned().collect::<BTreeSet<_>>(),
             AllowlistSource::Contract,
@@ -427,8 +470,115 @@ pub fn verify(
         allowlist,
         allowlist_source,
         preimage,
-        projection: document.projection_text(),
+        policy_binding: policy.binding,
+        projection: policy.projection,
     })
+}
+
+/// The effective policy, read out of the verified bytes.
+struct DerivedPolicy {
+    binding: PolicyBinding,
+    projection: String,
+    tools: Option<ContractTools>,
+}
+
+/// Tie the envelope's `projection` and `tools` to the bytes that were hashed.
+///
+/// The digest covers `canonical(body) ‖ canonical(closure_manifest)` and nothing
+/// else. `projection` (what the model reads) and `tools` (what it may call) sit
+/// OUTSIDE it, so a transport that keeps the bytes and swaps either would
+/// otherwise change the effective policy under an intact digest. The rule here:
+/// the effective values come from the verified bytes; an envelope copy is only
+/// ever compared, never adopted, and a copy that differs refuses.
+///
+/// No canonicalisation is performed. The two halves are parsed as the JSON
+/// values they are and the envelope is compared as values, so a re-ordering that
+/// the canonicaliser would have fixed cannot make a different policy equal.
+/// The accepted Argana schema has no tool field, so a body without `tools` yields
+/// the no-shell default and an envelope `tools` is refused rather than believed.
+fn derive_policy(
+    digest: &str,
+    bytes: &[u8],
+    document: &ContractDocument,
+) -> Result<DerivedPolicy, ContractRefusal> {
+    let unbound = |detail: String| ContractRefusal::PolicyUnbound {
+        digest: digest.to_owned(),
+        detail,
+    };
+    let text = std::str::from_utf8(bytes).map_err(|err| ContractRefusal::Unverifiable {
+        digest: digest.to_owned(),
+        detail: format!("the digested bytes are not UTF-8: {err}"),
+    })?;
+
+    let Some((body, manifest)) = split_halves(text) else {
+        // Opaque preimage: the only thing tied to the digest is the text itself.
+        if document.tools.is_some() {
+            return Err(unbound(
+                "the preimage has no body/closure_manifest structure to carry a tool \
+                 allowlist, and an envelope allowlist is not covered by the digest"
+                    .to_owned(),
+            ));
+        }
+        match &document.projection {
+            Value::Null => {}
+            Value::String(shown) if shown == text => {}
+            _ => {
+                return Err(unbound(
+                    "the envelope projection is not the opaque preimage text".to_owned(),
+                ))
+            }
+        }
+        return Ok(DerivedPolicy {
+            binding: PolicyBinding::OpaquePreimageText,
+            projection: text.to_owned(),
+            tools: None,
+        });
+    };
+
+    let derived_projection = serde_json::json!({ "body": body, "closure_manifest": manifest });
+    match &document.projection {
+        Value::Null => {}
+        shown if *shown == derived_projection => {}
+        _ => {
+            return Err(unbound(
+                "the envelope projection differs from the body/closure_manifest in the digested \
+                 bytes"
+                    .to_owned(),
+            ))
+        }
+    }
+
+    let derived_tools = match body.get("tools") {
+        None => None,
+        Some(value) => Some(
+            serde_json::from_value::<ContractTools>(value.clone())
+                .map_err(|err| unbound(format!("body.tools is not a tool allowlist: {err}")))?,
+        ),
+    };
+    if let Some(shown) = document.tools.as_ref() {
+        if derived_tools.as_ref() != Some(shown) {
+            return Err(unbound(
+                "the envelope tools differ from the tools in the digested bytes".to_owned(),
+            ));
+        }
+    }
+    Ok(DerivedPolicy {
+        binding: PolicyBinding::DerivedFromCanonicalBytes,
+        projection: serde_json::to_string_pretty(&derived_projection)
+            .unwrap_or_else(|_| derived_projection.to_string()),
+        tools: derived_tools,
+    })
+}
+
+/// `text` as exactly two concatenated JSON objects, or `None`.
+fn split_halves(text: &str) -> Option<(Value, Value)> {
+    let mut stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+    let body = stream.next()?.ok()?;
+    let manifest = stream.next()?.ok()?;
+    if stream.next().is_some() || stream.byte_offset() != text.len() {
+        return None;
+    }
+    (body.is_object() && manifest.is_object()).then_some((body, manifest))
 }
 
 /// The bytes the digest is checked against, and which route produced them.

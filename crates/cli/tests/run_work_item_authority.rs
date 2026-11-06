@@ -25,15 +25,19 @@ async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value, http
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let projection =
-        json!({"tools": {"allow": ["read"]}, "untrusted_admission": claims}).to_string();
-    let digest = digest_of(projection.as_bytes());
+    // Tools and the untrusted claims live inside the digested body; an
+    // envelope-only allowlist would now refuse with CONTRACT_POLICY_UNBOUND.
+    let bytes = format!(
+        "{}{}",
+        json!({"tools": {"allow": ["read"]}, "untrusted_admission": claims}),
+        json!({"revisions": []})
+    );
+    let digest = digest_of(bytes.as_bytes());
     let contract = inputs.path().join("contract.json");
     std::fs::write(
         &contract,
         json!({
-            "digest": digest, "projection": projection,
-            "tools": {"allow": ["read"]},
+            "digest": digest, "canonical_bytes": bytes,
         })
         .to_string(),
     )

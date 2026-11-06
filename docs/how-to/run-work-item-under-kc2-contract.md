@@ -22,6 +22,19 @@ current generation through a trusted provider. Synthetic positive tests prove
 these predicates only; they are not live authority or an effect-time revocation
 fence. The empty-tools fallback remains a separate source obligation.
 
+## Envelope-to-bytes policy binding (KCLIVE-11)
+
+The digest covers only `canonical(body) ‖ canonical(closure_manifest)`. The
+document's `projection` and `tools` are outside it, so they never set policy on
+their own. When the verified preimage parses as those two JSON objects, the
+projection the model reads and the tool allowlist (`body.tools.allow`, absent
+means the no-shell default) are derived from the verified bytes; an envelope copy
+is only compared, and a difference refuses with `CONTRACT_POLICY_UNBOUND` before
+readiness, authority and any model call. An opaque text preimage cannot carry an
+envelope `tools` at all. The accepted Argana schema currently defines no tool
+field, so an Argana contract yields the default allowlist; a narrower
+read/write-only policy needs the owner to add it to the canonical body.
+
 ## Prerequisites
 
 - The `arcana` binary installed (see [`install.md`](install.md)).
