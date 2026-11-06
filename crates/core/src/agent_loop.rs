@@ -1809,23 +1809,65 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Empty output for a config that must not start a run.
+    fn invalid_run_output(&self, reason: TerminalReason) -> RunOutput {
+        RunOutput {
+            reason,
+            final_text: None,
+            turns: 0,
+            tool_calls: 0,
+            executed_tools: Vec::new(),
+            tool_calls_attempted: 0,
+            tool_calls_denied: 0,
+            cost: self.cost.snapshot(),
+            selected_models: Vec::new(),
+            first_dispatch_observation: None,
+            compactions: 0,
+            terminal_detail: None,
+        }
+    }
+
+    /// Build the terminal [`RunOutput`] once the loop has decided to stop.
+    ///
+    /// An operator abort is recorded here (not in the step that noticed it), so
+    /// a Ctrl-C during a connector call still leaves an audit line even when no
+    /// tool ran.
+    fn finish_run(
+        &self,
+        mut state: RunState,
+        step: StepResult,
+        reason: TerminalReason,
+    ) -> RunOutput {
+        let final_text = match step {
+            StepResult::Terminal(_, text) => text,
+            StepResult::Continue(_) => None,
+        };
+        let cost = self.cost.snapshot();
+        let reason = if reason == TerminalReason::AbortedByOperator {
+            self.record_abort(state.attempts, &state.selected, &cost)
+        } else {
+            reason
+        };
+        RunOutput {
+            reason,
+            final_text,
+            turns: state.attempts,
+            tool_calls: state.tool_calls,
+            executed_tools: std::mem::take(&mut state.executed_tools),
+            tool_calls_attempted: state.tool_calls_attempted,
+            tool_calls_denied: state.denied,
+            cost,
+            selected_models: state.selected,
+            first_dispatch_observation: state.first_dispatch_observation,
+            compactions: state.compactions,
+            terminal_detail: state.terminal_detail.take(),
+        }
+    }
+
     /// Drive `task` to a terminal outcome — the single public entrypoint.
     pub async fn run(&self, task: &str) -> RunOutput {
         if let Some(reason) = self.config.invalid_reason() {
-            return RunOutput {
-                reason,
-                final_text: None,
-                turns: 0,
-                tool_calls: 0,
-                executed_tools: Vec::new(),
-                tool_calls_attempted: 0,
-                tool_calls_denied: 0,
-                cost: self.cost.snapshot(),
-                selected_models: Vec::new(),
-                first_dispatch_observation: None,
-                compactions: 0,
-                terminal_detail: None,
-            };
+            return self.invalid_run_output(reason);
         }
         let mut state = RunState::new(task);
         loop {
@@ -1837,30 +1879,7 @@ impl<'a> Driver<'a> {
             match reduce(outcome) {
                 LoopControl::Reloop => {}
                 LoopControl::Stop(reason) => {
-                    let final_text = match step {
-                        StepResult::Terminal(_, text) => text,
-                        StepResult::Continue(_) => None,
-                    };
-                    let cost = self.cost.snapshot();
-                    let reason = if reason == TerminalReason::AbortedByOperator {
-                        self.record_abort(state.attempts, &state.selected, &cost)
-                    } else {
-                        reason
-                    };
-                    return RunOutput {
-                        reason,
-                        final_text,
-                        turns: state.attempts,
-                        tool_calls: state.tool_calls,
-                        executed_tools: std::mem::take(&mut state.executed_tools),
-                        tool_calls_attempted: state.tool_calls_attempted,
-                        tool_calls_denied: state.denied,
-                        cost,
-                        selected_models: state.selected,
-                        first_dispatch_observation: state.first_dispatch_observation,
-                        compactions: state.compactions,
-                        terminal_detail: state.terminal_detail.take(),
-                    };
+                    return self.finish_run(state, step, reason);
                 }
             }
         }
