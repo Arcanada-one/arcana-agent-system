@@ -1,5 +1,8 @@
 # Reading note for change-admission-ARAS-G07B-restart.json
 
+> Superseded for the restart-identity claim by `change-admission-ARAS-G07D-intent.not-measured.md`: the four tests described as
+> "pinning today's gap" below were flipped into safety assertions once the durable intent record landed.
+
 The receipt is the raw `tools/graph/verify.py` draft for `9f122d7..6f2bd1b` (a new test file and a
 CHANGELOG entry; no production code changed). Its three `verified` verdicts state only that
 `v-fitness` found no new fitness violation and that five CHANGELOG references resolve. They say

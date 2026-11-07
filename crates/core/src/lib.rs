@@ -11,6 +11,7 @@ pub mod dispatch;
 pub mod execution;
 pub mod hooks;
 pub mod kb;
+pub mod operation_intent;
 pub mod permission;
 pub mod prompt_budget;
 pub mod tool;
