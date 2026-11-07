@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- G07: after a dispatch that produced no reply (unknown outcome), a changed payload is no
+  longer re-dispatched under a freshly minted `Idempotency-Key`. `TurnIntentSeries::stamp`
+  refuses (`IntentDecision::Refused`) and keeps the original key; `call_connector` returns the
+  new typed `ConnectorError::ReconcileRequired` without dispatching, and the run ends
+  `ConnectorFatal` naming the key. A server `idempotency_key_reused` verdict after an earlier
+  unanswered dispatch under the same key ends the run the same way instead of abandoning the
+  key. Unchanged-payload retry (replay under the original key) and a first-dispatch
+  `idempotency_key_reused` (key replaced) are unchanged. Durable resume stays out of scope.
+
 ### Changed
 
 - `arcana run --work-item` asks Muneral for dependency readiness after the contract

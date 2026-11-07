@@ -93,13 +93,11 @@ impl Driver<'_> {
             // own instruction. `TurnIntentSeries::stamp` should mint a new key
             // first; this is the backstop for a missed prediction.
             let reused_key = error.is_idempotency_key_reused();
+            // G07: see `release_reused_key`.
             if reused_key {
-                eprintln!(
-                    "arcana: the Idempotency-Key this turn was dispatched under belongs to a \
-                 different request — re-dispatching under a fresh key; this is a defect in \
-                 arcana, not in the connector"
-                );
-                state.intent.abandon_key();
+                if let Err(step) = Self::release_reused_key(state, attempts, started) {
+                    return Recovered::Step(step);
+                }
             }
             if !reused_key && !error.is_transient() {
                 state.terminal_detail = Some(connector_fatal_detail(
@@ -153,6 +151,41 @@ impl Driver<'_> {
             }
             return Recovered::Step(StepResult::Continue(ContinueReason::ConnectorRetry));
         }
+    }
+
+    /// The server said the turn's key belongs to another request. Drop it for
+    /// a fresh one only when this was the sole dispatch under it. After an
+    /// earlier dispatch with no reply its outcome is unknown, and a fresh key
+    /// would dispatch the work again: refuse, naming the key (G07).
+    ///
+    /// # Errors
+    /// The terminal step when reconciliation is required.
+    fn release_reused_key(
+        state: &mut RunState,
+        attempts: u32,
+        started: Instant,
+    ) -> Result<(), StepResult> {
+        let key = state
+            .intent
+            .active_key()
+            .map(|key| key.as_str().to_owned())
+            .unwrap_or_default();
+        if state.intent.abandon_key() {
+            eprintln!(
+                "arcana: the Idempotency-Key this turn was dispatched under belongs to a \
+                 different request — re-dispatching under a fresh key; this is a defect in \
+                 arcana, not in the connector"
+            );
+            return Ok(());
+        }
+        let refusal = ConnectorError::ReconcileRequired { key };
+        state.terminal_detail = Some(connector_fatal_detail(
+            &refusal,
+            attempts,
+            started.elapsed(),
+            FatalCause::NotRetryable,
+        ));
+        Err(StepResult::Terminal(TerminalReason::ConnectorFatal, None))
     }
 
     /// Book the next re-dispatch of a failed request on the counted budget and

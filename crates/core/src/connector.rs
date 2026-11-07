@@ -524,6 +524,16 @@ pub enum ConnectorError {
         message: String,
         retry_after: Option<u64>,
     },
+    /// G07: a dispatch under `key` produced no reply, so its outcome is
+    /// unknown, and the next request would have been a DIFFERENT payload (or the
+    /// server says the key is bound to another one). Nothing was sent. The
+    /// original key and intent stay in force; the operation must be reconciled
+    /// before a changed payload may be dispatched as a new operation.
+    #[error(
+        "reconcile required — an earlier dispatch under Idempotency-Key {key} has an unknown \
+         outcome and the request changed, so it was not sent; reconcile that operation first"
+    )]
+    ReconcileRequired { key: String },
     /// Body was not the JSON shape we expect for the given status.
     #[error("upstream returned non-JSON body (content-type: {content_type:?}, {bytes} bytes)")]
     UpstreamNonJson {
@@ -638,7 +648,8 @@ impl ConnectorError {
             | Self::Transport(_)
             | Self::UpstreamNonJson { .. }
             | Self::UnexpectedStatus(_)
-            | Self::UnexpectedEnvelopeStatus => false,
+            | Self::UnexpectedEnvelopeStatus
+            | Self::ReconcileRequired { .. } => false,
         }
     }
 
@@ -773,6 +784,13 @@ impl ConnectorError {
         self.logical_kind() == Some(IDEMPOTENCY_KEY_REUSED)
     }
 
+    /// True when the request was refused locally because an earlier dispatch's
+    /// outcome is unknown (see [`Self::ReconcileRequired`]). Nothing was sent.
+    #[must_use]
+    pub const fn is_reconcile_required(&self) -> bool {
+        matches!(self, Self::ReconcileRequired { .. })
+    }
+
     /// True when the request completed and was charged exactly once, but its
     /// answer was too large to store for replay.
     ///
@@ -800,6 +818,7 @@ impl ConnectorError {
             Self::Http { status, .. } | Self::UnexpectedStatus(status) => format!("HTTP {status}"),
             Self::UpstreamNonJson { .. } => "non-JSON body".to_owned(),
             Self::UnexpectedEnvelopeStatus => "unexpected envelope status".to_owned(),
+            Self::ReconcileRequired { .. } => "reconcile required".to_owned(),
             Self::Logical {
                 http_status, kind, ..
             } => format!("HTTP {http_status} {kind}"),

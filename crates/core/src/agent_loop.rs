@@ -1522,15 +1522,16 @@ a format this runner cannot execute";
 /// rather than replaying the first one. So a key stable across an
 /// attempt-series is only correct if the payload is too, and this type does
 /// not assume it: it records [`ExecuteRequest::intent_fingerprint`] alongside
-/// the key and mints a fresh key if the payload ever changes under it.
+/// the key. If the payload changes under a key whose dispatch has had no reply
+/// (G07: unknown outcome) it mints nothing and refuses with
+/// `ConnectorError::ReconcileRequired`; a changed payload is a new operation.
 ///
 /// The invariant is not local: the prompt is recomposed from history on every
 /// attempt, the model id comes from a policy keyed on the turn index, and the
 /// remaining cost budget is recomputed — three values with three owners that
 /// must all be unchanged between a failed attempt and its re-dispatch. A
 /// fingerprint that disagrees is a defect upstream of here, and this turns it
-/// into a named warning and one extra charge instead of a `422` that ends the
-/// run.
+/// into a named refusal instead of a silent second paid dispatch.
 /// What [`TurnIntentSeries::stamp`] did with the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IntentDecision {
@@ -1539,10 +1540,11 @@ enum IntentDecision {
     /// This turn's key was reused, so an attempt that already completed
     /// upstream is replayed rather than charged again. The point of all this.
     Reused,
-    /// A series was in force and the payload changed under it, so the key had
-    /// to be replaced. A defect: the re-dispatch is correct and paid for, and
-    /// the attempt it duplicates was paid for too.
-    Replaced,
+    /// A series was in force — a dispatch under its key produced no reply, so
+    /// its outcome is unknown — and the payload changed under it. G07: the
+    /// request is NOT dispatched and no key is minted; the original key and
+    /// fingerprint stay in force and the operation must be reconciled first.
+    Refused,
 }
 
 struct TurnIntentSeries {
@@ -1555,6 +1557,9 @@ struct TurnIntentSeries {
     turn: u64,
     /// The key in force, with the payload it was minted against.
     active: Option<(IdempotencyKey, [u8; 32])>,
+    /// Dispatches stamped under the key in force. More than one means an
+    /// earlier dispatch under it ended without a reply (outcome unknown).
+    dispatches: u32,
     /// When the request the key in force identifies FIRST left this client.
     ///
     /// Lives here rather than in [`RunState`] because it measures the same
@@ -1570,6 +1575,7 @@ impl TurnIntentSeries {
             run: uuid::Uuid::new_v4().as_u128(),
             turn: 0,
             active: None,
+            dispatches: 0,
             dispatched_at: None,
         }
     }
@@ -1579,27 +1585,31 @@ impl TurnIntentSeries {
     ///
     /// Returned rather than logged in place, because only the caller can print
     /// and the cases differ in newsworthiness: [`IntentDecision::New`] is every
-    /// ordinary turn and must be silent, while [`IntentDecision::Replaced`] is
-    /// a defect and must not be. Deciding that here with an `eprintln!` would
+    /// ordinary turn and must be silent, while [`IntentDecision::Refused`] is
+    /// a refusal and must not be. Deciding that here with an `eprintln!` would
     /// make the difference unobservable from a test.
     fn stamp(&mut self, req: &mut ExecuteRequest, now: Instant) -> IntentDecision {
         let fingerprint = req.intent_fingerprint();
         let (key, decision) = match self.active.as_ref() {
             // Same payload as the attempt before it: the same key, and the
             // server replays rather than charges.
-            Some((key, seen)) if *seen == fingerprint => (key.clone(), IntentDecision::Reused),
-            other => {
-                let decision = if other.is_some() {
-                    IntentDecision::Replaced
-                } else {
-                    IntentDecision::New
-                };
+            Some((key, seen)) if *seen == fingerprint => {
+                self.dispatches = self.dispatches.saturating_add(1);
+                (key.clone(), IntentDecision::Reused)
+            }
+            // G07: a key is in force only while its dispatch has had no reply
+            // (`finish_turn` clears it on any response), so its outcome is
+            // unknown. A changed payload is a new operation and must not be
+            // sent as an invisible retry under a fresh key.
+            Some(_) => return IntentDecision::Refused,
+            None => {
+                let decision = IntentDecision::New;
+                self.dispatches = 1;
                 self.turn = self.turn.saturating_add(1);
                 let key = IdempotencyKey::for_turn(self.run, self.turn);
                 self.active = Some((key.clone(), fingerprint));
                 // A fresh key is a fresh upstream request, so its wait clock
-                // starts here, including on `Replaced`, where the previous
-                // request's elapsed time says nothing about this one.
+                // starts here.
                 self.dispatched_at = Some(now);
                 (key, decision)
             }
@@ -1616,6 +1626,7 @@ impl TurnIntentSeries {
     /// next turn replay the previous turn's answer.
     fn finish_turn(&mut self) {
         self.active = None;
+        self.dispatches = 0;
         self.dispatched_at = None;
     }
 
@@ -1630,9 +1641,23 @@ impl TurnIntentSeries {
     /// The one caller is the `idempotency_key_reused` path: the key belongs to
     /// a different payload, so nothing of ours was dispatched or charged under
     /// it and reusing it can only be refused again.
-    fn abandon_key(&mut self) {
+    ///
+    /// G07: returns `false`, keeping the key, when more than one dispatch went
+    /// out under it. Then an earlier one ended without a reply and may have been
+    /// executed and charged, so a fresh-key redispatch could pay twice.
+    fn abandon_key(&mut self) -> bool {
+        if self.dispatches > 1 {
+            return false;
+        }
         self.active = None;
+        self.dispatches = 0;
         self.dispatched_at = None;
+        true
+    }
+
+    /// The key in force, for naming it in a refusal.
+    fn active_key(&self) -> Option<&IdempotencyKey> {
+        self.active.as_ref().map(|(key, _)| key)
     }
 }
 
@@ -2311,14 +2336,17 @@ No other markup is executed, whatever your training says. \
             req.first_dispatch_measurement = self.config.first_dispatch_measurement.clone();
         }
         // Last, so the fingerprint it records covers the finished request.
-        if intent.stamp(&mut req, Instant::now()) == IntentDecision::Replaced {
-            // Not a `tracing` call: the CLI installs no subscriber, so this is
-            // the only way the line is ever seen.
-            eprintln!(
-                "arcana: the request changed between attempts of one turn, so this re-dispatch \
-                 cannot be replayed under the turn's Idempotency-Key and may be charged again \
-                 — this is a defect in arcana, not in the connector"
-            );
+        if intent.stamp(&mut req, Instant::now()) == IntentDecision::Refused {
+            // G07: an earlier dispatch under the key in force has an unknown
+            // outcome and the payload changed. Do not dispatch; keep the
+            // original key. Not a `tracing` call: the CLI installs no
+            // subscriber, so the error line is the only way it is ever seen.
+            return Err(ConnectorError::ReconcileRequired {
+                key: intent
+                    .active_key()
+                    .map(|key| key.as_str().to_owned())
+                    .unwrap_or_default(),
+            });
         }
         match self.connector.execute(req).await {
             Ok(resp) => {
@@ -3303,7 +3331,7 @@ mod connector_retry_tests {
 
         series.finish_turn();
         let mut next_turn = ExecuteRequest::new("deepseek", "and the next question");
-        // `New`, not `Replaced`: an ordinary turn boundary is not a defect. A
+        // `New`, not `Refused`: an ordinary turn boundary is not a refusal. A
         // `finish_turn` that failed to release the key would still mint a fresh
         // key here (the payload differs) and put the defect line on every turn
         // of every run, which is the mutant this assertion exists to kill.
@@ -3314,24 +3342,42 @@ mod connector_retry_tests {
         assert_ne!(first.idempotency_key, next_turn.idempotency_key);
     }
 
-    /// The safety net under the stable key: if the payload changes under it —
-    /// which would be a defect elsewhere in the loop — the key changes with
-    /// it, rather than being refused by the server as a reused key. And it is
-    /// reported as the defect it is, not folded in with a turn boundary.
+    /// G07: after a dispatch that produced no reply the outcome is unknown, so
+    /// a payload that then changes must NOT be stamped with a fresh key.
+    /// Nothing is minted, the request carries no key, and the original
+    /// identity stays in force for an unchanged retry.
     #[test]
-    fn a_payload_that_changes_mid_series_gets_a_fresh_key_and_is_named_a_defect() {
+    fn g07_a_changed_payload_after_an_unknown_outcome_is_not_given_a_fresh_key() {
         let mut series = TurnIntentSeries::new();
         let mut first = ExecuteRequest::new("deepseek", "what is the answer");
         assert_eq!(
             series.stamp(&mut first, Instant::now()),
             IntentDecision::New
         );
+        // No `finish_turn`: the first dispatch never got a reply.
         let mut changed = ExecuteRequest::new("deepseek", "a different question entirely");
+        let decision = series.stamp(&mut changed, Instant::now());
         assert_eq!(
-            series.stamp(&mut changed, Instant::now()),
-            IntentDecision::Replaced
+            decision,
+            IntentDecision::Refused,
+            "a fresh key was minted over an unknown outcome"
         );
-        assert_ne!(first.idempotency_key, changed.idempotency_key);
+        assert_ne!(
+            changed.idempotency_key, first.idempotency_key,
+            "the changed payload must not ride the original key either"
+        );
+        assert!(
+            changed.idempotency_key.is_none(),
+            "a refused request must carry no key: {:?}",
+            changed.idempotency_key
+        );
+        // The original identity survives: an unchanged retry still replays.
+        let mut again = ExecuteRequest::new("deepseek", "what is the answer");
+        assert_eq!(
+            series.stamp(&mut again, Instant::now()),
+            IntentDecision::Reused
+        );
+        assert_eq!(again.idempotency_key, first.idempotency_key);
     }
 
     /// The fingerprint copies the server's two exclusions. The measurement one
