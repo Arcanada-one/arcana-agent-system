@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Root (non-crate) suite = the non-cargo steps of .github/workflows/ci.yml, in CI order, real output, real exit codes.
+# Prints "Ran N tests" where N = count of 'ok' lines the bats TAP stream actually emitted.
+set -u
+fail=0
+tap=$(mktemp)
+run() { echo "+ $*"; "$@"; local rc=$?; echo "  exit=$rc :: $*"; [ $rc -eq 0 ] || fail=1; }
+echo "+ bats dev-tools/tests"; bats dev-tools/tests | tee "$tap"; rc=${PIPESTATUS[0]}; echo "  exit=$rc :: bats dev-tools/tests"; [ $rc -eq 0 ] || fail=1
+shellcheck -S warning dev-tools/*.sh packaging/tests/*.sh; rc=$?; echo "  exit=$rc :: shellcheck -S warning dev-tools/*.sh packaging/tests/*.sh"; [ $rc -eq 0 ] || fail=1
+run dev-tools/check-internal-versions.sh
+run dev-tools/check-workflow-triggers.sh
+run dev-tools/check-env-declared.py
+run cargo build --locked --package arcana-credential-broker --bin arcana-credential-broker
+run bash packaging/tests/lifecycle-rehearsal.sh
+run bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
+n=$(grep -c '^ok ' "$tap"); rm -f "$tap"
+echo "Ran $n tests (bats TAP ok-lines)"
+exit $fail
