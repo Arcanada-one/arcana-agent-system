@@ -3,9 +3,9 @@
   "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
   "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
-  "verdict": "refused"
+  "verdict": "paused_safe"
  },
- "captured_at_utc": "2026-11-07T22:56:45Z",
+ "captured_at_utc": "2026-11-07T21:50:44Z",
  "change_set": {
   "base": "ed52641bf7979bab48a6468350b147234f55f2f9",
   "files": [
@@ -546,48 +546,9 @@
     ],
     "path": "docs/how-to/run-work-item-under-kc2-contract.md",
     "status": "M"
-   },
-   {
-    "kind": "receipt",
-    "new": true,
-    "path": "receipts/graph/aras-kclive11-local-canary/canary-plan-frozen.json",
-    "status": "A"
-   },
-   {
-    "kind": "receipt",
-    "new": true,
-    "path": "receipts/graph/aras-kclive11-local-canary/canary-result-measured.json",
-    "status": "A"
-   },
-   {
-    "kind": "doc",
-    "new": true,
-    "path": "receipts/graph/aras-kclive11-local-canary/make-plan.py.txt",
-    "status": "A"
-   },
-   {
-    "kind": "receipt",
-    "new": true,
-    "path": "receipts/graph/aras-kclive11-local-canary/measured-source.json",
-    "status": "A"
-   },
-   {
-    "kind": "doc",
-    "new": true,
-    "path": "receipts/graph/aras-kclive11-local-canary/root-suite-wrapper.txt",
-    "status": "A"
-   },
-   {
-    "kind": "receipt",
-    "node_id": "receipt:receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
-    "node_ids": [
-     "receipt:receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json"
-    ],
-    "path": "receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
-    "status": "A"
    }
   ],
-  "head": "c3f7dac7c538bb4e15b5cde928fe38b739d7e44f",
+  "head": "f4f7598e524c9894a9ae8769f07660939075f1f5",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -596,18 +557,18 @@
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:2c5835c19f2dc9f42fcbd3e7c913fdca52ce71dbd396ded19f8429e722143e8a",
-  "path": "/home/dev/aup/claude-work/arasga02/vout/graph-ed52641bf797.json",
+  "path": "/home/dev/aup/claude-work/arasga01/w273/vout/graph-ed52641bf797.json",
   "source_commit": "ed52641bf7979bab48a6468350b147234f55f2f9"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:205283bd94798741a99d9dcb36e8af24f3e2efab91fc1931261eaa6df9be0cfb",
-  "path": "/home/dev/aup/claude-work/arasga02/vout/graph-head-c3f7dac7c538.json",
-  "source_commit": "c3f7dac7c538bb4e15b5cde928fe38b739d7e44f",
+  "graph_digest": "sha256:9d6a3be607b607784a71cec10b457b6cee941dc0963af771e0ac2da29570f914",
+  "path": "/home/dev/aup/claude-work/arasga01/w273/vout/graph-head-f4f7598e524c.json",
+  "source_commit": "f4f7598e524c9894a9ae8769f07660939075f1f5",
   "staleness": {
-   "checked_at_utc": "2026-11-07T22:57:45Z",
-   "checked_nodes": 478,
+   "checked_at_utc": "2026-11-07T21:51:13Z",
+   "checked_nodes": 477,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -10601,17 +10562,17 @@
  },
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
-  "profile: profile.json; baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+  "profile: /home/dev/aup/claude-work/arasga01/w273/profile.json; baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261107T225645Z-c3f7dac7",
+ "receipt_id": "car-verify-20261107T215044Z-f4f7598e",
  "receipt_path": "receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/aup/claude-work/arasga02/aras"
+  "path": "/home/dev/aup/claude-work/arasga01/aras273"
  },
  "revision_selection": {
   "base": [
@@ -10968,7 +10929,6 @@
    "document:docs/how-to/run-work-item-under-kc2-contract.md",
    "receipt:receipts/graph/change-admission-ARAS-RDY-01.json",
    "receipt:receipts/graph/change-admission-ARAS252-634.json",
-   "receipt:receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json",
    "receipt:receipts/graph/change-admission-a2-297c.json",
    "receipt:receipts/graph/change-admission-a2-361.json",
@@ -10981,7 +10941,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-07T22:57:45Z",
+  "checked_at_utc": "2026-11-07T21:51:13Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -11008,21 +10968,6 @@
    "path": "receipts/graph/change-admission-ARAS252-634.json",
    "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
    "rule": "DEC-AUP-0034"
-  },
-  {
-   "content_hash": {
-    "base": null,
-    "head": "sha256:acf0db5e323ba1da97f4a09c8ef342e6868dd9430bfca38cb5ace2a74dc21600"
-   },
-   "entity": "receipt:receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
-   "node_type": "receipt",
-   "path": "receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
-   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json for work item KCLIVE-11",
-   "rule": "DEC-AUP-0035",
-   "superseded": {
-    "receipt_path": "receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
-    "work_item": "KCLIVE-11"
-   }
   },
   {
    "content_hash": {
@@ -11092,14 +11037,14 @@
   }
  ],
  "tree": {
-  "commit": "c3f7dac7c538bb4e15b5cde928fe38b739d7e44f",
+  "commit": "f4f7598e524c9894a9ae8769f07660939075f1f5",
   "dirty": false
  },
  "verdicts": [
   {
    "entity": "code_unit:.github/graph-admission/tools/ci/stage_userpath.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11107,8 +11052,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/admit_change.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11116,8 +11061,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/build_graph.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11125,8 +11070,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/canary_evidence.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11134,8 +11079,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/ci_gate.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11143,8 +11088,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/ci_selection.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11152,8 +11097,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/contract_diff.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11161,8 +11106,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/fixture_contracts.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11170,8 +11115,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/full_suite_ci.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11179,8 +11124,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/impact.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11188,8 +11133,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/impact_pair.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11197,8 +11142,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/inline_nest_harness.cjs",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-type-check-uncovered: COVERAGE_GAP: .github/graph-admission/tools/graph/inline_nest_harness.cjs lies in no deployable with a TypeScript project and no tsconfig.json exists in its directory, any directory above it, or the root; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -11207,8 +11152,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-type-check-uncovered: COVERAGE_GAP: .github/graph-admission/tools/graph/metadata_contract_observer.cjs lies in no deployable with a TypeScript project and no tsconfig.json exists in its directory, any directory above it, or the root; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -11217,8 +11162,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/metadata_contract_proof.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11226,8 +11171,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/native_projection.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11235,8 +11180,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/nest_bootstrap.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11244,8 +11189,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/nest_fixture_scope.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11253,8 +11198,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/origin_association.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11262,8 +11207,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/process_observation.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11271,8 +11216,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/python_search_path.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11280,8 +11225,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/readiness_check.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11289,8 +11234,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/schema_check.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11298,8 +11243,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/selected_dependency.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11307,8 +11252,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/selected_dependency_fitness.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11316,8 +11261,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/selected_dependency_replay.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11325,8 +11270,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/selected_dependency_runner.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11334,8 +11279,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/shell_source.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11343,8 +11288,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/shell_workflow.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11352,8 +11297,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/source_input_contract.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11361,8 +11306,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/sshsig.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11370,8 +11315,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/test_source_input_contract.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11379,8 +11324,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/verify.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11388,8 +11333,8 @@
   },
   {
    "entity": "code_unit:.github/graph-admission/tools/graph/workflow_config.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -11397,8 +11342,8 @@
   },
   {
    "entity": "code_unit:.github/workflows/ci.yml",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-workflow-config-b803fcb7f17ed923: workflow shell caller closure not measured: job changelog step 1: command/process substitution closure is unresolved; job lint-test step 9: line 1: wrapper execution scope/options unresolved; job lint-test step 9: line 2: wrapper execution scope/options unresolved; job lint-test step 9: line 3: missing literal helper dev-tools/tests; job network-exposure-lint: reusable/opaque shell context; job platform-isolation step 5: line 1: unsupported loader/interpreter options; job platform-native-negative-controls step 2: command/process substitution closure is unres",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -11407,8 +11352,8 @@
   },
   {
    "entity": "code_unit:.github/workflows/graph-admission-call.yml",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-workflow-config-60a4bd100e640545: workflow shell caller closure not measured: job graph-admission: reusable/opaque shell context; 1 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence; v-fitness: no new fitness violation; workflow actionlint NOT_MEASURED: pinned actionlint binary unavailable; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -11417,8 +11362,8 @@
   },
   {
    "entity": "code_unit:.github/workflows/graph-admission.yml",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-workflow-config-dc49cc771602c92b: workflow shell caller closure not measured: job graph-admission step 10: checkout root or source-affecting workflow environment unresolved; job graph-admission step 10: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 11: checkout root or source-affecting workflow environment unresolved; job graph-admission step 11: command/process substitution closure is unresolved; job graph-admission step 12: checkout root or source-affecting workflow environment unresolved; job graph-admission step 12: command/process substitution cl",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -11427,8 +11372,8 @@
   },
   {
    "entity": "code_unit:.github/workflows/release.yml",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-workflow-config-87db21a973eed4fe: workflow shell caller closure not measured: job build step 4: opaque input/interpolated workflow source; job build step 5: local action/checkout path scope unresolved; job preflight step 1: command/process substitution closure is unresolved; job preflight step 3: command/process substitution closure is unresolved; job sign-attest-release step 2: local action/checkout path scope unresolved; job sign-attest-release step 4: line 3: source-affecting shell environment binding; job sign-attest-release step 6: command/process substitution closure is unresolved; 7 w",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -11625,10 +11570,10 @@
   },
   {
    "entity": "code_unit:crates/cli/tests/run_work_item_refusal_evidence.rs",
-   "reason": "v-config-schema: every key read is declared; v-fitness: no new fitness violation; v-canary-1: canary aras-kclive11-refusal-evidence-local (pre) on owned scratch filesystem; wiremock on loopback; no network/credentials/provider/production: Actual owned process termination and original-plan assertions; escaped descendants are not proven absent",
-   "verdict": "verified",
+   "reason": "v-canary: INFERRED_BOUNDARY_WITHOUT_CANARY: no canary result lists this entity (matrix P6, observed-edges-and-deploy-gate.v1 rule C1)",
+   "verdict": "not_measured",
    "verifier_ids": [
-    "v-canary-1",
+    "v-canary",
     "v-config-schema",
     "v-fitness"
    ]
@@ -12051,8 +11996,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/cutover/__init__.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12060,8 +12005,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/cutover/backends.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12069,8 +12014,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/cutover/coordinator.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12078,8 +12023,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/cutover/drill.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12087,8 +12032,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/cutover/gate_oracle.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12096,8 +12041,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/cutover/gates.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12105,8 +12050,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/data_gate/consume_data_gate.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12114,8 +12059,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/fault_drill/__init__.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12123,8 +12068,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/fault_drill/coordinator.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12132,8 +12077,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/fault_drill/fault_drill.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12141,8 +12086,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/fault_drill/oracle.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12150,8 +12095,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/fault_drill/scenarios.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12159,8 +12104,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/fault_drill/world.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12168,8 +12113,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/__init__.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12177,8 +12122,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/backend.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12186,8 +12131,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/core.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12195,8 +12140,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/fixtures.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12204,8 +12149,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/oracle.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12213,8 +12158,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/package.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12222,8 +12167,8 @@
   },
   {
    "entity": "code_unit:dev-tools/aup-transition/rebuild/rebuild.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12231,8 +12176,8 @@
   },
   {
    "entity": "code_unit:dev-tools/check-binary-name.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-4dc2d7e6367d9e2f: shell syntax/closure: not_measured; v-shell-behavior-4dc2d7e6367d9e2f: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 31: dynamic load/substitution; line 61: multiline/opaque shell statement; line 62: wrapper options/child command unresolved; line 76: dynamic load/substitution; line 91: dynamic load/substitution; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12242,8 +12187,8 @@
   },
   {
    "entity": "code_unit:dev-tools/check-env-declared.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12251,8 +12196,8 @@
   },
   {
    "entity": "code_unit:dev-tools/check-internal-versions.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-95a1861186b1ab5c: shell syntax/closure: not_measured; v-shell-behavior-95a1861186b1ab5c: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 18: directory transition has unresolved execution cwd; line 21: multiline/opaque shell statement; line 24: multiline/opaque shell statement; line 32: dynamic load/substitution; line 34: multiline/opaque shell statement; line 41: dynamic command/alias/eval; line 56: multiline/opaque shell statement; line 58: multiline/opaque shell statement; line 69: multiline/opaque shell statement; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12262,8 +12207,8 @@
   },
   {
    "entity": "code_unit:dev-tools/check-workflow-triggers.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-8683459c2c8d4ced: shell syntax/closure: not_measured; v-shell-behavior-8683459c2c8d4ced: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 27: directory transition has unresolved execution cwd; line 30: heredoc data/generation closure not measured; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12273,8 +12218,8 @@
   },
   {
    "entity": "code_unit:dev-tools/prose-review/review.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12282,8 +12227,8 @@
   },
   {
    "entity": "code_unit:dev-tools/release-bump-anchor.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-3b6079bcdb25a1ed: shell syntax/closure: not_measured; v-shell-behavior-3b6079bcdb25a1ed: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 12: directory transition has unresolved execution cwd; line 33: dynamic load/substitution; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12293,8 +12238,8 @@
   },
   {
    "entity": "code_unit:dev-tools/sec0030-governance-witness-capture.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-6922b301d3f949a6: shell syntax/closure: not_measured; v-shell-behavior-6922b301d3f949a6: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: dynamic command/alias/eval; line 110: multiline/opaque shell statement; line 117: dynamic load/substitution; line 118: multiline/opaque shell statement; line 120: dynamic load/substitution; line 123: multiline/opaque shell statement; line 124: multiline/opaque shell statement; line 125: dynamic command/alias/eval; line 128: dynamic load/substitution; line 134: dynamic load/substitution; line 138: dynamic load/substitution; line 142: multiline/opa",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12304,8 +12249,8 @@
   },
   {
    "entity": "code_unit:dev-tools/sec0030-governance-witness-verify.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-4185bff290f5d6cf: shell syntax/closure: not_measured; v-shell-behavior-4185bff290f5d6cf: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 105: wrapper options/child command unresolved; line 109: multiline/opaque shell statement; line 110: multiline/opaque shell statement; line 111: multiline/opaque shell statement; line 112: multiline/opaque shell statement; line 113: multiline/opaque shell statement; line 116: multiline/opaque shell statement; line 117: multiline/opaque shell statement; line 118: multiline/opaque shell statement; line 119: multiline/opaque shell statement; line 11: mul",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12315,8 +12260,8 @@
   },
   {
    "entity": "code_unit:dev-tools/sec0030-ssh-sign-from-fd.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12324,8 +12269,8 @@
   },
   {
    "entity": "code_unit:dev-tools/smoke/arcana-smoke.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-f507ef6f32d4d229: shell syntax/closure: not_measured; v-shell-behavior-f507ef6f32d4d229: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 117: multiline/opaque shell statement; line 118: multiline/opaque shell statement; line 174: multiline/opaque shell statement; line 208: Bats skip may omit a required test; line 219: multiline/opaque shell statement; line 220: multiline/opaque shell statement; line 252: directory transition has unresolved execution cwd; line 253: wrapper options/child command unresolved; line 264: directory transition has unresolved execution cwd; line 265: wrapper op",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12335,8 +12280,8 @@
   },
   {
    "entity": "code_unit:dev-tools/smoke/fixtures/mc-error.json",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12344,8 +12289,8 @@
   },
   {
    "entity": "code_unit:dev-tools/smoke/fixtures/mc-success.json",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12353,8 +12298,8 @@
   },
   {
    "entity": "code_unit:dev-tools/smoke/mc_replay_server.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12362,8 +12307,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/arcana-smoke.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-3e5353cb4d6a5ace: shell syntax/closure: not_measured; v-shell-behavior-3e5353cb4d6a5ace: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 12: directory transition has unresolved execution cwd; line 18: directory transition has unresolved execution cwd; line 25: dynamic load/substitution; line 34: dynamic load/substitution; line 81: heredoc data/generation closure not measured; line 97: dynamic load/substitution; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12373,8 +12318,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/check-binary-name.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-c42754c2e7cdbcd9: shell syntax/closure: not_measured; v-shell-behavior-c42754c2e7cdbcd9: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; Bats run lacks an immediate unconditional child status assertion; line 10: directory transition has unresolved execution cwd; line 111: dynamic load/substitution; line 112: heredoc data/generation closure not measured; line 11: directory transition has unresolved execution cwd; line 124: dynamic load/substitution; line 129: dynamic load/substitution; line 141: dynamic load/substitution; line",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12384,8 +12329,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/check-env-declared.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-5091beecc0751d0f: shell syntax/closure: not_measured; v-shell-behavior-5091beecc0751d0f: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats run lacks an immediate unconditional child status assertion; line 10: directory transition has unresolved execution cwd; line 14: heredoc data/generation closure not measured; line 18: heredoc data/generation closure not measured; line 31: dynamic command/alias/eval; line 38: dynamic command/alias/eval; line 42: dynamic command/alias/eval; line 48: dynamic command/alias/eval; line 55: dynamic command/alias/eval; line 62: dynamic command/alias/eval; li",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12395,8 +12340,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/check-internal-versions.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-0877b047ae4e9b4a: shell syntax/closure: not_measured; v-shell-behavior-0877b047ae4e9b4a: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 11: directory transition has unresolved execution cwd; line 27: multiline/opaque shell statement; line 29: dynamic load/substitution; line 42: dynamic command/alias/eval; line 79: multiline/opaque shell statement; line 80: dynamic command/alias/eval; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12406,8 +12351,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/check-workflow-triggers.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-98c7f73229ac189d: shell syntax/closure: not_measured; v-shell-behavior-98c7f73229ac189d: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats run lacks an immediate unconditional child status assertion; line 101: dynamic command/alias/eval; line 108: dynamic command/alias/eval; line 115: dynamic command/alias/eval; line 121: dynamic command/alias/eval; line 129: multiline/opaque shell statement; line 130: dynamic command/alias/eval; line 15: directory transition has unresolved execution cwd; line 27: heredoc data/generation closure not measured; line 51: dynamic command/alias/eval; line 60:",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12417,8 +12362,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/release-bump-anchor.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-3df29c8998c12928: shell syntax/closure: not_measured; v-shell-behavior-3df29c8998c12928: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: dynamic load/substitution; line 110: dynamic command/alias/eval; line 14: directory transition has unresolved execution cwd; line 47: dynamic load/substitution; line 49: dynamic command/alias/eval; line 51: dynamic load/substitution; line 58: dynamic load/substitution; line 60: multiline/opaque shell statement; line 61: multiline/opaque shell statement; line 63: dynamic load/substitution; line 65: dynamic command/alias/eval; line 67: dynamic load",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12428,8 +12373,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-governance-witness-capture.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-09da96d97a06231d: shell syntax/closure: not_measured; v-shell-behavior-09da96d97a06231d: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 104: multiline/opaque shell statement; line 114: dynamic command/alias/eval; line 118: multiline/opaque shell statement; line 128: dynamic command/alias/eval; line 138: dynamic load/substitution; line 139: dynamic load/substitution; line 141: multiline/opaque shell statement; line 152: multiline/opaque shell statement; line 153: multiline/opaque shell statement; line 154: multiline/opaq",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12439,8 +12384,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-governance-witness.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-95e8f1ee6701987e: shell syntax/closure: not_measured; v-shell-behavior-95e8f1ee6701987e: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: multiline/opaque shell statement; line 101: multiline/opaque shell statement; line 102: multiline/opaque shell statement; line 103: multiline/opaque shell statement; line 104: multiline/opaque shell statement; line 105: wrapper options/child command unresolved; line 117: multiline/opaque shell statement; line 128: dynamic load/substitution; line 129: multiline/opaque shell statement; line 130: dynamic command/alias/eval; line 147: multiline/opaqu",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12450,8 +12395,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-lifecycle-disable-contract.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-c6fff7c5bce210fb: shell syntax/closure: not_measured; v-shell-behavior-c6fff7c5bce210fb: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 3: directory transition has unresolved execution cwd; line 8: dynamic load/substitution; line 9: dynamic load/substitution; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12461,8 +12406,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-linux-attestation-contract.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-a133600be8525631: shell syntax/closure: not_measured; v-shell-behavior-a133600be8525631: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 3: directory transition has unresolved execution cwd; line 48: heredoc data/generation closure not measured; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12472,8 +12417,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-linux-containment-contract.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-74e1af58525b8970: shell syntax/closure: not_measured; v-shell-behavior-74e1af58525b8970: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 10: multiline/opaque shell statement; line 11: multiline/opaque shell statement; line 12: multiline/opaque shell statement; line 13: multiline/opaque shell statement; line 14: multiline/opaque shell statement; line 15: multiline/opaque shell statement; line 16: multiline/opaque shell statement; line 17: multiline/opaque shell statement; line 3: directory transition has unresolved execut",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12483,8 +12428,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-macos-native-contract.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-3804b89abb4d3d1a: shell syntax/closure: not_measured; v-shell-behavior-3804b89abb4d3d1a: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 3: directory transition has unresolved execution cwd; line 49: dynamic load/substitution; line 50: dynamic load/substitution; line 55: dynamic load/substitution; v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12494,8 +12439,8 @@
   },
   {
    "entity": "code_unit:dev-tools/tests/sec0030-release-governance.bats",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-cac739b33750b564: shell syntax/closure: not_measured; v-shell-behavior-cac739b33750b564: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 25: multiline/opaque shell statement; line 26: multiline/opaque shell statement; line 27: multiline/opaque shell statement; line 28: multiline/opaque shell statement; line 29: multiline/opaque shell statement; line 30: multiline/opaque shell statement; line 3: directory transition has unresolved execution cwd; line 45: multiline/opaque shell statement; line 46: multiline/opaque shell st",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12505,8 +12450,8 @@
   },
   {
    "entity": "code_unit:packaging/broker-lifecycle.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-fbc15b1b3fc67d33: shell syntax/closure: not_measured; v-shell-behavior-fbc15b1b3fc67d33: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: dynamic load/substitution; line 104: dynamic load/substitution; line 108: dynamic load/substitution; line 123: dynamic load/substitution; line 135: multiline/opaque shell statement; line 136: multiline/opaque shell statement; line 137: dynamic load/substitution; line 155: multiline/opaque shell statement; line 158: dynamic command/alias/eval; line 163: dynamic load/substitution; line 164: multiline/opaque shell statement; line 180: dynamic load/s",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12516,8 +12461,8 @@
   },
   {
    "entity": "code_unit:packaging/macos/one.arcanada.credential-broker.plist",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12525,8 +12470,8 @@
   },
   {
    "entity": "code_unit:packaging/tests/fixtures/linux-hostile-descendant.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12534,8 +12479,8 @@
   },
   {
    "entity": "code_unit:packaging/tests/fixtures/linux-seqpacket-attestation.py",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-global-fallback-test-root: complete fallback suite: not_measured",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root"
@@ -12543,8 +12488,8 @@
   },
   {
    "entity": "code_unit:packaging/tests/lifecycle-rehearsal.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-81c6db630c67d554: shell syntax/closure: not_measured; v-shell-behavior-81c6db630c67d554: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 10: dynamic load/substitution; line 136: dynamic load/substitution; line 143: dynamic load/substitution; line 144: dynamic load/substitution; line 146: dynamic load/substitution; line 14: dynamic load/substitution; line 159: dynamic load/substitution; line 173: dynamic load/substitution; line 180: dynamic load/substitution; line 18: dynamic load/substitution; line 190: multiline/opaque shell statement; line 191: multiline/opaque shell statement; line ",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12554,8 +12499,8 @@
   },
   {
    "entity": "code_unit:packaging/tests/linux-live-attestation.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-5e81ba90d5fd6b05: shell syntax/closure: not_measured; v-shell-behavior-5e81ba90d5fd6b05: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 13: dynamic load/substitution; line 18: wrapper execution scope/options unresolved; line 20: directory transition has unresolved execution cwd; line 22: dynamic load/substitution; line 33: wrapper execution scope/options unresolved; line 34: multiline/opaque shell statement; line 58: multiline/opaque shell statement; line 59: multiline/opaque shell statement; line 60: multiline/opaque shell statement; line 61: multiline/opaque shell statement; line 62",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12565,8 +12510,8 @@
   },
   {
    "entity": "code_unit:packaging/tests/linux-live-containment.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-2311c46133b52a7c: shell syntax/closure: not_measured; v-shell-behavior-2311c46133b52a7c: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 113: dynamic load/substitution; line 125: dynamic load/substitution; line 12: dynamic load/substitution; line 153: dynamic load/substitution; line 154: dynamic load/substitution; line 165: wrapper execution scope/options unresolved; line 170: dynamic load/substitution; line 171: dynamic load/substitution; line 172: dynamic load/substitution; line 173: dynamic load/substitution; line 174: dynamic load/substitution; line 175: dynamic load/substitution; ",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12576,8 +12521,8 @@
   },
   {
    "entity": "code_unit:packaging/tests/macos-live-xpc-sandbox.sh",
-   "reason": "v-global-fallback-test-root: complete fallback suite: failed",
-   "verdict": "failed",
+   "reason": "v-shell-syntax-40f4b5b195125a28: shell syntax/closure: not_measured; v-shell-behavior-40f4b5b195125a28: SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: wrapper options/child command unresolved; line 102: multiline/opaque shell statement; line 103: wrapper options/child command unresolved; line 110: multiline/opaque shell statement; line 111: wrapper options/child command unresolved; line 125: multiline/opaque shell statement; line 127: dynamic command/alias/eval; line 128: multiline/opaque shell statement; line 130: dynamic command/alias/eval; line 134: multiline/opaque shell statement; line 135",
+   "verdict": "not_measured",
    "verifier_ids": [
     "v-fitness",
     "v-global-fallback-test-root",
@@ -12712,8 +12657,8 @@
    "exit_code": 127,
    "id": "v-type-check-uncovered",
    "kind": "type_check",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-type-check-uncovered.txt",
-   "started_at_utc": "2026-11-07T22:57:53Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-type-check-uncovered.txt",
+   "started_at_utc": "2026-11-07T21:51:17Z",
    "summary": "not_measured: 2 entity(ies) no tsconfig covers"
   },
   {
@@ -12728,8 +12673,8 @@
    "exit_code": 1,
    "id": "v-workflow-config-b803fcb7f17ed923",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-workflow-config-b803fcb7f17ed923.txt",
-   "started_at_utc": "2026-11-07T22:57:53Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-workflow-config-b803fcb7f17ed923.txt",
+   "started_at_utc": "2026-11-07T21:51:17Z",
    "summary": "workflow shell caller closure not measured: job changelog step 1: command/process substitution closure is unresolved; job lint-test step 9: line 1: wrapper execution scope/options unresolved; job lint-test step 9: line 2: wrapper execution scope/options unresolved; job lint-test step 9: line 3: missing literal helper dev-tools/tests; job network-exposure-lint: reusable/opaque shell context; job platform-isolation step 5: line 1: unsupported loader/interpreter options; job platform-native-negative-controls step 2: command/process substitution closure is unresolved; job release-pending step 1: command/process substitution closure is unresolved; job security-audit: reusable/opaque shell context; 9 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence"
   },
   {
@@ -12744,8 +12689,8 @@
    "exit_code": 1,
    "id": "v-workflow-config-60a4bd100e640545",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-workflow-config-60a4bd100e640545.txt",
-   "started_at_utc": "2026-11-07T22:57:53Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-workflow-config-60a4bd100e640545.txt",
+   "started_at_utc": "2026-11-07T21:51:17Z",
    "summary": "workflow shell caller closure not measured: job graph-admission: reusable/opaque shell context; 1 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence"
   },
   {
@@ -12760,8 +12705,8 @@
    "exit_code": 1,
    "id": "v-workflow-config-dc49cc771602c92b",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-workflow-config-dc49cc771602c92b.txt",
-   "started_at_utc": "2026-11-07T22:57:53Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-workflow-config-dc49cc771602c92b.txt",
+   "started_at_utc": "2026-11-07T21:51:17Z",
    "summary": "workflow shell caller closure not measured: job graph-admission step 10: checkout root or source-affecting workflow environment unresolved; job graph-admission step 10: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 11: checkout root or source-affecting workflow environment unresolved; job graph-admission step 11: command/process substitution closure is unresolved; job graph-admission step 12: checkout root or source-affecting workflow environment unresolved; job graph-admission step 12: command/process substitution closure is unresolved; job graph-admission step 14: checkout root or source-affecting workflow environment unresolved; job graph-admission step 15: checkout root or source-affecting workflow environment unresolved; job graph-admission step 16: checkout root or source-affecting workflow environment unresolved; job graph-admission step 16: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 17: checkout root or source-affecting workflow environment unresolved; job graph-admission step 17: line 1: unsupported interpreter script/module/stdin dispatch closure; job graph-admission step 18: checkout root or source-affecting workflow environment unresolved; job graph-admission step 18: command/process substitution closure is unresolved; job graph-admission step 19: checkout root or source-affecting workflow environment unresolved; job graph-admission step 19: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 1: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 20: checkout root or source-affecting workflow environment unresolved; job graph-admission step 20: line 11: unsupported interpreter script/module/stdin dispatch closure; job graph-admission step 21: checkout root or source-affecting workflow environment unresolved; job graph-admission step 21: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 22: checkout root or source-affecting workflow environment unresolved; job graph-admission step 22: heredoc/group/function/brace expansion closure is unresolved; job graph-admission step 23: local action/checkout path scope unresolved; job graph-admission step 24: checkout root or source-affecting workflow environment unresolved; job graph-admission step 3: line 1: unsupported interpreter script/module/stdin dispatch closure; job graph-admission step 4: command/process substitution closure is unresolved; job graph-admission step 8: checkout root or source-affecting workflow environment unresolved; job graph-admission step 8: command/process substitution closure is unresolved; job graph-admission step 9: checkout root or source-affecting workflow environment unresolved; job graph-admission step 9: command/process substitution closure is unresolved; 31 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence"
   },
   {
@@ -12776,13 +12721,13 @@
    "exit_code": 1,
    "id": "v-workflow-config-87db21a973eed4fe",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-workflow-config-87db21a973eed4fe.txt",
-   "started_at_utc": "2026-11-07T22:57:53Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-workflow-config-87db21a973eed4fe.txt",
+   "started_at_utc": "2026-11-07T21:51:17Z",
    "summary": "workflow shell caller closure not measured: job build step 4: opaque input/interpolated workflow source; job build step 5: local action/checkout path scope unresolved; job preflight step 1: command/process substitution closure is unresolved; job preflight step 3: command/process substitution closure is unresolved; job sign-attest-release step 2: local action/checkout path scope unresolved; job sign-attest-release step 4: line 3: source-affecting shell environment binding; job sign-attest-release step 6: command/process substitution closure is unresolved; 7 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence"
   },
   {
    "command": "verify.py config_schema: keys read at head ⊆ declared keys",
-   "duration_s": 2.04,
+   "duration_s": 0.99,
    "entities": [
     "code_unit:crates/cli/tests/kc2_source_route_e2e.rs",
     "code_unit:crates/cli/tests/kc2_tools_e2e.rs",
@@ -12796,8 +12741,8 @@
    "exit_code": 0,
    "id": "v-config-schema",
    "kind": "config_schema",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-config-schema.json",
-   "started_at_utc": "2026-11-07T22:57:53Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-config-schema.json",
+   "started_at_utc": "2026-11-07T21:51:17Z",
    "summary": "1 source(s), 0 new / 0 frozen undeclared reads, 0 failed; 5 vendored file(s) not attributed to this repository (Arcanada-one/arcanada-universal-program)"
   },
   {
@@ -13162,13 +13107,13 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-fitness.json",
-   "started_at_utc": "2026-11-07T22:57:55Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-fitness.json",
+   "started_at_utc": "2026-11-07T21:51:18Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.02,
+   "duration_s": 0.01,
    "entities": [
     "document:CHANGELOG.md",
     "document:crates/core/src/contract/schema/README.md",
@@ -13182,43 +13127,29 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-doc-reference.txt",
-   "started_at_utc": "2026-11-07T22:57:55Z",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-doc-reference.txt",
+   "started_at_utc": "2026-11-07T21:51:18Z",
    "summary": "3 document(s), 0 failed"
   },
   {
    "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
-   "duration_s": 2.41,
+   "duration_s": 0.0,
    "entities": [
+    "code_unit:crates/cli/tests/kc2_source_route_e2e.rs",
+    "code_unit:crates/cli/tests/kc2_tools_e2e.rs",
     "code_unit:crates/cli/tests/run_work_item_refusal_evidence.rs"
    ],
    "entity_verdicts": {
-    "code_unit:crates/cli/tests/run_work_item_refusal_evidence.rs": "verified"
-   },
-   "exit_code": 0,
-   "id": "v-canary-1",
-   "kind": "canary",
-   "output_ref": "receipts/graph/aras-kclive11-local-canary/canary-result-measured.json",
-   "started_at_utc": "2026-11-07T22:57:55Z",
-   "summary": "receipts/graph/aras-kclive11-local-canary/canary-result-measured.json: 1 verified / 0 failed / 0 not_measured"
-  },
-  {
-   "command": "tools/graph/deploy_gate.py canary --plan <plan> --phase pre|post (results supplied with --canary)",
-   "duration_s": 2.41,
-   "entities": [
-    "code_unit:crates/cli/tests/kc2_source_route_e2e.rs",
-    "code_unit:crates/cli/tests/kc2_tools_e2e.rs"
-   ],
-   "entity_verdicts": {
     "code_unit:crates/cli/tests/kc2_source_route_e2e.rs": "not_measured",
-    "code_unit:crates/cli/tests/kc2_tools_e2e.rs": "not_measured"
+    "code_unit:crates/cli/tests/kc2_tools_e2e.rs": "not_measured",
+    "code_unit:crates/cli/tests/run_work_item_refusal_evidence.rs": "not_measured"
    },
    "exit_code": 0,
    "id": "v-canary",
    "kind": "canary",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-canary.json",
-   "started_at_utc": "2026-11-07T22:57:55Z",
-   "summary": "1 canary result(s), 1 committed at head; 1 verified / 0 failed / 2 not_measured of 3 entities"
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-canary.json",
+   "started_at_utc": "2026-11-07T21:51:18Z",
+   "summary": "0 canary result(s), 0 committed at head; 0 verified / 0 failed / 3 not_measured of 3 entities"
   },
   {
    "command": "bash -n + pinned ShellCheck on syntax projection; no caller/Bats execution",
@@ -13232,9 +13163,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-4dc2d7e6367d9e2f",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-4dc2d7e6367d9e2f.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-4dc2d7e6367d9e2f.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:01Z",
+   "started_at_utc": "2026-11-07T21:51:20Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13249,9 +13180,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-95a1861186b1ab5c",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-95a1861186b1ab5c.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-95a1861186b1ab5c.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:04Z",
+   "started_at_utc": "2026-11-07T21:51:21Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13266,9 +13197,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-8683459c2c8d4ced",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-8683459c2c8d4ced.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-8683459c2c8d4ced.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:07Z",
+   "started_at_utc": "2026-11-07T21:51:23Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13283,9 +13214,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-3b6079bcdb25a1ed",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-3b6079bcdb25a1ed.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-3b6079bcdb25a1ed.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:10Z",
+   "started_at_utc": "2026-11-07T21:51:24Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13300,9 +13231,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-6922b301d3f949a6",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-6922b301d3f949a6.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-6922b301d3f949a6.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:13Z",
+   "started_at_utc": "2026-11-07T21:51:26Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13317,9 +13248,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-4185bff290f5d6cf",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-4185bff290f5d6cf.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-4185bff290f5d6cf.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:16Z",
+   "started_at_utc": "2026-11-07T21:51:27Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13334,9 +13265,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-f507ef6f32d4d229",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-f507ef6f32d4d229.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-f507ef6f32d4d229.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:19Z",
+   "started_at_utc": "2026-11-07T21:51:29Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13351,9 +13282,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-3e5353cb4d6a5ace",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-3e5353cb4d6a5ace.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-3e5353cb4d6a5ace.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:22Z",
+   "started_at_utc": "2026-11-07T21:51:30Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13368,9 +13299,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-c42754c2e7cdbcd9",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-c42754c2e7cdbcd9.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-c42754c2e7cdbcd9.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:25Z",
+   "started_at_utc": "2026-11-07T21:51:32Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13385,9 +13316,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-5091beecc0751d0f",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-5091beecc0751d0f.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-5091beecc0751d0f.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:28Z",
+   "started_at_utc": "2026-11-07T21:51:33Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13402,9 +13333,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-0877b047ae4e9b4a",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-0877b047ae4e9b4a.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-0877b047ae4e9b4a.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:31Z",
+   "started_at_utc": "2026-11-07T21:51:35Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13419,9 +13350,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-98c7f73229ac189d",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-98c7f73229ac189d.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-98c7f73229ac189d.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:34Z",
+   "started_at_utc": "2026-11-07T21:51:36Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13436,9 +13367,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-3df29c8998c12928",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-3df29c8998c12928.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-3df29c8998c12928.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:37Z",
+   "started_at_utc": "2026-11-07T21:51:38Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13453,9 +13384,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-09da96d97a06231d",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-09da96d97a06231d.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-09da96d97a06231d.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:40Z",
+   "started_at_utc": "2026-11-07T21:51:39Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13470,9 +13401,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-95e8f1ee6701987e",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-95e8f1ee6701987e.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-95e8f1ee6701987e.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:44Z",
+   "started_at_utc": "2026-11-07T21:51:41Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13487,9 +13418,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-c6fff7c5bce210fb",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-c6fff7c5bce210fb.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-c6fff7c5bce210fb.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:47Z",
+   "started_at_utc": "2026-11-07T21:51:42Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13504,9 +13435,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-a133600be8525631",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-a133600be8525631.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-a133600be8525631.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:51Z",
+   "started_at_utc": "2026-11-07T21:51:44Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13521,9 +13452,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-74e1af58525b8970",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-74e1af58525b8970.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-74e1af58525b8970.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:53Z",
+   "started_at_utc": "2026-11-07T21:51:45Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13538,9 +13469,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-3804b89abb4d3d1a",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-3804b89abb4d3d1a.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-3804b89abb4d3d1a.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:56Z",
+   "started_at_utc": "2026-11-07T21:51:46Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13555,9 +13486,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-cac739b33750b564",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-cac739b33750b564.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-cac739b33750b564.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:58:59Z",
+   "started_at_utc": "2026-11-07T21:51:48Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13572,9 +13503,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-fbc15b1b3fc67d33",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-fbc15b1b3fc67d33.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-fbc15b1b3fc67d33.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:59:03Z",
+   "started_at_utc": "2026-11-07T21:51:50Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13589,9 +13520,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-81c6db630c67d554",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-81c6db630c67d554.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-81c6db630c67d554.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:59:06Z",
+   "started_at_utc": "2026-11-07T21:51:51Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13606,9 +13537,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-5e81ba90d5fd6b05",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-5e81ba90d5fd6b05.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-5e81ba90d5fd6b05.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:59:09Z",
+   "started_at_utc": "2026-11-07T21:51:53Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13623,9 +13554,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-2311c46133b52a7c",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-2311c46133b52a7c.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-2311c46133b52a7c.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:59:12Z",
+   "started_at_utc": "2026-11-07T21:51:54Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13640,9 +13571,9 @@
    "exit_code": 0,
    "id": "v-shell-syntax-40f4b5b195125a28",
    "kind": "shell_syntax",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-syntax-40f4b5b195125a28.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-syntax-40f4b5b195125a28.txt",
    "scope": "shell_source_validation",
-   "started_at_utc": "2026-11-07T22:59:15Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "shell syntax/closure: not_measured"
   },
   {
@@ -13657,9 +13588,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-4dc2d7e6367d9e2f",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-4dc2d7e6367d9e2f.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-4dc2d7e6367d9e2f.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:17Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 31: dynamic load/substitution; line 61: multiline/opaque shell statement; line 62: wrapper options/child command unresolved; line 76: dynamic load/substitution; line 91: dynamic load/substitution"
   },
   {
@@ -13674,9 +13605,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-95a1861186b1ab5c",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-95a1861186b1ab5c.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-95a1861186b1ab5c.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:19Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 18: directory transition has unresolved execution cwd; line 21: multiline/opaque shell statement; line 24: multiline/opaque shell statement; line 32: dynamic load/substitution; line 34: multiline/opaque shell statement; line 41: dynamic command/alias/eval; line 56: multiline/opaque shell statement; line 58: multiline/opaque shell statement; line 69: multiline/opaque shell statement"
   },
   {
@@ -13691,9 +13622,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-8683459c2c8d4ced",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-8683459c2c8d4ced.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-8683459c2c8d4ced.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:21Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 27: directory transition has unresolved execution cwd; line 30: heredoc data/generation closure not measured"
   },
   {
@@ -13708,9 +13639,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-3b6079bcdb25a1ed",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-3b6079bcdb25a1ed.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-3b6079bcdb25a1ed.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:24Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 12: directory transition has unresolved execution cwd; line 33: dynamic load/substitution"
   },
   {
@@ -13725,9 +13656,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-6922b301d3f949a6",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-6922b301d3f949a6.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-6922b301d3f949a6.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:26Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: dynamic command/alias/eval; line 110: multiline/opaque shell statement; line 117: dynamic load/substitution; line 118: multiline/opaque shell statement; line 120: dynamic load/substitution; line 123: multiline/opaque shell statement; line 124: multiline/opaque shell statement; line 125: dynamic command/alias/eval; line 128: dynamic load/substitution; line 134: dynamic load/substitution; line 138: dynamic load/substitution; line 142: multiline/opaque shell statement; line 146: multiline/opaque shell statement; line 155: dynamic command/alias/eval; line 159: multiline/opaque shell statement; line 166: multiline/opaque shell statement; line 167: multiline/opaque shell statement; line 168: dynamic command/alias/eval; line 170: dynamic load/substitution; line 173: multiline/opaque shell statement; line 174: multiline/opaque shell statement; line 175: multiline/opaque shell statement; line 176: multiline/opaque shell statement; line 177: multiline/opaque shell statement; line 178: multiline/opaque shell statement; line 179: multiline/opaque shell statement; line 180: multiline/opaque shell statement; line 181: multiline/opaque shell statement; line 182: multiline/opaque shell statement; line 183: multiline/opaque shell statement; line 184: multiline/opaque shell statement; line 185: multiline/opaque shell statement; line 186: multiline/opaque shell statement; line 20: multiline/opaque shell statement; line 21: multiline/opaque shell statement; line 22: multiline/opaque shell statement; line 23: multiline/opaque shell statement; line 241: directory transition has unresolved execution cwd; line 242: dynamic load/substitution; line 245: multiline/opaque shell statement; line 246: multiline/opaque shell statement; line 247: multiline/opaque shell statement; line 248: wrapper options/child command unresolved; line 249: dynamic load/substitution; line 250: dynamic load/substitution; line 251: multiline/opaque shell statement; line 252: multiline/opaque shell statement; line 253: multiline/opaque shell statement; line 254: dynamic command/alias/eval; line 256: dynamic load/substitution; line 256: heredoc data/generation closure not measured; line 263: multiline/opaque shell statement; line 264: dynamic command/alias/eval; line 266: dynamic load/substitution; line 270: multiline/opaque shell statement; line 271: multiline/opaque shell statement; line 272: multiline/opaque shell statement; line 273: multiline/opaque shell statement; line 274: multiline/opaque shell statement; line 275: multiline/opaque shell statement; line 276: multiline/opaque shell statement; line 277: multiline/opaque shell statement; line 278: multiline/opaque shell statement; line 279: multiline/opaque shell statement; line 280: multiline/opaque shell statement; line 281: multiline/opaque shell statement; line 282: multiline/opaque shell statement; line 287: multiline/opaque shell statement; line 288: multiline/opaque shell statement; line 289: multiline/opaque shell statement; line 290: multiline/opaque shell statement; line 291: multiline/opaque shell statement; line 292: dynamic command/alias/eval; line 293: dynamic load/substitution; line 297: dynamic load/substitution; line 301: multiline/opaque shell statement; line 302: multiline/opaque shell statement; line 303: multiline/opaque shell statement; line 304: multiline/opaque shell statement; line 305: multiline/opaque shell statement; line 306: multiline/opaque shell statement; line 307: multiline/opaque shell statement; line 308: multiline/opaque shell statement; line 309: multiline/opaque shell statement; line 310: multiline/opaque shell statement; line 311: multiline/opaque shell statement; line 312: multiline/opaque shell statement; line 313: multiline/opaque shell statement; line 40: wrapper options/child command unresolved; line 41: wrapper options/child command unresolved; line 42: wrapper options/child command unresolved; line 43: wrapper options/child command unresolved; line 44: wrapper options/child command unresolved; line 45: wrapper options/child command unresolved; line 46: wrapper options/child command unresolved; line 47: wrapper options/child command unresolved; line 48: wrapper options/child command unresolved; line 61: dynamic command/alias/eval; line 63: dynamic command/alias/eval; line 64: dynamic load/substitution; line 70: dynamic load/substitution; line 72: dynamic load/substitution; line 81: dynamic command/alias/eval; line 85: multiline/opaque shell statement; line 86: multiline/opaque shell statement; line 87: multiline/opaque shell statement; line 88: multiline/opaque shell statement; line 89: multiline/opaque shell statement; line 90: multiline/opaque shell statement; line 91: dynamic command/alias/eval; line 96: multiline/opaque shell statement; line 97: multiline/opaque shell statement; line 98: multiline/opaque shell statement; line 99: multiline/opaque shell statement"
   },
   {
@@ -13742,9 +13673,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-4185bff290f5d6cf",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-4185bff290f5d6cf.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-4185bff290f5d6cf.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:28Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 105: wrapper options/child command unresolved; line 109: multiline/opaque shell statement; line 110: multiline/opaque shell statement; line 111: multiline/opaque shell statement; line 112: multiline/opaque shell statement; line 113: multiline/opaque shell statement; line 116: multiline/opaque shell statement; line 117: multiline/opaque shell statement; line 118: multiline/opaque shell statement; line 119: multiline/opaque shell statement; line 11: multiline/opaque shell statement; line 120: multiline/opaque shell statement; line 121: multiline/opaque shell statement; line 122: multiline/opaque shell statement; line 123: multiline/opaque shell statement; line 124: multiline/opaque shell statement; line 12: multiline/opaque shell statement; line 13: multiline/opaque shell statement; line 14: multiline/opaque shell statement; line 34: wrapper options/child command unresolved; line 35: wrapper options/child command unresolved; line 36: wrapper options/child command unresolved; line 37: wrapper options/child command unresolved; line 38: wrapper options/child command unresolved; line 39: wrapper options/child command unresolved; line 40: wrapper options/child command unresolved; line 41: wrapper options/child command unresolved; line 42: wrapper options/child command unresolved; line 43: wrapper options/child command unresolved; line 44: wrapper options/child command unresolved; line 45: wrapper options/child command unresolved; line 54: wrapper options/child command unresolved; line 55: wrapper options/child command unresolved; line 56: dynamic command/alias/eval; line 59: dynamic command/alias/eval; line 61: dynamic command/alias/eval; line 62: dynamic command/alias/eval; line 69: dynamic load/substitution; line 76: dynamic load/substitution; line 80: multiline/opaque shell statement"
   },
   {
@@ -13759,9 +13690,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-f507ef6f32d4d229",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-f507ef6f32d4d229.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-f507ef6f32d4d229.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:30Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 117: multiline/opaque shell statement; line 118: multiline/opaque shell statement; line 174: multiline/opaque shell statement; line 208: Bats skip may omit a required test; line 219: multiline/opaque shell statement; line 220: multiline/opaque shell statement; line 252: directory transition has unresolved execution cwd; line 253: wrapper options/child command unresolved; line 264: directory transition has unresolved execution cwd; line 265: wrapper options/child command unresolved; line 270: directory transition has unresolved execution cwd; line 271: wrapper options/child command unresolved; line 283: Bats skip may omit a required test; line 309: dynamic load/substitution; line 33: directory transition has unresolved execution cwd; line 341: dynamic load/substitution; line 345: Bats skip may omit a required test; line 345: dynamic load/substitution; line 34: directory transition has unresolved execution cwd; line 351: dynamic load/substitution; line 355: dynamic load/substitution; line 368: Bats skip may omit a required test; line 370: dynamic load/substitution; line 375: dynamic load/substitution; line 381: dynamic command/alias/eval; line 87: multiline/opaque shell statement; line 92: dynamic load/substitution"
   },
   {
@@ -13776,9 +13707,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-3e5353cb4d6a5ace",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-3e5353cb4d6a5ace.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-3e5353cb4d6a5ace.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:32Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 12: directory transition has unresolved execution cwd; line 18: directory transition has unresolved execution cwd; line 25: dynamic load/substitution; line 34: dynamic load/substitution; line 81: heredoc data/generation closure not measured; line 97: dynamic load/substitution"
   },
   {
@@ -13793,9 +13724,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-c42754c2e7cdbcd9",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-c42754c2e7cdbcd9.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-c42754c2e7cdbcd9.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:34Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; Bats run lacks an immediate unconditional child status assertion; line 10: directory transition has unresolved execution cwd; line 111: dynamic load/substitution; line 112: heredoc data/generation closure not measured; line 11: directory transition has unresolved execution cwd; line 124: dynamic load/substitution; line 129: dynamic load/substitution; line 141: dynamic load/substitution; line 142: multiline/opaque shell statement; line 143: multiline/opaque shell statement; line 144: dynamic load/substitution; line 14: dynamic load/substitution; line 155: dynamic load/substitution; line 15: multiline/opaque shell statement; line 16: wrapper options/child command unresolved; line 172: dynamic load/substitution; line 173: dynamic load/substitution; line 18: dynamic load/substitution; line 194: dynamic load/substitution; line 197: dynamic load/substitution; line 198: dynamic load/substitution; line 199: dynamic load/substitution; line 200: dynamic load/substitution; line 207: dynamic load/substitution; line 214: dynamic load/substitution; line 29: dynamic load/substitution; line 48: dynamic load/substitution; line 49: heredoc data/generation closure not measured; line 70: dynamic load/substitution; line 79: dynamic load/substitution; line 96: dynamic load/substitution"
   },
   {
@@ -13810,9 +13741,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-5091beecc0751d0f",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-5091beecc0751d0f.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-5091beecc0751d0f.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:36Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats run lacks an immediate unconditional child status assertion; line 10: directory transition has unresolved execution cwd; line 14: heredoc data/generation closure not measured; line 18: heredoc data/generation closure not measured; line 31: dynamic command/alias/eval; line 38: dynamic command/alias/eval; line 42: dynamic command/alias/eval; line 48: dynamic command/alias/eval; line 55: dynamic command/alias/eval; line 62: dynamic command/alias/eval; line 69: dynamic command/alias/eval; line 74: dynamic command/alias/eval"
   },
   {
@@ -13827,9 +13758,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-0877b047ae4e9b4a",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-0877b047ae4e9b4a.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-0877b047ae4e9b4a.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:38Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 11: directory transition has unresolved execution cwd; line 27: multiline/opaque shell statement; line 29: dynamic load/substitution; line 42: dynamic command/alias/eval; line 79: multiline/opaque shell statement; line 80: dynamic command/alias/eval"
   },
   {
@@ -13844,9 +13775,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-98c7f73229ac189d",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-98c7f73229ac189d.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-98c7f73229ac189d.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:40Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats run lacks an immediate unconditional child status assertion; line 101: dynamic command/alias/eval; line 108: dynamic command/alias/eval; line 115: dynamic command/alias/eval; line 121: dynamic command/alias/eval; line 129: multiline/opaque shell statement; line 130: dynamic command/alias/eval; line 15: directory transition has unresolved execution cwd; line 27: heredoc data/generation closure not measured; line 51: dynamic command/alias/eval; line 60: dynamic command/alias/eval; line 69: dynamic command/alias/eval; line 77: dynamic command/alias/eval; line 85: dynamic command/alias/eval; line 93: dynamic command/alias/eval"
   },
   {
@@ -13861,9 +13792,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-3df29c8998c12928",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-3df29c8998c12928.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-3df29c8998c12928.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:42Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: dynamic load/substitution; line 110: dynamic command/alias/eval; line 14: directory transition has unresolved execution cwd; line 47: dynamic load/substitution; line 49: dynamic command/alias/eval; line 51: dynamic load/substitution; line 58: dynamic load/substitution; line 60: multiline/opaque shell statement; line 61: multiline/opaque shell statement; line 63: dynamic load/substitution; line 65: dynamic command/alias/eval; line 67: dynamic load/substitution; line 68: dynamic load/substitution; line 73: multiline/opaque shell statement; line 74: multiline/opaque shell statement; line 76: dynamic load/substitution; line 81: dynamic command/alias/eval; line 83: dynamic load/substitution; line 96: dynamic load/substitution; line 98: dynamic command/alias/eval"
   },
   {
@@ -13878,9 +13809,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-09da96d97a06231d",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-09da96d97a06231d.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-09da96d97a06231d.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:43Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 104: multiline/opaque shell statement; line 114: dynamic command/alias/eval; line 118: multiline/opaque shell statement; line 128: dynamic command/alias/eval; line 138: dynamic load/substitution; line 139: dynamic load/substitution; line 141: multiline/opaque shell statement; line 152: multiline/opaque shell statement; line 153: multiline/opaque shell statement; line 154: multiline/opaque shell statement; line 155: wrapper options/child command unresolved; line 156: multiline/opaque shell statement; line 157: multiline/opaque shell statement; line 158: wrapper options/child command unresolved; line 17: multiline/opaque shell statement; line 184: dynamic load/substitution; line 185: dynamic load/substitution; line 200: multiline/opaque shell statement; line 201: multiline/opaque shell statement; line 202: multiline/opaque shell statement; line 203: multiline/opaque shell statement; line 204: multiline/opaque shell statement; line 205: multiline/opaque shell statement; line 206: multiline/opaque shell statement; line 207: multiline/opaque shell statement; line 22: multiline/opaque shell statement; line 231: multiline/opaque shell statement; line 232: dynamic command/alias/eval; line 254: multiline/opaque shell statement; line 255: dynamic command/alias/eval; line 266: multiline/opaque shell statement; line 267: dynamic command/alias/eval; line 3: directory transition has unresolved execution cwd; line 44: multiline/opaque shell statement; line 49: multiline/opaque shell statement; line 58: heredoc data/generation closure not measured; line 65: heredoc data/generation closure not measured"
   },
   {
@@ -13895,9 +13826,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-95e8f1ee6701987e",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-95e8f1ee6701987e.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-95e8f1ee6701987e.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:46Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: multiline/opaque shell statement; line 101: multiline/opaque shell statement; line 102: multiline/opaque shell statement; line 103: multiline/opaque shell statement; line 104: multiline/opaque shell statement; line 105: wrapper options/child command unresolved; line 117: multiline/opaque shell statement; line 128: dynamic load/substitution; line 129: multiline/opaque shell statement; line 130: dynamic command/alias/eval; line 147: multiline/opaque shell statement; line 156: multiline/opaque shell statement; line 157: dynamic command/alias/eval; line 15: multiline/opaque shell statement; line 195: multiline/opaque shell statement; line 196: dynamic command/alias/eval; line 3: directory transition has unresolved execution cwd; line 80: dynamic load/substitution; line 81: dynamic load/substitution; line 82: multiline/opaque shell statement; line 83: multiline/opaque shell statement; line 84: multiline/opaque shell statement; line 85: dynamic command/alias/eval; line 86: multiline/opaque shell statement; line 87: multiline/opaque shell statement; line 88: dynamic command/alias/eval; line 93: multiline/opaque shell statement; line 94: multiline/opaque shell statement; line 95: multiline/opaque shell statement; line 96: multiline/opaque shell statement; line 97: multiline/opaque shell statement; line 98: multiline/opaque shell statement; line 99: multiline/opaque shell statement"
   },
   {
@@ -13912,9 +13843,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-c6fff7c5bce210fb",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-c6fff7c5bce210fb.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-c6fff7c5bce210fb.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:48Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 3: directory transition has unresolved execution cwd; line 8: dynamic load/substitution; line 9: dynamic load/substitution"
   },
   {
@@ -13929,9 +13860,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-a133600be8525631",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-a133600be8525631.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-a133600be8525631.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:50Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 3: directory transition has unresolved execution cwd; line 48: heredoc data/generation closure not measured"
   },
   {
@@ -13946,9 +13877,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-74e1af58525b8970",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-74e1af58525b8970.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-74e1af58525b8970.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:52Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 10: multiline/opaque shell statement; line 11: multiline/opaque shell statement; line 12: multiline/opaque shell statement; line 13: multiline/opaque shell statement; line 14: multiline/opaque shell statement; line 15: multiline/opaque shell statement; line 16: multiline/opaque shell statement; line 17: multiline/opaque shell statement; line 3: directory transition has unresolved execution cwd; line 9: multiline/opaque shell statement"
   },
   {
@@ -13963,9 +13894,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-3804b89abb4d3d1a",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-3804b89abb4d3d1a.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-3804b89abb4d3d1a.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:54Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 3: directory transition has unresolved execution cwd; line 49: dynamic load/substitution; line 50: dynamic load/substitution; line 55: dynamic load/substitution"
   },
   {
@@ -13980,9 +13911,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-cac739b33750b564",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-cac739b33750b564.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-cac739b33750b564.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:56Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: Bats conditional execution membership is not statically resolved; line 25: multiline/opaque shell statement; line 26: multiline/opaque shell statement; line 27: multiline/opaque shell statement; line 28: multiline/opaque shell statement; line 29: multiline/opaque shell statement; line 30: multiline/opaque shell statement; line 3: directory transition has unresolved execution cwd; line 45: multiline/opaque shell statement; line 46: multiline/opaque shell statement; line 47: multiline/opaque shell statement; line 48: multiline/opaque shell statement; line 68: dynamic load/substitution; line 69: dynamic load/substitution; line 70: dynamic load/substitution; line 76: dynamic load/substitution"
   },
   {
@@ -13997,9 +13928,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-fbc15b1b3fc67d33",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-fbc15b1b3fc67d33.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-fbc15b1b3fc67d33.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T22:59:58Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: dynamic load/substitution; line 104: dynamic load/substitution; line 108: dynamic load/substitution; line 123: dynamic load/substitution; line 135: multiline/opaque shell statement; line 136: multiline/opaque shell statement; line 137: dynamic load/substitution; line 155: multiline/opaque shell statement; line 158: dynamic command/alias/eval; line 163: dynamic load/substitution; line 164: multiline/opaque shell statement; line 180: dynamic load/substitution; line 181: dynamic load/substitution; line 196: dynamic load/substitution; line 199: dynamic load/substitution; line 200: dynamic load/substitution; line 206: dynamic load/substitution; line 218: multiline/opaque shell statement; line 221: dynamic command/alias/eval; line 227: dynamic load/substitution; line 228: multiline/opaque shell statement; line 238: dynamic load/substitution; line 23: dynamic load/substitution; line 245: multiline/opaque shell statement; line 248: dynamic command/alias/eval; line 267: dynamic load/substitution; line 274: multiline/opaque shell statement; line 278: dynamic load/substitution; line 291: multiline/opaque shell statement; line 293: multiline/opaque shell statement; line 296: dynamic command/alias/eval; line 301: dynamic load/substitution; line 310: dynamic load/substitution; line 311: multiline/opaque shell statement; line 315: dynamic load/substitution; line 322: dynamic load/substitution; line 334: unsupported loader/interpreter options; line 338: dynamic load/substitution; line 339: dynamic load/substitution; line 340: dynamic load/substitution; line 348: dynamic load/substitution; line 365: dynamic load/substitution; line 366: dynamic load/substitution; line 367: dynamic load/substitution; line 377: dynamic load/substitution; line 378: dynamic load/substitution; line 379: dynamic load/substitution; line 384: dynamic load/substitution; line 385: dynamic load/substitution; line 388: dynamic load/substitution; line 390: dynamic load/substitution; line 392: dynamic load/substitution; line 393: dynamic load/substitution; line 402: dynamic load/substitution; line 403: multiline/opaque shell statement; line 424: dynamic load/substitution; line 42: dynamic load/substitution; line 430: multiline/opaque shell statement; line 433: dynamic load/substitution; line 434: dynamic load/substitution; line 452: dynamic load/substitution; line 456: dynamic load/substitution; line 469: multiline/opaque shell statement; line 470: dynamic load/substitution; line 475: dynamic load/substitution; line 477: dynamic load/substitution; line 479: multiline/opaque shell statement; line 480: dynamic command/alias/eval; line 491: dynamic load/substitution; line 492: dynamic load/substitution; line 493: dynamic load/substitution; line 495: dynamic load/substitution; line 496: dynamic load/substitution; line 49: dynamic load/substitution; line 503: wrapper execution scope/options unresolved; line 50: dynamic load/substitution; line 513: dynamic load/substitution; line 515: dynamic load/substitution; line 516: dynamic load/substitution; line 51: dynamic load/substitution; line 521: dynamic load/substitution; line 522: dynamic load/substitution; line 524: dynamic load/substitution; line 532: dynamic load/substitution; line 537: dynamic load/substitution; line 538: dynamic load/substitution; line 547: dynamic load/substitution; line 552: dynamic load/substitution; line 553: multiline/opaque shell statement; line 555: dynamic load/substitution; line 562: dynamic load/substitution; line 563: multiline/opaque shell statement; line 570: dynamic load/substitution; line 571: multiline/opaque shell statement; line 573: dynamic load/substitution; line 576: dynamic load/substitution; line 577: dynamic load/substitution; line 578: dynamic load/substitution; line 582: dynamic load/substitution; line 584: dynamic load/substitution; line 585: dynamic load/substitution; line 587: multiline/opaque shell statement; line 591: dynamic command/alias/eval; line 592: wrapper options/child command unresolved; line 593: wrapper options/child command unresolved; line 594: wrapper options/child command unresolved; line 595: wrapper options/child command unresolved; line 599: multiline/opaque shell statement; line 59: dynamic load/substitution; line 609: dynamic load/substitution; line 60: dynamic load/substitution; line 615: dynamic load/substitution; line 617: dynamic load/substitution; line 619: dynamic load/substitution; line 61: dynamic load/substitution; line 621: dynamic load/substitution; line 622: dynamic load/substitution; line 624: multiline/opaque shell statement; line 627: dynamic load/substitution; line 629: dynamic load/substitution; line 630: dynamic load/substitution; line 631: dynamic load/substitution; line 632: dynamic load/substitution; line 636: dynamic command/alias/eval; line 637: wrapper options/child command unresolved; line 638: wrapper options/child command unresolved; line 639: wrapper options/child command unresolved; line 640: wrapper options/child command unresolved; line 641: wrapper options/child command unresolved; line 644: multiline/opaque shell statement; line 646: multiline/opaque shell statement; line 653: dynamic load/substitution; line 663: dynamic load/substitution; line 686: directory transition has unresolved execution cwd; line 687: dynamic load/substitution; line 688: dynamic load/substitution; line 696: dynamic load/substitution; line 697: dynamic load/substitution; line 704: dynamic load/substitution; line 706: multiline/opaque shell statement; line 708: multiline/opaque shell statement; line 717: dynamic load/substitution; line 720: dynamic load/substitution; line 736: multiline/opaque shell statement; line 737: dynamic command/alias/eval; line 742: dynamic load/substitution; line 745: dynamic load/substitution; line 753: dynamic load/substitution; line 754: dynamic load/substitution; line 756: dynamic load/substitution; line 769: multiline/opaque shell statement; line 770: dynamic command/alias/eval; line 772: multiline/opaque shell statement; line 774: multiline/opaque shell statement; line 776: multiline/opaque shell statement; line 777: dynamic command/alias/eval; line 789: dynamic load/substitution; line 790: dynamic load/substitution; line 791: dynamic load/substitution; line 792: dynamic load/substitution; line 793: dynamic load/substitution; line 796: multiline/opaque shell statement; line 797: dynamic command/alias/eval; line 807: dynamic load/substitution; line 814: dynamic load/substitution; line 821: dynamic load/substitution; line 824: multiline/opaque shell statement; line 830: multiline/opaque shell statement; line 832: dynamic load/substitution; line 834: multiline/opaque shell statement; line 857: dynamic load/substitution; line 863: dynamic load/substitution; line 864: multiline/opaque shell statement; line 865: multiline/opaque shell statement; line 866: multiline/opaque shell statement; line 867: dynamic command/alias/eval; line 874: dynamic load/substitution; line 885: dynamic load/substitution; line 889: dynamic load/substitution; line 904: dynamic load/substitution; line 905: dynamic load/substitution; line 93: multiline/opaque shell statement"
   },
   {
@@ -14014,9 +13945,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-81c6db630c67d554",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-81c6db630c67d554.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-81c6db630c67d554.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T23:00:00Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 10: dynamic load/substitution; line 136: dynamic load/substitution; line 143: dynamic load/substitution; line 144: dynamic load/substitution; line 146: dynamic load/substitution; line 14: dynamic load/substitution; line 159: dynamic load/substitution; line 173: dynamic load/substitution; line 180: dynamic load/substitution; line 18: dynamic load/substitution; line 190: multiline/opaque shell statement; line 191: multiline/opaque shell statement; line 192: dynamic load/substitution; line 197: dynamic load/substitution; line 203: multiline/opaque shell statement; line 204: multiline/opaque shell statement; line 205: multiline/opaque shell statement; line 206: multiline/opaque shell statement; line 207: dynamic load/substitution; line 213: dynamic load/substitution; line 224: dynamic load/substitution; line 228: multiline/opaque shell statement; line 229: multiline/opaque shell statement; line 230: dynamic load/substitution; line 234: dynamic load/substitution; line 237: dynamic load/substitution; line 240: dynamic command/alias/eval; line 247: dynamic load/substitution; line 250: dynamic load/substitution; line 25: dynamic load/substitution; line 261: dynamic load/substitution; line 275: dynamic load/substitution; line 57: dynamic load/substitution; line 64: multiline/opaque shell statement; line 65: dynamic load/substitution; line 77: multiline/opaque shell statement; line 78: dynamic load/substitution; line 7: directory transition has unresolved execution cwd; line 97: dynamic load/substitution"
   },
   {
@@ -14031,9 +13962,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-5e81ba90d5fd6b05",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-5e81ba90d5fd6b05.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-5e81ba90d5fd6b05.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T23:00:02Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 13: dynamic load/substitution; line 18: wrapper execution scope/options unresolved; line 20: directory transition has unresolved execution cwd; line 22: dynamic load/substitution; line 33: wrapper execution scope/options unresolved; line 34: multiline/opaque shell statement; line 58: multiline/opaque shell statement; line 59: multiline/opaque shell statement; line 60: multiline/opaque shell statement; line 61: multiline/opaque shell statement; line 62: dynamic command/alias/eval; line 63: wrapper execution scope/options unresolved; line 65: dynamic load/substitution; line 69: wrapper execution scope/options unresolved; line 71: multiline/opaque shell statement; line 72: multiline/opaque shell statement; line 73: multiline/opaque shell statement; line 74: multiline/opaque shell statement; line 75: wrapper options/child command unresolved"
   },
   {
@@ -14048,9 +13979,9 @@
    "exit_code": 0,
    "id": "v-shell-behavior-2311c46133b52a7c",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-2311c46133b52a7c.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-2311c46133b52a7c.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T23:00:04Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 113: dynamic load/substitution; line 125: dynamic load/substitution; line 12: dynamic load/substitution; line 153: dynamic load/substitution; line 154: dynamic load/substitution; line 165: wrapper execution scope/options unresolved; line 170: dynamic load/substitution; line 171: dynamic load/substitution; line 172: dynamic load/substitution; line 173: dynamic load/substitution; line 174: dynamic load/substitution; line 175: dynamic load/substitution; line 177: multiline/opaque shell statement; line 17: wrapper execution scope/options unresolved; line 180: dynamic load/substitution; line 181: dynamic load/substitution; line 182: dynamic load/substitution; line 183: dynamic load/substitution; line 184: dynamic load/substitution; line 189: dynamic load/substitution; line 193: dynamic load/substitution; line 195: dynamic load/substitution; line 19: directory transition has unresolved execution cwd; line 201: heredoc data/generation closure not measured; line 233: wrapper execution scope/options unresolved; line 238: dynamic load/substitution; line 23: dynamic load/substitution; line 240: dynamic load/substitution; line 241: wrapper execution scope/options unresolved; line 31: wrapper execution scope/options unresolved; line 52: dynamic load/substitution; line 53: wrapper execution scope/options unresolved; line 55: dynamic load/substitution; line 56: dynamic load/substitution; line 57: dynamic load/substitution; line 58: multiline/opaque shell statement; line 59: dynamic command/alias/eval; line 66: wrapper options/child command unresolved; line 69: wrapper execution scope/options unresolved; line 70: dynamic load/substitution; line 71: dynamic load/substitution; line 72: dynamic command/alias/eval; line 86: dynamic command/alias/eval; line 87: dynamic load/substitution; line 88: dynamic command/alias/eval; line 89: multiline/opaque shell statement; line 90: wrapper options/child command unresolved"
   },
   {
@@ -14065,14 +13996,14 @@
    "exit_code": 0,
    "id": "v-shell-behavior-40f4b5b195125a28",
    "kind": "shell_behavior",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-shell-behavior-40f4b5b195125a28.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-shell-behavior-40f4b5b195125a28.txt",
    "scope": "shell_fixture_behavior",
-   "started_at_utc": "2026-11-07T23:00:06Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "SHELL_DYNAMIC_CLOSURE_NOT_MEASURED: line 100: wrapper options/child command unresolved; line 102: multiline/opaque shell statement; line 103: wrapper options/child command unresolved; line 110: multiline/opaque shell statement; line 111: wrapper options/child command unresolved; line 125: multiline/opaque shell statement; line 127: dynamic command/alias/eval; line 128: multiline/opaque shell statement; line 130: dynamic command/alias/eval; line 134: multiline/opaque shell statement; line 135: multiline/opaque shell statement; line 136: multiline/opaque shell statement; line 137: multiline/opaque shell statement; line 138: multiline/opaque shell statement; line 139: dynamic command/alias/eval; line 142: dynamic load/substitution; line 14: dynamic load/substitution; line 161: dynamic command/alias/eval; line 166: multiline/opaque shell statement; line 167: multiline/opaque shell statement; line 172: dynamic command/alias/eval; line 174: dynamic load/substitution; line 176: dynamic command/alias/eval; line 179: dynamic command/alias/eval; line 182: dynamic load/substitution; line 191: heredoc data/generation closure not measured; line 19: directory transition has unresolved execution cwd; line 219: dynamic load/substitution; line 21: dynamic load/substitution; line 223: dynamic load/substitution; line 230: multiline/opaque shell statement; line 231: multiline/opaque shell statement; line 232: multiline/opaque shell statement; line 233: dynamic command/alias/eval; line 234: multiline/opaque shell statement; line 235: dynamic command/alias/eval; line 236: multiline/opaque shell statement; line 237: dynamic command/alias/eval; line 238: multiline/opaque shell statement; line 239: multiline/opaque shell statement; line 240: wrapper options/child command unresolved; line 243: multiline/opaque shell statement; line 245: multiline/opaque shell statement; line 250: heredoc data/generation closure not measured; line 268: multiline/opaque shell statement; line 269: dynamic command/alias/eval; line 274: multiline/opaque shell statement; line 275: multiline/opaque shell statement; line 287: dynamic load/substitution; line 54: wrapper options/child command unresolved; line 83: multiline/opaque shell statement; line 84: multiline/opaque shell statement; line 85: wrapper options/child command unresolved; line 86: multiline/opaque shell statement; line 87: wrapper options/child command unresolved; line 88: multiline/opaque shell statement; line 89: wrapper options/child command unresolved; line 90: multiline/opaque shell statement; line 91: wrapper options/child command unresolved; line 92: multiline/opaque shell statement; line 93: wrapper options/child command unresolved; line 99: multiline/opaque shell statement"
   },
   {
-   "command": "env PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin bash /home/dev/aup/claude-work/arasga02/root-suite.sh",
-   "duration_s": 0.96,
+   "command": "",
+   "duration_s": 0.0,
    "entities": [
     "code_unit:.github/graph-admission/tools/ci/stage_userpath.py",
     "code_unit:.github/graph-admission/tools/graph/admit_change.py",
@@ -14167,110 +14098,110 @@
     "code_unit:packaging/tests/macos-live-xpc-sandbox.sh"
    ],
    "entity_verdicts": {
-    "code_unit:.github/graph-admission/tools/ci/stage_userpath.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/admit_change.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/build_graph.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/canary_evidence.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/ci_gate.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/ci_selection.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/contract_diff.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/fixture_contracts.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/full_suite_ci.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/impact.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/impact_pair.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/inline_nest_harness.cjs": "failed",
-    "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs": "failed",
-    "code_unit:.github/graph-admission/tools/graph/metadata_contract_proof.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/native_projection.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/nest_bootstrap.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/nest_fixture_scope.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/origin_association.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/process_observation.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/python_search_path.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/readiness_check.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/schema_check.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/selected_dependency.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/selected_dependency_fitness.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/selected_dependency_replay.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/selected_dependency_runner.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/shell_source.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/shell_workflow.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/source_input_contract.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/sshsig.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/test_source_input_contract.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/verify.py": "failed",
-    "code_unit:.github/graph-admission/tools/graph/workflow_config.py": "failed",
-    "code_unit:.github/workflows/ci.yml": "failed",
-    "code_unit:.github/workflows/graph-admission-call.yml": "failed",
-    "code_unit:.github/workflows/graph-admission.yml": "failed",
-    "code_unit:.github/workflows/release.yml": "failed",
-    "code_unit:dev-tools/aup-transition/cutover/__init__.py": "failed",
-    "code_unit:dev-tools/aup-transition/cutover/backends.py": "failed",
-    "code_unit:dev-tools/aup-transition/cutover/coordinator.py": "failed",
-    "code_unit:dev-tools/aup-transition/cutover/drill.py": "failed",
-    "code_unit:dev-tools/aup-transition/cutover/gate_oracle.py": "failed",
-    "code_unit:dev-tools/aup-transition/cutover/gates.py": "failed",
-    "code_unit:dev-tools/aup-transition/data_gate/consume_data_gate.py": "failed",
-    "code_unit:dev-tools/aup-transition/fault_drill/__init__.py": "failed",
-    "code_unit:dev-tools/aup-transition/fault_drill/coordinator.py": "failed",
-    "code_unit:dev-tools/aup-transition/fault_drill/fault_drill.py": "failed",
-    "code_unit:dev-tools/aup-transition/fault_drill/oracle.py": "failed",
-    "code_unit:dev-tools/aup-transition/fault_drill/scenarios.py": "failed",
-    "code_unit:dev-tools/aup-transition/fault_drill/world.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/__init__.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/backend.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/core.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/fixtures.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/oracle.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/package.py": "failed",
-    "code_unit:dev-tools/aup-transition/rebuild/rebuild.py": "failed",
-    "code_unit:dev-tools/check-binary-name.sh": "failed",
-    "code_unit:dev-tools/check-env-declared.py": "failed",
-    "code_unit:dev-tools/check-internal-versions.sh": "failed",
-    "code_unit:dev-tools/check-workflow-triggers.sh": "failed",
-    "code_unit:dev-tools/prose-review/review.py": "failed",
-    "code_unit:dev-tools/release-bump-anchor.sh": "failed",
-    "code_unit:dev-tools/sec0030-governance-witness-capture.sh": "failed",
-    "code_unit:dev-tools/sec0030-governance-witness-verify.sh": "failed",
-    "code_unit:dev-tools/sec0030-ssh-sign-from-fd.py": "failed",
-    "code_unit:dev-tools/smoke/arcana-smoke.sh": "failed",
-    "code_unit:dev-tools/smoke/fixtures/mc-error.json": "failed",
-    "code_unit:dev-tools/smoke/fixtures/mc-success.json": "failed",
-    "code_unit:dev-tools/smoke/mc_replay_server.py": "failed",
-    "code_unit:dev-tools/tests/arcana-smoke.bats": "failed",
-    "code_unit:dev-tools/tests/check-binary-name.bats": "failed",
-    "code_unit:dev-tools/tests/check-env-declared.bats": "failed",
-    "code_unit:dev-tools/tests/check-internal-versions.bats": "failed",
-    "code_unit:dev-tools/tests/check-workflow-triggers.bats": "failed",
-    "code_unit:dev-tools/tests/release-bump-anchor.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-governance-witness-capture.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-governance-witness.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-lifecycle-disable-contract.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-linux-attestation-contract.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-linux-containment-contract.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-macos-native-contract.bats": "failed",
-    "code_unit:dev-tools/tests/sec0030-release-governance.bats": "failed",
-    "code_unit:packaging/broker-lifecycle.sh": "failed",
-    "code_unit:packaging/macos/one.arcanada.credential-broker.plist": "failed",
-    "code_unit:packaging/tests/fixtures/linux-hostile-descendant.py": "failed",
-    "code_unit:packaging/tests/fixtures/linux-seqpacket-attestation.py": "failed",
-    "code_unit:packaging/tests/lifecycle-rehearsal.sh": "failed",
-    "code_unit:packaging/tests/linux-live-attestation.sh": "failed",
-    "code_unit:packaging/tests/linux-live-containment.sh": "failed",
-    "code_unit:packaging/tests/macos-live-xpc-sandbox.sh": "failed"
+    "code_unit:.github/graph-admission/tools/ci/stage_userpath.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/admit_change.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/build_graph.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/canary_evidence.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/ci_gate.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/ci_selection.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/contract_diff.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/fixture_contracts.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/full_suite_ci.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/impact.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/impact_pair.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/inline_nest_harness.cjs": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/metadata_contract_observer.cjs": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/metadata_contract_proof.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/native_projection.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/nest_bootstrap.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/nest_fixture_scope.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/origin_association.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/process_observation.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/python_search_path.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/readiness_check.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/schema_check.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/selected_dependency.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/selected_dependency_fitness.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/selected_dependency_replay.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/selected_dependency_runner.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/shell_source.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/shell_workflow.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/source_input_contract.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/sshsig.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/test_source_input_contract.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/verify.py": "not_measured",
+    "code_unit:.github/graph-admission/tools/graph/workflow_config.py": "not_measured",
+    "code_unit:.github/workflows/ci.yml": "not_measured",
+    "code_unit:.github/workflows/graph-admission-call.yml": "not_measured",
+    "code_unit:.github/workflows/graph-admission.yml": "not_measured",
+    "code_unit:.github/workflows/release.yml": "not_measured",
+    "code_unit:dev-tools/aup-transition/cutover/__init__.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/cutover/backends.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/cutover/coordinator.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/cutover/drill.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/cutover/gate_oracle.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/cutover/gates.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/data_gate/consume_data_gate.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/fault_drill/__init__.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/fault_drill/coordinator.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/fault_drill/fault_drill.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/fault_drill/oracle.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/fault_drill/scenarios.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/fault_drill/world.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/__init__.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/backend.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/core.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/fixtures.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/oracle.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/package.py": "not_measured",
+    "code_unit:dev-tools/aup-transition/rebuild/rebuild.py": "not_measured",
+    "code_unit:dev-tools/check-binary-name.sh": "not_measured",
+    "code_unit:dev-tools/check-env-declared.py": "not_measured",
+    "code_unit:dev-tools/check-internal-versions.sh": "not_measured",
+    "code_unit:dev-tools/check-workflow-triggers.sh": "not_measured",
+    "code_unit:dev-tools/prose-review/review.py": "not_measured",
+    "code_unit:dev-tools/release-bump-anchor.sh": "not_measured",
+    "code_unit:dev-tools/sec0030-governance-witness-capture.sh": "not_measured",
+    "code_unit:dev-tools/sec0030-governance-witness-verify.sh": "not_measured",
+    "code_unit:dev-tools/sec0030-ssh-sign-from-fd.py": "not_measured",
+    "code_unit:dev-tools/smoke/arcana-smoke.sh": "not_measured",
+    "code_unit:dev-tools/smoke/fixtures/mc-error.json": "not_measured",
+    "code_unit:dev-tools/smoke/fixtures/mc-success.json": "not_measured",
+    "code_unit:dev-tools/smoke/mc_replay_server.py": "not_measured",
+    "code_unit:dev-tools/tests/arcana-smoke.bats": "not_measured",
+    "code_unit:dev-tools/tests/check-binary-name.bats": "not_measured",
+    "code_unit:dev-tools/tests/check-env-declared.bats": "not_measured",
+    "code_unit:dev-tools/tests/check-internal-versions.bats": "not_measured",
+    "code_unit:dev-tools/tests/check-workflow-triggers.bats": "not_measured",
+    "code_unit:dev-tools/tests/release-bump-anchor.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-governance-witness-capture.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-governance-witness.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-lifecycle-disable-contract.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-linux-attestation-contract.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-linux-containment-contract.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-macos-native-contract.bats": "not_measured",
+    "code_unit:dev-tools/tests/sec0030-release-governance.bats": "not_measured",
+    "code_unit:packaging/broker-lifecycle.sh": "not_measured",
+    "code_unit:packaging/macos/one.arcanada.credential-broker.plist": "not_measured",
+    "code_unit:packaging/tests/fixtures/linux-hostile-descendant.py": "not_measured",
+    "code_unit:packaging/tests/fixtures/linux-seqpacket-attestation.py": "not_measured",
+    "code_unit:packaging/tests/lifecycle-rehearsal.sh": "not_measured",
+    "code_unit:packaging/tests/linux-live-attestation.sh": "not_measured",
+    "code_unit:packaging/tests/linux-live-containment.sh": "not_measured",
+    "code_unit:packaging/tests/macos-live-xpc-sandbox.sh": "not_measured"
    },
-   "exit_code": 1,
+   "exit_code": 127,
    "id": "v-global-fallback-test-root",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-root.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-root.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:00:06Z",
-   "summary": "complete fallback suite: failed",
-   "timeout_seconds": 7200
+   "started_at_utc": "2026-11-07T21:51:56Z",
+   "summary": "complete fallback suite: not_measured",
+   "timeout_seconds": 900
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 43.31,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 63.3,
    "entities": [
     "deployable_unit:crates/cli"
    ],
@@ -14280,15 +14211,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-cli",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-cli.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-cli.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:00:07Z",
+   "started_at_utc": "2026-11-07T21:51:56Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 8.76,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 33.17,
    "entities": [
     "deployable_unit:crates/connectors"
    ],
@@ -14298,15 +14229,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-connectors",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-connectors.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-connectors.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:00:51Z",
+   "started_at_utc": "2026-11-07T21:52:59Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 13.16,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 43.07,
    "entities": [
     "deployable_unit:crates/core"
    ],
@@ -14316,15 +14247,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-core",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-core.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-core.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:00:59Z",
+   "started_at_utc": "2026-11-07T21:53:32Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 0.78,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 13.65,
    "entities": [
     "deployable_unit:crates/credential-broker"
    ],
@@ -14334,15 +14265,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-credential-broker",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-credential-broker.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-credential-broker.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:01:13Z",
+   "started_at_utc": "2026-11-07T21:54:16Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 9.89,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 12.72,
    "entities": [
     "deployable_unit:crates/execution-boundary"
    ],
@@ -14352,15 +14283,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-execution-boundary",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-execution-boundary.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-execution-boundary.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:01:13Z",
+   "started_at_utc": "2026-11-07T21:54:29Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 0.82,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 25.07,
    "entities": [
     "deployable_unit:crates/mcp"
    ],
@@ -14370,15 +14301,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-mcp",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-mcp.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-mcp.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:01:23Z",
+   "started_at_utc": "2026-11-07T21:54:42Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 1.55,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 20.88,
    "entities": [
     "deployable_unit:crates/skills"
    ],
@@ -14388,15 +14319,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-skills",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-skills.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-skills.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:01:24Z",
+   "started_at_utc": "2026-11-07T21:55:07Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 2.89,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 13.68,
    "entities": [
     "deployable_unit:crates/supervisor"
    ],
@@ -14406,15 +14337,15 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-supervisor",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-supervisor.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-supervisor.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:01:26Z",
+   "started_at_utc": "2026-11-07T21:55:28Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   },
   {
-   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga02/tgt PATH=/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
-   "duration_s": 2.92,
+   "command": "env CARGO_TARGET_DIR=/home/dev/aup/claude-work/arasga01/tgt275 PATH=/home/dev/.cargo/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/home/dev/.config/orca/cli/bin:/home/dev/.local/bin:/home/dev/bin:/home/dev/.npm-global/bin:/home/dev/.cargo/bin:/opt/orca/v1.4.232/squashfs-root:/opt/orca/v1.4.232/squashfs-root/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/dev/aup/bin:/home/dev/aup/bin cargo test --locked -j 4",
+   "duration_s": 30.32,
    "entities": [
     "deployable_unit:crates/tools"
    ],
@@ -14424,9 +14355,9 @@
    "exit_code": 0,
    "id": "v-global-fallback-test-crates-tools",
    "kind": "targeted_test",
-   "output_ref": "/home/dev/aup/claude-work/arasga02/vout/v-global-fallback-test-crates-tools.txt",
+   "output_ref": "/home/dev/aup/claude-work/arasga01/w273/vout/v-global-fallback-test-crates-tools.txt",
    "scope": "global_fallback_full_suite",
-   "started_at_utc": "2026-11-07T23:01:29Z",
+   "started_at_utc": "2026-11-07T21:55:42Z",
    "summary": "complete fallback suite: verified",
    "timeout_seconds": 7200
   }
@@ -14434,15 +14365,9 @@
  "verify": {
   "events": [
    {
-    "code": "SUPERSEDED_SELF_EXCLUSION",
-    "entity": "receipt:receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json",
-    "rule": "DEC-AUP-0035",
-    "text": "the receipt at receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json is the previous version of the one this run is writing, for the same work item KCLIVE-11 — superseded by construction, so it owes this change no verdict"
-   },
-   {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "9 affected entity(ies) owe no verdict (receipt: 9): unchanged at both revisions and given no verifier by the matrix"
+    "text": "8 affected entity(ies) owe no verdict (receipt: 8): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -15147,7 +15072,6 @@
    ],
    "receipt:receipts/graph/change-admission-ARAS-RDY-01.json": [],
    "receipt:receipts/graph/change-admission-ARAS252-634.json": [],
-   "receipt:receipts/graph/change-admission-KCLIVE-11-canonical-policy-binding-pr273.json": [],
    "receipt:receipts/graph/change-admission-a2-297b-20260925T014220Z.json": [],
    "receipt:receipts/graph/change-admission-a2-297c.json": [],
    "receipt:receipts/graph/change-admission-a2-361.json": [],
@@ -15156,9 +15080,9 @@
    "receipt:receipts/graph/change-admission-macos-15-runners.json": []
   },
   "seconds": {
-   "prepare": 3.04,
-   "total": 286.46,
-   "verifiers": 91.93
+   "prepare": 1.51,
+   "total": 327.48,
+   "verifiers": 256.87
   }
  },
  "work_item": "KCLIVE-11"
