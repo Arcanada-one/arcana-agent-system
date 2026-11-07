@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+
+- G07 stage 2 (reproduction only, no behaviour change): `crates/core/tests/driver_restart_identity.rs`
+  pins that ARAS carries no operation identity across a process restart. After a run ends on an
+  unknown outcome, a new `Driver` over the same audit directory dispatches the same task under a
+  fresh `Idempotency-Key` (unchanged payload), dispatches a changed payload without refusal, and
+  never replays under the original key; nothing in the audit directory holds a key or request
+  digest. A durable intent store, real-connector behaviour, held cost and reconciliation remain
+  NOT_MEASURED.
+
 ### Fixed
 
 - G07: after a dispatch that produced no reply (unknown outcome), a changed payload is no
