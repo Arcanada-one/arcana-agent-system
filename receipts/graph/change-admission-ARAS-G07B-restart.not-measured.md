@@ -9,7 +9,7 @@ Verdicts the receipt cannot carry, each `not_measured`:
 
 | Property | Why not measured | What would measure it |
 |----------|------------------|-----------------------|
-| Durable attempt / intent / restart lineage | ARAS persists no identity (the `dispatch` audit record holds turn, model and sizes only); no store exists and none was built | a durable intent store written before dispatch, owned by the ARAS/Muneral/connector owners |
+| Durable attempt / intent / restart lineage | the agent loop / model-call path persists no identity (the `dispatch` audit record holds turn, model and sizes only); no store exists on that path and none was built. The separate `arcana-credential-broker` ledger is durable idempotency state outside this path (see REPORT.md inventory) | a durable intent store written before dispatch, owned by the ARAS/Muneral/connector owners |
 | Real Model Connector behaviour | mocks only; no live provider | an isolated connector with a funded test tenant, restart between cut and replay |
 | Held cost / reservation across restart | `CostTracker` is process-local | connector-side reservation read back after restart |
 | Reconciliation workflow | no reconcile-required state exists across processes | a persisted reconcile state plus an operator or Muneral transition |
