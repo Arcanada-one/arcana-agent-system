@@ -3,7 +3,7 @@
 //! is read by the ARAS strict reader. `#[ignore]`d: it needs the running Argana and the harness
 //! manifest (the harness imports private repositories and is kept with the task evidence).
 //!
-//! `KC2_SRC_DIR=<out> KC2_E2E_ARGANA_URL=http://127.0.0.1:<port> cargo test -p arcana-agent --test kc2_source_route_e2e -- --ignored`
+//! `KC2_E2E_DIR=<out> KC2_E2E_ARGANA_URL=http://127.0.0.1:<port> cargo test -p arcana-agent --test kc2_source_route_e2e -- --ignored`
 //!
 //! `<out>/source_manifest.json`: `{"cases":[{"id","digest","probe":bool}]}`. Writes
 //! `<out>/source_rust_results.json`: per id the HTTP status, the Argana code when refused, and the
@@ -141,7 +141,7 @@ fn rehashed(whole: &str, edit: impl Fn(&str) -> String) -> (String, String) {
 #[test]
 #[ignore = "needs a running Argana at e758e922 and the harness manifest; see the module docs"]
 fn the_served_canonical_source_object_is_read_by_the_strict_reader() {
-    let dir = PathBuf::from(std::env::var("KC2_SRC_DIR").expect("KC2_SRC_DIR"));
+    let dir = PathBuf::from(std::env::var("KC2_E2E_DIR").expect("KC2_E2E_DIR"));
     let base = std::env::var("KC2_E2E_ARGANA_URL").expect("KC2_E2E_ARGANA_URL");
     let manifest: Value =
         serde_json::from_slice(&std::fs::read(dir.join("source_manifest.json")).unwrap()).unwrap();
