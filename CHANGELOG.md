@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `arcana-core` contract reader: `verify_with(expected, document, ReaderMode)` adds an
+  explicit strict `arcanada-kc2-tools/v1` mode over the bytes `verify` already
+  re-hashed (`verify` itself is the recorded legacy route and can never satisfy the
+  strict profile). Strict mode accepts only `canonical.bytes_b64`, refuses duplicate
+  JSON keys and non-canonical bytes under a matching hash, requires the closed
+  twelve-member v2 body plus an explicit closed `body.tools={profile,allow}` (allow
+  unique, ASCII-ascending, within `edit`/`grep`/`read`/`write`, at most four,
+  `[]` = deny-all), and never falls back to the default allowlist. New typed
+  refusals: `CONTRACT_PROFILE_REQUIRED`, `CONTRACT_PROFILE_INVALID`,
+  `CONTRACT_CANONICAL_INVALID`, `CONTRACT_POLICY_SOURCE_UNRESOLVED`,
+  `CONTRACT_READER_UNSUPPORTED`; the meanings of `CONTRACT_DIGEST_MISMATCH` and
+  `CONTRACT_POLICY_UNBOUND` are unchanged. `arcana run --work-item --contract-profile
+  <profile>` selects the strict route; the binding, the readiness receipt and the
+  learning trace record the reader route, the recognised profile, the reader
+  capability signal and the schema parity (`NOT_READY` until the talomnia
+  normative schema is pinned in `TALOMNIA_SCHEMA_PIN`).
+
 - `arcana run --work-item` asks Muneral for dependency readiness after the contract
   binding is verified and before the authority gate. `ready: false` refuses with
   `WORK_ITEM_NOT_READY`; unavailable, non-200 (including 201), malformed,

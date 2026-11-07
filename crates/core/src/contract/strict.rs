@@ -89,8 +89,8 @@ pub(super) fn derive(
         )
     })?;
 
-    let body = parse_half("body", body_text).map_err(&canon)?;
-    let manifest = parse_half("closure_manifest", manifest_text).map_err(&canon)?;
+    let body = parse_half("body", body_text).map_err(canon)?;
+    let manifest = parse_half("closure_manifest", manifest_text).map_err(canon)?;
 
     // Exact canonical round-trip: a hash that matches ambiguous, re-ordered or
     // re-spaced JSON is not profile conformance.
@@ -128,13 +128,13 @@ pub(super) fn derive(
             .copied()
             .chain(std::iter::once("tools")),
     )
-    .map_err(&invalid)?;
+    .map_err(invalid)?;
     check_exact_keys(
         "closure_manifest",
         manifest_map,
         MANIFEST_MEMBERS.iter().copied(),
     )
-    .map_err(&invalid)?;
+    .map_err(invalid)?;
     if !manifest_map.get("revisions").is_some_and(Value::is_array) {
         return Err(invalid(
             "closure_manifest.revisions is not an array".to_owned(),
@@ -215,7 +215,7 @@ fn validate_tools(
             )))
         }
     }
-    let allow = parse_allow(allow).map_err(&invalid)?;
+    let allow = parse_allow(allow).map_err(invalid)?;
     Ok(allow)
 }
 
