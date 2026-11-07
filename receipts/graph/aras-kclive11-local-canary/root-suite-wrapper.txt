@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 # Root (non-crate) suite = the non-cargo steps of .github/workflows/ci.yml, in CI order, real output, real exit codes.
-# Prints "Ran N tests" where N = count of 'ok' lines the bats TAP stream actually emitted.
+# The verifier exports the head tree with `git archive` (no .git), but the CI suite includes a provenance smoke that needs a
+# real checkout. So: clone the pinned code commit, require the exported tree to equal it (receipts/ excluded: record documents
+# only), and run the suite inside that clone. Prints "Ran N tests" where N = count of 'ok' lines the bats TAP stream emitted.
 set -u
+X=98a18a24430292b3bf18c59b1dad099452e92235
+SRC=/home/dev/aup/claude-work/arasga02/aras
+exported=$(pwd)
+tmp=$(mktemp -d /home/dev/aup/claude-work/arasga02/rootclone.XXXXXX)
+trap 'rm -rf "$tmp"' EXIT
+git clone -q --no-local "$SRC" "$tmp/c" && git -C "$tmp/c" checkout -q "$X" || { echo "clone failed"; exit 1; }
+if ! diff -rq -x .git -x target -x receipts "$exported" "$tmp/c"; then echo "exported tree differs from pinned commit $X"; exit 1; fi
+echo "exported tree == $X (receipts/ excluded)"
+cd "$tmp/c" || exit 1
 fail=0
 tap=$(mktemp)
 run() { echo "+ $*"; "$@"; local rc=$?; echo "  exit=$rc :: $*"; [ $rc -eq 0 ] || fail=1; }
