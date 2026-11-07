@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Talomnia kc2: talomnia-ontology/v2 closure manifest as emitted (no manifest_digest; the contract digest covers it whole)",
+  "type": "object",
+  "properties": {
+    "snapshot_digest": {
+      "$ref": "common-defs.schema.json#/$defs/digest"
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "revisions",
+    "snapshot_digest"
+  ],
+  "additionalProperties": false,
+  "description": "revisions is a list of [revision_id, content_digest] string pairs (the interpreter has no tuple items, so both positions are typed string only)."
+}

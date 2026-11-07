@@ -56,20 +56,24 @@ use harness::{strict, PROFILE};
 
 /// A canonical (sorted, compact) SYNTHETIC body with the twelve v2 members and
 /// the given `tools` value (`None` omits the member).
+///
+/// Value shapes follow the pinned talomnia schema (`kc2-v2-body.schema.json`): the first
+/// version of these fixtures used placeholder values (`"scope": {}`, `"verdict": "synthetic"`, ...)
+/// that the schema refuses, which only showed once the reader enforced the pinned schema.
 fn body_with(tools: Option<serde_json::Value>) -> serde_json::Value {
     let mut body = json!({
-        "task": "synthetic-task",
-        "scope": {},
-        "projection": {},
+        "task": {"goal": "synthetic-task"},
+        "scope": {"project": "synthetic"},
+        "projection": [],
         "embedded": [],
-        "reduction": {},
+        "reduction": "closure-only",
         "conflict_records": [],
         "refusals": [],
-        "verdicts": [],
+        "verdicts": {},
         "envelope_unverified": [],
-        "verdict": "synthetic",
+        "verdict": "T",
         "quarantined": [],
-        "canonicalization": "json-c14n-pilot/v1"
+        "canonicalization": {"name": "json-c14n-pilot", "version": "v1"}
     });
     if let Some(tools) = tools {
         body["tools"] = tools;
@@ -83,9 +87,14 @@ fn tools(allow: serde_json::Value) -> serde_json::Value {
 
 fn manifest(pins: usize) -> String {
     let revisions: Vec<_> = (0..pins)
-        .map(|i| json!({"synthetic": format!("pin-{i}")}))
+        .map(|i| {
+            json!([
+                format!("synthetic-pin@r{}", i + 1),
+                format!("sha256:{:064x}", i + 1)
+            ])
+        })
         .collect();
-    json!({"snapshot_digest": "synthetic", "revisions": revisions}).to_string()
+    json!({"snapshot_digest": format!("sha256:{:064x}", 0), "revisions": revisions}).to_string()
 }
 
 /// Build a document around raw `body‖manifest` text, hashed as given.
@@ -357,7 +366,7 @@ fn m11_unsorted_keys_with_matching_digest_are_canonical_invalid() {
 #[test]
 fn m11_raw_non_ascii_where_the_rule_escapes_is_canonical_invalid() {
     let mut value = body_with(Some(tools(json!(["read"]))));
-    value["task"] = json!("caf\u{e9}");
+    value["task"] = json!({"goal": "caf\u{e9}"});
     // serde_json writes the raw character; json-c14n-pilot/v1 requires é.
     let (d, doc) = doc_of(&value, 1);
     assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_CANONICAL_INVALID");
@@ -373,7 +382,7 @@ fn m11_whitespace_between_the_halves_is_canonical_invalid() {
 #[test]
 fn float_number_is_canonical_invalid() {
     let mut value = body_with(Some(tools(json!(["read"]))));
-    value["scope"] = json!({"n": 1.5});
+    value["scope"] = json!({"project": 1.5});
     let (d, doc) = doc_of(&value, 1);
     assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_CANONICAL_INVALID");
 }
@@ -471,10 +480,13 @@ fn r2_string_projection_route_is_canonical_invalid() {
 // ---------- R1: top-level hints and envelope copies ----------
 
 #[test]
-fn r1_envelope_schema_version_that_disagrees_with_the_inner_marker_is_unbound() {
+fn r1_envelope_schema_version_that_is_an_unknown_marker_is_profile_invalid() {
     let (d, doc) = doc_of(&body_with(Some(tools(json!(["read"])))), 1);
     let doc = with_hints(&doc, Some("KnowledgeContract"), Some("something-else"));
-    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_POLICY_UNBOUND");
+    // KC-SWE interpretation point (pinned reader `kc2_tools_profile.py`): any other unknown
+    // profile marker is CONTRACT_PROFILE_INVALID. This assertion said CONTRACT_POLICY_UNBOUND
+    // before the pin; see the K1-K4 tests below and REPORT.md.
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
 }
 
 #[test]
@@ -570,4 +582,224 @@ fn r3_reader_unsupported_is_raised_before_any_bytes_are_examined() {
         harness::strict_as("nope/v0", "not-a-digest", &doc).unwrap_err(),
         "CONTRACT_READER_UNSUPPORTED"
     );
+}
+
+// ---------- KCLIVE-11 pin: parity with the pinned talomnia reader (kc2_tools_profile.py) ----------
+//
+// KC-SWE interpretation points, then the value shapes the pinned JSON schemas fix. Every
+// expected code below was also produced by the pinned reader itself (see
+// `contract_strict_parity.rs`, which runs one shared corpus through both).
+
+fn hinted(schema_version: &str) -> (String, ContractDocument) {
+    let (d, doc) = doc_of(&body_with(Some(tools(json!(["read"])))), 1);
+    let doc = with_hints(&doc, None, Some(schema_version));
+    (d, doc)
+}
+
+#[test]
+fn k1_a_legacy_talomnia_ontology_marker_requires_the_profile() {
+    for legacy in ["talomnia-ontology/v1", "talomnia-ontology/v2"] {
+        let (d, doc) = hinted(legacy);
+        assert_eq!(
+            strict(&d, &doc).unwrap_err(),
+            "CONTRACT_PROFILE_REQUIRED",
+            "{legacy}"
+        );
+    }
+}
+
+#[test]
+fn k3_another_version_of_the_tools_profile_family_is_reader_unsupported() {
+    for other in [
+        "arcanada-kc2-tools/v0",
+        "arcanada-kc2-tools/v2",
+        "arcanada-kc2-tools/v10",
+    ] {
+        let (d, doc) = hinted(other);
+        assert_eq!(
+            strict(&d, &doc).unwrap_err(),
+            "CONTRACT_READER_UNSUPPORTED",
+            "{other}"
+        );
+    }
+}
+
+#[test]
+fn k4_any_other_unknown_marker_is_profile_invalid() {
+    for other in [
+        "other/v9",
+        "ARCANADA-KC2-TOOLS/V1",
+        "arcanada-kc2-tools/v1x",
+        "arcanada-kc2-tools/v",
+        "",
+    ] {
+        let (d, doc) = hinted(other);
+        assert_eq!(
+            strict(&d, &doc).unwrap_err(),
+            "CONTRACT_PROFILE_INVALID",
+            "{other:?}"
+        );
+    }
+}
+
+#[test]
+fn k6_an_inner_marker_naming_another_version_is_profile_invalid() {
+    assert_eq!(
+        code_for_tools(json!({"profile": "arcanada-kc2-tools/v2", "allow": ["read"]})),
+        "CONTRACT_PROFILE_INVALID"
+    );
+}
+
+fn body_mut(edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut value = body_with(Some(tools(json!(["read"]))));
+    edit(&mut value);
+    let (d, doc) = doc_of(&value, 1);
+    strict(&d, &doc).expect_err("must refuse")
+}
+
+#[test]
+fn v_the_pinned_schema_fixes_the_value_shapes_inside_the_twelve_members() {
+    type Edit = Box<dyn FnOnce(&mut serde_json::Value)>;
+    let cases: Vec<(&str, Edit)> = vec![
+        ("scope with no axis", Box::new(|b| b["scope"] = json!({}))),
+        (
+            "scope with two axes",
+            Box::new(|b| b["scope"] = json!({"project": "a", "space": "b"})),
+        ),
+        (
+            "scope with an unknown axis",
+            Box::new(|b| b["scope"] = json!({"galaxy": "a"})),
+        ),
+        (
+            "embedded not empty",
+            Box::new(|b| b["embedded"] = json!(["x"])),
+        ),
+        (
+            "refusals not empty",
+            Box::new(|b| b["refusals"] = json!(["x"])),
+        ),
+        (
+            "reduction outside the pattern",
+            Box::new(|b| b["reduction"] = json!("whatever")),
+        ),
+        (
+            "verdict outside T/K",
+            Box::new(|b| b["verdict"] = json!("F")),
+        ),
+        (
+            "verdicts as an array",
+            Box::new(|b| b["verdicts"] = json!([])),
+        ),
+        (
+            "a verdicts value outside TFUK",
+            Box::new(|b| b["verdicts"] = json!({"a": "X"})),
+        ),
+        (
+            "canonicalization as a string",
+            Box::new(|b| b["canonicalization"] = json!("json-c14n-pilot/v1")),
+        ),
+        (
+            "task with an unknown field",
+            Box::new(|b| b["task"] = json!({"goal": "g", "zzz": 1})),
+        ),
+        ("task as a string", Box::new(|b| b["task"] = json!("goal"))),
+        (
+            "projection as an object",
+            Box::new(|b| b["projection"] = json!({})),
+        ),
+        (
+            "projection with a malformed revision id",
+            Box::new(|b| {
+                b["projection"] = json!([{"assertions": [], "source": {
+                    "content_digest": format!("sha256:{:064x}", 1), "revision_id": "BAD"}}]);
+            }),
+        ),
+        (
+            "a malformed conflict record",
+            Box::new(|b| b["conflict_records"] = json!([{"kind": "ConflictRecord"}])),
+        ),
+        (
+            "an envelope_unverified item missing its provider",
+            Box::new(|b| b["envelope_unverified"] = json!([{"condition": "c"}])),
+        ),
+        (
+            "a quarantined item missing its key",
+            Box::new(|b| b["quarantined"] = json!([{"addr": "a"}])),
+        ),
+    ];
+    for (what, edit) in cases {
+        assert_eq!(body_mut(edit), "CONTRACT_PROFILE_INVALID", "{what}");
+    }
+}
+
+#[test]
+fn v_manifest_value_shapes_are_the_pinned_schemas() {
+    let body = body_with(Some(tools(json!(["read"])))).to_string();
+    let digest0 = format!("sha256:{:064x}", 0);
+    let bad = [
+        json!({"snapshot_digest": "synthetic", "revisions": []}),
+        json!({"snapshot_digest": "sha256:".to_owned() + &"A".repeat(64), "revisions": []}),
+        json!({"snapshot_digest": digest0, "revisions": [["a@r1", "sha256:x", "extra"]]}),
+        json!({"snapshot_digest": digest0, "revisions": [{"a": 1}]}),
+    ];
+    for m in bad {
+        let (d, doc) = doc_raw(&body, &m.to_string());
+        assert_eq!(
+            strict(&d, &doc).unwrap_err(),
+            "CONTRACT_PROFILE_INVALID",
+            "{m}"
+        );
+    }
+}
+
+#[test]
+fn v_values_the_schema_leaves_open_are_accepted() {
+    let mut value = body_with(Some(tools(json!(["read"]))));
+    value["task"] = json!({
+        "goal": "g",
+        "inputs": [1, {"a": [null]}, "x"],
+        "outputs": [true],
+        "required_capability_types": ["t"],
+        "bounds": {"n": 1, "s": {"k": [1]}}
+    });
+    value["scope"] = json!({"project": 5});
+    value["verdicts"] = json!({"any key at all": "U", "b": "F"});
+    let (d, doc) = doc_of(&value, 1);
+    assert_eq!(strict(&d, &doc).unwrap(), vec!["read"]);
+}
+
+#[test]
+fn v_a_body_or_manifest_that_is_not_an_object_is_profile_invalid() {
+    let m = manifest(1);
+    let (d, doc) = doc_raw("[]", &m);
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
+    let body = body_with(Some(tools(json!(["read"])))).to_string();
+    let (d, doc) = doc_raw(&body, "[]");
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
+}
+
+#[test]
+fn o_required_members_are_judged_before_the_schema() {
+    let mut value = body_with(Some(json!({"profile": PROFILE})));
+    value.as_object_mut().unwrap().remove("verdicts");
+    let (d, doc) = doc_of(&value, 1);
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_REQUIRED");
+}
+
+#[test]
+fn o_a_float_is_refused_at_parse_time_before_the_schema() {
+    let mut value = body_with(Some(tools(json!(["read"]))));
+    value["verdict"] = json!("F");
+    value["task"] = json!({"goal": "g", "bounds": {"n": 1.5}});
+    let (d, doc) = doc_of(&value, 1);
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_CANONICAL_INVALID");
+}
+
+#[test]
+fn o_the_schema_is_judged_before_the_canonical_round_trip() {
+    let mut value = body_with(Some(tools(json!(["read"]))));
+    value["verdict"] = json!("F");
+    let pretty = serde_json::to_string_pretty(&value).unwrap();
+    let (d, doc) = doc_raw(&pretty, &manifest(1));
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
 }

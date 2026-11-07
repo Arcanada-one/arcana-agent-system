@@ -18,15 +18,23 @@ use base64::Engine as _;
 use serde_json::json;
 
 fn synthetic(allow: serde_json::Value, pins: usize) -> (String, ContractDocument) {
+    // Value shapes follow the pinned talomnia schema (the first fixtures used placeholders it refuses).
     let body = json!({
-        "task": "synthetic-task", "scope": {}, "projection": {}, "embedded": [],
-        "reduction": {}, "conflict_records": [], "refusals": [], "verdicts": [],
-        "envelope_unverified": [], "verdict": "synthetic", "quarantined": [],
-        "canonicalization": "json-c14n-pilot/v1",
+        "task": {"goal": "synthetic-task"}, "scope": {"project": "synthetic"}, "projection": [],
+        "embedded": [], "reduction": "closure-only", "conflict_records": [], "refusals": [],
+        "verdicts": {}, "envelope_unverified": [], "verdict": "T", "quarantined": [],
+        "canonicalization": {"name": "json-c14n-pilot", "version": "v1"},
         "tools": {"profile": STRICT_PROFILE, "allow": allow}
     });
-    let revisions: Vec<_> = (0..pins).map(|i| json!({"synthetic": i})).collect();
-    let manifest = json!({"snapshot_digest": "synthetic", "revisions": revisions});
+    let revisions: Vec<_> = (0..pins)
+        .map(|i| {
+            json!([
+                format!("synthetic-pin@r{}", i + 1),
+                format!("sha256:{:064x}", i + 1)
+            ])
+        })
+        .collect();
+    let manifest = json!({"snapshot_digest": format!("sha256:{:064x}", 0), "revisions": revisions});
     let bytes = format!("{body}{manifest}");
     let digest = digest_of(bytes.as_bytes());
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes.as_bytes());
@@ -68,13 +76,15 @@ fn a_strict_binding_records_route_profile_capability_and_parity() {
 }
 
 #[test]
-fn schema_parity_is_not_ready_while_the_talomnia_pin_slot_is_empty() {
+fn schema_parity_reports_the_verified_unmerged_pin() {
+    let pin = TALOMNIA_SCHEMA_PIN.expect("the talomnia schema is pinned");
+    assert_eq!(pin.commit, "336e644071323f5489ee417cc130ed3143185cbf");
     assert!(
-        TALOMNIA_SCHEMA_PIN.is_none(),
-        "no schema identity may be invented"
+        !pin.merged,
+        "the pin is an unmerged PR commit and must say so"
     );
-    assert_eq!(schema_parity(), SchemaParity::NotReady);
-    assert_eq!(schema_parity().as_str(), "NOT_READY");
+    assert_eq!(schema_parity(), SchemaParity::PinnedVerifiedUnmerged);
+    assert_eq!(schema_parity().as_str(), "PINNED_VERIFIED_UNMERGED");
     let (d, doc) = synthetic(json!(["read"]), 1);
     let b = verify_with(
         &d,
@@ -84,7 +94,7 @@ fn schema_parity_is_not_ready_while_the_talomnia_pin_slot_is_empty() {
         },
     )
     .unwrap();
-    assert_eq!(b.schema_parity(), SchemaParity::NotReady);
+    assert_eq!(b.schema_parity(), SchemaParity::PinnedVerifiedUnmerged);
 }
 
 #[test]

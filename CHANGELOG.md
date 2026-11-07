@@ -16,15 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON keys and non-canonical bytes under a matching hash, requires the closed
   twelve-member v2 body plus an explicit closed `body.tools={profile,allow}` (allow
   unique, ASCII-ascending, within `edit`/`grep`/`read`/`write`, at most four,
-  `[]` = deny-all), and never falls back to the default allowlist. New typed
+  `[]` = deny-all), and never falls back to the default allowlist. The shape of the
+  body, manifest and every value inside them is the talomnia-knowledge schema,
+  vendored byte for byte under `crates/core/src/contract/schema/` and pinned by git
+  blob id to commit `336e6440…` (head of the OPEN, UNMERGED draft PR546; a squash-merge
+  or amendment of that PR requires a re-pin before this can merge). A pin mismatch
+  refuses with `CONTRACT_READER_UNSUPPORTED` before any contract byte is read. New typed
   refusals: `CONTRACT_PROFILE_REQUIRED`, `CONTRACT_PROFILE_INVALID`,
   `CONTRACT_CANONICAL_INVALID`, `CONTRACT_POLICY_SOURCE_UNRESOLVED`,
   `CONTRACT_READER_UNSUPPORTED`; the meanings of `CONTRACT_DIGEST_MISMATCH` and
   `CONTRACT_POLICY_UNBOUND` are unchanged. `arcana run --work-item --contract-profile
   <profile>` selects the strict route; the binding, the readiness receipt and the
   learning trace record the reader route, the recognised profile, the reader
-  capability signal and the schema parity (`NOT_READY` until the talomnia
-  normative schema is pinned in `TALOMNIA_SCHEMA_PIN`).
+  capability signal and the schema parity (`PINNED_VERIFIED_UNMERGED` while
+  `TALOMNIA_SCHEMA_PIN` points at an unmerged commit and the vendored bytes match it).
 
 - `arcana run --work-item` asks Muneral for dependency readiness after the contract
   binding is verified and before the authority gate. `ready: false` refuses with

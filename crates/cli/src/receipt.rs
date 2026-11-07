@@ -100,7 +100,8 @@ pub struct ContractSection {
     pub recognised_profile: Option<String>,
     /// The reader's capability signal (admission can check it).
     pub reader_capability: String,
-    /// `NOT_READY` until the talomnia normative schema is pinned.
+    /// State of the talomnia schema pin (`NOT_READY`, `PIN_MISMATCH`, `PINNED_VERIFIED_UNMERGED` or
+    /// `PINNED_VERIFIED`).
     pub schema_parity: String,
 }
 

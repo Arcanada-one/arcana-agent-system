@@ -5,48 +5,38 @@
 //! `canonical(body) ‖ canonical(closure_manifest)` bytes and answers whether
 //! they conform to the profile, refusing with a typed code when they do not.
 //!
-//! Two things in this file look like canonicalisation and are not:
+//! The SHAPE of those bytes (top-level members, the twelve body members, the closure manifest,
+//! `body.tools`, every value inside them) is NOT written down here. It is the normative schema
+//! owned by talomnia-knowledge, vendored byte for byte and pinned by blob id
+//! ([`super::TALOMNIA_SCHEMA_PIN`]), and enforced with the `jsonschema` crate over the pinned
+//! files. What a schema keyword cannot state stays here, in the order the pinned reference reader
+//! (`kc2_tools_profile.py`) applies it: profile-marker classification, required-vs-invalid for the
+//! load-bearing `body.tools` members, marker agreement, strictly ascending `allow`, exact canonical
+//! bytes, and the consumer-only envelope/policy-source checks.
 //!
-//! * [`render_canonical`] re-renders a PARSED half in the existing
-//!   `json-c14n-pilot/v1` form (sorted keys, `,`/`:` separators, `ensure_ascii`,
-//!   integers only — talomnia-knowledge `ontology/src/canonical.py`) purely so
-//!   the result can be compared byte for byte with the half the digest was
-//!   computed over. Its output is never hashed and never adopted; a mismatch is a
-//!   refusal. Digest computation is untouched ([`super::digest_of`]).
-//! * The twelve body members and two manifest members are named only so a
-//!   closed key set can be enforced. Their value shapes are NOT validated here:
-//!   that is the normative v2 schema owned by talomnia-knowledge, pinned in
-//!   [`super::TALOMNIA_SCHEMA_PIN`] (empty until it exists).
+//! One thing in this file looks like canonicalisation and is not: [`render_canonical`] re-renders
+//! a PARSED half in the existing `json-c14n-pilot/v1` form (sorted keys, `,`/`:` separators,
+//! `ensure_ascii`, integers only - talomnia-knowledge `ontology/src/canonical.py`) purely so the
+//! result can be compared byte for byte with the half the digest was computed over. Its output is
+//! never hashed and never adopted; a mismatch is a refusal. Digest computation is untouched
+//! ([`super::digest_of`]).
 
 use std::fmt;
 
+use jsonschema::{Retrieve, Uri};
 use serde::de::IgnoredAny;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 
-use super::{ContractDocument, ContractRefusal, ContractTools, STRICT_PROFILE, TOOL_VOCABULARY};
-
-/// The twelve body members the KC2 v2 producer emits (ACTION-POLICY-PROPOSAL §1).
-pub const V2_BODY_MEMBERS: [&str; 12] = [
-    "task",
-    "scope",
-    "projection",
-    "embedded",
-    "reduction",
-    "conflict_records",
-    "refusals",
-    "verdicts",
-    "envelope_unverified",
-    "verdict",
-    "quarantined",
-    "canonicalization",
-];
-
-/// The two closure-manifest members (v2 structure).
-pub const MANIFEST_MEMBERS: [&str; 2] = ["snapshot_digest", "revisions"];
+use super::{
+    ContractDocument, ContractRefusal, ContractTools, SchemaPin, PROFILE_SCHEMA, TOOL_VOCABULARY,
+};
 
 /// The top-level `kind` literal of the profile object.
 pub const PROFILE_KIND: &str = "KnowledgeContract";
+
+/// Profile markers of the legacy `talomnia-ontology` line: they carry no tools profile.
+const LEGACY_VERSIONS: [&str; 2] = ["talomnia-ontology/v1", "talomnia-ontology/v2"];
 
 /// What a conforming profile body yields.
 pub(super) struct StrictPolicy {
@@ -56,12 +46,124 @@ pub(super) struct StrictPolicy {
     pub projection: Value,
 }
 
+/// `arcanada-kc2-tools/v<digits>` - the family of tools-profile markers (the pinned reader's
+/// `^arcanada-kc2-tools/v[0-9]+$`, ASCII digits, nothing after them).
+fn is_profile_family(marker: &str) -> bool {
+    marker
+        .strip_prefix("arcanada-kc2-tools/v")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Classify a top-level profile marker the way the pinned reader does: the legacy
+/// `talomnia-ontology` versions need a profile (`CONTRACT_PROFILE_REQUIRED`), another version of
+/// this family is beyond this reader (`CONTRACT_READER_UNSUPPORTED`), anything else unknown is
+/// `CONTRACT_PROFILE_INVALID`. `Ok` only for exactly `profile`.
+fn classify_marker(digest: &str, profile: &str, marker: &str) -> Result<(), ContractRefusal> {
+    if marker == profile {
+        return Ok(());
+    }
+    if LEGACY_VERSIONS.contains(&marker) {
+        return Err(ContractRefusal::ProfileRequired {
+            digest: digest.to_owned(),
+            detail: format!(
+                "the envelope schema_version `{marker}` carries no `{profile}` marker; strict mode                  never falls back to a legacy or default tool set"
+            ),
+        });
+    }
+    if is_profile_family(marker) {
+        return Err(ContractRefusal::ReaderUnsupported {
+            requested: marker.to_owned(),
+            detail: format!("profile `{marker}` is outside this reader's capability (`{profile}`)"),
+        });
+    }
+    Err(ContractRefusal::ProfileInvalid {
+        digest: digest.to_owned(),
+        detail: format!("unknown profile marker `{marker}` in the envelope schema_version"),
+    })
+}
+
+/// Resolves the `$ref`s between the pinned schema files from the pinned bytes, never from the
+/// network or the file system.
+struct PinnedFiles(Vec<(&'static str, Value)>);
+
+impl Retrieve for PinnedFiles {
+    fn retrieve(
+        &self,
+        uri: &Uri<String>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let name = uri.path().as_str().rsplit('/').next().unwrap_or_default();
+        self.0
+            .iter()
+            .find(|(known, _)| *known == name)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| format!("`{name}` is not one of the pinned schema files").into())
+    }
+}
+
+/// Validate the digested halves against the pinned profile schema. The schema describes the whole
+/// persisted contract, so it is run over `{body, closure_manifest, contract_digest, kind,
+/// schema_version}` rebuilt from the VERIFIED bytes (never from envelope copies).
+fn check_schema(
+    digest: &str,
+    profile: &str,
+    pin: &SchemaPin,
+    body: &Value,
+    manifest: &Value,
+) -> Result<(), ContractRefusal> {
+    let unsupported = |detail: String| ContractRefusal::ReaderUnsupported {
+        requested: profile.to_owned(),
+        detail,
+    };
+    let mut files = Vec::with_capacity(pin.schemas.len());
+    for schema in pin.schemas {
+        let value = serde_json::from_slice::<Value>(schema.bytes).map_err(|err| {
+            unsupported(format!(
+                "pinned schema `{}` is not JSON: {err}",
+                schema.name
+            ))
+        })?;
+        files.push((schema.name, value));
+    }
+    let root = files
+        .iter()
+        .find(|(name, _)| *name == PROFILE_SCHEMA)
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| unsupported(format!("the pin does not hold `{PROFILE_SCHEMA}`")))?;
+    let validator = jsonschema::options()
+        .with_retriever(PinnedFiles(files))
+        .build(&root)
+        .map_err(|err| unsupported(format!("schema enforcement unavailable: {err}")))?;
+    let whole = serde_json::json!({
+        "body": body,
+        "closure_manifest": manifest,
+        "contract_digest": digest,
+        "kind": PROFILE_KIND,
+        "schema_version": profile,
+    });
+    let problems: Vec<String> = validator
+        .iter_errors(&whole)
+        .take(5)
+        .map(|err| format!("{err} (at `{}`)", err.instance_path()))
+        .collect();
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(ContractRefusal::ProfileInvalid {
+        digest: digest.to_owned(),
+        detail: format!(
+            "the digested contract does not conform to the pinned {PROFILE_SCHEMA}: {}",
+            problems.join("; ")
+        ),
+    })
+}
+
 /// Validate verified `bytes` against the strict profile `profile`.
 pub(super) fn derive(
     digest: &str,
     profile: &str,
     bytes: &[u8],
     document: &ContractDocument,
+    pin: &SchemaPin,
 ) -> Result<StrictPolicy, ContractRefusal> {
     let canon = |detail: String| ContractRefusal::CanonicalInvalid {
         digest: digest.to_owned(),
@@ -92,14 +194,71 @@ pub(super) fn derive(
     let body = parse_half("body", body_text).map_err(canon)?;
     let manifest = parse_half("closure_manifest", manifest_text).map_err(canon)?;
 
-    // Exact canonical round-trip: a hash that matches ambiguous, re-ordered or
-    // re-spaced JSON is not profile conformance.
-    for (name, half, text) in [
+    // The envelope's profile marker (outside the digest) is classified first, as the pinned
+    // reader classifies its top-level marker. An absent hint is allowed: integrity comes from the
+    // digested inner marker below.
+    if let Some(hint) = document.schema_version.as_deref() {
+        classify_marker(digest, profile, hint)?;
+    }
+
+    let Value::Object(body_map) = &body else {
+        return Err(invalid(format!(
+            "body must be an object, found {}",
+            kind_of(&body)
+        )));
+    };
+
+    // ---- body.tools: required members, then inner-marker agreement ----
+    let Some(tools) = body_map.get("tools") else {
+        return Err(required(
+            "body.tools is absent; the strict profile never falls back to a default tool set"
+                .to_owned(),
+        ));
+    };
+    let Value::Object(tools_map) = tools else {
+        return Err(invalid(format!(
+            "body.tools must be an object with exactly `profile` and `allow`, found {}",
+            kind_of(tools)
+        )));
+    };
+    let Some(marker) = tools_map.get("profile") else {
+        return Err(required("body.tools.profile is absent".to_owned()));
+    };
+    if !tools_map.contains_key("allow") {
+        return Err(required(
+            "body.tools.allow is absent; a missing allow is never read as deny-all".to_owned(),
+        ));
+    }
+    match marker {
+        Value::String(found) if found == profile => {}
+        Value::String(found) => {
+            return Err(invalid(format!(
+                "body.tools.profile is `{found}`, the reader was asked for `{profile}`"
+            )))
+        }
+        other => {
+            return Err(invalid(format!(
+                "body.tools.profile must be the string `{profile}`, found {}",
+                kind_of(other)
+            )))
+        }
+    }
+
+    // ---- the pinned schema: every member and every value inside it ----
+    check_schema(digest, profile, pin, &body, &manifest)?;
+
+    // The schema fixes the vocabulary, uniqueness and size; strictly ascending order is what a
+    // keyword cannot state.
+    let allow = parse_allow(&tools_map["allow"]).map_err(invalid)?;
+
+    // Exact canonical round-trip: a hash that matches ambiguous, re-ordered or re-spaced JSON is
+    // not profile conformance.
+    for (name, half, half_text) in [
         ("body", &body, body_text),
         ("closure_manifest", &manifest, manifest_text),
     ] {
         let rendered = render_canonical(half).map_err(|why| canon(format!("{name}: {why}")))?;
-        if rendered != text {
+        if rendered != half_text {
             return Err(canon(format!(
                 "{name} is not the exact json-c14n-pilot/v1 form of itself (digest matched \
                  non-canonical bytes)"
@@ -107,46 +266,10 @@ pub(super) fn derive(
         }
     }
 
-    let (Value::Object(body_map), Value::Object(manifest_map)) = (&body, &manifest) else {
-        return Err(canon(
-            "body and closure_manifest must both be JSON objects".to_owned(),
-        ));
-    };
-
-    // ---- body.tools: required, closed, explicit ----
-    let Some(tools) = body_map.get("tools") else {
-        return Err(required(
-            "body.tools is absent; the strict profile never falls back to a default tool set"
-                .to_owned(),
-        ));
-    };
-    check_exact_keys(
-        "body",
-        body_map,
-        V2_BODY_MEMBERS
-            .iter()
-            .copied()
-            .chain(std::iter::once("tools")),
-    )
-    .map_err(invalid)?;
-    check_exact_keys(
-        "closure_manifest",
-        manifest_map,
-        MANIFEST_MEMBERS.iter().copied(),
-    )
-    .map_err(invalid)?;
-    if !manifest_map.get("revisions").is_some_and(Value::is_array) {
-        return Err(invalid(
-            "closure_manifest.revisions is not an array".to_owned(),
-        ));
-    }
-
-    let allow = validate_tools(digest, profile, tools)?;
-
-    let derived = check_envelope(digest, profile, document, &body, &manifest, &allow)?;
+    let derived = check_envelope(digest, document, &body, &manifest, &allow)?;
 
     // ---- policy source: a non-empty allow must be justified by pinned revisions ----
-    let revisions_empty = manifest_map
+    let revisions_empty = manifest
         .get("revisions")
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty);
@@ -165,71 +288,15 @@ pub(super) fn derive(
     })
 }
 
-/// `body.tools`: a closed object with exactly `profile` and `allow`.
-fn validate_tools(
-    digest: &str,
-    profile: &str,
-    tools: &Value,
-) -> Result<Vec<String>, ContractRefusal> {
-    let invalid = |detail: String| ContractRefusal::ProfileInvalid {
-        digest: digest.to_owned(),
-        detail,
-    };
-    let required = |detail: String| ContractRefusal::ProfileRequired {
-        digest: digest.to_owned(),
-        detail,
-    };
-    let Value::Object(tools) = tools else {
-        return Err(invalid(format!(
-            "body.tools must be an object with exactly `profile` and `allow`, found {}",
-            kind_of(tools)
-        )));
-    };
-    let Some(marker) = tools.get("profile") else {
-        return Err(required("body.tools.profile is absent".to_owned()));
-    };
-    let Some(allow) = tools.get("allow") else {
-        return Err(required(
-            "body.tools.allow is absent; a missing allow is never read as deny-all".to_owned(),
-        ));
-    };
-    if let Some(extra) = tools
-        .keys()
-        .find(|key| *key != "profile" && *key != "allow")
-    {
-        return Err(invalid(format!(
-            "body.tools has the unknown member `{extra}`"
-        )));
-    }
-    match marker {
-        Value::String(found) if found == profile => {}
-        Value::String(found) => {
-            return Err(invalid(format!(
-                "body.tools.profile is `{found}`, the reader was asked for `{profile}`"
-            )))
-        }
-        other => {
-            return Err(invalid(format!(
-                "body.tools.profile must be the string `{profile}`, found {}",
-                kind_of(other)
-            )))
-        }
-    }
-    let allow = parse_allow(allow).map_err(invalid)?;
-    Ok(allow)
-}
-
-/// Envelope copies and dispatch hints (all outside the digest) must agree with
-/// the verified bytes. Returns the projection derived from those bytes.
+/// Envelope copies (all outside the digest) must agree with the verified bytes. Returns the
+/// projection derived from those bytes. The envelope `schema_version` hint was classified earlier.
 fn check_envelope(
     digest: &str,
-    profile: &str,
     document: &ContractDocument,
     body: &Value,
     manifest: &Value,
     allow: &[String],
 ) -> Result<Value, ContractRefusal> {
-    // ---- top-level dispatch hints (outside the digest) must agree ----
     let diverges = |detail: String| ContractRefusal::PolicyUnbound {
         digest: digest.to_owned(),
         detail,
@@ -238,14 +305,6 @@ fn check_envelope(
         if kind != PROFILE_KIND {
             return Err(diverges(format!(
                 "the envelope kind is `{kind}`, the profile object is `{PROFILE_KIND}`"
-            )));
-        }
-    }
-    if let Some(hint) = document.schema_version.as_deref() {
-        if hint != STRICT_PROFILE || hint != profile {
-            return Err(diverges(format!(
-                "the envelope schema_version hint `{hint}` disagrees with the digested \
-                 body.tools.profile `{profile}`"
             )));
         }
     }
@@ -273,21 +332,6 @@ fn check_envelope(
         }
     }
     Ok(derived)
-}
-
-fn check_exact_keys<'a>(
-    what: &str,
-    map: &Map<String, Value>,
-    expected: impl Iterator<Item = &'a str> + Clone,
-) -> Result<(), String> {
-    if let Some(missing) = expected.clone().find(|key| !map.contains_key(*key)) {
-        return Err(format!("{what} is missing the required member `{missing}`"));
-    }
-    let known: Vec<&str> = expected.collect();
-    if let Some(extra) = map.keys().find(|key| !known.contains(&key.as_str())) {
-        return Err(format!("{what} has the unknown member `{extra}`"));
-    }
-    Ok(())
 }
 
 fn parse_allow(value: &Value) -> Result<Vec<String>, String> {
@@ -388,10 +432,12 @@ impl<'de> Visitor<'de> for StrictVisitor {
     fn visit_u64<E: de::Error>(self, v: u64) -> Result<Strict, E> {
         Ok(Strict(Value::from(v)))
     }
+    // The canonical form has integers only, and the pinned reader rejects every non-integer
+    // literal (`1.0` and `1e2` included) at parse time, before any schema check: so does this one.
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<Strict, E> {
-        serde_json::Number::from_f64(v)
-            .map(|n| Strict(Value::Number(n)))
-            .ok_or_else(|| E::custom("non-finite number"))
+        Err(E::custom(format!(
+            "non-integer number {v}: the canonical form forbids floats"
+        )))
     }
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Strict, E> {
         Ok(Strict(Value::String(v.to_owned())))

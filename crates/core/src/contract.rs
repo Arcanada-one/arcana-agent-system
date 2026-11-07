@@ -37,6 +37,7 @@
 //! the receipt, because "the digest checked out" means something different for
 //! each.
 
+mod pin;
 mod strict;
 
 use std::collections::BTreeSet;
@@ -101,29 +102,25 @@ impl ReaderCapability {
     }
 }
 
-/// Identity of the normative talomnia-knowledge v2 body/manifest + tools
-/// schema this reader must be checked against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SchemaPin {
-    /// Commit of the talomnia-knowledge repository that holds the schema.
-    pub commit: &'static str,
-    /// Git blob of the schema file at that commit.
-    pub blob: &'static str,
-}
+pub use pin::{
+    git_blob_id, verify_pin, PinnedSchema, SchemaPin, PROFILE_SCHEMA, PROFILE_SCHEMA_FILES,
+    TALOMNIA_SCHEMA_PIN,
+};
 
-/// THE single slot for the talomnia schema identity. `None` until KC-SWE
-/// publishes the normative schema; it MUST be filled from that publication and
-/// never from a guess. ARAS writes no second schema (KC-Brain decision, point 5).
-pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = None;
-
-/// Whether this reader's rules have been checked against the normative schema.
+/// Whether this reader enforces the normative schema it is pinned to, and in what state that pin is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SchemaParity {
     /// No normative schema is pinned, so parity cannot be claimed.
     NotReady,
-    /// A schema is pinned, but parity has not been measured by this reader.
-    PinnedNotMeasured,
+    /// A schema is pinned but the compiled-in bytes do not match the pinned blobs. The strict
+    /// reader refuses (`CONTRACT_READER_UNSUPPORTED`).
+    PinMismatch,
+    /// The compiled-in schema bytes match the pin, which points at an UNMERGED commit: a
+    /// squash-merge or amendment of the owner's PR requires a re-pin before this can merge.
+    PinnedVerifiedUnmerged,
+    /// As above, with the pinned commit on the owner's default branch.
+    PinnedVerified,
 }
 
 impl SchemaParity {
@@ -131,19 +128,28 @@ impl SchemaParity {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NotReady => "NOT_READY",
-            Self::PinnedNotMeasured => "PINNED_NOT_MEASURED",
+            Self::PinMismatch => "PIN_MISMATCH",
+            Self::PinnedVerifiedUnmerged => "PINNED_VERIFIED_UNMERGED",
+            Self::PinnedVerified => "PINNED_VERIFIED",
         }
+    }
+}
+
+/// Parity state of `pin`.
+#[must_use]
+pub fn schema_parity_of(pin: Option<&SchemaPin>) -> SchemaParity {
+    match pin {
+        None => SchemaParity::NotReady,
+        Some(pin) if verify_pin(pin).is_err() => SchemaParity::PinMismatch,
+        Some(pin) if pin.merged => SchemaParity::PinnedVerified,
+        Some(_) => SchemaParity::PinnedVerifiedUnmerged,
     }
 }
 
 /// Parity state of this build.
 #[must_use]
 pub fn schema_parity() -> SchemaParity {
-    if TALOMNIA_SCHEMA_PIN.is_some() {
-        SchemaParity::PinnedNotMeasured
-    } else {
-        SchemaParity::NotReady
-    }
+    schema_parity_of(TALOMNIA_SCHEMA_PIN.as_ref())
 }
 
 /// How a contract is read. The mode is explicit and is recorded on the binding.
@@ -658,6 +664,24 @@ pub fn verify_with(
     document: &ContractDocument,
     mode: ReaderMode<'_>,
 ) -> Result<ContractBinding, ContractRefusal> {
+    verify_with_pin(expected, document, mode, TALOMNIA_SCHEMA_PIN.as_ref())
+}
+
+/// [`verify_with`] against an explicit schema pin. Production code uses [`verify_with`]
+/// ([`TALOMNIA_SCHEMA_PIN`]); this exists so a missing or mismatching pin can be exercised.
+///
+/// In `Strict` mode the pin is checked BEFORE any contract byte is examined: no pin, or compiled-in
+/// schema bytes that differ from the pinned blobs, is `CONTRACT_READER_UNSUPPORTED`.
+///
+/// # Errors
+/// Every way the binding cannot be made, as [`ContractRefusal`].
+pub fn verify_with_pin(
+    expected: &str,
+    document: &ContractDocument,
+    mode: ReaderMode<'_>,
+    pin: Option<&SchemaPin>,
+) -> Result<ContractBinding, ContractRefusal> {
+    let mut strict_pin: Option<&SchemaPin> = None;
     if let ReaderMode::Strict { profile } = mode {
         if !READER_CAPABILITY.supports(profile) {
             return Err(ContractRefusal::ReaderUnsupported {
@@ -665,6 +689,20 @@ pub fn verify_with(
                 detail: "no strict reader for that profile is built into this binary".to_owned(),
             });
         }
+        let Some(pin) = pin else {
+            return Err(ContractRefusal::ReaderUnsupported {
+                requested: profile.to_owned(),
+                detail: "no talomnia schema is pinned, so the profile cannot be enforced"
+                    .to_owned(),
+            });
+        };
+        if let Err(detail) = verify_pin(pin) {
+            return Err(ContractRefusal::ReaderUnsupported {
+                requested: profile.to_owned(),
+                detail: format!("the pinned talomnia schema does not match: {detail}"),
+            });
+        }
+        strict_pin = Some(pin);
     }
     if !is_wellformed_digest(expected) {
         return Err(ContractRefusal::MalformedDigest {
@@ -694,7 +732,13 @@ pub fn verify_with(
                 ),
             });
         }
-        let policy = strict::derive(expected, profile, &bytes, document)?;
+        let Some(pin) = strict_pin else {
+            return Err(ContractRefusal::ReaderUnsupported {
+                requested: profile.to_owned(),
+                detail: "no verified talomnia schema pin for the strict reader".to_owned(),
+            });
+        };
+        let policy = strict::derive(expected, profile, &bytes, document, pin)?;
         return Ok(ContractBinding {
             digest: expected.to_owned(),
             kc2_revision: document.revision(),

@@ -651,14 +651,18 @@ mod tests {
     /// SYNTHETIC strict-profile contract, for the trace's reader fields only.
     fn strict_binding() -> ContractBinding {
         use arcana_core::contract::{verify_with, CanonicalBlock, ReaderMode, STRICT_PROFILE};
+        // Value shapes follow the pinned talomnia schema (placeholders would be refused by it).
         let body = serde_json::json!({
-            "task": "t", "scope": {}, "projection": {}, "embedded": [],
-            "reduction": {}, "conflict_records": [], "refusals": [], "verdicts": [],
-            "envelope_unverified": [], "verdict": "v", "quarantined": [],
-            "canonicalization": "json-c14n-pilot/v1",
+            "task": {"goal": "t"}, "scope": {"project": "p"}, "projection": [], "embedded": [],
+            "reduction": "closure-only", "conflict_records": [], "refusals": [], "verdicts": {},
+            "envelope_unverified": [], "verdict": "T", "quarantined": [],
+            "canonicalization": {"name": "json-c14n-pilot", "version": "v1"},
             "tools": {"profile": STRICT_PROFILE, "allow": ["read"]}
         });
-        let manifest = serde_json::json!({"snapshot_digest": "s", "revisions": [{"p": 1}]});
+        let manifest = serde_json::json!({
+            "snapshot_digest": format!("sha256:{:064x}", 0),
+            "revisions": [["p@r1", format!("sha256:{:064x}", 1)]]
+        });
         let bytes = format!("{body}{manifest}");
         let digest = digest_of(bytes.as_bytes());
         let document = ContractDocument {
@@ -711,7 +715,7 @@ mod tests {
             .contract
             .reader_capability
             .contains("strict:arcanada-kc2-tools/v1"));
-        assert_eq!(trace.contract.schema_parity, "NOT_READY");
+        assert_eq!(trace.contract.schema_parity, "PINNED_VERIFIED_UNMERGED");
     }
 
     #[test]
