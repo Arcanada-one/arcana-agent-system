@@ -144,22 +144,16 @@
   "result": "REFUSE"
  },
  "M11-lone-high-surrogate": {
-  "allow": [
-   "read",
-   "write"
-  ],
-  "code": null,
-  "detail": "",
-  "result": "ACCEPT"
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "unpaired UTF-16 surrogate in a JSON string at $.body.task.goal",
+  "result": "REFUSE"
  },
  "M11-lone-low-surrogate": {
-  "allow": [
-   "read",
-   "write"
-  ],
-  "code": null,
-  "detail": "",
-  "result": "ACCEPT"
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "unpaired UTF-16 surrogate in a JSON string at $.body.task.goal",
+  "result": "REFUSE"
  },
  "M11-pretty-printed": {
   "allow": null,
@@ -416,13 +410,10 @@
   "result": "REFUSE"
  },
  "POS-nonempty-allow-empty-revisions": {
-  "allow": [
-   "read",
-   "write"
-  ],
-  "code": null,
-  "detail": "",
-  "result": "ACCEPT"
+  "allow": null,
+  "code": "CONTRACT_POLICY_SOURCE_UNRESOLVED",
+  "detail": "body.tools.allow ['read', 'write'] is non-empty but closure_manifest.revisions is empty: no source revision to derive the allow-list from",
+  "result": "REFUSE"
  },
  "POS-read-write": {
   "allow": [

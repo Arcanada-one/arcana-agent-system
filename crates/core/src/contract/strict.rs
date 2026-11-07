@@ -318,8 +318,8 @@ pub(super) fn derive(
         )
     })?;
 
-    let body = parse_half("body", body_text).map_err(canon)?;
-    let manifest = parse_half("closure_manifest", manifest_text).map_err(canon)?;
+    let body = parse_half_or_refuse(digest, profile, "body", body_text)?;
+    let manifest = parse_half_or_refuse(digest, profile, "closure_manifest", manifest_text)?;
 
     // The envelope's profile marker (outside the digest) is classified first, as the pinned
     // reader classifies its top-level marker. An absent hint is allowed: integrity comes from the
@@ -595,20 +595,121 @@ impl<'de> Visitor<'de> for StrictVisitor {
     }
 }
 
-fn parse_half(name: &str, text: &str) -> Result<Value, String> {
+/// Why a digested half did not parse: a defect of the bytes, or a value this reader cannot hold.
+enum HalfError {
+    /// Not strictly parseable canonical JSON (`CONTRACT_CANONICAL_INVALID`).
+    Invalid(String),
+    /// A well-formed canonical integer outside this reader's declared domain
+    /// (`CONTRACT_READER_UNSUPPORTED`): a capability limit, never a rounding or a truncation.
+    Unsupported(String),
+}
+
+impl fmt::Display for HalfError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (Self::Invalid(text) | Self::Unsupported(text)) = self;
+        f.write_str(text)
+    }
+}
+
+/// [`parse_half`] with its failure mapped to the typed refusal: `CONTRACT_CANONICAL_INVALID` for a
+/// defect of the bytes, `CONTRACT_READER_UNSUPPORTED` for a capability limit.
+fn parse_half_or_refuse(
+    digest: &str,
+    profile: &str,
+    name: &str,
+    text: &str,
+) -> Result<Value, ContractRefusal> {
+    parse_half(name, text).map_err(|err| match err {
+        HalfError::Invalid(detail) => ContractRefusal::CanonicalInvalid {
+            digest: digest.to_owned(),
+            detail,
+        },
+        HalfError::Unsupported(detail) => ContractRefusal::ReaderUnsupported {
+            requested: profile.to_owned(),
+            detail,
+        },
+    })
+}
+
+fn parse_half(name: &str, text: &str) -> Result<Value, HalfError> {
     serde_json::from_str::<Strict>(text)
         .map(|Strict(value)| value)
         .map_err(|err| {
-            if let Some(literal) = integer_outside_domain(text) {
-                return format!(
-                    "{name} holds the integer {literal}, outside the supported integer domain \
-                     [{}, {}] (reviewed restriction C1, see `INTEGER_DOMAIN`): the normative \
-                     canonical form has unbounded integers, this reader does not",
-                    INTEGER_DOMAIN.0, INTEGER_DOMAIN.1
-                );
+            // A lone surrogate escape is not a Unicode scalar value: it is a defect of the bytes
+            // (the normative decision: CONTRACT_CANONICAL_INVALID before hashing), so it wins
+            // over a capability limit found anywhere in the same half, whatever the order.
+            if !has_lone_surrogate_escape(text) {
+                if let Some(literal) = integer_outside_domain(text) {
+                    return HalfError::Unsupported(format!(
+                        "{name} holds the integer {}, outside the integer domain this reader \
+                         supports [{}, {}] (declared capability limit C1, see `INTEGER_DOMAIN`): \
+                         the canonical form has exact unbounded integers, this reader refuses \
+                         rather than round or truncate",
+                        abbreviate(&literal),
+                        INTEGER_DOMAIN.0,
+                        INTEGER_DOMAIN.1
+                    ));
+                }
             }
-            format!("{name} is not strictly parseable JSON: {err}")
+            HalfError::Invalid(format!("{name} is not strictly parseable JSON: {err}"))
         })
+}
+
+/// `true` when a JSON string in `text` holds a `\uD800..\uDFFF` escape that is not part of a
+/// high-then-low pair (keys and values alike; escapes only, since raw UTF-8 cannot encode one).
+fn has_lone_surrogate_escape(text: &str) -> bool {
+    let b = text.as_bytes();
+    let hex = |i: usize| -> Option<u32> {
+        let h = text.get(i..i + 4)?;
+        u32::from_str_radix(h, 16).ok()
+    };
+    let mut i = 0;
+    let mut in_string = false;
+    while i < b.len() {
+        match b[i] {
+            b'"' => in_string = !in_string,
+            b'\\' if in_string => {
+                if b.get(i + 1) == Some(&b'u') {
+                    if let Some(unit) = hex(i + 2) {
+                        if (0xD800..0xDC00).contains(&unit) {
+                            let low = b.get(i + 6) == Some(&b'\\')
+                                && b.get(i + 7) == Some(&b'u')
+                                && hex(i + 8).is_some_and(|u| (0xDC00..0xE000).contains(&u));
+                            if !low {
+                                return true;
+                            }
+                            i += 12;
+                            continue;
+                        }
+                        if (0xDC00..0xE000).contains(&unit) {
+                            return true;
+                        }
+                    }
+                    i += 6;
+                    continue;
+                }
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// A long integer literal shortened for a message (the full literal can have thousands of digits).
+fn abbreviate(literal: &str) -> String {
+    if literal.len() <= 40 {
+        literal.to_owned()
+    } else {
+        format!(
+            "{}...{} ({} chars)",
+            &literal[..20],
+            &literal[literal.len() - 10..],
+            literal.len()
+        )
+    }
 }
 
 /// C1 - the canonical VALUE DOMAIN this reader supports (reviewed decision, KCLIVE-11 / PR273).
@@ -617,8 +718,11 @@ fn parse_half(name: &str, text: &str) -> Result<Value, String> {
 /// integers, `\uXXXX` escapes for every non-ASCII char (surrogate pairs above the BMP), and lets a
 /// lone escaped surrogate through. This reader supports:
 ///
-/// * integers in `[i64::MIN, u64::MAX]` - anything outside refuses, fail-closed, with
-///   `CONTRACT_CANONICAL_INVALID` and a message that names this restriction (it is not a "float");
+/// * integers in `[i64::MIN, u64::MAX]` - anything outside refuses, fail-closed, with the typed
+///   `CONTRACT_READER_UNSUPPORTED` (a reader capability, not a defect of the bytes: the canonical
+///   domain has exact unbounded integers) and a message that names this restriction. Never
+///   rounded, truncated or read as a float. The Python reference reader accepts exact integers up
+///   to 4300 decimal digits and refuses longer ones with the same typed code;
 /// * all Unicode scalar values, including non-BMP text, as escaped surrogate PAIRS;
 /// * NOT a lone surrogate escape (`"\ud800"`): it is not a Unicode scalar value and `serde_json`
 ///   refuses it, so it refuses here as non-strictly-parseable.
@@ -628,7 +732,7 @@ fn parse_half(name: &str, text: &str) -> Result<Value, String> {
 /// compared; the brief forbids altering legacy canonicalisation, and nothing in the profile or a
 /// producer needs an integer above `u64`. The restriction is measured against the real chain
 /// (`kc2_tools_e2e`: the producer, Argana and the pinned reader accept 2^64 and 2^200 in an open
-/// task value; this reader refuses) and named, with its reason, in that test's `KNOWN_DIFFERENCES`.
+/// task value; this reader refuses with `CONTRACT_READER_UNSUPPORTED`) and named, with its reason, in that test's `KNOWN_DIFFERENCES`.
 /// Reverse if a producer legitimately emits an integer above `u64`: then lift it with an
 /// arbitrary-precision number type confined to this module, not the shared `serde_json`.
 pub const INTEGER_DOMAIN: (&str, &str) = ("-9223372036854775808", "18446744073709551615");
@@ -802,7 +906,10 @@ mod tests {
     #[test]
     fn a_duplicate_key_is_an_error_not_last_wins() {
         let err = parse_half("body", r#"{"a":1,"a":2}"#).unwrap_err();
-        assert!(err.contains("duplicate object key `a`"), "{err}");
+        assert!(
+            err.to_string().contains("duplicate object key `a`"),
+            "{err}"
+        );
         assert!(parse_half("body", r#"{"a":{"b":1,"b":2}}"#).is_err());
     }
 }

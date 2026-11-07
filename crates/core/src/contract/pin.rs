@@ -70,11 +70,11 @@ pub const PROFILE_SCHEMA_FILES: [&str; 4] = [
     "common-defs.schema.json",
 ];
 
-/// THE pin (talomnia-knowledge draft PR546, head `b3fe1199...`, filled from the owner's
+/// THE pin (talomnia-knowledge draft PR546, head `e98c507b...`, filled from the owner's
 /// publication in the task brief and re-measured with `git hash-object`; nothing here is guessed).
 pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = Some(SchemaPin {
     repo: "Arcanada-one/talomnia-knowledge",
-    commit: "b3fe119921357964d68d77980b10b9f80135d831",
+    commit: "e98c507b697baffaabf4f53471420082a13e8488",
     merged: false,
     source: "draft PR546 (open, unmerged) head",
     schemas: &[
@@ -106,7 +106,7 @@ pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = Some(SchemaPin {
             bytes: include_bytes!("schema/common-defs.schema.json"),
         },
     ],
-    reference_reader_blob: "b26cbe40cdd3546f7d74a4cfabd9bdd8e9a006e7",
+    reference_reader_blob: "f310ab09601ee0367f562a7a049ca9f6d0825ff5",
 });
 
 /// Git blob id (`git hash-object`) of `bytes`.

@@ -1,7 +1,7 @@
 # Vendored talomnia-knowledge KC2 schemas (pin for the strict reader)
 
 Byte-exact copies of `ontology/schemas/*.schema.json` from
-`Arcanada-one/talomnia-knowledge` at commit `b3fe119921357964d68d77980b10b9f80135d831`
+`Arcanada-one/talomnia-knowledge` at commit `e98c507b697baffaabf4f53471420082a13e8488`
 (head of the OPEN, UNMERGED draft PR546). They are the normative shape of
 `arcanada-kc2-tools/v1`; ARAS writes no second schema. Do not edit them: the reader checks the
 git blob SHA-1 of each file against `TALOMNIA_SCHEMA_PIN` (`../pin.rs`) and refuses with

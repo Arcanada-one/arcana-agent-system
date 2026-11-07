@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[]` = deny-all), and never falls back to the default allowlist. The shape of the
   body, manifest and every value inside them is the talomnia-knowledge schema,
   vendored byte for byte under `crates/core/src/contract/schema/` and pinned by git
-  blob id to commit `b3fe1199…` (head of the OPEN, UNMERGED draft PR546; a squash-merge
+  blob id to commit `e98c507b…` (head of the OPEN, UNMERGED draft PR546; a squash-merge
   or amendment of that PR requires a re-pin before this can merge). A pin mismatch
   refuses with `CONTRACT_READER_UNSUPPORTED` before any contract byte is read. New typed
   refusals: `CONTRACT_PROFILE_REQUIRED`, `CONTRACT_PROFILE_INVALID`,
@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   learning trace record the reader route, the recognised profile, the reader
   capability signal and the schema parity (`PINNED_VERIFIED_UNMERGED` while
   `TALOMNIA_SCHEMA_PIN` points at an unmerged commit and the vendored bytes match it).
+
+- `arcana-core` contract reader, re-pin to talomnia-knowledge PR546 `e98c507b…` (reference reader
+  blob `f310ab09`; the five schema blobs are unchanged from `b3fe1199`). **Typed capability
+  refusal for integers:** an integer outside `[i64::MIN, u64::MAX]` is now refused with
+  `CONTRACT_READER_UNSUPPORTED` (a reader capability; the canonical domain has exact unbounded
+  integers, the Python reference reader holds up to 4300 decimal digits and refuses longer ones with
+  the same code), no longer with `CONTRACT_CANONICAL_INVALID`; never rounded, truncated or read as a
+  float. A lone surrogate escape keeps `CONTRACT_CANONICAL_INVALID` and wins over a capability limit
+  in the same half. The cross-runtime canonical fixtures (`tools-profile-canonical`, 29 files) are
+  consumed by `contract_strict_canonical_fixtures`; the 120-case parity now has four named
+  differences (the reference reader adopted the policy-source rule and the Unicode gate, so those
+  two disappeared). No digest, canonical or hash line changed for existing contracts.
 
 - `arcana-core` contract reader (Agent-Brain review of PR273: R1, R2, C1):
   - **R2, no downgrade.** The legacy route (`verify`, `ReaderMode::Legacy`, and therefore

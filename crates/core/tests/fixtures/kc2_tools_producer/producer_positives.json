@@ -80,6 +80,10 @@
    "body_text": "{\"canonicalization\":{\"name\":\"json-c14n-pilot\",\"version\":\"v1\"},\"conflict_records\":[],\"embedded\":[],\"envelope_unverified\":[],\"projection\":[],\"quarantined\":[],\"reduction\":\"closure-only\",\"refusals\":[],\"scope\":{\"project\":\"synthetic\"},\"task\":{\"goal\":\"synthetic goal\"},\"tools\":{\"allow\":[\"read\",\"write\"],\"profile\":\"arcanada-kc2-tools/v1\"},\"verdict\":\"T\",\"verdicts\":{}}",
    "digest": "sha256:1a25e7963a6ebd26ec6687e22759c137a730164e0e7913bdd826962fae4ed3da",
    "manifest_text": "{\"revisions\":[],\"snapshot_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}",
+   "producer_refusal": {
+    "code": "CONTRACT_POLICY_SOURCE_UNRESOLVED",
+    "detail": "body.tools.allow ['read', 'write'] is non-empty but closure_manifest.revisions is empty: no source revision to derive the allow-list from"
+   },
    "whole_b64": "eyJib2R5Ijp7ImNhbm9uaWNhbGl6YXRpb24iOnsibmFtZSI6Impzb24tYzE0bi1waWxvdCIsInZlcnNpb24iOiJ2MSJ9LCJjb25mbGljdF9yZWNvcmRzIjpbXSwiZW1iZWRkZWQiOltdLCJlbnZlbG9wZV91bnZlcmlmaWVkIjpbXSwicHJvamVjdGlvbiI6W10sInF1YXJhbnRpbmVkIjpbXSwicmVkdWN0aW9uIjoiY2xvc3VyZS1vbmx5IiwicmVmdXNhbHMiOltdLCJzY29wZSI6eyJwcm9qZWN0Ijoic3ludGhldGljIn0sInRhc2siOnsiZ29hbCI6InN5bnRoZXRpYyBnb2FsIn0sInRvb2xzIjp7ImFsbG93IjpbInJlYWQiLCJ3cml0ZSJdLCJwcm9maWxlIjoiYXJjYW5hZGEta2MyLXRvb2xzL3YxIn0sInZlcmRpY3QiOiJUIiwidmVyZGljdHMiOnt9fSwiY2xvc3VyZV9tYW5pZmVzdCI6eyJyZXZpc2lvbnMiOltdLCJzbmFwc2hvdF9kaWdlc3QiOiJzaGEyNTY6MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCJ9LCJjb250cmFjdF9kaWdlc3QiOiJzaGEyNTY6MWEyNWU3OTYzYTZlYmQyNmVjNjY4N2UyMjc1OWMxMzdhNzMwMTY0ZTBlNzkxM2JkZDgyNjk2MmZhZTRlZDNkYSIsImtpbmQiOiJLbm93bGVkZ2VDb250cmFjdCIsInNjaGVtYV92ZXJzaW9uIjoiYXJjYW5hZGEta2MyLXRvb2xzL3YxIn0="
   },
   "u64_max": {
@@ -125,6 +129,10 @@
    "body_text": "{\"canonicalization\":{\"name\":\"json-c14n-pilot\",\"version\":\"v1\"},\"conflict_records\":[],\"embedded\":[],\"envelope_unverified\":[],\"projection\":[{\"assertions\":[\"synthetic assertion 0\"],\"source\":{\"content_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000001\",\"revision_id\":\"synthetic-pin@r1\"}},{\"assertions\":[\"synthetic assertion 1\"],\"source\":{\"content_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000002\",\"revision_id\":\"synthetic-pin@r2\"}}],\"quarantined\":[],\"reduction\":\"closure-only\",\"refusals\":[],\"scope\":{\"project\":\"synthetic\"},\"task\":{\"bounds\":{\"x\\ud800y\":\"x\\ud800y\"},\"goal\":\"x\\ud800y\"},\"tools\":{\"allow\":[\"read\"],\"profile\":\"arcanada-kc2-tools/v1\"},\"verdict\":\"T\",\"verdicts\":{}}",
    "digest": "sha256:8f917f8d7b54ecfe2ca99ad8d73af99874596c5b5bf6e5a2ee5dd12514c0120d",
    "manifest_text": "{\"revisions\":[[\"synthetic-pin@r1\",\"sha256:0000000000000000000000000000000000000000000000000000000000000001\"],[\"synthetic-pin@r2\",\"sha256:0000000000000000000000000000000000000000000000000000000000000002\"]],\"snapshot_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}",
+   "producer_refusal": {
+    "code": "CONTRACT_CANONICAL_INVALID",
+    "detail": "unpaired UTF-16 surrogate in a JSON string at $.body.task.goal"
+   },
    "whole_b64": "eyJib2R5Ijp7ImNhbm9uaWNhbGl6YXRpb24iOnsibmFtZSI6Impzb24tYzE0bi1waWxvdCIsInZlcnNpb24iOiJ2MSJ9LCJjb25mbGljdF9yZWNvcmRzIjpbXSwiZW1iZWRkZWQiOltdLCJlbnZlbG9wZV91bnZlcmlmaWVkIjpbXSwicHJvamVjdGlvbiI6W3siYXNzZXJ0aW9ucyI6WyJzeW50aGV0aWMgYXNzZXJ0aW9uIDAiXSwic291cmNlIjp7ImNvbnRlbnRfZGlnZXN0Ijoic2hhMjU2OjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJyZXZpc2lvbl9pZCI6InN5bnRoZXRpYy1waW5AcjEifX0seyJhc3NlcnRpb25zIjpbInN5bnRoZXRpYyBhc3NlcnRpb24gMSJdLCJzb3VyY2UiOnsiY29udGVudF9kaWdlc3QiOiJzaGEyNTY6MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMiIsInJldmlzaW9uX2lkIjoic3ludGhldGljLXBpbkByMiJ9fV0sInF1YXJhbnRpbmVkIjpbXSwicmVkdWN0aW9uIjoiY2xvc3VyZS1vbmx5IiwicmVmdXNhbHMiOltdLCJzY29wZSI6eyJwcm9qZWN0Ijoic3ludGhldGljIn0sInRhc2siOnsiYm91bmRzIjp7InhcdWQ4MDB5IjoieFx1ZDgwMHkifSwiZ29hbCI6InhcdWQ4MDB5In0sInRvb2xzIjp7ImFsbG93IjpbInJlYWQiXSwicHJvZmlsZSI6ImFyY2FuYWRhLWtjMi10b29scy92MSJ9LCJ2ZXJkaWN0IjoiVCIsInZlcmRpY3RzIjp7fX0sImNsb3N1cmVfbWFuaWZlc3QiOnsicmV2aXNpb25zIjpbWyJzeW50aGV0aWMtcGluQHIxIiwic2hhMjU2OjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEiXSxbInN5bnRoZXRpYy1waW5AcjIiLCJzaGEyNTY6MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMiJdXSwic25hcHNob3RfZGlnZXN0Ijoic2hhMjU2OjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAifSwiY29udHJhY3RfZGlnZXN0Ijoic2hhMjU2OjhmOTE3ZjhkN2I1NGVjZmUyY2E5OWFkOGQ3M2FmOTk4NzQ1OTZjNWI1YmY2ZTVhMmVlNWRkMTI1MTRjMDEyMGQiLCJraW5kIjoiS25vd2xlZGdlQ29udHJhY3QiLCJzY2hlbWFfdmVyc2lvbiI6ImFyY2FuYWRhLWtjMi10b29scy92MSJ9"
   },
   "uni_non_bmp": {
@@ -145,6 +153,6 @@
  "producer": {
   "entry": "kc2_tools_profile_producer.emit_synthetic_profile_contract",
   "source": "synthetic talomnia-ontology/v2 contract (no native revision)",
-  "talomnia_commit": "b3fe119921357964d68d77980b10b9f80135d831"
+  "talomnia_commit": "e98c507b697baffaabf4f53471420082a13e8488"
  }
 }

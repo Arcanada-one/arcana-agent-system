@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit producer-generated positive fixtures for the strict-reader tests (KCLIVE-11, R1).
 
-Usage: emit.py <talomnia checkout at b3fe119921357964d68d77980b10b9f80135d831> > producer_positives.json
+Usage: emit.py <talomnia checkout at e98c507b697baffaabf4f53471420082a13e8488> > producer_positives.json
 
 Every positive is produced by the pinned talomnia opt-in producer
 (`kc2_tools_profile_producer.emit_synthetic_profile_contract`), which re-reads its own output with
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 TAL = Path(sys.argv[1]).resolve()
-COMMIT = "b3fe119921357964d68d77980b10b9f80135d831"
+COMMIT = "e98c507b697baffaabf4f53471420082a13e8488"
 head = subprocess.run(["git", "-C", str(TAL), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
 if head != COMMIT:
     raise SystemExit(f"REFUSED: {TAL} is at {head}, the pin is {COMMIT}")
@@ -57,12 +57,23 @@ def sealed(fn, pins=2):
 
 def entry(source, allow):
     r = producer.emit_synthetic_profile_contract(source, allow)
-    assert "refusal" not in r, r
-    c = r["contract"]
+    refusal = r.get("refusal")
+    if refusal:
+        # The pinned producer REFUSES this input (recorded verbatim). The bytes it would have
+        # carried are still built from the producer's own wrapper and canonical form, so the
+        # consumer tests keep one-defect bytes; `producer_refusal` marks that the reference
+        # reader does not accept them.
+        c = producer._wrap(source, allow)
+        raw = None
+    else:
+        c, raw = r["contract"], r["bytes"]
     body = canon.canonical_bytes(c["body"]).decode()
     man = canon.canonical_bytes(c["closure_manifest"]).decode()
-    return {"allow": list(allow), "body_text": body, "manifest_text": man, "digest": c["contract_digest"],
-            "whole_b64": base64.b64encode(r["bytes"]).decode()}
+    out = {"allow": list(allow), "body_text": body, "manifest_text": man, "digest": c["contract_digest"],
+           "whole_b64": base64.b64encode(raw if raw is not None else canon.canonical_bytes(c)).decode()}
+    if refusal:
+        out["producer_refusal"] = refusal
+    return out
 
 
 def bounds(val):

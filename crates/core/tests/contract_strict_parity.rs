@@ -29,12 +29,6 @@ const PRODUCER: &str = include_str!("fixtures/kc2_tools_parity/producer_at_pin.j
 /// (case id, why)
 const KNOWN_DIFFERENCES: &[(&str, &str)] = &[
     (
-        "POS-nonempty-allow-empty-revisions",
-        "OPEN QUESTION: ARAS refuses a non-empty allow with no pinned revision \
-         (CONTRACT_POLICY_SOURCE_UNRESOLVED, KC-Brain consumer rule); the pinned reader accepts - \
-         its producer-side counterpart module is not at the pin",
-    ),
-    (
         "POS-hint-absent",
         "OPEN QUESTION: the envelope hints sit outside the digest and Argana may omit them; ARAS \
          takes integrity from the digested inner marker, the pinned reader requires a top-level \
@@ -51,17 +45,11 @@ const KNOWN_DIFFERENCES: &[(&str, &str)] = &[
          CONTRACT_DIGEST_MISMATCH before any profile check; the pinned reader checks it last",
     ),
     (
-        "M11-lone-high-surrogate",
-        "C1, OPEN KC-Brain decision (not changed here): the pinned reader accepts a lone escaped \
-         surrogate (Python str); ARAS refuses it fail-closed as CONTRACT_CANONICAL_INVALID, and \
-         Argana ef0c6093 refuses it at put with the same typed code",
-    ),
-    ("M11-lone-low-surrogate", "as M11-lone-high-surrogate"),
-    (
         "M11-bignum-in-open-bounds",
-        "C1, reviewed decision (see INTEGER_DOMAIN in contract/strict.rs): ARAS supports integers \
-         in [i64::MIN, u64::MAX] and refuses any other as non-canonical, fail-closed, naming the \
-         restriction; Python integers are unbounded and the pinned reader accepts",
+        "DECLARED CAPABILITY DIFFERENCE (see INTEGER_DOMAIN in contract/strict.rs): this reader \
+         holds integers in [i64::MIN, u64::MAX] and refuses any other with the typed \
+         CONTRACT_READER_UNSUPPORTED, never rounding or truncating; the pinned reader accepts \
+         exact integers up to 4300 decimal digits and refuses longer ones with the same code",
     ),
 ];
 

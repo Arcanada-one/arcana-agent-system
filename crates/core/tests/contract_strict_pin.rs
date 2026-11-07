@@ -13,7 +13,7 @@ use serde_json::json;
 
 /// The commit and blobs published by the schema owner (draft PR546 head), written out
 /// independently of the pin so a typo in either is caught.
-const COMMIT: &str = "b3fe119921357964d68d77980b10b9f80135d831";
+const COMMIT: &str = "e98c507b697baffaabf4f53471420082a13e8488";
 const BLOBS: [(&str, &str); 5] = [
     (
         "arcanada-kc2-tools-v1.schema.json",
@@ -92,7 +92,7 @@ fn the_pin_names_the_published_commit_and_every_published_blob() {
     assert!(!pin.merged);
     assert_eq!(
         pin.reference_reader_blob,
-        "b26cbe40cdd3546f7d74a4cfabd9bdd8e9a006e7"
+        "f310ab09601ee0367f562a7a049ca9f6d0825ff5"
     );
     assert_eq!(pin.schemas.len(), BLOBS.len());
     for (name, blob) in BLOBS {

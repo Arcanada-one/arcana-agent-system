@@ -231,9 +231,13 @@ fn r1_every_producer_generated_positive_in_the_supported_domain_is_accepted_with
 
 #[test]
 fn r1_the_consumer_policy_source_rule_is_not_the_producers() {
-    // Producer-valid bytes (the pinned reader accepts them) whose non-empty allow pins no revision:
-    // the consumer-only KC-Brain rule refuses them. A named, measured difference (see the parity
-    // test's KNOWN_DIFFERENCES), not a producer defect.
+    // Q1 is closed at e98c507b: the pinned reader applies the same rule (non-empty allow with no
+    // pinned revision -> CONTRACT_POLICY_SOURCE_UNRESOLVED), so the producer refuses these bytes
+    // and ARAS answers with the same code. (Before e98c507b this was a named parity difference.)
+    assert_eq!(
+        producer_case("rw_no_pins")["producer_refusal"]["code"],
+        "CONTRACT_POLICY_SOURCE_UNRESOLVED"
+    );
     let (d, doc, _) = doc_of_case("rw_no_pins");
     assert_eq!(
         strict(&d, &doc).unwrap_err(),
@@ -424,17 +428,19 @@ fn c1_integers_up_to_the_64_bit_boundaries_are_supported() {
 #[test]
 fn c1_an_integer_beyond_the_64_bit_domain_is_a_named_restriction_not_a_float() {
     // 18446744073709551616 (2^64) in an open task value: producer-valid, accepted by the pinned
-    // reader. Restricted domain: refused, fail-closed, and the refusal says why.
+    // reader. Declared capability limit: refused, fail-closed with the typed
+    // CONTRACT_READER_UNSUPPORTED (a reader capability, not a defect of the bytes), and the
+    // refusal says why. Never rounded, truncated or read as a float.
     for name in ["u64_max_plus_1", "i64_min_minus_1", "pow2_200"] {
         let (d, doc, _) = doc_of_case(name);
         assert_eq!(
             strict(&d, &doc).unwrap_err(),
-            "CONTRACT_CANONICAL_INVALID",
+            "CONTRACT_READER_UNSUPPORTED",
             "{name}"
         );
         let detail = detail_of(&d, &doc);
         assert!(
-            detail.contains("reviewed restriction C1") && !detail.contains("forbids floats"),
+            detail.contains("declared capability limit C1") && !detail.contains("forbids floats"),
             "{name}: {detail}"
         );
     }
@@ -452,12 +458,17 @@ fn c1_non_bmp_text_is_supported_as_escaped_surrogate_pairs() {
 }
 
 #[test]
-fn c1_a_lone_escaped_surrogate_is_refused_even_though_the_producer_emits_it() {
+fn c1_a_lone_escaped_surrogate_is_refused_and_the_pinned_producer_now_refuses_it_too() {
     let (d, doc, _) = doc_of_case("uni_lone_surrogate");
     assert!(producer_case("uni_lone_surrogate")["body_text"]
         .as_str()
         .unwrap()
         .contains("\\ud800"));
+    // the pinned producer (e98c507b) refuses the same input with the same typed code
+    assert_eq!(
+        producer_case("uni_lone_surrogate")["producer_refusal"]["code"],
+        "CONTRACT_CANONICAL_INVALID"
+    );
     assert_eq!(
         strict(&d, &doc).unwrap_err(),
         "CONTRACT_CANONICAL_INVALID",
