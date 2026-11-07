@@ -30,9 +30,12 @@ const PRODUCER: &str = include_str!("fixtures/kc2_tools_parity/producer_at_pin.j
 const KNOWN_DIFFERENCES: &[(&str, &str)] = &[
     (
         "POS-hint-absent",
-        "OPEN QUESTION: the envelope hints sit outside the digest and Argana may omit them; ARAS \
-         takes integrity from the digested inner marker, the pinned reader requires a top-level \
-         schema_version",
+        "Q2, NAMED LEGACY-ROUTE DIFFERENCE (KC-Brain decision 2026-11-07), compatibility \
+         containment - NOT a waiver of the KC2 source schema and NOT a parity PASS. Per route: \
+         direct/legacy read = ARAS ACCEPTs from the digested inner marker and asserts no \
+         new-source strict admission; opt-in /source route = REFUSED (Argana put returns the \
+         reference reader's CONTRACT_PROFILE_REQUIRED, so a hint-less object is never served). \
+         The pinned reader requires the top-level schema_version",
     ),
     (
         "R1-hint-kind-wrong",
@@ -46,10 +49,11 @@ const KNOWN_DIFFERENCES: &[(&str, &str)] = &[
     ),
     (
         "M11-bignum-in-open-bounds",
-        "DECLARED CAPABILITY DIFFERENCE (see INTEGER_DOMAIN in contract/strict.rs): this reader \
-         holds integers in [i64::MIN, u64::MAX] and refuses any other with the typed \
-         CONTRACT_READER_UNSUPPORTED, never rounding or truncating; the pinned reader accepts \
-         exact integers up to 4300 decimal digits and refuses longer ones with the same code",
+        "Q3, DECLARED CAPABILITY DIFFERENCE (KC-Brain decision 2026-11-07; see INTEGER_DOMAIN in \
+         contract/strict.rs): on EVERY route (strict and legacy) this reader holds integers in \
+         [i64::MIN, u64::MAX] and refuses any other with the typed CONTRACT_READER_UNSUPPORTED, \
+         never rounding, normalising or accepting; the pinned reader accepts exact integers up to \
+         4300 decimal digits and refuses longer ones with the same code",
     ),
 ];
 
@@ -155,4 +159,38 @@ fn aras_strict_reader_agrees_with_the_pinned_talomnia_reader_except_where_named(
         stale.is_empty(),
         "named differences that no longer exist: {stale:?}"
     );
+}
+
+/// Q2 per route, asserted rather than only described. The legacy/direct read of the hint-less
+/// object is the named difference; the /source route's behaviour is the reference reader's own
+/// refusal (Argana put runs the pinned reader), recorded in `producer_at_pin.json`, and measured
+/// end to end against a running Argana by `harness/e2e_source.py` (REPORT.md, put 422
+/// `CONTRACT_PROFILE_REQUIRED`, nothing served).
+#[test]
+fn q2_hint_less_object_is_a_named_legacy_route_difference_and_a_refusal_on_the_source_route() {
+    let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+    let producer: Value = serde_json::from_str(PRODUCER).unwrap();
+    let case = corpus["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "POS-hint-absent")
+        .expect("the Q2 case stays in the shared corpus");
+    // the object really has no top-level schema_version hint
+    assert!(case.get("hint_schema_version").is_none_or(Value::is_null));
+    // /source route: the reference reader (what Argana put runs) refuses it, with its own code
+    assert_eq!(producer["POS-hint-absent"]["result"], "REFUSE");
+    assert_eq!(
+        producer["POS-hint-absent"]["code"],
+        "CONTRACT_PROFILE_REQUIRED"
+    );
+    // direct/legacy read: ARAS accepts from the digested inner marker - the named difference
+    let (result, code, _) = aras(case);
+    assert_eq!((result.as_str(), code), ("ACCEPT", None));
+    // and it is named, with the per-route statement, so it can neither grow silently nor vanish
+    let named = KNOWN_DIFFERENCES
+        .iter()
+        .find(|(id, _)| *id == "POS-hint-absent")
+        .unwrap();
+    assert!(named.1.contains("NOT a waiver") && named.1.contains("/source route"));
 }

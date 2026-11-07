@@ -699,7 +699,7 @@ fn has_lone_surrogate_escape(text: &str) -> bool {
 }
 
 /// A long integer literal shortened for a message (the full literal can have thousands of digits).
-fn abbreviate(literal: &str) -> String {
+pub(super) fn abbreviate(literal: &str) -> String {
     if literal.len() <= 40 {
         literal.to_owned()
     } else {
@@ -738,7 +738,7 @@ fn abbreviate(literal: &str) -> String {
 pub const INTEGER_DOMAIN: (&str, &str) = ("-9223372036854775808", "18446744073709551615");
 
 /// First integer literal (outside strings) that is not an `i64` or `u64`, if any.
-fn integer_outside_domain(text: &str) -> Option<String> {
+pub(super) fn integer_outside_domain(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut i = 0;
     let mut in_string = false;

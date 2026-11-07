@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `arcana-core` contract reader (Q3, KC-Brain decision 2026-11-07): the legacy route now
+  refuses an integer outside `[i64::MIN, u64::MAX]` in the digested bytes with the typed
+  `CONTRACT_READER_UNSUPPORTED`; before, it silently rounded it to a float in the projection
+  the model reads. The strict route already refused it. Q2 (hint-less object) is a named
+  legacy-route difference in the parity report, refused on the opt-in `/source` route; no
+  behaviour change there. Not a waiver of the KC2 source schema and not a full parity PASS.
 - `arcana-core` contract reader: `verify_with(expected, document, ReaderMode)` adds an
   explicit strict `arcanada-kc2-tools/v1` mode over the bytes `verify` already
   re-hashed (`verify` itself is the recorded legacy route and can never satisfy the

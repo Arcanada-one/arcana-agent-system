@@ -886,6 +886,23 @@ fn derive_policy(
         });
     };
 
+    // Q3: the legacy reader holds numbers as `serde_json` does, so an integer outside
+    // [i64::MIN, u64::MAX] would be rounded to a float in the projection the model reads. Refuse it
+    // with the typed capability code instead; nothing is rounded, normalised or accepted.
+    if let Some(literal) = strict::integer_outside_domain(text) {
+        return Err(ContractRefusal::ReaderUnsupported {
+            requested: "legacy".to_owned(),
+            detail: format!(
+                "the digested bytes hold the integer {}, outside the integer domain this reader \
+                 supports [{}, {}] (declared capability limit C1): this reader refuses rather than \
+                 round or truncate",
+                strict::abbreviate(&literal),
+                strict::INTEGER_DOMAIN.0,
+                strict::INTEGER_DOMAIN.1
+            ),
+        });
+    }
+
     let derived_projection = serde_json::json!({ "body": body, "closure_manifest": manifest });
     match &document.projection {
         Value::Null => {}
