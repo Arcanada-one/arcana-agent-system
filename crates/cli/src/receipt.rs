@@ -94,6 +94,14 @@ pub struct ContractSection {
     pub allowlist: Vec<String>,
     /// `contract` or `default-no-shell`.
     pub allowlist_source: String,
+    /// `legacy` or `strict`. Only `strict` can satisfy the strict profile.
+    pub reader_route: String,
+    /// The profile the strict reader recognised; `null` on the legacy route.
+    pub recognised_profile: Option<String>,
+    /// The reader's capability signal (admission can check it).
+    pub reader_capability: String,
+    /// `NOT_READY` until the talomnia normative schema is pinned.
+    pub schema_parity: String,
 }
 
 /// One file quoted into the brief as ground truth, and the bytes it was.
@@ -196,6 +204,10 @@ pub fn build(
             kc2_snapshot: binding.kc2_snapshot().map(ToOwned::to_owned),
             allowlist: binding.allowlist().iter().cloned().collect(),
             allowlist_source: binding.allowlist_source().as_str().to_owned(),
+            reader_route: binding.reader_route().as_str().to_owned(),
+            recognised_profile: binding.profile().map(ToOwned::to_owned),
+            reader_capability: binding.reader_capability(),
+            schema_parity: binding.schema_parity().as_str().to_owned(),
         },
         worktree: Worktree {
             path: root.display().to_string(),

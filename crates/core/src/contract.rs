@@ -37,6 +37,8 @@
 //! the receipt, because "the digest checked out" means something different for
 //! each.
 
+mod strict;
+
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -51,6 +53,128 @@ pub const DIGEST_ALGO_PREFIX: &str = "sha256:";
 
 /// Length of the hex half of a well-formed digest.
 pub const DIGEST_HEX_LEN: usize = 64;
+
+/// The execution profile the strict reader enforces (KC-Brain decision, PR1886).
+pub const STRICT_PROFILE: &str = "arcanada-kc2-tools/v1";
+
+/// The closed tool vocabulary of [`STRICT_PROFILE`], ASCII-ascending.
+pub const TOOL_VOCABULARY: [&str; 4] = ["edit", "grep", "read", "write"];
+
+/// The existing canonicalisation rule the digested bytes must round-trip under.
+pub const CANONICAL_RULE: &str = "json-c14n-pilot/v1";
+
+/// Which profiles this build of the reader can enforce, as a signal admission
+/// can check BEFORE a profiled contract is run.
+///
+/// An older reader that merely ignores `body.tools.profile` is not capable and
+/// cannot be relied upon to refuse; it never produces this signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReaderCapability {
+    /// Strict profiles this reader enforces.
+    pub strict_profiles: &'static [&'static str],
+    /// The canonical-form rule its round-trip check implements.
+    pub canonical_rule: &'static str,
+}
+
+/// This build's capability.
+pub const READER_CAPABILITY: ReaderCapability = ReaderCapability {
+    strict_profiles: &[STRICT_PROFILE],
+    canonical_rule: CANONICAL_RULE,
+};
+
+impl ReaderCapability {
+    /// True when this reader enforces `profile`.
+    #[must_use]
+    pub fn supports(&self, profile: &str) -> bool {
+        self.strict_profiles.contains(&profile)
+    }
+
+    /// One recordable line, e.g. `strict:arcanada-kc2-tools/v1;canonical:json-c14n-pilot/v1`.
+    #[must_use]
+    pub fn signal(&self) -> String {
+        let profiles: Vec<String> = self
+            .strict_profiles
+            .iter()
+            .map(|profile| format!("strict:{profile}"))
+            .collect();
+        format!("{};canonical:{}", profiles.join(","), self.canonical_rule)
+    }
+}
+
+/// Identity of the normative talomnia-knowledge v2 body/manifest + tools
+/// schema this reader must be checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaPin {
+    /// Commit of the talomnia-knowledge repository that holds the schema.
+    pub commit: &'static str,
+    /// Git blob of the schema file at that commit.
+    pub blob: &'static str,
+}
+
+/// THE single slot for the talomnia schema identity. `None` until KC-SWE
+/// publishes the normative schema; it MUST be filled from that publication and
+/// never from a guess. ARAS writes no second schema (KC-Brain decision, point 5).
+pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = None;
+
+/// Whether this reader's rules have been checked against the normative schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaParity {
+    /// No normative schema is pinned, so parity cannot be claimed.
+    NotReady,
+    /// A schema is pinned, but parity has not been measured by this reader.
+    PinnedNotMeasured,
+}
+
+impl SchemaParity {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotReady => "NOT_READY",
+            Self::PinnedNotMeasured => "PINNED_NOT_MEASURED",
+        }
+    }
+}
+
+/// Parity state of this build.
+#[must_use]
+pub fn schema_parity() -> SchemaParity {
+    if TALOMNIA_SCHEMA_PIN.is_some() {
+        SchemaParity::PinnedNotMeasured
+    } else {
+        SchemaParity::NotReady
+    }
+}
+
+/// How a contract is read. The mode is explicit and is recorded on the binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReaderMode<'a> {
+    /// The pre-profile compatibility route (what [`verify`] does). It can never
+    /// satisfy the strict profile; the binding says so.
+    Legacy,
+    /// Enforce the closed profile `profile` over the verified bytes.
+    Strict { profile: &'a str },
+}
+
+/// Which route produced a binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReaderRoute {
+    /// The recorded legacy compatibility route.
+    Legacy,
+    /// The strict profile validator.
+    Strict,
+}
+
+impl ReaderRoute {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::Strict => "strict",
+        }
+    }
+}
 
 /// What a contract-bound run may call when the contract names no tools.
 ///
@@ -169,6 +293,14 @@ pub struct ContractDocument {
     /// Tools the contract admits.
     #[serde(default)]
     pub tools: Option<ContractTools>,
+    /// Top-level `kind` dispatch hint of a profile object. Outside the digest;
+    /// in strict mode it must agree with the digested bytes.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Top-level `schema_version` dispatch hint. Outside the digest; in strict
+    /// mode it must equal the digested `body.tools.profile`.
+    #[serde(default)]
+    pub schema_version: Option<String>,
 }
 
 impl ContractDocument {
@@ -288,9 +420,40 @@ pub struct ContractBinding {
     preimage: DigestPreimage,
     policy_binding: PolicyBinding,
     projection: String,
+    reader_route: ReaderRoute,
+    profile: Option<String>,
 }
 
 impl ContractBinding {
+    /// The route that produced this binding. Only [`ReaderRoute::Strict`]
+    /// satisfies the strict profile.
+    #[must_use]
+    pub fn reader_route(&self) -> ReaderRoute {
+        self.reader_route
+    }
+    /// The profile the strict reader recognised and enforced; `None` on the
+    /// legacy route, which recognises none.
+    #[must_use]
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
+    }
+    /// The capability signal of the reader that built this binding.
+    #[must_use]
+    pub fn reader_capability(&self) -> String {
+        READER_CAPABILITY.signal()
+    }
+    /// Parity of the reader's rules with the normative schema (see
+    /// [`TALOMNIA_SCHEMA_PIN`]).
+    #[must_use]
+    pub fn schema_parity(&self) -> SchemaParity {
+        schema_parity()
+    }
+    /// True only for a binding the strict reader produced for `profile`.
+    #[must_use]
+    pub fn satisfies_profile(&self, profile: &str) -> bool {
+        self.reader_route == ReaderRoute::Strict && self.profile.as_deref() == Some(profile)
+    }
+
     /// How the effective policy was tied to the digested bytes.
     #[must_use]
     pub fn policy_binding(&self) -> PolicyBinding {
@@ -355,6 +518,22 @@ pub enum ContractRefusal {
     /// (`projection`, `tools`) is not what the verified bytes say, or cannot be
     /// tied to them at all. The envelope is not covered by the digest.
     PolicyUnbound { digest: String, detail: String },
+    /// Strict profile: a required profile member (`body.tools`, `profile` or
+    /// `allow`) is absent. Never read as a default or as deny-all.
+    ProfileRequired { digest: String, detail: String },
+    /// Strict profile: the profile members are present but invalid — unknown or
+    /// wrong-typed fields, vocabulary, ordering, duplicates, shape.
+    ProfileInvalid { digest: String, detail: String },
+    /// Strict profile: the digested bytes are not the exact canonical form —
+    /// duplicate keys, non-canonical bytes under a matching hash, or a
+    /// preimage that is not `canonical(body) ‖ canonical(closure_manifest)`.
+    CanonicalInvalid { digest: String, detail: String },
+    /// Strict profile: the policy source behind a non-empty allow is missing,
+    /// inadmissible, conflicting or unsupported.
+    PolicySourceUnresolved { digest: String, detail: String },
+    /// This reader cannot enforce the requested profile. Raised before any
+    /// contract bytes are examined.
+    ReaderUnsupported { requested: String, detail: String },
 }
 
 impl ContractRefusal {
@@ -369,6 +548,11 @@ impl ContractRefusal {
             Self::Unverifiable { .. } => "CONTRACT_UNVERIFIABLE",
             Self::Unavailable { .. } => "CONTRACT_SOURCE_UNAVAILABLE",
             Self::PolicyUnbound { .. } => "CONTRACT_POLICY_UNBOUND",
+            Self::ProfileRequired { .. } => "CONTRACT_PROFILE_REQUIRED",
+            Self::ProfileInvalid { .. } => "CONTRACT_PROFILE_INVALID",
+            Self::CanonicalInvalid { .. } => "CONTRACT_CANONICAL_INVALID",
+            Self::PolicySourceUnresolved { .. } => "CONTRACT_POLICY_SOURCE_UNRESOLVED",
+            Self::ReaderUnsupported { .. } => "CONTRACT_READER_UNSUPPORTED",
         }
     }
 }
@@ -413,6 +597,32 @@ impl fmt::Display for ContractRefusal {
                 "{code}: the envelope returned for {digest} sets policy that the digested bytes do \
                  not carry ({detail}); refused before the first model call"
             ),
+            Self::ProfileRequired { digest, detail } => write!(
+                f,
+                "{code}: the contract {digest} omits a member the strict profile requires \
+                 ({detail}); refused before the first model call"
+            ),
+            Self::ProfileInvalid { digest, detail } => write!(
+                f,
+                "{code}: the contract {digest} does not conform to the strict profile \
+                 ({detail}); refused before the first model call"
+            ),
+            Self::CanonicalInvalid { digest, detail } => write!(
+                f,
+                "{code}: the digested bytes of {digest} are not the exact canonical form \
+                 ({detail}); a matching hash is not profile conformance"
+            ),
+            Self::PolicySourceUnresolved { digest, detail } => write!(
+                f,
+                "{code}: the policy source behind the tools of {digest} is unresolved ({detail}); \
+                 refused before the first model call"
+            ),
+            Self::ReaderUnsupported { requested, detail } => write!(
+                f,
+                "{code}: this reader cannot enforce the profile `{requested}` ({detail}); \
+                 capability: {}",
+                READER_CAPABILITY.signal()
+            ),
         }
     }
 }
@@ -430,6 +640,32 @@ pub fn verify(
     expected: &str,
     document: &ContractDocument,
 ) -> Result<ContractBinding, ContractRefusal> {
+    verify_with(expected, document, ReaderMode::Legacy)
+}
+
+/// [`verify`] with an explicit [`ReaderMode`].
+///
+/// `Legacy` is the shipped route, recorded as such on the binding. `Strict`
+/// runs the profile validator over the bytes that were just re-hashed — the same
+/// digest check, the same envelope-vs-bytes binding, one more validator — and
+/// never takes the default allowlist, an opaque preimage, a serde-default
+/// `allow`, set normalisation or a non-Argana preimage route.
+///
+/// # Errors
+/// Every way the binding cannot be made, as [`ContractRefusal`].
+pub fn verify_with(
+    expected: &str,
+    document: &ContractDocument,
+    mode: ReaderMode<'_>,
+) -> Result<ContractBinding, ContractRefusal> {
+    if let ReaderMode::Strict { profile } = mode {
+        if !READER_CAPABILITY.supports(profile) {
+            return Err(ContractRefusal::ReaderUnsupported {
+                requested: profile.to_owned(),
+                detail: "no strict reader for that profile is built into this binary".to_owned(),
+            });
+        }
+    }
     if !is_wellformed_digest(expected) {
         return Err(ContractRefusal::MalformedDigest {
             value: expected.to_owned(),
@@ -444,6 +680,33 @@ pub fn verify(
             expected: expected.to_owned(),
             computed,
             preimage,
+        });
+    }
+
+    if let ReaderMode::Strict { profile } = mode {
+        if preimage != DigestPreimage::CanonicalBytesB64 {
+            return Err(ContractRefusal::CanonicalInvalid {
+                digest: expected.to_owned(),
+                detail: format!(
+                    "the preimage came from `{}`; the strict profile accepts only \
+                     canonical.bytes_b64",
+                    preimage.as_str()
+                ),
+            });
+        }
+        let policy = strict::derive(expected, profile, &bytes, document)?;
+        return Ok(ContractBinding {
+            digest: expected.to_owned(),
+            kc2_revision: document.revision(),
+            kc2_snapshot: document.snapshot(),
+            allowlist: policy.allow.iter().cloned().collect(),
+            allowlist_source: AllowlistSource::Contract,
+            preimage,
+            policy_binding: PolicyBinding::DerivedFromCanonicalBytes,
+            projection: serde_json::to_string_pretty(&policy.projection)
+                .unwrap_or_else(|_| policy.projection.to_string()),
+            reader_route: ReaderRoute::Strict,
+            profile: Some(profile.to_owned()),
         });
     }
 
@@ -472,6 +735,8 @@ pub fn verify(
         preimage,
         policy_binding: policy.binding,
         projection: policy.projection,
+        reader_route: ReaderRoute::Legacy,
+        profile: None,
     })
 }
 
