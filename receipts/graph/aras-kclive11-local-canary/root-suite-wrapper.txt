@@ -10,7 +10,7 @@ exported=$(pwd)
 tmp=$(mktemp -d /home/dev/aup/claude-work/arasga02/rootclone.XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 git clone -q --no-local "$SRC" "$tmp/c" && git -C "$tmp/c" checkout -q "$X" || { echo "clone failed"; exit 1; }
-if ! diff -rq -x .git -x target -x receipts "$exported" "$tmp/c"; then echo "exported tree differs from pinned commit $X"; exit 1; fi
+if ! diff -rq -x .git -x target -x receipts -x __pycache__ "$exported" "$tmp/c"; then echo "exported tree differs from pinned commit $X"; exit 1; fi
 echo "exported tree == $X (receipts/ excluded)"
 cd "$tmp/c" || exit 1
 fail=0
