@@ -428,6 +428,9 @@ pub struct ContractBinding {
     projection: String,
     reader_route: ReaderRoute,
     profile: Option<String>,
+    /// Parity of the pin the strict reader ACTUALLY enforced for this binding. `None` on the
+    /// legacy route: no schema was enforced there, whatever the build pins.
+    enforced_parity: Option<SchemaParity>,
 }
 
 impl ContractBinding {
@@ -452,12 +455,21 @@ impl ContractBinding {
     /// [`TALOMNIA_SCHEMA_PIN`]).
     #[must_use]
     pub fn schema_parity(&self) -> SchemaParity {
-        schema_parity()
+        self.enforced_parity.unwrap_or_else(schema_parity)
     }
-    /// True only for a binding the strict reader produced for `profile`.
+    /// The execution-profile gate: true only for a binding the strict reader produced for
+    /// `profile` over a VERIFIED pin, by a reader whose capability names that profile. A label is
+    /// not enforcement: a binding with no verified pin behind it, a legacy binding, or a profile
+    /// this build cannot enforce never satisfies it.
     #[must_use]
     pub fn satisfies_profile(&self, profile: &str) -> bool {
-        self.reader_route == ReaderRoute::Strict && self.profile.as_deref() == Some(profile)
+        self.reader_route == ReaderRoute::Strict
+            && self.profile.as_deref() == Some(profile)
+            && READER_CAPABILITY.supports(profile)
+            && matches!(
+                self.enforced_parity,
+                Some(SchemaParity::PinnedVerified | SchemaParity::PinnedVerifiedUnmerged)
+            )
     }
 
     /// How the effective policy was tied to the digested bytes.
@@ -540,6 +552,10 @@ pub enum ContractRefusal {
     /// This reader cannot enforce the requested profile. Raised before any
     /// contract bytes are examined.
     ReaderUnsupported { requested: String, detail: String },
+    /// The digested bytes (or the envelope marker) name a tools profile, but the legacy route was
+    /// asked to read them. The legacy route recognises no profile and enforces none, so omitting
+    /// `--contract-profile` must not turn profile-marked bytes into a legacy contract.
+    ProfileRouteRequired { digest: String, detail: String },
 }
 
 impl ContractRefusal {
@@ -559,6 +575,7 @@ impl ContractRefusal {
             Self::CanonicalInvalid { .. } => "CONTRACT_CANONICAL_INVALID",
             Self::PolicySourceUnresolved { .. } => "CONTRACT_POLICY_SOURCE_UNRESOLVED",
             Self::ReaderUnsupported { .. } => "CONTRACT_READER_UNSUPPORTED",
+            Self::ProfileRouteRequired { .. } => "CONTRACT_PROFILE_ROUTE_REQUIRED",
         }
     }
 }
@@ -623,6 +640,12 @@ impl fmt::Display for ContractRefusal {
                 "{code}: the policy source behind the tools of {digest} is unresolved ({detail}); \
                  refused before the first model call"
             ),
+            Self::ProfileRouteRequired { digest, detail } => write!(
+                f,
+                "{code}: the contract {digest} is marked with a tools profile ({detail}) and the \
+                 legacy route enforces none; run it with --contract-profile, never as a legacy \
+                 contract; refused before the first model call"
+            ),
             Self::ReaderUnsupported { requested, detail } => write!(
                 f,
                 "{code}: this reader cannot enforce the profile `{requested}` ({detail}); \
@@ -667,6 +690,32 @@ pub fn verify_with(
     verify_with_pin(expected, document, mode, TALOMNIA_SCHEMA_PIN.as_ref())
 }
 
+/// The capability and pin checks a strict read needs BEFORE any contract byte is examined: the
+/// profile must be one this build enforces, and the schema pin must exist and match the compiled-in
+/// bytes. Returns the verified pin.
+fn strict_gate<'p>(
+    profile: &str,
+    pin: Option<&'p SchemaPin>,
+) -> Result<&'p SchemaPin, ContractRefusal> {
+    if !READER_CAPABILITY.supports(profile) {
+        return Err(ContractRefusal::ReaderUnsupported {
+            requested: profile.to_owned(),
+            detail: "no strict reader for that profile is built into this binary".to_owned(),
+        });
+    }
+    let Some(pin) = pin else {
+        return Err(ContractRefusal::ReaderUnsupported {
+            requested: profile.to_owned(),
+            detail: "no talomnia schema is pinned, so the profile cannot be enforced".to_owned(),
+        });
+    };
+    verify_pin(pin).map_err(|detail| ContractRefusal::ReaderUnsupported {
+        requested: profile.to_owned(),
+        detail: format!("the pinned talomnia schema does not match: {detail}"),
+    })?;
+    Ok(pin)
+}
+
 /// [`verify_with`] against an explicit schema pin. Production code uses [`verify_with`]
 /// ([`TALOMNIA_SCHEMA_PIN`]); this exists so a missing or mismatching pin can be exercised.
 ///
@@ -681,29 +730,10 @@ pub fn verify_with_pin(
     mode: ReaderMode<'_>,
     pin: Option<&SchemaPin>,
 ) -> Result<ContractBinding, ContractRefusal> {
-    let mut strict_pin: Option<&SchemaPin> = None;
-    if let ReaderMode::Strict { profile } = mode {
-        if !READER_CAPABILITY.supports(profile) {
-            return Err(ContractRefusal::ReaderUnsupported {
-                requested: profile.to_owned(),
-                detail: "no strict reader for that profile is built into this binary".to_owned(),
-            });
-        }
-        let Some(pin) = pin else {
-            return Err(ContractRefusal::ReaderUnsupported {
-                requested: profile.to_owned(),
-                detail: "no talomnia schema is pinned, so the profile cannot be enforced"
-                    .to_owned(),
-            });
-        };
-        if let Err(detail) = verify_pin(pin) {
-            return Err(ContractRefusal::ReaderUnsupported {
-                requested: profile.to_owned(),
-                detail: format!("the pinned talomnia schema does not match: {detail}"),
-            });
-        }
-        strict_pin = Some(pin);
-    }
+    let strict_pin = match mode {
+        ReaderMode::Strict { profile } => Some(strict_gate(profile, pin)?),
+        ReaderMode::Legacy => None,
+    };
     if !is_wellformed_digest(expected) {
         return Err(ContractRefusal::MalformedDigest {
             value: expected.to_owned(),
@@ -751,6 +781,17 @@ pub fn verify_with_pin(
                 .unwrap_or_else(|_| policy.projection.to_string()),
             reader_route: ReaderRoute::Strict,
             profile: Some(profile.to_owned()),
+            enforced_parity: Some(schema_parity_of(Some(pin))),
+        });
+    }
+
+    // R2: the legacy route enforces no profile, so it must never take a profile-marked contract.
+    // Without this, omitting the flag turned bytes that a strict reader refuses (or that need its
+    // checks) into a legacy binding with the contract's own `allow`.
+    if let Some(why) = strict::profile_mark(&bytes, document) {
+        return Err(ContractRefusal::ProfileRouteRequired {
+            digest: expected.to_owned(),
+            detail: why,
         });
     }
 
@@ -781,6 +822,7 @@ pub fn verify_with_pin(
         projection: policy.projection,
         reader_route: ReaderRoute::Legacy,
         profile: None,
+        enforced_parity: None,
     })
 }
 

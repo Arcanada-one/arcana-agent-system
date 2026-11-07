@@ -31,6 +31,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capability signal and the schema parity (`PINNED_VERIFIED_UNMERGED` while
   `TALOMNIA_SCHEMA_PIN` points at an unmerged commit and the vendored bytes match it).
 
+- `arcana-core` contract reader (Agent-Brain review of PR273: R1, R2, C1):
+  - **R2, no downgrade.** The legacy route (`verify`, `ReaderMode::Legacy`, and therefore
+    `arcana run --work-item` without `--contract-profile`) now refuses profile-marked bytes with the
+    new typed refusal `CONTRACT_PROFILE_ROUTE_REQUIRED`, before readiness and authority. Marked means
+    `body.tools` carries a `profile` member (any occurrence of those keys, so duplicate keys cannot hide
+    it), or the envelope `schema_version` hint is an `arcanada-kc2-tools/vN` marker, or bytes that do
+    not parse as two JSON values name the profile family. Actual legacy bytes and digests (no
+    `tools`, or `tools: {allow}`) are accepted exactly as before; `digest_of`, the legacy
+    canonicalisation and `contract_authority` are untouched. The test
+    `profile_marked_bytes_are_refused_on_the_legacy_route` replaces the one that asserted the downgrade.
+  - **R1, gate and fixtures.** The positive fixtures of the strict tests are now producer-generated
+    bytes (`crates/core/tests/fixtures/kc2_tools_producer/`, emitted by the pinned talomnia opt-in
+    producer from a synthetic v2 source; `emit.py` regenerates them), and the first hand-built
+    positives are discriminating one-defect negatives over them. `satisfies_profile` additionally
+    requires the parity of the pin the strict reader actually enforced (verified) and a capability that
+    names the profile; the legacy route records no enforced parity.
+  - **C1, canonical value domain: restricted, written down.** Integers outside
+    `[i64::MIN, u64::MAX]` (for example `18446744073709551616` in an open task value) and lone escaped
+    surrogates are refused fail-closed with `CONTRACT_CANONICAL_INVALID`; the refusal names the
+    restriction instead of calling the integer a float. Non-BMP text (escaped surrogate pairs) and the
+    64-bit boundaries are supported. See `INTEGER_DOMAIN` in `contract/strict.rs` and the C1 section of
+    `docs/how-to/run-work-item-under-kc2-contract.md`.
+  - Tests: `contract_profile_route` (synthetic authority provider and a continuation counter),
+    `run_work_item_profile_route` (the binary, flag omitted / present / legacy bytes), the extended
+    `contract_strict_profile`, and `kc2_tools_e2e` (ignored; needs a contract source and the external
+    harness).
+
 - `arcana run --work-item` asks Muneral for dependency readiness after the contract
   binding is verified and before the authority gate. `ready: false` refuses with
   `WORK_ITEM_NOT_READY`; unavailable, non-200 (including 201), malformed,

@@ -106,6 +106,7 @@ dependencies = [
  "arcana-tools",
  "assert_cmd",
  "async-trait",
+ "base64 0.22.1",
  "clap",
  "predicates",
  "reqwest",

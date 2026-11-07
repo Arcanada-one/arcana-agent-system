@@ -494,6 +494,10 @@ fn typed_refusals() -> Vec<(&'static str, String)> {
             requested: slot(),
             detail: slot(),
         },
+        ContractRefusal::ProfileRouteRequired {
+            digest: slot(),
+            detail: slot(),
+        },
     ];
     // `preimage` is an enum, not a runtime string: it renders one of three
     // words the source names, so each is its own template rather than a slot
@@ -544,7 +548,8 @@ fn every_variant_is_named(
         | ContractRefusal::ProfileInvalid { .. }
         | ContractRefusal::CanonicalInvalid { .. }
         | ContractRefusal::PolicySourceUnresolved { .. }
-        | ContractRefusal::ReaderUnsupported { .. } => {}
+        | ContractRefusal::ReaderUnsupported { .. }
+        | ContractRefusal::ProfileRouteRequired { .. } => {}
     }
     match ground {
         GroundTruthRefusal::Unreadable { .. } | GroundTruthRefusal::Empty { .. } => {}

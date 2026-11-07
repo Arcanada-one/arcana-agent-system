@@ -54,27 +54,28 @@ use harness::{strict, PROFILE};
 
 // ---------- synthetic fixtures ----------
 
-/// A canonical (sorted, compact) SYNTHETIC body with the twelve v2 members and
-/// the given `tools` value (`None` omits the member).
+/// Producer-generated positives (R1): bytes emitted by the pinned talomnia opt-in producer
+/// (`kc2_tools_profile_producer.emit_synthetic_profile_contract`, commit 336e6440) from a SYNTHETIC
+/// v2 source contract and re-read by that producer's own strict reader before it returned them.
+/// Regenerate with `fixtures/kc2_tools_producer/emit.py`. They are not a grant and not evidence of
+/// source eligibility.
+const PRODUCER: &str = include_str!("fixtures/kc2_tools_producer/producer_positives.json");
+
+fn producer_case(name: &str) -> serde_json::Value {
+    let all: serde_json::Value = serde_json::from_str(PRODUCER).unwrap();
+    all["cases"][name].clone()
+}
+
+/// The producer-generated body of `rw` with its `tools` member removed, then set to `tools`
+/// (`None` omits the member). Every mutation in this file starts from producer bytes, so a
+/// refusal means the one defect that was introduced, never "the fixture was never valid".
 ///
-/// Value shapes follow the pinned talomnia schema (`kc2-v2-body.schema.json`): the first
-/// version of these fixtures used placeholder values (`"scope": {}`, `"verdict": "synthetic"`, ...)
-/// that the schema refuses, which only showed once the reader enforced the pinned schema.
+/// The producer body is pure ASCII with no string escapes, so `serde_json`'s sorted compact
+/// rendering is its canonical form; `the_base_is_the_producers_own_bytes` proves it.
 fn body_with(tools: Option<serde_json::Value>) -> serde_json::Value {
-    let mut body = json!({
-        "task": {"goal": "synthetic-task"},
-        "scope": {"project": "synthetic"},
-        "projection": [],
-        "embedded": [],
-        "reduction": "closure-only",
-        "conflict_records": [],
-        "refusals": [],
-        "verdicts": {},
-        "envelope_unverified": [],
-        "verdict": "T",
-        "quarantined": [],
-        "canonicalization": {"name": "json-c14n-pilot", "version": "v1"}
-    });
+    let mut body: serde_json::Value =
+        serde_json::from_str(producer_case("rw")["body_text"].as_str().unwrap()).unwrap();
+    body.as_object_mut().unwrap().remove("tools");
     if let Some(tools) = tools {
         body["tools"] = tools;
     }
@@ -85,16 +86,14 @@ fn tools(allow: serde_json::Value) -> serde_json::Value {
     json!({ "profile": PROFILE, "allow": allow })
 }
 
+/// Producer-generated closure manifest: `0` pins is the producer's own no-pin manifest, anything
+/// else its two-pin manifest.
 fn manifest(pins: usize) -> String {
-    let revisions: Vec<_> = (0..pins)
-        .map(|i| {
-            json!([
-                format!("synthetic-pin@r{}", i + 1),
-                format!("sha256:{:064x}", i + 1)
-            ])
-        })
-        .collect();
-    json!({"snapshot_digest": format!("sha256:{:064x}", 0), "revisions": revisions}).to_string()
+    let name = if pins == 0 { "deny_all_no_pins" } else { "rw" };
+    producer_case(name)["manifest_text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 /// Build a document around raw `body‖manifest` text, hashed as given.
@@ -151,6 +150,21 @@ fn with_hints(
 // ---------- positives (SYNTHETIC) ----------
 
 #[test]
+fn the_base_is_the_producers_own_bytes() {
+    let rw = producer_case("rw");
+    assert_eq!(
+        body_with(Some(tools(json!(["read", "write"])))).to_string(),
+        rw["body_text"].as_str().unwrap()
+    );
+    let bytes = format!(
+        "{}{}",
+        rw["body_text"].as_str().unwrap(),
+        rw["manifest_text"].as_str().unwrap()
+    );
+    assert_eq!(digest_of(bytes.as_bytes()), rw["digest"].as_str().unwrap());
+}
+
+#[test]
 fn synthetic_read_write_is_accepted_with_exactly_those_tools() {
     let (d, doc) = doc_of(&body_with(Some(tools(json!(["read", "write"])))), 1);
     assert_eq!(strict(&d, &doc).unwrap(), vec!["read", "write"]);
@@ -160,6 +174,198 @@ fn synthetic_read_write_is_accepted_with_exactly_those_tools() {
 fn synthetic_empty_allow_is_explicit_deny_all() {
     let (d, doc) = doc_of(&body_with(Some(tools(json!([])))), 0);
     assert_eq!(strict(&d, &doc).unwrap(), Vec::<String>::new());
+}
+
+// ---------- R1: producer-generated positives, and the first synthetic positives as negatives ----------
+
+type Edit = Box<dyn FnOnce(&mut serde_json::Value)>;
+
+fn doc_of_case(name: &str) -> (String, ContractDocument, Vec<String>) {
+    let case = producer_case(name);
+    let (d, doc) = doc_raw(
+        case["body_text"].as_str().unwrap(),
+        case["manifest_text"].as_str().unwrap(),
+    );
+    assert_eq!(
+        d,
+        case["digest"].as_str().unwrap(),
+        "{name}: the producer's contract_digest is H(body || manifest) as this reader re-hashes it"
+    );
+    let allow = case["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    (d, doc, allow)
+}
+
+fn detail_of(d: &str, doc: &ContractDocument) -> String {
+    arcana_core::contract::verify_with(
+        d,
+        doc,
+        arcana_core::contract::ReaderMode::Strict { profile: PROFILE },
+    )
+    .expect_err("must refuse")
+    .to_string()
+}
+
+#[test]
+fn r1_every_producer_generated_positive_in_the_supported_domain_is_accepted_with_its_own_allow() {
+    for name in [
+        "rw",
+        "deny_all",
+        "all_four",
+        "deny_all_no_pins",
+        "u64_max",
+        "i64_min",
+        "i64_max",
+        "uni_bmp",
+        "uni_non_bmp",
+        "uni_controls",
+    ] {
+        let (d, doc, allow) = doc_of_case(name);
+        assert_eq!(strict(&d, &doc).unwrap(), allow, "{name}");
+    }
+}
+
+#[test]
+fn r1_the_consumer_policy_source_rule_is_not_the_producers() {
+    // Producer-valid bytes (the pinned reader accepts them) whose non-empty allow pins no revision:
+    // the consumer-only KC-Brain rule refuses them. A named, measured difference (see the parity
+    // test's KNOWN_DIFFERENCES), not a producer defect.
+    let (d, doc, _) = doc_of_case("rw_no_pins");
+    assert_eq!(
+        strict(&d, &doc).unwrap_err(),
+        "CONTRACT_POLICY_SOURCE_UNRESOLVED"
+    );
+}
+
+#[test]
+fn r1_the_first_synthetic_positives_are_now_one_defect_negatives_over_producer_bytes() {
+    // The placeholder values PR273's first fixtures used as POSITIVES (the review's R1). Each one
+    // alone, applied to producer-generated bytes that are accepted unmodified, is refused.
+    let (d, doc) = doc_of(&body_with(Some(tools(json!(["read", "write"])))), 1);
+    assert_eq!(
+        strict(&d, &doc).unwrap(),
+        vec!["read", "write"],
+        "the unmodified base"
+    );
+    let defects: Vec<(&str, Edit)> = vec![
+        (
+            "task: \"synthetic-task\"",
+            Box::new(|b| b["task"] = json!("synthetic-task")),
+        ),
+        ("scope: {}", Box::new(|b| b["scope"] = json!({}))),
+        ("projection: {}", Box::new(|b| b["projection"] = json!({}))),
+        ("reduction: {}", Box::new(|b| b["reduction"] = json!({}))),
+        ("verdicts: []", Box::new(|b| b["verdicts"] = json!([]))),
+        (
+            "verdict: \"synthetic\"",
+            Box::new(|b| b["verdict"] = json!("synthetic")),
+        ),
+        (
+            "canonicalization: \"json-c14n-pilot/v1\"",
+            Box::new(|b| b["canonicalization"] = json!("json-c14n-pilot/v1")),
+        ),
+    ];
+    for (what, edit) in defects {
+        assert_eq!(body_mut(edit), "CONTRACT_PROFILE_INVALID", "{what}");
+    }
+    let body = body_with(Some(tools(json!(["read"])))).to_string();
+    for bad_manifest in [
+        json!({"snapshot_digest": "synthetic", "revisions": []}),
+        json!({"snapshot_digest": format!("sha256:{:064x}", 0), "revisions": [{"revision_id": "a@r1"}]}),
+    ] {
+        let (d, doc) = doc_raw(&body, &bad_manifest.to_string());
+        assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
+    }
+    // and all of them together: the first hand-built positive in full
+    let mut all = body_with(Some(tools(json!(["read"]))));
+    all["task"] = json!("synthetic-task");
+    all["scope"] = json!({});
+    all["projection"] = json!({});
+    all["reduction"] = json!({});
+    all["verdicts"] = json!([]);
+    all["verdict"] = json!("synthetic");
+    all["canonicalization"] = json!("json-c14n-pilot/v1");
+    let (d, doc) = doc_raw(
+        &all.to_string(),
+        &json!({"snapshot_digest": "synthetic", "revisions": [{"a": 1}]}).to_string(),
+    );
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
+}
+
+// ---------- C1: the canonical value domain (integers, non-BMP text, escaped surrogates) ----------
+
+#[test]
+fn c1_integers_up_to_the_64_bit_boundaries_are_supported() {
+    for name in ["u64_max", "i64_min", "i64_max"] {
+        let (d, doc, allow) = doc_of_case(name);
+        assert_eq!(strict(&d, &doc).unwrap(), allow, "{name}");
+    }
+}
+
+#[test]
+fn c1_an_integer_beyond_the_64_bit_domain_is_a_named_restriction_not_a_float() {
+    // 18446744073709551616 (2^64) in an open task value: producer-valid, accepted by the pinned
+    // reader. Restricted domain: refused, fail-closed, and the refusal says why.
+    for name in ["u64_max_plus_1", "i64_min_minus_1", "pow2_200"] {
+        let (d, doc, _) = doc_of_case(name);
+        assert_eq!(
+            strict(&d, &doc).unwrap_err(),
+            "CONTRACT_CANONICAL_INVALID",
+            "{name}"
+        );
+        let detail = detail_of(&d, &doc);
+        assert!(
+            detail.contains("reviewed restriction C1") && !detail.contains("forbids floats"),
+            "{name}: {detail}"
+        );
+    }
+}
+
+#[test]
+fn c1_non_bmp_text_is_supported_as_escaped_surrogate_pairs() {
+    let (d, doc, allow) = doc_of_case("uni_non_bmp");
+    let text = producer_case("uni_non_bmp")["body_text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(text.contains("\\ud83d\\ude00"), "{text}");
+    assert_eq!(strict(&d, &doc).unwrap(), allow);
+}
+
+#[test]
+fn c1_a_lone_escaped_surrogate_is_refused_even_though_the_producer_emits_it() {
+    let (d, doc, _) = doc_of_case("uni_lone_surrogate");
+    assert!(producer_case("uni_lone_surrogate")["body_text"]
+        .as_str()
+        .unwrap()
+        .contains("\\ud800"));
+    assert_eq!(
+        strict(&d, &doc).unwrap_err(),
+        "CONTRACT_CANONICAL_INVALID",
+        "{}",
+        detail_of(&d, &doc)
+    );
+}
+
+#[test]
+fn c1_a_literal_non_bmp_char_in_the_digested_bytes_is_not_canonical() {
+    // The canonical form escapes every non-ASCII char; a raw one under a matching hash is refused.
+    let (_, _, _) = doc_of_case("uni_non_bmp");
+    let body = producer_case("uni_non_bmp")["body_text"]
+        .as_str()
+        .unwrap()
+        .replace("\\ud83d\\ude00", "\u{1F600}");
+    let (d, doc) = doc_raw(
+        &body,
+        producer_case("uni_non_bmp")["manifest_text"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_CANONICAL_INVALID");
 }
 
 // ---------- M1: profile marker ----------
@@ -659,7 +865,6 @@ fn body_mut(edit: impl FnOnce(&mut serde_json::Value)) -> String {
 
 #[test]
 fn v_the_pinned_schema_fixes_the_value_shapes_inside_the_twelve_members() {
-    type Edit = Box<dyn FnOnce(&mut serde_json::Value)>;
     let cases: Vec<(&str, Edit)> = vec![
         ("scope with no axis", Box::new(|b| b["scope"] = json!({}))),
         (

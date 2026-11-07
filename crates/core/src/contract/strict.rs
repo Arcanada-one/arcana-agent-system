@@ -54,6 +54,133 @@ fn is_profile_family(marker: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Whether the bytes the digest covers, or the envelope's `schema_version` hint, are marked with a
+/// tools profile; `Some(why)` if so. Used by the LEGACY route to refuse such contracts.
+///
+/// Marked means: `body.tools` (top level of the first value) carries a `profile` member, in ANY
+/// occurrence of those keys (a duplicate `tools` or `profile` key cannot hide the mark behind
+/// last-wins parsing), or the envelope hint is a `arcanada-kc2-tools/vN` marker. A pre-profile
+/// contract has `tools: {allow}` or no `tools`, so actual legacy bytes are never marked.
+///
+/// Bytes that are not two parseable JSON values would otherwise reach the legacy opaque-text
+/// route, which takes the DEFAULT tool set - wider than a profile contract's own `allow`. For
+/// those the mark is the profile family name appearing anywhere in the text.
+pub(super) fn profile_mark(bytes: &[u8], document: &ContractDocument) -> Option<String> {
+    if let Some(hint) = document.schema_version.as_deref() {
+        if is_profile_family(hint) {
+            return Some(format!("the envelope schema_version names `{hint}`"));
+        }
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let parsed = split_raw(text).and_then(|(body_text, _)| {
+        serde_json::from_str::<BodyMark>(body_text)
+            .ok()
+            .map(|m| m.0)
+    });
+    match parsed {
+        Some(true) => Some("body.tools carries a `profile` member".to_owned()),
+        Some(false) => None,
+        None => text
+            .contains("arcanada-kc2-tools")
+            .then(|| "the unparseable bytes name the arcanada-kc2-tools profile family".to_owned()),
+    }
+}
+
+/// `true` if the body object has a `tools` member that is an object with a `profile` member.
+struct BodyMark(bool);
+
+impl<'de> Deserialize<'de> for BodyMark {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = BodyMark;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<BodyMark, A::Error> {
+                let mut marked = false;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "tools" {
+                        marked |= map.next_value::<ToolsMark>()?.0;
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(BodyMark(marked))
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<BodyMark, E> {
+                Ok(BodyMark(false))
+            }
+            fn visit_bool<E: de::Error>(self, _: bool) -> Result<BodyMark, E> {
+                Ok(BodyMark(false))
+            }
+            fn visit_i64<E: de::Error>(self, _: i64) -> Result<BodyMark, E> {
+                Ok(BodyMark(false))
+            }
+            fn visit_u64<E: de::Error>(self, _: u64) -> Result<BodyMark, E> {
+                Ok(BodyMark(false))
+            }
+            fn visit_f64<E: de::Error>(self, _: f64) -> Result<BodyMark, E> {
+                Ok(BodyMark(false))
+            }
+            fn visit_str<E: de::Error>(self, _: &str) -> Result<BodyMark, E> {
+                Ok(BodyMark(false))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<BodyMark, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(BodyMark(false))
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+/// `true` if the value is an object with a `profile` member.
+struct ToolsMark(bool);
+
+impl<'de> Deserialize<'de> for ToolsMark {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = ToolsMark;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ToolsMark, A::Error> {
+                let mut marked = false;
+                while let Some(key) = map.next_key::<String>()? {
+                    marked |= key == "profile";
+                    map.next_value::<IgnoredAny>()?;
+                }
+                Ok(ToolsMark(marked))
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<ToolsMark, E> {
+                Ok(ToolsMark(false))
+            }
+            fn visit_bool<E: de::Error>(self, _: bool) -> Result<ToolsMark, E> {
+                Ok(ToolsMark(false))
+            }
+            fn visit_i64<E: de::Error>(self, _: i64) -> Result<ToolsMark, E> {
+                Ok(ToolsMark(false))
+            }
+            fn visit_u64<E: de::Error>(self, _: u64) -> Result<ToolsMark, E> {
+                Ok(ToolsMark(false))
+            }
+            fn visit_f64<E: de::Error>(self, _: f64) -> Result<ToolsMark, E> {
+                Ok(ToolsMark(false))
+            }
+            fn visit_str<E: de::Error>(self, _: &str) -> Result<ToolsMark, E> {
+                Ok(ToolsMark(false))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ToolsMark, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(ToolsMark(false))
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
 /// Classify a top-level profile marker the way the pinned reader does: the legacy
 /// `talomnia-ontology` versions need a profile (`CONTRACT_PROFILE_REQUIRED`), another version of
 /// this family is beyond this reader (`CONTRACT_READER_UNSUPPORTED`), anything else unknown is
@@ -471,7 +598,82 @@ impl<'de> Visitor<'de> for StrictVisitor {
 fn parse_half(name: &str, text: &str) -> Result<Value, String> {
     serde_json::from_str::<Strict>(text)
         .map(|Strict(value)| value)
-        .map_err(|err| format!("{name} is not strictly parseable JSON: {err}"))
+        .map_err(|err| {
+            if let Some(literal) = integer_outside_domain(text) {
+                return format!(
+                    "{name} holds the integer {literal}, outside the supported integer domain \
+                     [{}, {}] (reviewed restriction C1, see `INTEGER_DOMAIN`): the normative \
+                     canonical form has unbounded integers, this reader does not",
+                    INTEGER_DOMAIN.0, INTEGER_DOMAIN.1
+                );
+            }
+            format!("{name} is not strictly parseable JSON: {err}")
+        })
+}
+
+/// C1 - the canonical VALUE DOMAIN this reader supports (reviewed decision, KCLIVE-11 / PR273).
+///
+/// The normative canonical form (`talomnia-knowledge` `canonical.py`, Python) has unbounded
+/// integers, `\uXXXX` escapes for every non-ASCII char (surrogate pairs above the BMP), and lets a
+/// lone escaped surrogate through. This reader supports:
+///
+/// * integers in `[i64::MIN, u64::MAX]` - anything outside refuses, fail-closed, with
+///   `CONTRACT_CANONICAL_INVALID` and a message that names this restriction (it is not a "float");
+/// * all Unicode scalar values, including non-BMP text, as escaped surrogate PAIRS;
+/// * NOT a lone surrogate escape (`"\ud800"`): it is not a Unicode scalar value and `serde_json`
+///   refuses it, so it refuses here as non-strictly-parseable.
+///
+/// Why restricted rather than supported: bignums need `serde_json`'s `arbitrary_precision`, a
+/// workspace-wide feature that changes how EVERY `Value` number in the legacy route is held and
+/// compared; the brief forbids altering legacy canonicalisation, and nothing in the profile or a
+/// producer needs an integer above `u64`. The restriction is measured against the real chain
+/// (`kc2_tools_e2e`: the producer, Argana and the pinned reader accept 2^64 and 2^200 in an open
+/// task value; this reader refuses) and named, with its reason, in that test's `KNOWN_DIFFERENCES`.
+/// Reverse if a producer legitimately emits an integer above `u64`: then lift it with an
+/// arbitrary-precision number type confined to this module, not the shared `serde_json`.
+pub const INTEGER_DOMAIN: (&str, &str) = ("-9223372036854775808", "18446744073709551615");
+
+/// First integer literal (outside strings) that is not an `i64` or `u64`, if any.
+fn integer_outside_domain(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut in_string = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            match b {
+                b'\\' => i += 1,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if b == b'-' || b.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let integral = !matches!(bytes.get(i), Some(b'.' | b'e' | b'E'));
+            let literal = &text[start..i];
+            if integral
+                && !literal.trim_start_matches('-').is_empty()
+                && literal.parse::<i64>().is_err()
+                && literal.parse::<u64>().is_err()
+            {
+                return Some(literal.to_owned());
+            }
+            continue;
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The `json-c14n-pilot/v1` rendering of `value`, for COMPARISON only.

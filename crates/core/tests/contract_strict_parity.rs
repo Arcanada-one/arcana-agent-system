@@ -59,8 +59,9 @@ const KNOWN_DIFFERENCES: &[(&str, &str)] = &[
     ),
     (
         "M11-bignum-in-open-bounds",
-        "ARAS refuses integers beyond i64/u64 as non-canonical (the safe direction); Python \
-         integers are unbounded",
+        "C1, reviewed decision (see INTEGER_DOMAIN in contract/strict.rs): ARAS supports integers \
+         in [i64::MIN, u64::MAX] and refuses any other as non-canonical, fail-closed, naming the \
+         restriction; Python integers are unbounded and the pinned reader accepts",
     ),
 ];
 

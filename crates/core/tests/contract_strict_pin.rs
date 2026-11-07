@@ -239,7 +239,16 @@ fn a_pin_mismatch_is_raised_before_any_contract_byte_is_examined() {
 
 #[test]
 fn the_legacy_route_does_not_depend_on_the_pin() {
-    let (d, doc) = good_doc();
+    // Legacy BYTES: profile-marked bytes are refused on the legacy route (R2), so the pin-free
+    // legacy route is shown on a pre-profile contract.
+    let body = json!({"role": "r", "tools": {"allow": ["read"]}});
+    let bytes = format!("{body}{}", json!({"snapshot_digest": "x", "revisions": []}));
+    let d = digest_of(bytes.as_bytes());
+    let doc = ContractDocument {
+        digest: d.clone(),
+        canonical_bytes: Some(bytes),
+        ..Default::default()
+    };
     let via_pin = verify_with_pin(&d, &doc, ReaderMode::Legacy, None).unwrap();
     assert_eq!(via_pin, verify(&d, &doc).unwrap());
 }

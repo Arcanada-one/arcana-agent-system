@@ -99,14 +99,39 @@ fn schema_parity_reports_the_verified_unmerged_pin() {
 
 #[test]
 fn the_legacy_route_is_recorded_and_never_satisfies_the_strict_profile() {
-    let (d, doc) = synthetic(json!(["read", "write"]), 1);
-    let legacy = verify(&d, &doc).unwrap();
+    // Legacy BYTES (no `body.tools.profile`): the legacy route binds them and says so.
+    let body = json!({"role": "r", "tools": {"allow": ["read", "write"]}});
+    let bytes = format!("{body}{}", json!({"snapshot_digest": "x", "revisions": []}));
+    let digest = digest_of(bytes.as_bytes());
+    let doc = ContractDocument {
+        digest: digest.clone(),
+        canonical_bytes: Some(bytes),
+        ..Default::default()
+    };
+    let legacy = verify(&digest, &doc).unwrap();
     assert_eq!(legacy.reader_route(), ReaderRoute::Legacy);
     assert_eq!(legacy.profile(), None);
     assert!(!legacy.satisfies_profile(STRICT_PROFILE));
     // Same bytes, explicit legacy mode: identical binding.
-    let explicit = verify_with(&d, &doc, ReaderMode::Legacy).unwrap();
+    let explicit = verify_with(&digest, &doc, ReaderMode::Legacy).unwrap();
     assert_eq!(legacy, explicit);
+}
+
+#[test]
+fn profile_marked_bytes_are_refused_on_the_legacy_route() {
+    // R2: this test used to assert the opposite - that the same profile bytes were accepted through
+    // `verify()` as a Legacy binding carrying the contract's own `allow`. That was the downgrade.
+    let (d, doc) = synthetic(json!(["read", "write"]), 1);
+    assert_eq!(
+        verify(&d, &doc).unwrap_err().code(),
+        "CONTRACT_PROFILE_ROUTE_REQUIRED"
+    );
+    assert_eq!(
+        verify_with(&d, &doc, ReaderMode::Legacy)
+            .unwrap_err()
+            .code(),
+        "CONTRACT_PROFILE_ROUTE_REQUIRED"
+    );
 }
 
 #[test]
