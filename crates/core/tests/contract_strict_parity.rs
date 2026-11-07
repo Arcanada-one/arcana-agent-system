@@ -51,12 +51,12 @@ const KNOWN_DIFFERENCES: &[(&str, &str)] = &[
          CONTRACT_DIGEST_MISMATCH before any profile check; the pinned reader checks it last",
     ),
     (
-        "K3-hint-tools-v2-trailing-newline",
-        "OPEN QUESTION for the schema owner: the pinned reader's `^arcanada-kc2-tools/v[0-9]+$` \
-         uses Python `re` `$`, which also matches before a trailing newline, so \
-         `arcanada-kc2-tools/v2\\n` is CONTRACT_READER_UNSUPPORTED there; ARAS matches the whole \
-         string and answers CONTRACT_PROFILE_INVALID (both refuse; `re.fullmatch` would agree)",
+        "M11-lone-high-surrogate",
+        "C1, OPEN KC-Brain decision (not changed here): the pinned reader accepts a lone escaped \
+         surrogate (Python str); ARAS refuses it fail-closed as CONTRACT_CANONICAL_INVALID, and \
+         Argana ef0c6093 refuses it at put with the same typed code",
     ),
+    ("M11-lone-low-surrogate", "as M11-lone-high-surrogate"),
     (
         "M11-bignum-in-open-bounds",
         "C1, reviewed decision (see INTEGER_DOMAIN in contract/strict.rs): ARAS supports integers \

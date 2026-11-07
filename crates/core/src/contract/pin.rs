@@ -70,11 +70,11 @@ pub const PROFILE_SCHEMA_FILES: [&str; 4] = [
     "common-defs.schema.json",
 ];
 
-/// THE pin (talomnia-knowledge draft PR546, head `336e6440...`, filled from the owner's
+/// THE pin (talomnia-knowledge draft PR546, head `b3fe1199...`, filled from the owner's
 /// publication in the task brief and re-measured with `git hash-object`; nothing here is guessed).
 pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = Some(SchemaPin {
     repo: "Arcanada-one/talomnia-knowledge",
-    commit: "336e644071323f5489ee417cc130ed3143185cbf",
+    commit: "b3fe119921357964d68d77980b10b9f80135d831",
     merged: false,
     source: "draft PR546 (open, unmerged) head",
     schemas: &[
@@ -85,12 +85,12 @@ pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = Some(SchemaPin {
         },
         PinnedSchema {
             name: "kc2-v2-body.schema.json",
-            blob: "64388b299269926510e3b474b43f1183bb67d1a7",
+            blob: "20a28176f1c90f5cd0fa0d80f62695e183bfa126",
             bytes: include_bytes!("schema/kc2-v2-body.schema.json"),
         },
         PinnedSchema {
             name: "kc2-v2-closure-manifest.schema.json",
-            blob: "f79603b00c0de639a6c6cb9a1e25add3b892ff4b",
+            blob: "90e9db5d0443d72e573237b679e912bc2c1dccab",
             bytes: include_bytes!("schema/kc2-v2-closure-manifest.schema.json"),
         },
         PinnedSchema {
@@ -106,7 +106,7 @@ pub const TALOMNIA_SCHEMA_PIN: Option<SchemaPin> = Some(SchemaPin {
             bytes: include_bytes!("schema/common-defs.schema.json"),
         },
     ],
-    reference_reader_blob: "80405b090373f4a007ea05b5572f6f53e24c65dd",
+    reference_reader_blob: "b26cbe40cdd3546f7d74a4cfabd9bdd8e9a006e7",
 });
 
 /// Git blob id (`git hash-object`) of `bytes`.

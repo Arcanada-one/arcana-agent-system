@@ -148,6 +148,12 @@ add("M11-bignum-in-open-bounds", "M11-bignum",
     + canon(manifest()),
     note="Python integers are unbounded; the ARAS reader refuses integers beyond i64/u64")
 
+add("M11-lone-high-surrogate", "M11-surrogate", std(body(task={"goal": "x\ud800y"})),
+    note="C1 / open KC-Brain decision: the reference reader accepts a lone escaped surrogate; Argana "
+         "refuses it at put with CONTRACT_CANONICAL_INVALID; ARAS refuses it with the same code")
+add("M11-lone-low-surrogate", "M11-surrogate", std(body(task={"goal": "x\udc00y"})),
+    note="as M11-lone-high-surrogate")
+
 # ---- M12 closed shapes (member sets) ----
 add("M12-extra-body-member", "M12", std(body(zzz=1)))
 add("M12-missing-body-member", "M12", std(body(verdicts=ABSENT)))
@@ -163,8 +169,13 @@ add("M12-manifest-not-object", "M12", canon(body()) + "[]")
 add("V-scope-empty", "V-scope", std(body(scope={})))
 add("V-scope-two-axes", "V-scope", std(body(scope={"project": "a", "space": "b"})))
 add("V-scope-unknown-axis", "V-scope", std(body(scope={"galaxy": "a"})))
-add("V-scope-open-values", "V-scope-open", std(body(scope={"project": 5})),
-    note="scope values are not vocabulary-checked")
+add("V-scope-open-values", "V-scope-values", std(body(scope={"project": 5})),
+    note="scope values are validated since the b3fe1199 pin (native syntax)")
+add("V-scope-ecosystem-false", "V-scope-values", std(body(scope={"ecosystem": False})))
+add("V-scope-ecosystem-true", "V-scope-values", std(body(scope={"ecosystem": True})))
+add("V-scope-env-unknown", "V-scope-values", std(body(scope={"env": "staging"})))
+add("V-scope-env-prod", "V-scope-values", std(body(scope={"env": "prod"})))
+add("V-scope-empty-string", "V-scope-values", std(body(scope={"space": ""})))
 add("V-scope-not-object", "V-scope", std(body(scope="project")))
 add("V-embedded-nonempty", "V-embedded", std(body(embedded=["x"])))
 add("V-refusals-nonempty", "V-refusals", std(body(refusals=["x"])))
@@ -208,6 +219,11 @@ add("V-quarantined-bad", "V-quarantined", std(body(quarantined=[{"addr": "a"}]))
 add("V-snapshot-digest-malformed", "V-manifest", std(body(), manifest(snapshot_digest="synthetic")))
 add("V-snapshot-digest-uppercase", "V-manifest", std(body(), manifest(snapshot_digest="sha256:" + "A" * 64)))
 add("V-revision-pair-three", "V-manifest", std(body(), manifest(revisions=[["a@r1", D1, "x"]])))
+add("V-revision-pair-bad-digest", "V-manifest", std(body(), manifest(revisions=[["a@r1", "sha256:xyz"]])))
+add("V-revision-pair-bad-id", "V-manifest", std(body(), manifest(revisions=[["BAD", D1]])))
+add("V-revision-pair-swapped", "V-manifest", std(body(), manifest(revisions=[[D1, "a@r1"]])))
+add("V-revision-pair-digest-newline", "V-manifest", std(body(), manifest(revisions=[["a@r1", D1 + "\n"]])),
+    note="fullmatch: a trailing newline is not a digest")
 add("V-revision-pair-object", "V-manifest", std(body(), manifest(revisions=[{"a": 1}])))
 
 # ---- R1 envelope hints (outside the digest) ----

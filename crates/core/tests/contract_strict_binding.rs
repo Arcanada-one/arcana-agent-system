@@ -78,7 +78,7 @@ fn a_strict_binding_records_route_profile_capability_and_parity() {
 #[test]
 fn schema_parity_reports_the_verified_unmerged_pin() {
     let pin = TALOMNIA_SCHEMA_PIN.expect("the talomnia schema is pinned");
-    assert_eq!(pin.commit, "336e644071323f5489ee417cc130ed3143185cbf");
+    assert_eq!(pin.commit, "b3fe119921357964d68d77980b10b9f80135d831");
     assert!(
         !pin.merged,
         "the pin is an unmerged PR commit and must say so"

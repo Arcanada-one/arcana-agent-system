@@ -27,24 +27,54 @@
       "additionalProperties": false,
       "description": "Part 2 section 2.4 block as emitted: only CONTRACT_TASK_FIELDS, each present only if the task carried it. Elements of inputs/outputs and bounds values are producer-defined, not closed here."
     },
+    "scope_name": {
+      "type": "string",
+      "minLength": 1
+    },
     "scope": {
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
       "properties": {
-        "ecosystem": {},
-        "space": {},
-        "project": {},
-        "repo": {},
-        "host": {},
-        "env": {},
-        "namespace": {},
-        "task": {},
-        "epic": {},
-        "actor": {}
+        "ecosystem": {
+          "type": "boolean",
+          "const": true
+        },
+        "space": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "project": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "repo": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "host": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "env": {
+          "type": "string",
+          "enum": [
+            "prod",
+            "test",
+            "dev"
+          ]
+        },
+        "namespace": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "task": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "epic": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "actor": {
+          "$ref": "#/$defs/scope_name"
+        }
       },
       "additionalProperties": false,
-      "description": "Exactly one axis key (kc2_defs.SCOPE_AXES); values are validated by the producer's scope vocabulary, not here."
+      "description": "Exactly one axis key (kc2_defs.SCOPE_AXES) with a value of the native scope syntax (kc2_defs.scope_is_valid): ecosystem is true, env is one of kc2_defs.ENV_VALUES, every other axis a non-empty string. Syntax only: registry membership and source eligibility are separate propositions this schema cannot decide."
     },
     "projection": {
       "type": "array",

@@ -55,7 +55,7 @@ use harness::{strict, PROFILE};
 // ---------- synthetic fixtures ----------
 
 /// Producer-generated positives (R1): bytes emitted by the pinned talomnia opt-in producer
-/// (`kc2_tools_profile_producer.emit_synthetic_profile_contract`, commit 336e6440) from a SYNTHETIC
+/// (`kc2_tools_profile_producer.emit_synthetic_profile_contract`, commit b3fe1199) from a SYNTHETIC
 /// v2 source contract and re-read by that producer's own strict reader before it returned them.
 /// Regenerate with `fixtures/kc2_tools_producer/emit.py`. They are not a grant and not evidence of
 /// source eligibility.
@@ -294,6 +294,121 @@ fn r1_the_first_synthetic_positives_are_now_one_defect_negatives_over_producer_b
         &json!({"snapshot_digest": "synthetic", "revisions": [{"a": 1}]}).to_string(),
     );
     assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
+}
+
+// ---------- re-pin to b3fe1199: scope values, manifest revision pairs, whole-string matches ----------
+
+#[test]
+fn p1_scope_values_are_validated_not_just_the_axis_key() {
+    let ok = |scope: serde_json::Value| {
+        let mut b = body_with(Some(tools(json!(["read", "write"]))));
+        b["scope"] = scope;
+        let (d, doc) = doc_of(&b, 1);
+        strict(&d, &doc)
+    };
+    // the accepted native syntax: ecosystem is true, env is prod/test/dev, others non-empty strings
+    for good in [
+        json!({"ecosystem": true}),
+        json!({"env": "prod"}),
+        json!({"env": "test"}),
+        json!({"env": "dev"}),
+        json!({"space": "s"}),
+        json!({"repo": "r"}),
+        json!({"actor": "a"}),
+    ] {
+        assert_eq!(ok(good.clone()).unwrap(), vec!["read", "write"], "{good}");
+    }
+    // one defect each, over the producer's own bytes
+    for bad in [
+        json!({"ecosystem": false}),
+        json!({"ecosystem": "true"}),
+        json!({"ecosystem": 1}),
+        json!({"ecosystem": null}),
+        json!({"env": "staging"}),
+        json!({"env": "PROD"}),
+        json!({"env": true}),
+        json!({"space": ""}),
+        json!({"project": 5}),
+        json!({"repo": null}),
+        json!({"host": ["h"]}),
+        json!({"namespace": {"a": 1}}),
+        json!({"task": false}),
+        json!({"epic": 0}),
+        json!({"actor": ""}),
+    ] {
+        assert_eq!(
+            ok(bad.clone()).unwrap_err(),
+            "CONTRACT_PROFILE_INVALID",
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn p2_manifest_revision_entries_must_be_a_revision_id_and_a_digest() {
+    let body = body_with(Some(tools(json!(["read"])))).to_string();
+    let d0 = format!("sha256:{:064x}", 1);
+    let snap = format!("sha256:{:064x}", 0);
+    let run = |revisions: serde_json::Value| {
+        let m = json!({"snapshot_digest": snap, "revisions": revisions}).to_string();
+        let (d, doc) = doc_raw(&body, &m);
+        strict(&d, &doc)
+    };
+    assert_eq!(
+        run(json!([["a@r1", d0]])).unwrap(),
+        vec!["read"],
+        "the well-formed pair"
+    );
+    for bad in [
+        json!([["a@r1", "sha256:xyz"]]),
+        json!([["a@r1", "x"]]),
+        json!([["a@r1", d0.to_uppercase()]]),
+        json!([[d0, "a@r1"]]),
+        json!([["", d0]]),
+        json!([["a@r1", 1]]),
+        json!([[1, d0]]),
+        json!([["a@r1"]]),
+        json!([["a@r1", d0, "extra"]]),
+        json!([{"revision_id": "a@r1"}]),
+    ] {
+        assert_eq!(
+            run(bad.clone()).unwrap_err(),
+            "CONTRACT_PROFILE_INVALID",
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn p3_a_trailing_newline_never_satisfies_a_pattern_or_a_marker() {
+    // digest-shaped and revision-id-shaped strings with a trailing newline
+    let body = body_with(Some(tools(json!(["read"])))).to_string();
+    let snap = format!("sha256:{:064x}", 0);
+    let d1 = format!("sha256:{:064x}", 1);
+    for m in [
+        json!({"snapshot_digest": format!("{snap}\n"), "revisions": [["a@r1", d1]]}),
+        json!({"snapshot_digest": snap, "revisions": [["a@r1", format!("{d1}\n")]]}),
+        json!({"snapshot_digest": snap, "revisions": [["a@r1\n", d1]]}),
+    ] {
+        let (d, doc) = doc_raw(&body, &m.to_string());
+        assert_eq!(
+            strict(&d, &doc).unwrap_err(),
+            "CONTRACT_PROFILE_INVALID",
+            "{m}"
+        );
+    }
+    // the inner marker and the envelope hint: a newline-suffixed family member is not a family
+    // member; the reference reader now answers CONTRACT_PROFILE_INVALID for it too.
+    let (d, doc) = doc_of(
+        &body_with(Some(
+            json!({"profile": format!("{PROFILE}\n"), "allow": ["read"]}),
+        )),
+        1,
+    );
+    assert_eq!(strict(&d, &doc).unwrap_err(), "CONTRACT_PROFILE_INVALID");
+    let (d, doc) = doc_of(&body_with(Some(tools(json!(["read"])))), 1);
+    let hinted = with_hints(&doc, None, Some("arcanada-kc2-tools/v2\n"));
+    assert_eq!(strict(&d, &hinted).unwrap_err(), "CONTRACT_PROFILE_INVALID");
 }
 
 // ---------- C1: the canonical value domain (integers, non-BMP text, escaped surrogates) ----------
@@ -967,7 +1082,8 @@ fn v_values_the_schema_leaves_open_are_accepted() {
         "required_capability_types": ["t"],
         "bounds": {"n": 1, "s": {"k": [1]}}
     });
-    value["scope"] = json!({"project": 5});
+    // scope VALUES are no longer open since the b3fe1199 pin (see p1_*): a native-syntax value here
+    value["scope"] = json!({"project": "p"});
     value["verdicts"] = json!({"any key at all": "U", "b": "F"});
     let (d, doc) = doc_of(&value, 1);
     assert_eq!(strict(&d, &doc).unwrap(), vec!["read"]);

@@ -4,7 +4,7 @@
 Usage: run_producer.py <talomnia ontology dir (holds src/ and schemas/)> corpus.json > producer.json
 
 Read-only on talomnia: it imports the producer-side reader from the given checkout (pin
-336e644071323f5489ee417cc130ed3143185cbf) and writes nothing there.
+b3fe119921357964d68d77980b10b9f80135d831) and writes nothing there.
 Each case is wrapped as ONE canonical whole-document byte string (what the producer-side
 reader consumes) with the raw digested halves inserted verbatim.
 """

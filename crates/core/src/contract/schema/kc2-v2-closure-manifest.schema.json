@@ -12,9 +12,14 @@
         "type": "array",
         "minItems": 2,
         "maxItems": 2,
-        "items": {
-          "type": "string"
-        }
+        "prefixItems": [
+          {
+            "$ref": "common-defs.schema.json#/$defs/revision_id"
+          },
+          {
+            "$ref": "common-defs.schema.json#/$defs/digest"
+          }
+        ]
       }
     }
   },
@@ -23,5 +28,5 @@
     "snapshot_digest"
   ],
   "additionalProperties": false,
-  "description": "revisions is a list of [revision_id, content_digest] string pairs (the interpreter has no tuple items, so both positions are typed string only)."
+  "description": "revisions is a list of [revision_id, content_digest] string pairs (position 0 is a revision_id, position 1 a sha256 digest; the interpreter enforces both through prefixItems)."
 }

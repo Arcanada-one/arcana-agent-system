@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit producer-generated positive fixtures for the strict-reader tests (KCLIVE-11, R1).
 
-Usage: emit.py <talomnia checkout at 336e644071323f5489ee417cc130ed3143185cbf> > producer_positives.json
+Usage: emit.py <talomnia checkout at b3fe119921357964d68d77980b10b9f80135d831> > producer_positives.json
 
 Every positive is produced by the pinned talomnia opt-in producer
 (`kc2_tools_profile_producer.emit_synthetic_profile_contract`), which re-reads its own output with
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 TAL = Path(sys.argv[1]).resolve()
-COMMIT = "336e644071323f5489ee417cc130ed3143185cbf"
+COMMIT = "b3fe119921357964d68d77980b10b9f80135d831"
 head = subprocess.run(["git", "-C", str(TAL), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
 if head != COMMIT:
     raise SystemExit(f"REFUSED: {TAL} is at {head}, the pin is {COMMIT}")

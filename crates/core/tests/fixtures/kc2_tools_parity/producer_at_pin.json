@@ -31,8 +31,8 @@
  },
  "K3-hint-tools-v2-trailing-newline": {
   "allow": null,
-  "code": "CONTRACT_READER_UNSUPPORTED",
-  "detail": "profile arcanada-kc2-tools/v2\n is outside this reader's capability",
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker 'arcanada-kc2-tools/v2\\n'",
   "result": "REFUSE"
  },
  "K4-hint-case-variant": {
@@ -142,6 +142,24 @@
   "code": "CONTRACT_CANONICAL_INVALID",
   "detail": "bytes are not parseable canonical JSON: non-integer number 1.0",
   "result": "REFUSE"
+ },
+ "M11-lone-high-surrogate": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "M11-lone-low-surrogate": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
  },
  "M11-pretty-printed": {
   "allow": null,
@@ -553,10 +571,34 @@
   "detail": "$.body.refusals: more than maxItems 0",
   "result": "REFUSE"
  },
+ "V-revision-pair-bad-digest": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][1]: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-bad-id": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][0]: does not match pattern '^[a-z][a-z0-9]*([.-][a-z0-9]+)*@r[1-9][0-9]*$'",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-digest-newline": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][1]: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
  "V-revision-pair-object": {
   "allow": null,
   "code": "CONTRACT_PROFILE_INVALID",
   "detail": "$.closure_manifest.revisions[0]: expected type array",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-swapped": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][0]: does not match pattern '^[a-z][a-z0-9]*([.-][a-z0-9]+)*@r[1-9][0-9]*$'; $.closure_manifest.revisions[0][1]: does not match pattern '^sha256:[0-9a-f]{64}$'",
   "result": "REFUSE"
  },
  "V-revision-pair-three": {
@@ -565,10 +607,46 @@
   "detail": "$.closure_manifest.revisions[0]: more than maxItems 2",
   "result": "REFUSE"
  },
+ "V-scope-ecosystem-false": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.ecosystem: expected const True",
+  "result": "REFUSE"
+ },
+ "V-scope-ecosystem-true": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
  "V-scope-empty": {
   "allow": null,
   "code": "CONTRACT_PROFILE_INVALID",
   "detail": "$.body.scope: fewer than minProperties 1",
+  "result": "REFUSE"
+ },
+ "V-scope-empty-string": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.space: shorter than minLength 1",
+  "result": "REFUSE"
+ },
+ "V-scope-env-prod": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-scope-env-unknown": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.env: value not in enum ['prod', 'test', 'dev']",
   "result": "REFUSE"
  },
  "V-scope-not-object": {
@@ -578,13 +656,10 @@
   "result": "REFUSE"
  },
  "V-scope-open-values": {
-  "allow": [
-   "read",
-   "write"
-  ],
-  "code": null,
-  "detail": "",
-  "result": "ACCEPT"
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.project: expected type string",
+  "result": "REFUSE"
  },
  "V-scope-two-axes": {
   "allow": null,

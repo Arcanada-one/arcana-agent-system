@@ -145,6 +145,6 @@
  "producer": {
   "entry": "kc2_tools_profile_producer.emit_synthetic_profile_contract",
   "source": "synthetic talomnia-ontology/v2 contract (no native revision)",
-  "talomnia_commit": "336e644071323f5489ee417cc130ed3143185cbf"
+  "talomnia_commit": "b3fe119921357964d68d77980b10b9f80135d831"
  }
 }

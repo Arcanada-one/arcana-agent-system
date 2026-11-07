@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[]` = deny-all), and never falls back to the default allowlist. The shape of the
   body, manifest and every value inside them is the talomnia-knowledge schema,
   vendored byte for byte under `crates/core/src/contract/schema/` and pinned by git
-  blob id to commit `336e6440…` (head of the OPEN, UNMERGED draft PR546; a squash-merge
+  blob id to commit `b3fe1199…` (head of the OPEN, UNMERGED draft PR546; a squash-merge
   or amendment of that PR requires a re-pin before this can merge). A pin mismatch
   refuses with `CONTRACT_READER_UNSUPPORTED` before any contract byte is read. New typed
   refusals: `CONTRACT_PROFILE_REQUIRED`, `CONTRACT_PROFILE_INVALID`,
@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     restriction instead of calling the integer a float. Non-BMP text (escaped surrogate pairs) and the
     64-bit boundaries are supported. See `INTEGER_DOMAIN` in `contract/strict.rs` and the C1 section of
     `docs/how-to/run-work-item-under-kc2-contract.md`.
+  - **Re-pin to talomnia-knowledge PR546 `b3fe1199…`.** Two vendored schemas changed
+    (`kc2-v2-body` blob `20a28176…`, `kc2-v2-closure-manifest` blob `90e9db5d…`); the profile schema,
+    `kc2-v2-contract` and `common-defs` are unchanged. Scope VALUES are now validated by the pinned
+    schema (`ecosystem` is `true`, `env` is `prod`/`test`/`dev`, every other axis a non-empty string)
+    and manifest revision entries must be `[revision_id, digest]`; both refuse with
+    `CONTRACT_PROFILE_INVALID`. No reader code changed: the strict reader enforces the vendored schema,
+    so the re-pin carries the stricter shape, and a trailing newline in a marker, digest or revision id
+    was already refused. The named parity difference for `arcanada-kc2-tools/v2\n` is gone (the pinned
+    reader now answers `CONTRACT_PROFILE_INVALID` too). Digests, canonicalisation, the legacy route and
+    the R2 profile-route refusal are untouched. Lone escaped surrogates remain refused
+    (`CONTRACT_CANONICAL_INVALID`) and are now a named parity difference; that is an open decision.
   - Tests: `contract_profile_route` (synthetic authority provider and a continuation counter),
     `run_work_item_profile_route` (the binary, flag omitted / present / legacy bytes), the extended
     `contract_strict_profile`, and `kc2_tools_e2e` (ignored; needs a contract source and the external
