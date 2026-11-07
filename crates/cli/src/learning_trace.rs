@@ -96,6 +96,12 @@ pub struct ContractRest {
     /// The constraints the steps rested on: what the contract admitted.
     pub allowlist: Vec<String>,
     pub allowlist_source: String,
+    /// `legacy` or `strict`.
+    pub reader_route: String,
+    /// The profile the strict reader recognised; `null` on the legacy route.
+    pub recognised_profile: Option<String>,
+    pub reader_capability: String,
+    pub schema_parity: String,
 }
 
 /// How the run ended, and whether that counts as evidence FOR anything.
@@ -273,6 +279,10 @@ pub fn build(sources: &Sources, summary: &RunSummary, root: &Path) -> Trace {
             kc2_snapshot: sources.binding.kc2_snapshot().map(ToOwned::to_owned),
             allowlist: sources.binding.allowlist().iter().cloned().collect(),
             allowlist_source: sources.binding.allowlist_source().as_str().to_owned(),
+            reader_route: sources.binding.reader_route().as_str().to_owned(),
+            recognised_profile: sources.binding.profile().map(ToOwned::to_owned),
+            reader_capability: sources.binding.reader_capability(),
+            schema_parity: sources.binding.schema_parity().as_str().to_owned(),
         },
         capability_set,
         capability_witness,
@@ -470,7 +480,7 @@ fn file_stamp(trace_id: &str) -> String {
 mod tests {
     use super::*;
     use arcana_core::agent_loop::TerminalReason;
-    use arcana_core::contract::{verify, ContractDocument, ContractTools};
+    use arcana_core::contract::{verify, ContractDocument};
     use arcana_core::cost::CostSnapshot;
     use arcana_core::hooks::audit::OUTCOME_TOOL_ERROR;
 
@@ -479,14 +489,14 @@ mod tests {
     use crate::effect::{Effect, EffectExpectation};
 
     fn binding(allow: &[&str]) -> ContractBinding {
-        const BYTES: &str = "the contract under test";
-        let digest = digest_of(BYTES.as_bytes());
+        let bytes = format!(
+            "{{\"role\":\"under-test\",\"tools\":{{\"allow\":{}}}}}{{\"revisions\":[]}}",
+            serde_json::json!(allow)
+        );
+        let digest = digest_of(bytes.as_bytes());
         let document = ContractDocument {
             digest: digest.clone(),
-            canonical_bytes: Some(BYTES.to_owned()),
-            tools: Some(ContractTools {
-                allow: allow.iter().map(|name| (*name).to_owned()).collect(),
-            }),
+            canonical_bytes: Some(bytes),
             ..Default::default()
         };
         verify(&digest, &document).expect("the fixture contract verifies")
@@ -615,6 +625,97 @@ mod tests {
         assert_eq!(trace.steps[1].tool, "write");
         assert_eq!(trace.capability_set, vec!["read", "write"]);
         assert!(!trace.outcome.negative);
+    }
+
+    /// Standard base64 (the cli crate has no base64 dependency of its own).
+    fn b64(bytes: &[u8]) -> String {
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let n = chunk
+                .iter()
+                .enumerate()
+                .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(char::from(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize]));
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    /// SYNTHETIC strict-profile contract, for the trace's reader fields only.
+    fn strict_binding() -> ContractBinding {
+        use arcana_core::contract::{verify_with, CanonicalBlock, ReaderMode, STRICT_PROFILE};
+        // Value shapes follow the pinned talomnia schema (placeholders would be refused by it).
+        let body = serde_json::json!({
+            "task": {"goal": "t"}, "scope": {"project": "p"}, "projection": [], "embedded": [],
+            "reduction": "closure-only", "conflict_records": [], "refusals": [], "verdicts": {},
+            "envelope_unverified": [], "verdict": "T", "quarantined": [],
+            "canonicalization": {"name": "json-c14n-pilot", "version": "v1"},
+            "tools": {"profile": STRICT_PROFILE, "allow": ["read"]}
+        });
+        let manifest = serde_json::json!({
+            "snapshot_digest": format!("sha256:{:064x}", 0),
+            "revisions": [["p@r1", format!("sha256:{:064x}", 1)]]
+        });
+        let bytes = format!("{body}{manifest}");
+        let digest = digest_of(bytes.as_bytes());
+        let document = ContractDocument {
+            digest: digest.clone(),
+            canonical: Some(CanonicalBlock {
+                bytes_b64: Some(b64(bytes.as_bytes())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        verify_with(
+            &digest,
+            &document,
+            ReaderMode::Strict {
+                profile: STRICT_PROFILE,
+            },
+        )
+        .expect("the synthetic strict contract verifies")
+    }
+
+    #[test]
+    fn the_trace_records_the_reader_route_profile_capability_and_parity() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(dir.path(), &[DISPATCH]);
+        let receipt = dir.path().join("r.json");
+        std::fs::write(&receipt, b"{}").unwrap();
+
+        let legacy = binding(&["read"]);
+        let src = sources(
+            dir.path(),
+            &legacy,
+            log.clone(),
+            Some(0),
+            "task-1",
+            &receipt,
+        );
+        let trace = build(&src, &out(TerminalReason::Completed, &[]), dir.path());
+        assert_eq!(trace.contract.reader_route, "legacy");
+        assert_eq!(trace.contract.recognised_profile, None);
+
+        let strict = strict_binding();
+        let src = sources(dir.path(), &strict, log, Some(0), "task-1", &receipt);
+        let trace = build(&src, &out(TerminalReason::Completed, &[]), dir.path());
+        assert_eq!(trace.contract.reader_route, "strict");
+        assert_eq!(
+            trace.contract.recognised_profile.as_deref(),
+            Some("arcanada-kc2-tools/v1")
+        );
+        assert!(trace
+            .contract
+            .reader_capability
+            .contains("strict:arcanada-kc2-tools/v1"));
+        assert_eq!(trace.contract.schema_parity, "PINNED_VERIFIED_UNMERGED");
     }
 
     #[test]

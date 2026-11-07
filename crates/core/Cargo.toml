@@ -20,6 +20,9 @@ serde = { version = "1", features = ["derive"] }
 # The contract digest is re-hashed byte for byte before a work item binds to it
 # (`crate::contract`); sha256 is the ecosystem-wide digest algorithm.
 sha2 = "0.11"
+# Git blob ids (SHA-1 of "blob <len>\0<bytes>") of the vendored talomnia schemas, so the pin is
+# checked in the form the schema owner published it (`git hash-object`).
+sha1 = "0.11"
 serde_json = "1"
 thiserror = "2"
 # Real model-aware token counting for the KB size-guard (ARAS-0053). Vocabs are

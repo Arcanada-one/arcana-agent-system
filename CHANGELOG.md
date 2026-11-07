@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `arcana-core` contract reader: `verify_with(expected, document, ReaderMode)` adds an
+  explicit strict `arcanada-kc2-tools/v1` mode over the bytes `verify` already
+  re-hashed (`verify` itself is the recorded legacy route and can never satisfy the
+  strict profile). Strict mode accepts only `canonical.bytes_b64`, refuses duplicate
+  JSON keys and non-canonical bytes under a matching hash, requires the closed
+  twelve-member v2 body plus an explicit closed `body.tools={profile,allow}` (allow
+  unique, ASCII-ascending, within `edit`/`grep`/`read`/`write`, at most four,
+  `[]` = deny-all), and never falls back to the default allowlist. The shape of the
+  body, manifest and every value inside them is the talomnia-knowledge schema,
+  vendored byte for byte under `crates/core/src/contract/schema/` and pinned by git
+  blob id to commit `b3fe1199…` (head of the OPEN, UNMERGED draft PR546; a squash-merge
+  or amendment of that PR requires a re-pin before this can merge). A pin mismatch
+  refuses with `CONTRACT_READER_UNSUPPORTED` before any contract byte is read. New typed
+  refusals: `CONTRACT_PROFILE_REQUIRED`, `CONTRACT_PROFILE_INVALID`,
+  `CONTRACT_CANONICAL_INVALID`, `CONTRACT_POLICY_SOURCE_UNRESOLVED`,
+  `CONTRACT_READER_UNSUPPORTED`; the meanings of `CONTRACT_DIGEST_MISMATCH` and
+  `CONTRACT_POLICY_UNBOUND` are unchanged. `arcana run --work-item --contract-profile
+  <profile>` selects the strict route; the binding, the readiness receipt and the
+  learning trace record the reader route, the recognised profile, the reader
+  capability signal and the schema parity (`PINNED_VERIFIED_UNMERGED` while
+  `TALOMNIA_SCHEMA_PIN` points at an unmerged commit and the vendored bytes match it).
+
+- `arcana-core` contract reader (Agent-Brain review of PR273: R1, R2, C1):
+  - **R2, no downgrade.** The legacy route (`verify`, `ReaderMode::Legacy`, and therefore
+    `arcana run --work-item` without `--contract-profile`) now refuses profile-marked bytes with the
+    new typed refusal `CONTRACT_PROFILE_ROUTE_REQUIRED`, before readiness and authority. Marked means
+    `body.tools` carries a `profile` member (any occurrence of those keys, so duplicate keys cannot hide
+    it), or the envelope `schema_version` hint is an `arcanada-kc2-tools/vN` marker, or bytes that do
+    not parse as two JSON values name the profile family. Actual legacy bytes and digests (no
+    `tools`, or `tools: {allow}`) are accepted exactly as before; `digest_of`, the legacy
+    canonicalisation and `contract_authority` are untouched. The test
+    `profile_marked_bytes_are_refused_on_the_legacy_route` replaces the one that asserted the downgrade.
+  - **R1, gate and fixtures.** The positive fixtures of the strict tests are now producer-generated
+    bytes (`crates/core/tests/fixtures/kc2_tools_producer/`, emitted by the pinned talomnia opt-in
+    producer from a synthetic v2 source; `emit.py` regenerates them), and the first hand-built
+    positives are discriminating one-defect negatives over them. `satisfies_profile` additionally
+    requires the parity of the pin the strict reader actually enforced (verified) and a capability that
+    names the profile; the legacy route records no enforced parity.
+  - **C1, canonical value domain: restricted, written down.** Integers outside
+    `[i64::MIN, u64::MAX]` (for example `18446744073709551616` in an open task value) and lone escaped
+    surrogates are refused fail-closed with `CONTRACT_CANONICAL_INVALID`; the refusal names the
+    restriction instead of calling the integer a float. Non-BMP text (escaped surrogate pairs) and the
+    64-bit boundaries are supported. See `INTEGER_DOMAIN` in `contract/strict.rs` and the C1 section of
+    `docs/how-to/run-work-item-under-kc2-contract.md`.
+  - **Re-pin to talomnia-knowledge PR546 `b3fe1199…`.** Two vendored schemas changed
+    (`kc2-v2-body` blob `20a28176…`, `kc2-v2-closure-manifest` blob `90e9db5d…`); the profile schema,
+    `kc2-v2-contract` and `common-defs` are unchanged. Scope VALUES are now validated by the pinned
+    schema (`ecosystem` is `true`, `env` is `prod`/`test`/`dev`, every other axis a non-empty string)
+    and manifest revision entries must be `[revision_id, digest]`; both refuse with
+    `CONTRACT_PROFILE_INVALID`. No reader code changed: the strict reader enforces the vendored schema,
+    so the re-pin carries the stricter shape, and a trailing newline in a marker, digest or revision id
+    was already refused. The named parity difference for `arcanada-kc2-tools/v2\n` is gone (the pinned
+    reader now answers `CONTRACT_PROFILE_INVALID` too). Digests, canonicalisation, the legacy route and
+    the R2 profile-route refusal are untouched. Lone escaped surrogates remain refused
+    (`CONTRACT_CANONICAL_INVALID`) and are now a named parity difference; that is an open decision.
+  - Tests: `contract_profile_route` (synthetic authority provider and a continuation counter),
+    `run_work_item_profile_route` (the binary, flag omitted / present / legacy bytes), the extended
+    `contract_strict_profile`, and `kc2_tools_e2e` (ignored; needs a contract source and the external
+    harness).
+
 - `arcana run --work-item` asks Muneral for dependency readiness after the contract
   binding is verified and before the authority gate. `ready: false` refuses with
   `WORK_ITEM_NOT_READY`; unavailable, non-200 (including 201), malformed,

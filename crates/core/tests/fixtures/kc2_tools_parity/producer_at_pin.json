@@ -1,0 +1,757 @@
+{
+ "K1-hint-talomnia-v1": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "talomnia-ontology/v1 carries no arcanada-kc2-tools/v1 marker; strict mode never falls back to a legacy or default tool set (select the legacy route explicitly if that is intended)",
+  "result": "REFUSE"
+ },
+ "K2-hint-talomnia-v2": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "talomnia-ontology/v2 carries no arcanada-kc2-tools/v1 marker; strict mode never falls back to a legacy or default tool set (select the legacy route explicitly if that is intended)",
+  "result": "REFUSE"
+ },
+ "K3-hint-tools-v0": {
+  "allow": null,
+  "code": "CONTRACT_READER_UNSUPPORTED",
+  "detail": "profile arcanada-kc2-tools/v0 is outside this reader's capability",
+  "result": "REFUSE"
+ },
+ "K3-hint-tools-v10": {
+  "allow": null,
+  "code": "CONTRACT_READER_UNSUPPORTED",
+  "detail": "profile arcanada-kc2-tools/v10 is outside this reader's capability",
+  "result": "REFUSE"
+ },
+ "K3-hint-tools-v2": {
+  "allow": null,
+  "code": "CONTRACT_READER_UNSUPPORTED",
+  "detail": "profile arcanada-kc2-tools/v2 is outside this reader's capability",
+  "result": "REFUSE"
+ },
+ "K3-hint-tools-v2-trailing-newline": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker 'arcanada-kc2-tools/v2\\n'",
+  "result": "REFUSE"
+ },
+ "K4-hint-case-variant": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker 'ARCANADA-KC2-TOOLS/V1'",
+  "result": "REFUSE"
+ },
+ "K4-hint-empty-string": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker ''",
+  "result": "REFUSE"
+ },
+ "K4-hint-other-unknown": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker 'other/v9'",
+  "result": "REFUSE"
+ },
+ "K4-hint-suffix-junk": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker 'arcanada-kc2-tools/v1x'",
+  "result": "REFUSE"
+ },
+ "K5-pinned-blob-mismatch": {
+  "allow": null,
+  "code": "CONTRACT_READER_UNSUPPORTED",
+  "detail": "schema arcanada-kc2-tools-v1.schema.json blob 518c85d955abcc0925f10927932e7be5d5565247 != pinned '0000000000000000000000000000000000000000'",
+  "result": "REFUSE"
+ },
+ "K6-inner-marker-v2": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "inner body.tools.profile disagrees with top-level schema_version",
+  "result": "REFUSE"
+ },
+ "K6-requested-empty": {
+  "result": "N/A"
+ },
+ "K6-requested-talomnia-v2": {
+  "result": "N/A"
+ },
+ "K6-requested-tools-v2": {
+  "result": "N/A"
+ },
+ "M1-null-marker": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "inner body.tools.profile disagrees with top-level schema_version",
+  "result": "REFUSE"
+ },
+ "M1-typed-marker": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "inner body.tools.profile disagrees with top-level schema_version",
+  "result": "REFUSE"
+ },
+ "M1-unknown-inner-marker": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "inner body.tools.profile disagrees with top-level schema_version",
+  "result": "REFUSE"
+ },
+ "M10-duplicate-allow-key": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "duplicate raw JSON key 'allow'",
+  "result": "REFUSE"
+ },
+ "M10-duplicate-top-key": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "duplicate raw JSON key 'scope'",
+  "result": "REFUSE"
+ },
+ "M11-bignum-in-open-bounds": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "M11-escape-uppercase-hex": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes differ from their canonical form",
+  "result": "REFUSE"
+ },
+ "M11-float": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes are not parseable canonical JSON: non-integer number 1.5",
+  "result": "REFUSE"
+ },
+ "M11-float-exponent": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes are not parseable canonical JSON: non-integer number 1e2",
+  "result": "REFUSE"
+ },
+ "M11-float-one-point-zero": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes are not parseable canonical JSON: non-integer number 1.0",
+  "result": "REFUSE"
+ },
+ "M11-lone-high-surrogate": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "M11-lone-low-surrogate": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "M11-pretty-printed": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes differ from their canonical form",
+  "result": "REFUSE"
+ },
+ "M11-raw-non-ascii": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes differ from their canonical form",
+  "result": "REFUSE"
+ },
+ "M11-unsorted-keys": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes differ from their canonical form",
+  "result": "REFUSE"
+ },
+ "M11-whitespace-between-halves": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes differ from their canonical form",
+  "result": "REFUSE"
+ },
+ "M12-body-not-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "body is not an object",
+  "result": "REFUSE"
+ },
+ "M12-body-only-tools": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body: missing required property 'canonicalization'; $.body: missing required property 'conflict_records'; $.body: missing required property 'embedded'; $.body: missing required property 'envelope_un",
+  "result": "REFUSE"
+ },
+ "M12-extra-body-member": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body: additional property 'zzz' not allowed",
+  "result": "REFUSE"
+ },
+ "M12-extra-manifest-member": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest: additional property 'extra' not allowed",
+  "result": "REFUSE"
+ },
+ "M12-manifest-missing-revisions": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest: missing required property 'revisions'",
+  "result": "REFUSE"
+ },
+ "M12-manifest-missing-snapshot": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest: missing required property 'snapshot_digest'",
+  "result": "REFUSE"
+ },
+ "M12-manifest-not-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest: expected type object",
+  "result": "REFUSE"
+ },
+ "M12-missing-body-member": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body: missing required property 'verdicts'",
+  "result": "REFUSE"
+ },
+ "M12-revisions-not-array": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions: expected type array",
+  "result": "REFUSE"
+ },
+ "M2-profile-absent": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "body.tools.profile absent",
+  "result": "REFUSE"
+ },
+ "M3-tools-absent": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "body.tools absent",
+  "result": "REFUSE"
+ },
+ "M4-allow-absent": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "body.tools.allow absent (absence is not deny-all)",
+  "result": "REFUSE"
+ },
+ "M4-allow-non-string": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow[0]: value not in enum ['edit', 'grep', 'read', 'write']",
+  "result": "REFUSE"
+ },
+ "M4-allow-null": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow: expected type array",
+  "result": "REFUSE"
+ },
+ "M4-empty-tools-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "body.tools.profile absent",
+  "result": "REFUSE"
+ },
+ "M4-tools-null": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "body.tools has type NoneType, not an object",
+  "result": "REFUSE"
+ },
+ "M5-alias": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow[0]: value not in enum ['edit', 'grep', 'read', 'write']",
+  "result": "REFUSE"
+ },
+ "M5-case-variant": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow[0]: value not in enum ['edit', 'grep', 'read', 'write']",
+  "result": "REFUSE"
+ },
+ "M5-five-entries": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow: more than maxItems 4; $.body.tools.allow[4]: value not in enum ['edit', 'grep', 'read', 'write']",
+  "result": "REFUSE"
+ },
+ "M5-shell": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow[0]: value not in enum ['edit', 'grep', 'read', 'write']",
+  "result": "REFUSE"
+ },
+ "M6-wildcard": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow[0]: value not in enum ['edit', 'grep', 'read', 'write']",
+  "result": "REFUSE"
+ },
+ "M7-duplicate": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow: items are not unique",
+  "result": "REFUSE"
+ },
+ "M7-out-of-order": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "body.tools.allow ['write', 'read'] is not strictly ascending",
+  "result": "REFUSE"
+ },
+ "M8-extra-tools-property": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools: additional property 'extra' not allowed",
+  "result": "REFUSE"
+ },
+ "M9-tools-empty-array": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "body.tools has type list, not an object",
+  "result": "REFUSE"
+ },
+ "N-envelope-projection-differs": {
+  "result": "N/A"
+ },
+ "N-envelope-tools-differs": {
+  "result": "N/A"
+ },
+ "N-opaque-text-preimage": {
+  "result": "N/A"
+ },
+ "O-allow-unordered-and-noncanonical": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "body.tools.allow ['write', 'read'] is not strictly ascending",
+  "result": "REFUSE"
+ },
+ "O-bad-digest-and-invalid": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.verdict: value not in enum ['T', 'K']",
+  "result": "REFUSE"
+ },
+ "O-bad-digest-valid-shape": {
+  "allow": null,
+  "code": "CONTRACT_DIGEST_MISMATCH",
+  "detail": "recorded sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff != recomputed sha256:11fc69248c1bf3fa4ed32fafd35802c05a678f9035b302bf51ffc2c971d2cb1d",
+  "result": "REFUSE"
+ },
+ "O-body-member-missing-and-allow-absent": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "body.tools.allow absent (absence is not deny-all)",
+  "result": "REFUSE"
+ },
+ "O-float-and-schema-invalid": {
+  "allow": null,
+  "code": "CONTRACT_CANONICAL_INVALID",
+  "detail": "bytes are not parseable canonical JSON: non-integer number 1.5",
+  "result": "REFUSE"
+ },
+ "O-noncanonical-and-schema-invalid": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.verdict: value not in enum ['T', 'K']",
+  "result": "REFUSE"
+ },
+ "P25-allow-not-array": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.tools.allow: expected type array",
+  "result": "REFUSE"
+ },
+ "P25-positional-tools": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "body.tools has type list, not an object",
+  "result": "REFUSE"
+ },
+ "POS-all-four": {
+  "allow": [
+   "edit",
+   "grep",
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "POS-deny-all": {
+  "allow": [],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "POS-hint-absent": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_REQUIRED",
+  "detail": "top-level schema_version (profile marker) absent",
+  "result": "REFUSE"
+ },
+ "POS-nonempty-allow-empty-revisions": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "POS-read-write": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "R1-hint-agrees": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "R1-hint-kind-wrong": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.kind: expected const 'KnowledgeContract'",
+  "result": "REFUSE"
+ },
+ "R1-hint-version-unknown": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "unknown profile marker 'something-else'",
+  "result": "REFUSE"
+ },
+ "V-canonicalization-string": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.canonicalization: expected type object",
+  "result": "REFUSE"
+ },
+ "V-canonicalization-wrong-name": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.canonicalization.name: expected const 'json-c14n-pilot'",
+  "result": "REFUSE"
+ },
+ "V-conflict-bad": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.conflict_records[0]: no anyOf branch matched ($.body.conflict_records[0]: missing required property 'about'; $.body.conflict_records[0]: missing required property 'parties'; $.body.conflict_rec",
+  "result": "REFUSE"
+ },
+ "V-conflict-unresolved": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-embedded-nonempty": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.embedded: more than maxItems 0",
+  "result": "REFUSE"
+ },
+ "V-envelope-unverified-bad": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.envelope_unverified[0]: missing required property 'condition'",
+  "result": "REFUSE"
+ },
+ "V-envelope-unverified-ok": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-projection-bad-revision-id": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.projection[0].source.revision_id: does not match pattern '^[a-z][a-z0-9]*([.-][a-z0-9]+)*@r[1-9][0-9]*$'",
+  "result": "REFUSE"
+ },
+ "V-projection-empty": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-projection-item-extra": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.projection[0]: additional property 'x' not allowed",
+  "result": "REFUSE"
+ },
+ "V-projection-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.projection: expected type array",
+  "result": "REFUSE"
+ },
+ "V-quarantined-bad": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.quarantined[0]: missing required property 'key'; $.body.quarantined[0]: missing required property 'revision_id'",
+  "result": "REFUSE"
+ },
+ "V-quarantined-ok": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-reduction-bad": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.reduction: does not match pattern '^(closure-only|dominated-prune|greedy-cover|exact\\\\([1-9][0-9]*\\\\))$'",
+  "result": "REFUSE"
+ },
+ "V-reduction-exact": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-reduction-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.reduction: expected type string",
+  "result": "REFUSE"
+ },
+ "V-refusals-nonempty": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.refusals: more than maxItems 0",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-bad-digest": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][1]: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-bad-id": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][0]: does not match pattern '^[a-z][a-z0-9]*([.-][a-z0-9]+)*@r[1-9][0-9]*$'",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-digest-newline": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][1]: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0]: expected type array",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-swapped": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0][0]: does not match pattern '^[a-z][a-z0-9]*([.-][a-z0-9]+)*@r[1-9][0-9]*$'; $.closure_manifest.revisions[0][1]: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
+ "V-revision-pair-three": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.revisions[0]: more than maxItems 2",
+  "result": "REFUSE"
+ },
+ "V-scope-ecosystem-false": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.ecosystem: expected const True",
+  "result": "REFUSE"
+ },
+ "V-scope-ecosystem-true": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-scope-empty": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope: fewer than minProperties 1",
+  "result": "REFUSE"
+ },
+ "V-scope-empty-string": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.space: shorter than minLength 1",
+  "result": "REFUSE"
+ },
+ "V-scope-env-prod": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-scope-env-unknown": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.env: value not in enum ['prod', 'test', 'dev']",
+  "result": "REFUSE"
+ },
+ "V-scope-not-object": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope: expected type object",
+  "result": "REFUSE"
+ },
+ "V-scope-open-values": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope.project: expected type string",
+  "result": "REFUSE"
+ },
+ "V-scope-two-axes": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope: more than maxProperties 1",
+  "result": "REFUSE"
+ },
+ "V-scope-unknown-axis": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.scope: additional property 'galaxy' not allowed",
+  "result": "REFUSE"
+ },
+ "V-snapshot-digest-malformed": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.snapshot_digest: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
+ "V-snapshot-digest-uppercase": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.closure_manifest.snapshot_digest: does not match pattern '^sha256:[0-9a-f]{64}$'",
+  "result": "REFUSE"
+ },
+ "V-task-bad-capability-types": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.task.required_capability_types[0]: expected type string",
+  "result": "REFUSE"
+ },
+ "V-task-open-items": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-task-string": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.task: expected type object",
+  "result": "REFUSE"
+ },
+ "V-task-unknown-field": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.task: additional property 'zzz' not allowed",
+  "result": "REFUSE"
+ },
+ "V-verdict-F": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.verdict: value not in enum ['T', 'K']",
+  "result": "REFUSE"
+ },
+ "V-verdict-K": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ },
+ "V-verdict-synthetic": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.verdict: value not in enum ['T', 'K']",
+  "result": "REFUSE"
+ },
+ "V-verdicts-as-array": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.verdicts: expected type object",
+  "result": "REFUSE"
+ },
+ "V-verdicts-bad-value": {
+  "allow": null,
+  "code": "CONTRACT_PROFILE_INVALID",
+  "detail": "$.body.verdicts.a: value not in enum ['T', 'F', 'U', 'K']",
+  "result": "REFUSE"
+ },
+ "V-verdicts-open-keys": {
+  "allow": [
+   "read",
+   "write"
+  ],
+  "code": null,
+  "detail": "",
+  "result": "ACCEPT"
+ }
+}

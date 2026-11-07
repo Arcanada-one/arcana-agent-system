@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Talomnia kc2: members of the talomnia-ontology/v2 KnowledgeContract body, as the producer (kc2_resolve.resolve step 8) emits them",
+  "$defs": {
+    "task": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array"
+        },
+        "outputs": {
+          "type": "array"
+        },
+        "required_capability_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bounds": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Part 2 section 2.4 block as emitted: only CONTRACT_TASK_FIELDS, each present only if the task carried it. Elements of inputs/outputs and bounds values are producer-defined, not closed here."
+    },
+    "scope_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "ecosystem": {
+          "type": "boolean",
+          "const": true
+        },
+        "space": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "project": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "repo": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "host": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "env": {
+          "type": "string",
+          "enum": [
+            "prod",
+            "test",
+            "dev"
+          ]
+        },
+        "namespace": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "task": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "epic": {
+          "$ref": "#/$defs/scope_name"
+        },
+        "actor": {
+          "$ref": "#/$defs/scope_name"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Exactly one axis key (kc2_defs.SCOPE_AXES) with a value of the native scope syntax (kc2_defs.scope_is_valid): ecosystem is true, env is one of kc2_defs.ENV_VALUES, every other axis a non-empty string. Syntax only: registry membership and source eligibility are separate propositions this schema cannot decide."
+    },
+    "projection": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": {
+              "revision_id": {
+                "$ref": "common-defs.schema.json#/$defs/revision_id"
+              },
+              "content_digest": {
+                "$ref": "common-defs.schema.json#/$defs/digest"
+              }
+            },
+            "required": [
+              "content_digest",
+              "revision_id"
+            ],
+            "additionalProperties": false
+          },
+          "assertions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "assertions",
+          "source"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "embedded": {
+      "type": "array",
+      "maxItems": 0,
+      "description": "The producer emits [] always."
+    },
+    "reduction": {
+      "type": "string",
+      "pattern": "^(closure-only|dominated-prune|greedy-cover|exact\\([1-9][0-9]*\\))$"
+    },
+    "pin": {
+      "type": "object",
+      "properties": {
+        "revision_id": {
+          "$ref": "common-defs.schema.json#/$defs/revision_id"
+        },
+        "content_digest": {
+          "$ref": "common-defs.schema.json#/$defs/digest"
+        }
+      },
+      "required": [
+        "content_digest",
+        "revision_id"
+      ],
+      "additionalProperties": false
+    },
+    "party": {
+      "type": "object",
+      "properties": {
+        "revision_id": {
+          "$ref": "common-defs.schema.json#/$defs/revision_id"
+        },
+        "content_digest": {
+          "$ref": "common-defs.schema.json#/$defs/digest"
+        },
+        "key": {
+          "type": "string"
+        },
+        "authority_class": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authority_class",
+        "content_digest",
+        "key",
+        "revision_id"
+      ],
+      "additionalProperties": false
+    },
+    "conflict_resolved": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "ConflictRecord"
+        },
+        "about": {
+          "type": "string"
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/party"
+          }
+        },
+        "resolution": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "const": "declared-precedence"
+            },
+            "order": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/pin"
+                }
+              ]
+            },
+            "order_used": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "winner_authority": {
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/scope"
+            }
+          },
+          "required": [
+            "by",
+            "order",
+            "order_used",
+            "scope",
+            "winner_authority"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "about",
+        "kind",
+        "parties",
+        "resolution"
+      ],
+      "additionalProperties": false
+    },
+    "conflict_unresolved": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "ConflictRecord"
+        },
+        "about": {
+          "type": "string"
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/party"
+          }
+        },
+        "resolution": {
+          "const": "UNRESOLVED"
+        }
+      },
+      "required": [
+        "about",
+        "kind",
+        "parties",
+        "resolution"
+      ],
+      "additionalProperties": false
+    },
+    "conflict_records": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/conflict_resolved"
+          },
+          {
+            "$ref": "#/$defs/conflict_unresolved"
+          }
+        ]
+      }
+    },
+    "refusals": {
+      "type": "array",
+      "maxItems": 0,
+      "description": "The producer emits [] always."
+    },
+    "four": {
+      "enum": [
+        "T",
+        "F",
+        "U",
+        "K"
+      ]
+    },
+    "verdicts": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/four"
+      }
+    },
+    "envelope_unverified": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "condition",
+          "provider"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "verdict": {
+      "enum": [
+        "T",
+        "K"
+      ]
+    },
+    "quarantined": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "addr": {
+            "type": "string"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "common-defs.schema.json#/$defs/revision_id"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "addr",
+          "key",
+          "revision_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "canonicalization": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "const": "json-c14n-pilot"
+        },
+        "version": {
+          "const": "v1"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
