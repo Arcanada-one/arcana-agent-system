@@ -8,10 +8,15 @@
 //! client timeout, so the provider may have executed and charged it. The second
 //! run is the "resume".
 //!
-//! **These tests pin a GAP, not a guarantee.** ARAS persists no operation
-//! identity (the `dispatch` audit record holds turn, model
-//! and sizes only; `Driver::run` is the sole entry point and mints a new run
-//! UUID). Each test asserts what happens TODAY after a restart. The same tests
+//! **These tests pin a GAP, not a guarantee.** The agent loop / model-call
+//! path persists no operation identity (the `dispatch` audit record holds
+//! turn, model and sizes only; `Driver::run` is the sole entry point and mints
+//! a new run UUID). This is NOT a claim that ARAS persists no identity
+//! anywhere: the separate `arcana-credential-broker` crate keeps a durable
+//! idempotency ledger (`crates/credential-broker/src/ledger.rs`), which is
+//! outside the model-call path and not used by `arcana-core`.
+//!
+//! Each test asserts what happens TODAY after a restart. The same tests
 //! written as the safe property ("no fresh identity", "no dispatch", "original
 //! key") were red on 9f122d7d; flipping an assertion here is the signal that a
 //! durable identity store has landed. Not measured until then.

@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 
 - G07 stage 2 (reproduction only, no behaviour change): `crates/core/tests/driver_restart_identity.rs`
-  pins that ARAS carries no operation identity across a process restart. After a run ends on an
+  pins that the agent loop / model-call path carries no operation identity across a process
+  restart (the separate `arcana-credential-broker` crate keeps a durable idempotency ledger, outside
+  this path and not used by `arcana-core`). After a run ends on an
   unknown outcome, a new `Driver` over the same audit directory dispatches the same task under a
   fresh `Idempotency-Key` (unchanged payload), dispatches a changed payload without refusal, and
   never replays under the original key; nothing in the audit directory holds a key or request
