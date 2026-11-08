@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authority, provider effect, cost reservation and Muneral reconcile join are
   NOT_MEASURED.
 
+- G05 round 3: discriminating controls for the two no-dispatch fences that
+  round 2 left untested — recovered Pending/Unknown cannot become
+  `no_dispatch` via `mark_no_dispatch` (session + driver), and a counted
+  `note_handoff` blocks proven-no-dispatch; post-handoff connector/executor
+  failures stay pending/unknown with no retained-refusal shortcut on the next
+  attempt (`crates/core/tests/g05_round3_fence_controls.rs`). No production
+  code change.
+
 - G05 round 2: composition-root `DriverConfig::route_protection`
   (`RouteProtection::Protected` vs `LegacyOutsideGuarantee`). A protected route
   with a missing gate or durable intent refuses with
