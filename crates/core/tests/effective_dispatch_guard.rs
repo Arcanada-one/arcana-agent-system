@@ -152,7 +152,7 @@ impl ModelConnector for CutOnce {
 
 struct World {
     audit: TempDir,
-    /// Private intent store path. Must NOT be the TempDir root: on CI that
+    /// Private intent store path. Must NOT be the `TempDir` root: on CI that
     /// directory is group-readable and `IntentStore` refuses it
     /// (`INTENT_PATH_INSECURE`). A child `intents/` is created owner-only by
     /// the store on first open (same pattern as `driver_restart_identity`).
