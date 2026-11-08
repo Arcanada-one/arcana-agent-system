@@ -1,5 +1,10 @@
 # Reading note for change-admission-ARAS-G05-round2-protected-no-dispatch.json
 
+Round 3 added discriminating controls for the two no-dispatch fences
+(`fresh_pending`/`held` and `handoff_count`) in
+`crates/core/tests/g05_round3_fence_controls.rs`. Those tests remain mock-only;
+the NOT_MEASURED rows below are unchanged.
+
 The receipt is the raw `tools/graph/verify.py` draft for the range `b3ac795..<head>`
 (ChangeAdmissionReceipt/v1) covering G05 round 2 (protected route + durable
 proven-no-dispatch). Its `verified` verdicts state only what the verifiers named
