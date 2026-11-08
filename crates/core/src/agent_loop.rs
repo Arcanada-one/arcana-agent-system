@@ -27,6 +27,7 @@ use crate::connector::{
 };
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
+use crate::effective_dispatch::{EffectGuardError, EffectKind, EffectiveDispatchConfig};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor, CapabilityOutput};
 use crate::hooks::HookContext;
 use crate::operation_intent::{
@@ -1292,6 +1293,12 @@ pub struct DriverConfig {
     /// dispatch go through the private intent record
     /// ([`crate::operation_intent`]) and refuses when a native field is missing.
     pub operation_intent: Option<OperationIntentConfig>,
+    /// G05: final effective-dispatch guard. `None` (the default) leaves the
+    /// pre-G05 path unchanged; `Some` requires `CoverageComplete`,
+    /// `PreconditionsDischarged` per mandatory member, current authority and a
+    /// durable reservation through [`Self::operation_intent`] immediately
+    /// before every model/tool effect (re-checked after awaits).
+    pub effective_dispatch: Option<EffectiveDispatchConfig>,
 }
 
 impl DriverConfig {
@@ -1322,6 +1329,7 @@ impl DriverConfig {
             connector_retry_backoff: DEFAULT_CONNECTOR_RETRY_BACKOFF,
             connector_retry_pause_budget: DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
             operation_intent: None,
+            effective_dispatch: None,
         }
     }
 
@@ -2478,6 +2486,11 @@ No other markup is executed, whatever your training says. \
                     .unwrap_or_default(),
             });
         }
+        // G05: final effective-dispatch guard. Durable reservation already
+        // happened above; re-check coverage/discharge/authority after the
+        // await inside `admit` and immediately before the connector effect.
+        self.admit_effective_dispatch(intent, EffectKind::ModelRequest)
+            .await?;
         match self.connector.execute(req).await {
             Ok(resp) => {
                 intent.note_reply(&resp.id);
@@ -2864,10 +2877,92 @@ same call again, unchanged, ends the run."
         // says what the model tried, and a call that is about to be refused
         // was still a call.
         state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
-        match self.executor.execute(&ctx, name, input).await {
-            Ok(capability) => self.accept_tool_capability(state, name, capability),
-            Err(err) => self.fold_capability_error(state, name, err, &attempted),
+        // G05: tool-effect boundary. Reuse the existing intent store (no
+        // second ledger): reserve a durable identity for this effect, then
+        // admit coverage/discharge/authority, re-checking after the await.
+        if self.config.effective_dispatch.is_some() {
+            let mut tool_req = ExecuteRequest::new("tool.effect", attempted.to_string());
+            tool_req.model = Some(name.to_owned());
+            match state.intent.stamp_durable(&mut tool_req, Instant::now()) {
+                Ok(IntentDecision::Refused) => {
+                    let key = state
+                        .intent
+                        .active_key()
+                        .map(|key| key.as_str().to_owned())
+                        .unwrap_or_default();
+                    state.terminal_detail = Some(format!(
+                        "reconcile required — unresolved prior intent under Idempotency-Key {key}; \
+                         tool effect was not executed"
+                    ));
+                    return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    state.terminal_detail = Some(error.to_string());
+                    return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+                }
+            }
+            if let Err(error) = self
+                .admit_effective_dispatch(&mut state.intent, EffectKind::ToolEffect)
+                .await
+            {
+                state.intent.finish_turn();
+                state.terminal_detail = Some(error.to_string());
+                return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+            }
         }
+        match self.executor.execute(&ctx, name, input).await {
+            Ok(capability) => {
+                if self.config.effective_dispatch.is_some() {
+                    state.intent.note_reply(&format!("tool:{name}"));
+                    state.intent.finish_turn();
+                }
+                self.accept_tool_capability(state, name, capability)
+            }
+            Err(err) => {
+                if self.config.effective_dispatch.is_some() {
+                    state.intent.note_no_reply();
+                }
+                self.fold_capability_error(state, name, err, &attempted)
+            }
+        }
+    }
+
+    /// G05 final guard: `CoverageComplete`, `PreconditionsDischarged`, current
+    /// authority, and a durable reservation through the existing intent store.
+    ///
+    /// # Errors
+    /// [`ConnectorError::EffectGuardRefused`] (or identity refusal) — nothing
+    /// may be dispatched.
+    async fn admit_effective_dispatch(
+        &self,
+        intent: &mut TurnIntentSeries,
+        kind: EffectKind,
+    ) -> Result<(), ConnectorError> {
+        let Some(gate) = self.config.effective_dispatch.as_ref() else {
+            return Ok(());
+        };
+        // Reservation is the existing intent store: a session must be open and
+        // a key must be in force from `stamp_durable`. Never invent one.
+        let reserved = intent.session.is_some() && intent.active.is_some();
+        match gate.admit(reserved, kind).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // Local refusal before the effect: drop the in-memory key so a
+                // later attempt cannot pretend this effect ran. The durable
+                // pending record stays (restart-safe identity); a fresh key is
+                // refused while it remains unresolved (G07/G05 AC5).
+                intent.finish_turn();
+                Err(effect_guard_refused(&error))
+            }
+        }
+    }
+}
+
+fn effect_guard_refused(error: &EffectGuardError) -> ConnectorError {
+    ConnectorError::EffectGuardRefused {
+        code: error.code(),
+        detail: error.to_string(),
     }
 }
 

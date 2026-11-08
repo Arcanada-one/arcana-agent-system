@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- G05: a final effective-dispatch guard on the `arcana-core` model-request and
+  tool-effect boundaries (`crates/core/src/effective_dispatch.rs`, opt-in through
+  `DriverConfig::effective_dispatch`). Immediately before each consequential
+  effect the driver requires CoverageComplete for every mandatory member,
+  PreconditionsDischarged individually (coverage/necessity is not discharge;
+  attributed claims are not pass), current authority, and a durable effect
+  identity/reservation through the existing G07 intent store (no second ledger).
+  Bindings are re-checked after every await and immediately before the effect.
+  A read-only clarification is not free permission for a model/network call.
+  Where ARAS has no native field the operation refuses with a typed `EFFECT_*`
+  code and never invents a value. New `ConnectorError::EffectGuardRefused`.
+  Existing contract digests and fail-closed defaults are unchanged. Native
+  authority, provider effect, cost reservation and Muneral reconcile join are
+  NOT_MEASURED.
+
 - G07: a durable, private, versioned model-operation intent record on the `arcana-core`
   `ModelConnector` call boundary (`crates/core/src/operation_intent.rs`, opt-in through
   `DriverConfig::operation_intent`). Order: validate the native binding, verify the private
@@ -29,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Muneral reconcile join are NOT_MEASURED.
 
 ### Tests
+
+- G05: `crates/core/tests/effective_dispatch_guard.rs` covers AC1 (A proven /
+  B unknown → zero effects), AC2 (covered but undischarged → typed refusal),
+  AC3 (synthetic authority positive control, exactly one dispatch), AC4
+  (revocation/expiry across await), AC5 (unresolved prior intent → no fresh-key
+  redispatch), AC6 (after reconcile a later operation remains possible), plus
+  tool-effect boundary and clarification-is-not-free controls, all against mock
+  connectors.
 
 - G07 stage 2: `crates/core/tests/driver_restart_identity.rs` now asserts the safe property
   that PR #276 had pinned as a defect (restart after an unknown outcome mints no fresh key,

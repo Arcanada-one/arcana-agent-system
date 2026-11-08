@@ -555,6 +555,12 @@ pub enum ConnectorError {
     /// unknown outcome ...). Nothing was sent. `code` is a closed identifier.
     #[error("operation intent refused ({code}): {detail}; nothing was sent")]
     IntentRefused { code: &'static str, detail: String },
+    /// G05: the final effective-dispatch guard refused the model/tool effect
+    /// (coverage incomplete, undischarged precondition, authority missing /
+    /// revoked / expired, or no durable intent reservation). Nothing was sent.
+    /// `code` is a closed `EFFECT_*` identifier.
+    #[error("effective-dispatch guard refused ({code}): {detail}; nothing was sent")]
+    EffectGuardRefused { code: &'static str, detail: String },
     /// Body was not the JSON shape we expect for the given status.
     #[error("upstream returned non-JSON body (content-type: {content_type:?}, {bytes} bytes)")]
     UpstreamNonJson {
@@ -671,7 +677,8 @@ impl ConnectorError {
             | Self::UnexpectedStatus(_)
             | Self::UnexpectedEnvelopeStatus
             | Self::ReconcileRequired { .. }
-            | Self::IntentRefused { .. } => false,
+            | Self::IntentRefused { .. }
+            | Self::EffectGuardRefused { .. } => false,
         }
     }
 
@@ -842,6 +849,7 @@ impl ConnectorError {
             Self::UnexpectedEnvelopeStatus => "unexpected envelope status".to_owned(),
             Self::ReconcileRequired { .. } => "reconcile required".to_owned(),
             Self::IntentRefused { .. } => "operation intent refused".to_owned(),
+            Self::EffectGuardRefused { .. } => "effective-dispatch guard refused".to_owned(),
             Self::Logical {
                 http_status, kind, ..
             } => format!("HTTP {http_status} {kind}"),
