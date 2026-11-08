@@ -168,7 +168,11 @@ impl World {
         let _ = registry.register(Arc::new(EchoTool));
         let (executor, hooks_keep) = test_executor(registry, allow_cascade(), HookChain::new());
         let store_root = TempDir::new().unwrap();
-        let store = store_root.path().join("intents");
+        // macOS TempDir is under `/var/folders` (`/var` → `private/var`); the
+        // store refuses symlink ancestors, so fixtures use the canonical path.
+        let store = std::fs::canonicalize(store_root.path())
+            .expect("canonical temporary root")
+            .join("intents");
         Self {
             audit: TempDir::new().unwrap(),
             store,

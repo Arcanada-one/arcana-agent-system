@@ -302,7 +302,11 @@ impl World {
         let _ = registry.register(tool);
         let (executor, hooks_keep) = test_executor(registry, cascade, hooks);
         let store_root = TempDir::new().unwrap();
-        let store = store_root.path().join("intents");
+        // macOS TempDir is under `/var/folders` (`/var` → `private/var`); the
+        // store refuses symlink ancestors, so fixtures use the canonical path.
+        let store = std::fs::canonicalize(store_root.path())
+            .expect("canonical temporary root")
+            .join("intents");
         Self {
             store,
             _store_root: store_root,
@@ -355,7 +359,9 @@ fn assert_no_retained_shortcut(detail: &str) {
 #[test]
 fn t1_session_recovered_pending_mark_no_dispatch_ineligible() {
     let root = TempDir::new().unwrap();
-    let store = root.path().join("intents");
+    let store = std::fs::canonicalize(root.path())
+        .expect("canonical temporary root")
+        .join("intents");
     // Session-level: any closed fingerprint is fine; the fence is session state.
     let fingerprint = [0x11u8; 32];
     seed_pending(&store, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", fingerprint);
@@ -385,7 +391,9 @@ fn t1_session_recovered_pending_mark_no_dispatch_ineligible() {
 #[test]
 fn t1_session_recovered_unknown_mark_no_dispatch_ineligible() {
     let root = TempDir::new().unwrap();
-    let store = root.path().join("intents");
+    let store = std::fs::canonicalize(root.path())
+        .expect("canonical temporary root")
+        .join("intents");
     let fingerprint = [0x22u8; 32];
     seed_unknown(&store, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", fingerprint);
     let before = record_bytes(&store);
@@ -500,7 +508,9 @@ async fn t1_driver_recovered_unknown_refusal_stays_unknown() {
 #[test]
 fn t2_session_handoff_blocks_mark_no_dispatch() {
     let root = TempDir::new().unwrap();
-    let store = root.path().join("intents");
+    let store = std::fs::canonicalize(root.path())
+        .expect("canonical temporary root")
+        .join("intents");
     let mut session =
         OperationSession::open(&OperationIntentConfig::new(&store, binding())).unwrap();
     session

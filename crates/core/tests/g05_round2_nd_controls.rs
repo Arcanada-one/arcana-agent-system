@@ -153,7 +153,11 @@ impl World {
         let _ = registry.register(Arc::new(EchoTool));
         let (executor, hooks_keep) = test_executor(registry, allow_cascade(), HookChain::new());
         let store_root = TempDir::new().unwrap();
-        let store = store_root.path().join("intents");
+        // macOS TempDir is under `/var/folders` (`/var` → `private/var`); the
+        // store refuses symlink ancestors, so fixtures use the canonical path.
+        let store = std::fs::canonicalize(store_root.path())
+            .expect("canonical temporary root")
+            .join("intents");
         Self {
             store,
             _store_root: store_root,
@@ -684,7 +688,9 @@ async fn nd11_intent_file_does_not_assert_budget_reservation() {
 fn nd12_v1_reconciled_and_unknown_version_refused() {
     let (_root, dir) = {
         let root = TempDir::new().unwrap();
-        let dir = root.path().join("intents");
+        let dir = std::fs::canonicalize(root.path())
+            .expect("canonical temporary root")
+            .join("intents");
         (root, dir)
     };
     // v1 Reconciled still requires outcome_ref and remains readable.
