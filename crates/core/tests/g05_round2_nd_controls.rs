@@ -107,7 +107,7 @@ fn durable(config: &mut DriverConfig, store: &Path) {
 
 fn durable_with_post_rename_dir_sync_fault(config: &mut DriverConfig, store: &Path) {
     let mut intent = OperationIntentConfig::new(store, binding());
-    intent.test_fail_no_dispatch_dir_sync_after_rename = true;
+    intent.arm_test_fail_no_dispatch_dir_sync_after_rename();
     config.operation_intent = Some(intent);
 }
 

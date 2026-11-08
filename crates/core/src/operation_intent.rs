@@ -100,8 +100,12 @@ pub struct OperationIntentConfig {
     /// refused, even if the text is identical.
     pub same_key_replay_verified: bool,
     /// Test-only seam: when true, the next durable write of a `NoDispatch`
-    /// record fails after rename at the directory-sync step. Production
-    /// configs leave this false; behaviour is unchanged when unset.
+    /// record fails after rename at the directory-sync step.
+    ///
+    /// Present only under `cfg(any(test, feature = "intent-test-faults"))`. A
+    /// normal release build of this crate does not expose the field; arm it
+    /// only from tests that enable the feature.
+    #[cfg(any(test, feature = "intent-test-faults"))]
     pub test_fail_no_dispatch_dir_sync_after_rename: bool,
 }
 
@@ -113,8 +117,17 @@ impl OperationIntentConfig {
             store_dir: store_dir.into(),
             binding,
             same_key_replay_verified: false,
+            #[cfg(any(test, feature = "intent-test-faults"))]
             test_fail_no_dispatch_dir_sync_after_rename: false,
         }
+    }
+
+    /// Arm the one-shot post-rename directory-sync fault for the next
+    /// `NoDispatch` write. Available only to tests that compile with
+    /// `intent-test-faults` (or unit tests of this crate).
+    #[cfg(any(test, feature = "intent-test-faults"))]
+    pub fn arm_test_fail_no_dispatch_dir_sync_after_rename(&mut self) {
+        self.test_fail_no_dispatch_dir_sync_after_rename = true;
     }
 }
 
@@ -664,6 +677,7 @@ mod fsio {
         current: Option<IntentRecord>,
         /// One-shot test seam from [`super::OperationIntentConfig`]. When set,
         /// the next `NoDispatch` write fails after rename at directory sync.
+        #[cfg(any(test, feature = "intent-test-faults"))]
         fail_no_dispatch_dir_sync_after_rename: bool,
     }
 
@@ -738,6 +752,7 @@ mod fsio {
                 last_seen: None,
                 generation: 0,
                 current: None,
+                #[cfg(any(test, feature = "intent-test-faults"))]
                 fail_no_dispatch_dir_sync_after_rename: false,
             };
             store.discard_staged_leftovers()?;
@@ -912,6 +927,7 @@ mod fsio {
             // Rename succeeded: the target may already expose `bytes`. Do not
             // unlink the staged name (it was consumed by rename). Directory
             // sync confirms durability; failure is uncertain persistence.
+            #[cfg(any(test, feature = "intent-test-faults"))]
             if record.disposition == Disposition::NoDispatch
                 && self.fail_no_dispatch_dir_sync_after_rename
             {
@@ -1098,6 +1114,7 @@ mod fsio {
         /// Arm the one-shot post-rename directory-sync fault for the next
         /// `NoDispatch` write. Used only from [`super::OperationSession::open`]
         /// when the test config requests it.
+        #[cfg(any(test, feature = "intent-test-faults"))]
         pub(crate) fn arm_no_dispatch_directory_sync_after_rename(&mut self) {
             self.fail_no_dispatch_dir_sync_after_rename = true;
         }
@@ -1162,10 +1179,15 @@ impl OperationSession {
     /// Any [`IntentError`]; nothing has been dispatched.
     pub fn open(config: &OperationIntentConfig) -> Result<Self, IntentError> {
         let binding = ValidBinding::from(&config.binding)?;
-        let (mut store, retained) = IntentStore::open(&config.store_dir, &binding)?;
-        if config.test_fail_no_dispatch_dir_sync_after_rename {
-            store.arm_no_dispatch_directory_sync_after_rename();
-        }
+        let (store, retained) = IntentStore::open(&config.store_dir, &binding)?;
+        #[cfg(any(test, feature = "intent-test-faults"))]
+        let store = {
+            let mut store = store;
+            if config.test_fail_no_dispatch_dir_sync_after_rename {
+                store.arm_no_dispatch_directory_sync_after_rename();
+            }
+            store
+        };
         let closed_no_dispatch = retained
             .clone()
             .filter(|r| matches!(r.disposition, Disposition::NoDispatch));
@@ -1189,6 +1211,21 @@ impl OperationSession {
     #[must_use]
     pub const fn closed_no_dispatch(&self) -> Option<&IntentRecord> {
         self.closed_no_dispatch.as_ref()
+    }
+
+    /// Disposition of the in-memory record held under this session's exclusive
+    /// lock, if any. Distinct from [`Self::closed_no_dispatch`]: an uncertain
+    /// post-rename publish must refresh `last_seen` without adopting terminal
+    /// success here, so a same-session retry can observe `Pending`.
+    #[must_use]
+    pub fn locked_disposition(&self) -> Option<Disposition> {
+        self.store.current_record().map(|r| r.disposition)
+    }
+
+    /// Generation of the in-memory record under the lock, if any.
+    #[must_use]
+    pub fn locked_generation(&self) -> Option<u64> {
+        self.store.current_record().map(|r| r.generation)
     }
 
     /// Count a connector or executor handoff for the current fresh pending.

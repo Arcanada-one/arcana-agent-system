@@ -8,6 +8,13 @@ repository.workspace = true
 authors.workspace = true
 description = "Core library: agent loop, tool dispatcher, context management"
 
+[features]
+default = []
+# Test-only fault seams for the intent store (post-rename directory-sync
+# injection). Not part of any shipped build; enable only for `cargo test` /
+# `cargo clippy --all-targets` of this workspace.
+intent-test-faults = []
+
 [dependencies]
 async-trait = "0.1"
 # Argana hands the contract's digest preimage over as `canonical.bytes_b64`;

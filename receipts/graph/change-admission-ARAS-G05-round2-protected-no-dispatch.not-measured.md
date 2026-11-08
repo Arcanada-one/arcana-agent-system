@@ -6,8 +6,13 @@ Round 3 added discriminating controls for the two no-dispatch fences
 phase-accurate controls: pre-rename failure leaves prior Pending; post-rename
 directory-sync failure leaves persistence uncertain (Pending or valid
 NoDispatch on reopen); successful terminal write confirms NoDispatch only after
-directory sync. Those tests remain mock-only; the NOT_MEASURED rows below are
-unchanged.
+directory sync. Round 4 closure adds a direct same-session
+`OperationSession::mark_no_dispatch` retry under the held lock after the
+injected post-rename fault (no false Competing; no in-memory terminal adoption)
+and compile-gates the test seam behind feature `intent-test-faults`. Those
+tests remain mock-only; the NOT_MEASURED rows below are unchanged. A real
+(non-seam) directory-fsync failure during a Pending write is also
+NOT_MEASURED and must not be read as tested.
 
 The receipt is the raw `tools/graph/verify.py` draft for the range `b3ac795..<head>`
 (ChangeAdmissionReceipt/v1) covering G05 round 2 (protected route + durable
@@ -28,9 +33,10 @@ What the tests in this change measured (mock connectors only; synthetic fixtures
   closed key cannot dispatch (ND06); ND07 pre-rename write failure leaves prior
   Pending; ND07 post-rename directory-sync failure does not dispatch or claim
   terminal success and reopen shows Pending or valid NoDispatch; ND07 successful
-  terminal write persists NoDispatch; closed repeat vs new op (ND08); intent file
-  does not assert a native budget reservation (ND11); v1 Reconciled + unknown
-  version (ND12);
+  terminal write persists NoDispatch; ND07 same-session under-lock retry after the
+  injected post-rename fault is not false Competing and does not adopt terminal
+  in-memory success; closed repeat vs new op (ND08); intent file does not assert
+  a native budget reservation (ND11); v1 Reconciled + unknown version (ND12);
 - G07 crash-after-Pending / PR #276 store tests remain green; no second ledger;
   no existing contract digest/canonical/hash line changes. Record schema digest
   is not pinned in-tree; versioning is explicit `RECORD_VERSION` (1) /
@@ -46,4 +52,5 @@ Verdicts this change cannot carry, each `not_measured`:
 | Muneral reconcile join | no Muneral attempt/transition was read or written | native attempt record and a reconcile transition |
 | ND09 native witness adapter | no authenticated composition-root witness that validates witness scope or refuses model→tool reuse | native witness adapter bound to exact action |
 | ND10 real handoff fence | local `between_checks` recheck is not an atomic revocation/effect fence across network scheduling | ordered connector/executor handoff fence with authority |
+| Real directory-fsync fault on Pending write | only the NoDispatch post-rename seam is injected; the Pending write path's real `fsync` failure is typed as uncertain but not fault-injected | platform fault injection on directory sync during a Pending publish |
 
