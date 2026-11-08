@@ -30,6 +30,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 /// How one mandatory obligation is covered in the final effective request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,10 +329,33 @@ impl EffectiveDispatchConfig {
         if let Some(hook) = self.between_checks.as_ref() {
             hook().await;
         } else {
-            tokio::task::yield_now().await;
+            // Cooperative one-shot yield without requiring tokio's `rt` feature
+            // (publish --dry-run verifies the crate with default features only).
+            YieldOnce::default().await;
         }
         let snap = self.snapshot();
         evaluate(&snap, intent_reserved, kind)
+    }
+}
+
+/// Polls `Pending` once, then `Ready`. Lets AC4-style revoke/expiry land across
+/// the await without depending on `tokio::task::yield_now` (`rt` feature).
+#[derive(Default)]
+struct YieldOnce {
+    yielded: bool,
+}
+
+impl Future for YieldOnce {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.yielded {
+            Poll::Ready(())
+        } else {
+            self.yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
     }
 }
 
