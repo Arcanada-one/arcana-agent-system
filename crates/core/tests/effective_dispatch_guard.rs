@@ -14,7 +14,7 @@
 
 mod common;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -152,7 +152,12 @@ impl ModelConnector for CutOnce {
 
 struct World {
     audit: TempDir,
-    store: TempDir,
+    /// Private intent store path. Must NOT be the TempDir root: on CI that
+    /// directory is group-readable and `IntentStore` refuses it
+    /// (`INTENT_PATH_INSECURE`). A child `intents/` is created owner-only by
+    /// the store on first open (same pattern as `driver_restart_identity`).
+    store: PathBuf,
+    _store_root: TempDir,
     executor: CapabilityExecutor,
     _hooks_keep: TempDir,
 }
@@ -162,9 +167,12 @@ impl World {
         let mut registry = ToolDispatcher::new();
         let _ = registry.register(Arc::new(EchoTool));
         let (executor, hooks_keep) = test_executor(registry, allow_cascade(), HookChain::new());
+        let store_root = TempDir::new().unwrap();
+        let store = store_root.path().join("intents");
         Self {
             audit: TempDir::new().unwrap(),
-            store: TempDir::new().unwrap(),
+            store,
+            _store_root: store_root,
             executor,
             _hooks_keep: hooks_keep,
         }
@@ -175,7 +183,7 @@ impl World {
         connector: &'a dyn ModelConnector,
         mut config: DriverConfig,
     ) -> Driver<'a> {
-        durable(&mut config, self.store.path());
+        durable(&mut config, &self.store);
         let cost = Arc::new(CostTracker::new());
         let _ = &self.audit;
         Driver::new(
@@ -338,7 +346,7 @@ async fn ac5_unresolved_prior_intent_no_fresh_key_redispatch() {
     let _ = registry.register(Arc::new(EchoTool));
     let (executor, _keep) = test_executor(registry, allow_cascade(), HookChain::new());
     let mut cfg = config2;
-    durable(&mut cfg, world.store.path());
+    durable(&mut cfg, &world.store);
     let out = Driver::new(
         &cut2,
         &executor,
@@ -384,7 +392,7 @@ async fn ac6_after_reconcile_later_operation_still_possible() {
     let _ = registry.register(Arc::new(EchoTool));
     let (executor, _keep) = test_executor(registry, allow_cascade(), HookChain::new());
     let mut cfg = config2;
-    durable(&mut cfg, world.store.path());
+    durable(&mut cfg, &world.store);
     let out2 = Driver::new(
         &connector2,
         &executor,
