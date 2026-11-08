@@ -369,7 +369,11 @@ async fn d01_intent_not_durable_means_no_dispatch() {
     assert_eq!(connector.calls(), 0, "nothing dispatched: {out:?}");
     assert_ne!(out.reason, TerminalReason::Completed);
     assert!(out.final_text.is_none(), "no fabricated outcome");
-    assert!(record_files(&world).is_empty(), "no record was published");
+    assert_eq!(
+        record_files(&world),
+        Vec::<PathBuf>::new(),
+        "no record was published"
+    );
 }
 
 /// D01b: a writer died after staging, before the rename. The staged file was
@@ -624,7 +628,7 @@ async fn a_missing_or_unclean_native_field_refuses_the_operation() {
         detail(&out)
     );
     assert_eq!(connector.calls(), 0);
-    assert!(record_files(&world).is_empty());
+    assert_eq!(record_files(&world), Vec::<PathBuf>::new());
 }
 
 /// The ordinary path: a completed run leaves a reconciled record, and a later
