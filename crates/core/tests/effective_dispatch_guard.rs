@@ -362,7 +362,7 @@ async fn ac5_unresolved_prior_intent_no_fresh_key_redispatch() {
         "expected held-intent refusal, got {detail}"
     );
     // Original key identity preserved in the first cut.
-    assert!(!first_key.is_empty());
+    assert_ne!(first_key, "");
 }
 
 /// AC6: legitimate reconciliation → a later valid operation remains possible.
