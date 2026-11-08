@@ -9,10 +9,11 @@ NoDispatch on reopen); successful terminal write confirms NoDispatch only after
 directory sync. Round 4 closure adds a direct same-session
 `OperationSession::mark_no_dispatch` retry under the held lock after the
 injected post-rename fault (no false Competing; no in-memory terminal adoption)
-and compile-gates the test seam behind feature `intent-test-faults`. Those
-tests remain mock-only; the NOT_MEASURED rows below are unchanged. A real
-(non-seam) directory-fsync failure during a Pending write is also
-NOT_MEASURED and must not be read as tested.
+and compile-gates the test seam behind
+`cfg(any(test, feature = "intent-test-faults", debug_assertions))` (absent
+from normal release builds). Those tests remain mock-only; the NOT_MEASURED
+rows below are unchanged. A real (non-seam) directory-fsync failure during a
+Pending write is also NOT_MEASURED and must not be read as tested.
 
 The receipt is the raw `tools/graph/verify.py` draft for the range `b3ac795..<head>`
 (ChangeAdmissionReceipt/v1) covering G05 round 2 (protected route + durable

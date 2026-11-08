@@ -33,11 +33,9 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
-        # intent-test-faults: compile the gated NoDispatch directory-sync seam
-        # used only by arcana-core integration tests (not a shipped surface).
-        run: cargo clippy --workspace --all-targets --features arcana-core/intent-test-faults -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
-        run: cargo test --workspace --features arcana-core/intent-test-faults
+        run: cargo test --workspace
       - name: the workspace can still be published
         # #101 was `cargo publish` failing outright on bare `path` dependencies.
         # Publishing nine interdependent crates is a one-way ratchet — a
@@ -87,7 +85,7 @@ jobs:
         with:
           components: rustfmt,clippy
       - name: Common contract and platform identity probes
-        run: cargo test --locked --workspace --features arcana-core/intent-test-faults
+        run: cargo test --locked --workspace
       - name: Build live broker executable
         run: cargo build --locked --package arcana-credential-broker --bin arcana-credential-broker
       - name: Rehearse live install, failed upgrade, and binary-plus-config rollback

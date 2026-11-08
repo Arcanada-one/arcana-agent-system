@@ -11,8 +11,9 @@ description = "Core library: agent loop, tool dispatcher, context management"
 [features]
 default = []
 # Test-only fault seams for the intent store (post-rename directory-sync
-# injection). Not part of any shipped build; enable only for `cargo test` /
-# `cargo clippy --all-targets` of this workspace.
+# injection). Not part of any shipped/release build. Dev/test profiles also
+# expose the seam via `cfg(debug_assertions)`; this feature remains for
+# explicit opt-in (e.g. unusual release-with-seams builds).
 intent-test-faults = []
 
 [dependencies]

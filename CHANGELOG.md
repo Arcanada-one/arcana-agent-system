@@ -35,9 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - G05 ND07 closure: direct `OperationSession` same-session retry after an
   injected post-rename directory-sync fault asserts no false
   `INTENT_STATE_COMPETING` and no in-memory terminal adoption; the test-only
-  seam is compile-gated behind feature `intent-test-faults` (absent from normal
-  release builds). A real non-seam directory-fsync fault on a Pending write
-  remains NOT_MEASURED (`crates/core/tests/operation_intent_store.rs`).
+  seam is compile-gated (`cfg(any(test, feature = "intent-test-faults",
+  debug_assertions))`, absent from normal release builds). A real non-seam
+  directory-fsync fault on a Pending write remains NOT_MEASURED
+  (`crates/core/tests/operation_intent_store.rs`).
 
 - G05 round 3: discriminating controls for the two no-dispatch fences that
   round 2 left untested — recovered Pending/Unknown cannot become
