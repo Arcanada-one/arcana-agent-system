@@ -56,9 +56,16 @@ fn intent(turn: u64) -> NewIntent {
     }
 }
 
+/// `TempDir` roots on macOS live under `/var/folders/...`, and `/var` is a
+/// symlink to `private/var`. The store refuses any symlink ancestor; tests that
+/// mean "a private directory" must therefore open the canonical path.
+fn canonical_temp_root(dir: &TempDir) -> PathBuf {
+    std::fs::canonicalize(dir.path()).expect("canonical temporary root")
+}
+
 fn store() -> (TempDir, PathBuf) {
     let root = TempDir::new().unwrap();
-    let dir = root.path().join("intents");
+    let dir = canonical_temp_root(&root).join("intents");
     (root, dir)
 }
 
@@ -87,10 +94,14 @@ fn d07_group_or_world_accessible_directory_is_refused() {
 #[test]
 fn d07_a_symlink_in_the_store_path_is_never_followed() {
     let root = TempDir::new().unwrap();
-    let real = root.path().join("real");
+    // Canonicalize the TempDir itself so the only symlinks under test are the
+    // ones this case creates (macOS `/var` → `private/var` is otherwise enough
+    // to refuse every open before the intentional link is reached).
+    let base = canonical_temp_root(&root);
+    let real = base.join("real");
     std::fs::create_dir(&real).unwrap();
     std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let link = root.path().join("link");
+    let link = base.join("link");
     std::os::unix::fs::symlink(&real, &link).unwrap();
     // The link as the final component.
     assert_eq!(
