@@ -332,3 +332,137 @@ fn a_second_unresolved_operation_cannot_orphan_the_first() {
     session.mark(Disposition::Reconciled, Some("r")).unwrap();
     assert!(session.persist_pending(&intent(2)).is_ok());
 }
+
+fn record_path(dir: &Path) -> PathBuf {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .expect("record file")
+}
+
+fn disposition_of(bytes: &[u8]) -> String {
+    let value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    value["body"]["disposition"].as_str().unwrap().to_owned()
+}
+
+fn run_turn_of(bytes: &[u8]) -> (String, u64) {
+    let value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let body = &value["body"];
+    (
+        body["run_id"].as_str().unwrap().to_owned(),
+        body["turn"].as_u64().unwrap(),
+    )
+}
+
+/// Store API (1): same key K with a changed fingerprint A→B must not overwrite
+/// the unresolved K/A record.
+#[test]
+fn unresolved_same_key_with_changed_fingerprint_is_refused_and_bytes_stay() {
+    let (_root, dir) = store();
+    let mut session = open(&dir, "task-a").unwrap();
+    let original = intent(1);
+    session.persist_pending(&original).unwrap();
+    let path = record_path(&dir);
+    let before = std::fs::read(&path).unwrap();
+    let before_disposition = disposition_of(&before);
+
+    let mut changed = original.clone();
+    changed.request_fingerprint = [9u8; 32];
+    let error = session.persist_pending(&changed).unwrap_err();
+    assert_eq!(error.code(), "INTENT_STATE_COMPETING", "{error}");
+
+    let after = std::fs::read(&path).unwrap();
+    assert_eq!(after, before, "retained bytes must not change");
+    assert_eq!(disposition_of(&after), before_disposition);
+    assert_eq!(disposition_of(&after), "pending");
+}
+
+/// Store API (2): same K+A after Unknown must not silently reset to Pending or
+/// rewrite run/turn. Replay stays refused unless verified (caller path).
+#[test]
+fn unknown_same_key_and_fingerprint_is_not_reset_to_pending() {
+    let (_root, dir) = store();
+    let mut session = open(&dir, "task-a").unwrap();
+    let original = intent(1);
+    session.persist_pending(&original).unwrap();
+    session.mark(Disposition::Unknown, None).unwrap();
+    let path = record_path(&dir);
+    let before = std::fs::read(&path).unwrap();
+    let (run_before, turn_before) = run_turn_of(&before);
+    assert_eq!(disposition_of(&before), "unknown");
+
+    let mut retry = original.clone();
+    retry.run_id = "fedcba9876543210fedcba9876543210".into();
+    retry.turn = 99;
+    let error = session.persist_pending(&retry).unwrap_err();
+    assert_eq!(error.code(), "INTENT_STATE_COMPETING", "{error}");
+
+    let after = std::fs::read(&path).unwrap();
+    assert_eq!(
+        after, before,
+        "Unknown record must be retained byte-for-byte"
+    );
+    assert_eq!(disposition_of(&after), "unknown");
+    let (run_after, turn_after) = run_turn_of(&after);
+    assert_eq!(run_after, run_before);
+    assert_eq!(turn_after, turn_before);
+}
+
+/// Store API (3): a different key while a record is unresolved stays refused
+/// (already pinned by `a_second_unresolved_operation_cannot_orphan_the_first`;
+/// restated here so the invariant suite names the case explicitly).
+#[test]
+fn different_key_while_unresolved_is_still_refused() {
+    let (_root, dir) = store();
+    let mut session = open(&dir, "task-a").unwrap();
+    session.persist_pending(&intent(1)).unwrap();
+    let path = record_path(&dir);
+    let before = std::fs::read(&path).unwrap();
+    let error = session.persist_pending(&intent(2)).unwrap_err();
+    assert_eq!(error.code(), "INTENT_STATE_COMPETING", "{error}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+/// Store API (4): after an observed reply (Reconciled), a later operation
+/// still persists.
+#[test]
+fn after_reconciled_a_later_operation_still_persists() {
+    let (_root, dir) = store();
+    let mut session = open(&dir, "task-a").unwrap();
+    session.persist_pending(&intent(1)).unwrap();
+    session
+        .mark(Disposition::Reconciled, Some("observed-reply"))
+        .unwrap();
+    assert_eq!(
+        disposition_of(&std::fs::read(record_path(&dir)).unwrap()),
+        "reconciled"
+    );
+    session.persist_pending(&intent(2)).unwrap();
+    assert_eq!(
+        disposition_of(&std::fs::read(record_path(&dir)).unwrap()),
+        "pending"
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(record_path(&dir)).unwrap()).unwrap();
+    assert_eq!(value["body"]["turn"].as_u64().unwrap(), 2);
+}
+
+/// Store API (5): a transition `unseal` would reject (Reconciled with no
+/// `outcome_ref`) is refused before persistence; prior bytes stay.
+#[test]
+fn mark_reconciled_without_outcome_is_refused_before_persistence() {
+    let (_root, dir) = store();
+    let mut session = open(&dir, "task-a").unwrap();
+    session.persist_pending(&intent(1)).unwrap();
+    let path = record_path(&dir);
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(disposition_of(&before), "pending");
+
+    let error = session.mark(Disposition::Reconciled, None).unwrap_err();
+    assert_eq!(error.code(), "INTENT_RECORD_CORRUPT", "{error}");
+
+    let after = std::fs::read(&path).unwrap();
+    assert_eq!(after, before, "invalid transition must not publish");
+    assert_eq!(disposition_of(&after), "pending");
+}

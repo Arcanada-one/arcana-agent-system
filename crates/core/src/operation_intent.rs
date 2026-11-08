@@ -374,6 +374,12 @@ fn seal(body: &IntentRecord) -> Result<Vec<u8>, IntentError> {
     Ok(bytes)
 }
 
+/// Disposition and `outcome_ref` pairs the store may persist. Shared by [`unseal`]
+/// (reject a retained record) and `IntentStore::mark` (refuse before write).
+fn disposition_outcome_valid(disposition: Disposition, outcome_ref: Option<&str>) -> bool {
+    !matches!((disposition, outcome_ref), (Disposition::Reconciled, None))
+}
+
 fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(IntentError::Oversize);
@@ -405,10 +411,7 @@ fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
             .as_deref()
             .is_some_and(|r| !is_hex(r, 64))
         || crate::connector::IdempotencyKey::from_persisted(&record.idempotency_key).is_none()
-        || matches!(
-            (record.disposition, &record.outcome_ref),
-            (Disposition::Reconciled, None)
-        )
+        || !disposition_outcome_valid(record.disposition, record.outcome_ref.as_deref())
     {
         return Err(IntentError::Corrupt {
             reason: "record field outside its closed shape",
@@ -453,8 +456,8 @@ mod fsio {
     use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags};
 
     use super::{
-        hex, now_epoch_s, seal, unseal, Disposition, IntentError, IntentRecord, NewIntent,
-        ValidBinding, MAX_RECORD_BYTES, MAX_STORE_ENTRIES, RECORD_VERSION,
+        disposition_outcome_valid, hex, now_epoch_s, seal, unseal, Disposition, IntentError,
+        IntentRecord, NewIntent, ValidBinding, MAX_RECORD_BYTES, MAX_STORE_ENTRIES, RECORD_VERSION,
     };
 
     fn io_error(operation: &'static str, error: rustix::io::Errno) -> IntentError {
@@ -839,6 +842,13 @@ mod fsio {
         /// Durably persist a new `pending` intent. The caller dispatches only
         /// after this returns `Ok`.
         ///
+        /// An unresolved retained record (any key or fingerprint) is refused:
+        /// the store itself holds the key↔fingerprint↔disposition invariant so
+        /// a caller cannot overwrite K/A with K/B, reset `unknown` to
+        /// `pending`, or orphan the held identity. Replay of the same key is
+        /// decided by [`OperationSession`] / the composition root and never by
+        /// rewriting the retained bytes here.
+        ///
         /// # Errors
         /// Any [`IntentError`]; the request must then NOT be dispatched.
         pub fn persist_pending(&mut self, new: &NewIntent) -> Result<(), IntentError> {
@@ -846,10 +856,10 @@ mod fsio {
                 return Err(IntentError::DeadlineExpired);
             }
             if let Some(record) = self.current.as_ref() {
-                if record.disposition.is_unresolved()
-                    && record.idempotency_key != new.idempotency_key
-                {
-                    // A second unresolved operation would orphan the first one.
+                if record.disposition.is_unresolved() {
+                    // Same key with a changed fingerprint, same key after
+                    // Unknown, or a different key: all would replace the held
+                    // proof. Refuse before any write.
                     return Err(IntentError::Competing);
                 }
             }
@@ -886,6 +896,10 @@ mod fsio {
 
         /// Move the current operation to `unknown` or `reconciled`.
         ///
+        /// Transitions are validated with the same disposition and `outcome_ref`
+        /// rule [`unseal`] applies on restart, so an invalid record is never
+        /// published.
+        ///
         /// # Errors
         /// Any [`IntentError`]. A failed transition leaves the stricter
         /// earlier disposition on disk, which is the safe side.
@@ -899,9 +913,15 @@ mod fsio {
                     reason: "no operation to mark",
                 });
             };
+            let outcome_ref = outcome.map(|o| hex(blake3::hash(o.as_bytes()).as_bytes()));
+            if !disposition_outcome_valid(disposition, outcome_ref.as_deref()) {
+                return Err(IntentError::Corrupt {
+                    reason: "record field outside its closed shape",
+                });
+            }
             record.generation = self.generation.saturating_add(1);
             record.disposition = disposition;
-            record.outcome_ref = outcome.map(|o| hex(blake3::hash(o.as_bytes()).as_bytes()));
+            record.outcome_ref = outcome_ref;
             self.write(&record)
         }
     }
