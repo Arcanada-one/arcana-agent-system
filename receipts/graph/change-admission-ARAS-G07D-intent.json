@@ -3,12 +3,21 @@
   "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
   "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
-  "verdict": "admitted"
+  "verdict": "admitted_with_exemptions"
  },
- "captured_at_utc": "2026-11-08T13:25:58Z",
+ "captured_at_utc": "2026-11-08T21:14:20Z",
  "change_set": {
   "base": "9f122d7dab58390918e036c3629f2e63f9829476",
   "files": [
+   {
+    "kind": "config",
+    "node_id": "code_unit:.github/workflows/ci.yml",
+    "node_ids": [
+     "code_unit:.github/workflows/ci.yml"
+    ],
+    "path": ".github/workflows/ci.yml",
+    "status": "M"
+   },
    {
     "kind": "doc",
     "node_id": "document:CHANGELOG.md",
@@ -91,26 +100,33 @@
     "status": "A"
    }
   ],
-  "head": "3b859d6c90dc87f3db50cf30018a38faa453c527",
+  "head": "e4a522ecb072b2bb429959e6651e2382e76f23ad",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
- "exemptions": [],
+ "exemptions": [
+  {
+   "entity": "code_unit:.github/workflows/ci.yml",
+   "expires_at_utc": "2026-11-22T21:13:43Z",
+   "owner": "KCLIVE-11 worker (arcana-devs) / ARAS owner",
+   "reason": "This range adds only `timeout-minutes: 30` on job platform-isolation (platform-contract-mock). The v-workflow-config not_measured findings name pre-existing shell steps (changelog/lint-test/network-exposure reusable/opaque contexts) that this diff does not rewrite; the O_NOFOLLOW store behaviour and test fixtures are covered by v-fitness/v-doc-reference. Exemption expires in 14 days so it cannot become the permanent fix for workflow shell measurement."
+  }
+ ],
  "graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-11-07T23:52:18Z",
   "graph_digest": "sha256:cbd5bd56506b338e47aa99425ec3b05b06aecd46c7003a9295aa62f4d680c3f5",
-  "path": "/home/dev/aup/claude-work/arasg07e/gate/base-graph.json",
+  "path": "/home/dev/orca/workspaces/arcanada/arasg07f/work-kclive11/gate-276/base-graph.json",
   "source_commit": "9f122d7dab58390918e036c3629f2e63f9829476"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:59e20025d58ccf4e95f9f73e6f370cd3161067db311c19a17e8aa884d3cf58b1",
-  "path": "/tmp/arcana-verify-gz9b98a4/verifier-out/graph-head-3b859d6c90dc.json",
-  "source_commit": "3b859d6c90dc87f3db50cf30018a38faa453c527",
+  "graph_digest": "sha256:2df551282a6d3ef2d9da7ecb2f98e0dc7ce72841072fefeacd968cd1acffe1bd",
+  "path": "/tmp/arcana-verify-gyhb0k1v/verifier-out/graph-head-e4a522ecb072.json",
+  "source_commit": "e4a522ecb072b2bb429959e6651e2382e76f23ad",
   "staleness": {
-   "checked_at_utc": "2026-11-08T13:26:11Z",
+   "checked_at_utc": "2026-11-08T21:14:33Z",
    "checked_nodes": 465,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -1988,6 +2004,126 @@
      "head"
     ],
     "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-234.json",
+      "provenance": "deterministic",
+      "to": "code_unit:.github/workflows/ci.yml",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-238.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-238.json",
+      "provenance": "deterministic",
+      "to": "code_unit:.github/workflows/ci.yml",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-272.json",
+      "provenance": "deterministic",
+      "to": "code_unit:.github/workflows/ci.yml",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-a2-361.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-a2-361.json",
+      "provenance": "deterministic",
+      "to": "code_unit:.github/workflows/ci.yml",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-empty-contract.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-empty-contract.json",
+      "provenance": "deterministic",
+      "to": "code_unit:.github/workflows/ci.yml",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-macos-15-runners.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-macos-15-runners.json",
+      "provenance": "deterministic",
+      "to": "code_unit:.github/workflows/ci.yml",
+      "via": "explicit-path"
+     }
+    ],
+    "revisions": [
+     "base",
+     "head"
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
    }
   ],
   "edge_types": "all",
@@ -1997,25 +2133,27 @@
   "inferred_tail": [],
   "max_depth": 3,
   "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
-  "total": 84
+  "total": 90
  },
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
   "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none",
+  "exemptions: 1 attached from /home/dev/orca/workspaces/arcanada/arasg07f/work-kclive11/gate-276/exemptions.json",
   "this receipt is being filed at receipts/graph/change-admission-ARAS-G07D-intent.json with `work_item: null` — no --work-item was given. A record under receipts/graph/ is re-issued at its own path after a rebase or a second commit, and DEC-AUP-0035 supersedes the previous draft only when both declare the SAME work item. Without one, this file can never be superseded at this path: a later run will carry an I14 on it that no verifier can discharge. Re-issue with --work-item <ID>."
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261108T132558Z-3b859d6c",
+ "receipt_id": "car-verify-20261108T211420Z-e4a522ec",
  "receipt_path": "receipts/graph/change-admission-ARAS-G07D-intent.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/aup/claude-work/arasg07e/aras"
+  "path": "/home/dev/orca/workspaces/arcanada/arasg07f/work-kclive11/arasg07b"
  },
  "revision_selection": {
   "base": [
+   "code_unit:.github/workflows/ci.yml",
    "code_unit:crates/cli/src/demo.rs",
    "code_unit:crates/cli/src/interrupt.rs",
    "code_unit:crates/cli/src/kb_read.rs",
@@ -2103,9 +2241,16 @@
    "deployable_unit:crates/core",
    "deployable_unit:crates/skills",
    "deployable_unit:crates/tools",
-   "document:CHANGELOG.md"
+   "document:CHANGELOG.md",
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-238.json",
+   "receipt:receipts/graph/change-admission-a2-272.json",
+   "receipt:receipts/graph/change-admission-a2-361.json",
+   "receipt:receipts/graph/change-admission-empty-contract.json",
+   "receipt:receipts/graph/change-admission-macos-15-runners.json"
   ],
   "head": [
+   "code_unit:.github/workflows/ci.yml",
    "code_unit:crates/cli/src/demo.rs",
    "code_unit:crates/cli/src/interrupt.rs",
    "code_unit:crates/cli/src/kb_read.rs",
@@ -2198,24 +2343,106 @@
    "deployable_unit:crates/tools",
    "document:CHANGELOG.md",
    "document:receipts/graph/change-admission-ARAS-G07B-restart.not-measured.md",
-   "document:receipts/graph/change-admission-ARAS-G07D-intent.not-measured.md"
+   "document:receipts/graph/change-admission-ARAS-G07D-intent.not-measured.md",
+   "receipt:receipts/graph/change-admission-a2-234.json",
+   "receipt:receipts/graph/change-admission-a2-238.json",
+   "receipt:receipts/graph/change-admission-a2-272.json",
+   "receipt:receipts/graph/change-admission-a2-361.json",
+   "receipt:receipts/graph/change-admission-empty-contract.json",
+   "receipt:receipts/graph/change-admission-macos-15-runners.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-08T13:26:11Z",
+  "checked_at_utc": "2026-11-08T21:14:33Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [],
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf",
+    "head": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-234.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-234.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:94517aaf247e538d3a499b165bb79ad574d9d29af783c7d9c0bb8b380771a879",
+    "head": "sha256:94517aaf247e538d3a499b165bb79ad574d9d29af783c7d9c0bb8b380771a879"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-238.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-238.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:34f00f2284d7bbc045f731d2fe3a5ec0eb47efbd0ce39c06eac5c62932f3909b",
+    "head": "sha256:34f00f2284d7bbc045f731d2fe3a5ec0eb47efbd0ce39c06eac5c62932f3909b"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-272.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-272.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:f97cb39820fc720301ff63fce5b1d9a960624021241284f79e4b4546eb3fd335",
+    "head": "sha256:f97cb39820fc720301ff63fce5b1d9a960624021241284f79e4b4546eb3fd335"
+   },
+   "entity": "receipt:receipts/graph/change-admission-a2-361.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-a2-361.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:506f210f7a7c23218277b86ff0f06e4e712150d0859e0667b3646ee6007f8cb0",
+    "head": "sha256:506f210f7a7c23218277b86ff0f06e4e712150d0859e0667b3646ee6007f8cb0"
+   },
+   "entity": "receipt:receipts/graph/change-admission-empty-contract.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-empty-contract.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  },
+  {
+   "content_hash": {
+    "base": "sha256:f8890a723857c8c55964eb77691c4105ac3a928b85bd2373c89298f2952b8ff6",
+    "head": "sha256:f8890a723857c8c55964eb77691c4105ac3a928b85bd2373c89298f2952b8ff6"
+   },
+   "entity": "receipt:receipts/graph/change-admission-macos-15-runners.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-macos-15-runners.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  }
+ ],
  "tree": {
-  "commit": "3b859d6c90dc87f3db50cf30018a38faa453c527",
+  "commit": "e4a522ecb072b2bb429959e6651e2382e76f23ad",
   "dirty": false
  },
  "verdicts": [
+  {
+   "entity": "code_unit:.github/workflows/ci.yml",
+   "reason": "v-workflow-config-b803fcb7f17ed923: workflow shell caller closure not measured: job changelog step 1: command/process substitution closure is unresolved; job lint-test step 9: line 1: wrapper execution scope/options unresolved; job lint-test step 9: line 2: wrapper execution scope/options unresolved; job lint-test step 9: line 3: missing literal helper dev-tools/tests; job network-exposure-lint: reusable/opaque shell context; job platform-isolation step 5: line 1: unsupported loader/interpreter options; job platform-native-negative-controls step 2: command/process substitution closure is unres",
+   "verdict": "not_measured",
+   "verifier_ids": [
+    "v-fitness",
+    "v-workflow-config-b803fcb7f17ed923"
+   ]
+  },
   {
    "entity": "code_unit:crates/cli/src/demo.rs",
    "reason": "v-fitness: no new fitness violation",
@@ -2969,9 +3196,26 @@
  },
  "verifiers": [
   {
-   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "command": "workflow_config.validate exact head bytes",
    "duration_s": 0.0,
    "entities": [
+    "code_unit:.github/workflows/ci.yml"
+   ],
+   "entity_verdicts": {
+    "code_unit:.github/workflows/ci.yml": "not_measured"
+   },
+   "exit_code": 1,
+   "id": "v-workflow-config-b803fcb7f17ed923",
+   "kind": "config_schema",
+   "output_ref": "/tmp/arcana-verify-gyhb0k1v/verifier-out/v-workflow-config-b803fcb7f17ed923.txt",
+   "started_at_utc": "2026-11-08T21:14:37Z",
+   "summary": "workflow shell caller closure not measured: job changelog step 1: command/process substitution closure is unresolved; job lint-test step 9: line 1: wrapper execution scope/options unresolved; job lint-test step 9: line 2: wrapper execution scope/options unresolved; job lint-test step 9: line 3: missing literal helper dev-tools/tests; job network-exposure-lint: reusable/opaque shell context; job platform-isolation step 5: line 1: unsupported loader/interpreter options; job platform-native-negative-controls step 2: command/process substitution closure is unresolved; job release-pending step 1: command/process substitution closure is unresolved; job security-audit: reusable/opaque shell context; 9 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence"
+  },
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.01,
+   "entities": [
+    "code_unit:.github/workflows/ci.yml",
     "code_unit:crates/cli/src/demo.rs",
     "code_unit:crates/cli/src/interrupt.rs",
     "code_unit:crates/cli/src/kb_read.rs",
@@ -3064,6 +3308,7 @@
     "deployable_unit:crates/tools"
    ],
    "entity_verdicts": {
+    "code_unit:.github/workflows/ci.yml": "not_measured",
     "code_unit:crates/cli/src/demo.rs": "verified",
     "code_unit:crates/cli/src/interrupt.rs": "verified",
     "code_unit:crates/cli/src/kb_read.rs": "verified",
@@ -3158,8 +3403,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/tmp/arcana-verify-gz9b98a4/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-11-08T13:26:15Z",
+   "output_ref": "/tmp/arcana-verify-gyhb0k1v/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-11-08T21:14:37Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3178,8 +3423,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/tmp/arcana-verify-gz9b98a4/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-11-08T13:26:15Z",
+   "output_ref": "/tmp/arcana-verify-gyhb0k1v/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-11-08T21:14:37Z",
    "summary": "3 document(s), 0 failed"
   }
  ],
@@ -3189,9 +3434,18 @@
     "code": "RECEIPT_WITHOUT_WORK_ITEM",
     "rule": "DEC-AUP-0035",
     "text": "this receipt is being filed at receipts/graph/change-admission-ARAS-G07D-intent.json with `work_item: null` — no --work-item was given. A record under receipts/graph/ is re-issued at its own path after a rebase or a second commit, and DEC-AUP-0035 supersedes the previous draft only when both declare the SAME work item. Without one, this file can never be superseded at this path: a later run will carry an I14 on it that no verifier can discharge. Re-issue with --work-item <ID>."
+   },
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "6 affected entity(ies) owe no verdict (receipt: 6): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
+   "code_unit:.github/workflows/ci.yml": [
+    "config_schema",
+    "fitness_rules"
+   ],
    "code_unit:crates/cli/src/demo.rs": [
     "fitness_rules"
    ],
@@ -3470,12 +3724,18 @@
    ],
    "document:receipts/graph/change-admission-ARAS-G07D-intent.not-measured.md": [
     "doc_reference"
-   ]
+   ],
+   "receipt:receipts/graph/change-admission-a2-234.json": [],
+   "receipt:receipts/graph/change-admission-a2-238.json": [],
+   "receipt:receipts/graph/change-admission-a2-272.json": [],
+   "receipt:receipts/graph/change-admission-a2-361.json": [],
+   "receipt:receipts/graph/change-admission-empty-contract.json": [],
+   "receipt:receipts/graph/change-admission-macos-15-runners.json": []
   },
   "seconds": {
-   "prepare": 1.42,
-   "total": 17.38,
-   "verifiers": 0.01
+   "prepare": 1.49,
+   "total": 17.73,
+   "verifiers": 0.02
   }
  }
 }

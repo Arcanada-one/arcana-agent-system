@@ -155,7 +155,12 @@ struct World {
 impl World {
     fn new() -> Self {
         let root = TempDir::new().unwrap();
-        let store = root.path().join("intents");
+        // TempDir on macOS sits under `/var/folders/...` (`/var` → `private/var`).
+        // IntentStore refuses symlink ancestors; a private-directory fixture must
+        // therefore use the canonical path.
+        let store = std::fs::canonicalize(root.path())
+            .expect("canonical temporary root")
+            .join("intents");
         Self {
             audit: TempDir::new().unwrap(),
             store,
@@ -653,7 +658,12 @@ async fn a_reconciled_operation_does_not_block_the_next_one() {
 }
 
 /// D07a: two drivers against one pending key -> at most one operation.
-#[tokio::test(start_paused = true)]
+///
+/// Wall-clock bound (not `start_paused`): if the first driver cannot open the
+/// store it finishes without entering `execute`, and the old `join!` on
+/// `entered.notified()` waited forever. Fail closed with the first driver's
+/// typed outcome instead of hanging the hosted job.
+#[tokio::test]
 async fn d07_two_concurrent_drivers_yield_one_authority_consistent_operation() {
     struct Gate {
         entered: tokio::sync::Notify,
@@ -675,16 +685,33 @@ async fn d07_two_concurrent_drivers_yield_one_authority_consistent_operation() {
         calls: AtomicUsize::new(0),
     };
     let world = World::new();
-    let (a, b) = tokio::join!(process(&gate, &world, TASK, false), async {
-        gate.entered.notified().await;
-        let out = process(&gate, &world, TASK, false).await;
-        gate.release.notify_one();
-        out
-    });
-    assert_eq!(a.reason, TerminalReason::Completed, "{a:?}");
-    assert_ne!(b.reason, TerminalReason::Completed);
-    assert!(detail(&b).contains("INTENT_STORE_LOCKED"), "{}", detail(&b));
-    assert_eq!(gate.calls.load(Ordering::SeqCst), 1, "exactly one dispatch");
+    let first = process(&gate, &world, TASK, false);
+    tokio::pin!(first);
+    tokio::select! {
+        out = &mut first => {
+            panic!(
+                "first driver finished before entering execute (store open failed?): reason={:?} detail={}",
+                out.reason,
+                detail(&out)
+            );
+        }
+        () = gate.entered.notified() => {
+            let b = process(&gate, &world, TASK, false).await;
+            gate.release.notify_one();
+            let a = first.await;
+            assert_eq!(a.reason, TerminalReason::Completed, "{a:?}");
+            assert_ne!(b.reason, TerminalReason::Completed);
+            assert!(
+                detail(&b).contains("INTENT_STORE_LOCKED"),
+                "{}",
+                detail(&b)
+            );
+            assert_eq!(gate.calls.load(Ordering::SeqCst), 1, "exactly one dispatch");
+        }
+        () = tokio::time::sleep(Duration::from_secs(5)) => {
+            panic!("first driver did not enter execute within 5s (bounded wait)");
+        }
+    }
 }
 
 /// D07b: truncated / corrupt / oversized / misfiled state fails closed.
