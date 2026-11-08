@@ -2,8 +2,12 @@
 
 Round 3 added discriminating controls for the two no-dispatch fences
 (`fresh_pending`/`held` and `handoff_count`) in
-`crates/core/tests/g05_round3_fence_controls.rs`. Those tests remain mock-only;
-the NOT_MEASURED rows below are unchanged.
+`crates/core/tests/g05_round3_fence_controls.rs`. Round 4 splits ND07 into
+phase-accurate controls: pre-rename failure leaves prior Pending; post-rename
+directory-sync failure leaves persistence uncertain (Pending or valid
+NoDispatch on reopen); successful terminal write confirms NoDispatch only after
+directory sync. Those tests remain mock-only; the NOT_MEASURED rows below are
+unchanged.
 
 The receipt is the raw `tools/graph/verify.py` draft for the range `b3ac795..<head>`
 (ChangeAdmissionReceipt/v1) covering G05 round 2 (protected route + durable
@@ -21,9 +25,12 @@ What the tests in this change measured (mock connectors only; synthetic fixtures
   identity / generation retained) under the exclusive lock;
 - recovered Pending/Unknown never becomes no-dispatch (ND03/ND04); restart after
   durable no-dispatch returns the retained refusal (ND05); late attempt under the
-  closed key cannot dispatch (ND06); terminal write failure leaves Pending
-  inspectable (ND07); closed repeat vs new op (ND08); intent file does not assert
-  a native budget reservation (ND11); v1 Reconciled + unknown version (ND12);
+  closed key cannot dispatch (ND06); ND07 pre-rename write failure leaves prior
+  Pending; ND07 post-rename directory-sync failure does not dispatch or claim
+  terminal success and reopen shows Pending or valid NoDispatch; ND07 successful
+  terminal write persists NoDispatch; closed repeat vs new op (ND08); intent file
+  does not assert a native budget reservation (ND11); v1 Reconciled + unknown
+  version (ND12);
 - G07 crash-after-Pending / PR #276 store tests remain green; no second ledger;
   no existing contract digest/canonical/hash line changes. Record schema digest
   is not pinned in-tree; versioning is explicit `RECORD_VERSION` (1) /

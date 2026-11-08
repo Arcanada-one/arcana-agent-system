@@ -105,6 +105,12 @@ fn durable(config: &mut DriverConfig, store: &Path) {
     config.operation_intent = Some(OperationIntentConfig::new(store, binding()));
 }
 
+fn durable_with_post_rename_dir_sync_fault(config: &mut DriverConfig, store: &Path) {
+    let mut intent = OperationIntentConfig::new(store, binding());
+    intent.test_fail_no_dispatch_dir_sync_after_rename = true;
+    config.operation_intent = Some(intent);
+}
+
 fn gate(config: &mut DriverConfig, ed: EffectiveDispatchConfig) {
     config.effective_dispatch = Some(ed);
 }
@@ -463,10 +469,10 @@ async fn nd06_late_attempt_under_closed_key_cannot_dispatch() {
     );
 }
 
-/// ND07: terminal write fails (directory made read-only after Pending) → no
-/// terminal acknowledgement; record stays inspectable as pending.
+/// ND07 (b): pre-rename terminal write failure (directory made read-only after
+/// pending) → no terminal acknowledgement; prior pending bytes remain.
 #[tokio::test]
-async fn nd07_terminal_write_failure_leaves_pending_inspectable() {
+async fn nd07_pre_rename_terminal_write_failure_leaves_pending_inspectable() {
     use std::os::unix::fs::PermissionsExt;
     let world = World::new();
     let mut session =
@@ -481,6 +487,10 @@ async fn nd07_terminal_write_failure_leaves_pending_inspectable() {
             idempotency_key: "arcana.cccccccccccccccccccccccccccccccc.1".into(),
         })
         .unwrap();
+    let pending_key = world.record_json()["idempotency_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     std::fs::set_permissions(&world.store, std::fs::Permissions::from_mode(0o500)).unwrap();
     let err = session
         .mark_no_dispatch("EFFECT_PRECONDITION_UNDISCHARGED")
@@ -491,7 +501,7 @@ async fn nd07_terminal_write_failure_leaves_pending_inspectable() {
             err.code(),
             "INTENT_STORE_IO" | "INTENT_PATH_INSECURE" | "INTENT_PARENT_CHANGED"
         ),
-        "ND07: expected write failure, got {}",
+        "ND07 pre-rename: expected write failure, got {}",
         err.code()
     );
     // Drop session (release lock) and re-open to inspect.
@@ -499,9 +509,109 @@ async fn nd07_terminal_write_failure_leaves_pending_inspectable() {
     let body = world.record_json();
     assert_eq!(
         body["disposition"], "pending",
-        "ND07: pending must remain inspectable"
+        "ND07 pre-rename: prior pending bytes must remain"
     );
+    assert_eq!(body["idempotency_key"], pending_key);
     assert!(body["refusal_reason"].is_null());
+}
+
+/// ND07 (a): rename succeeded / directory sync failed → driver does not
+/// dispatch, does not acknowledge terminal success, retains the same key, and
+/// reopen shows pending or valid `no_dispatch` (never a blind pending rewrite).
+#[tokio::test]
+async fn nd07_post_rename_dir_sync_failure_persistence_uncertain() {
+    let world = World::new();
+    let connector = CountingConnector::prose("must-not-run");
+    let mut config = DriverConfig::new("scripted");
+    gate(
+        &mut config,
+        EffectiveDispatchConfig::new(state_undischarged()),
+    );
+    durable_with_post_rename_dir_sync_fault(&mut config, &world.store);
+    let out = world.driver(&connector, config).run(TASK).await;
+
+    assert_eq!(connector.calls(), 0, "ND07 post-rename: no dispatch");
+    assert_eq!(out.reason, TerminalReason::ConnectorFatal);
+    let detail = out.terminal_detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains("INTENT_NO_DISPATCH_UNRESOLVED"),
+        "ND07 post-rename: no terminal-success ack, got {detail}"
+    );
+    assert!(
+        detail.contains("INTENT_PUBLISH_DURABILITY_UNCERTAIN")
+            || detail.contains("was not confirmed"),
+        "ND07 post-rename: durability must be unconfirmed, got {detail}"
+    );
+    assert!(
+        !detail.contains("INTENT_NO_DISPATCH_RETAINED"),
+        "ND07 post-rename: must not claim retained terminal no-dispatch"
+    );
+
+    let body = world.record_json();
+    let key = body["idempotency_key"].as_str().unwrap().to_owned();
+    assert!(!key.is_empty(), "ND07 post-rename: key retained");
+    let disposition = body["disposition"].as_str().unwrap();
+    assert!(
+        disposition == "pending" || disposition == "no_dispatch",
+        "ND07 post-rename: reopen must show Pending or valid NoDispatch, got {disposition}"
+    );
+    if disposition == "no_dispatch" {
+        assert_eq!(body["version"], RECORD_VERSION_NO_DISPATCH);
+        assert_eq!(body["refusal_reason"], "EFFECT_PRECONDITION_UNDISCHARGED");
+        assert!(body["outcome_ref"].is_null());
+    } else {
+        assert!(body["refusal_reason"].is_null());
+    }
+
+    // Re-open under the exclusive lock: same identity; no fresh-key retry and
+    // no evidence erased. If NoDispatch is already visible, retained refusal
+    // applies; if still Pending, the unresolved hold remains.
+    let session =
+        OperationSession::open(&OperationIntentConfig::new(&world.store, binding())).unwrap();
+    match disposition {
+        "no_dispatch" => {
+            let closed = session.closed_no_dispatch().expect("closed no-dispatch");
+            assert_eq!(closed.idempotency_key, key);
+            assert!(session.held().is_none());
+        }
+        "pending" => {
+            let held = session.held().expect("held pending");
+            assert_eq!(held.idempotency_key, key);
+            assert!(session.closed_no_dispatch().is_none());
+        }
+        other => panic!("unexpected disposition {other}"),
+    }
+}
+
+/// ND07 (c): normal successful terminal no-dispatch write persists under the
+/// lock and is acknowledged only after directory sync succeeds.
+#[tokio::test]
+async fn nd07_successful_terminal_no_dispatch_write_persists() {
+    let world = World::new();
+    let connector = CountingConnector::prose("must-not-run");
+    let mut config = DriverConfig::new("scripted");
+    gate(
+        &mut config,
+        EffectiveDispatchConfig::new(state_undischarged()),
+    );
+    durable(&mut config, &world.store);
+    let out = world.driver(&connector, config).run(TASK).await;
+    assert_eq!(connector.calls(), 0);
+    assert_eq!(out.reason, TerminalReason::ConnectorFatal);
+    let detail = out.terminal_detail.unwrap();
+    assert!(
+        detail.contains("EFFECT_PRECONDITION_UNDISCHARGED"),
+        "{detail}"
+    );
+    assert!(
+        !detail.contains("INTENT_NO_DISPATCH_UNRESOLVED"),
+        "ND07 success: durable no-dispatch must be confirmed, got {detail}"
+    );
+    let body = world.record_json();
+    assert_eq!(body["disposition"], "no_dispatch");
+    assert_eq!(body["version"], RECORD_VERSION_NO_DISPATCH);
+    assert_eq!(body["refusal_reason"], "EFFECT_PRECONDITION_UNDISCHARGED");
+    assert_ne!(body["idempotency_key"].as_str().unwrap(), "");
 }
 
 /// ND08: same closed operation repeated → retained refusal; genuinely new

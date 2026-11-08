@@ -11,6 +11,10 @@
 //! The write ordering is the one `arcana-credential-broker` uses for its state
 //! file: stage a temp file with `create_new`, write, `fsync` the file, `rename`
 //! over the target, `fsync` the parent directory, and fail closed on any step.
+//! Phase-specific durability: **before** the rename, a failed step leaves the
+//! prior target bytes unchanged; **after** a successful rename, a directory
+//! fsync failure means persistence is uncertain (the target may already hold
+//! the new bytes) and must not be treated as a confirmed prior-Pending state.
 //! The broker's quota ledger, committed-key types, policy grants and status
 //! vocabulary are deliberately NOT reused; this module has its own record.
 //!
@@ -95,6 +99,10 @@ pub struct OperationIntentConfig {
     /// an unresolved earlier operation then stays unknown and the request is
     /// refused, even if the text is identical.
     pub same_key_replay_verified: bool,
+    /// Test-only seam: when true, the next durable write of a `NoDispatch`
+    /// record fails after rename at the directory-sync step. Production
+    /// configs leave this false; behaviour is unchanged when unset.
+    pub test_fail_no_dispatch_dir_sync_after_rename: bool,
 }
 
 impl OperationIntentConfig {
@@ -105,6 +113,7 @@ impl OperationIntentConfig {
             store_dir: store_dir.into(),
             binding,
             same_key_replay_verified: false,
+            test_fail_no_dispatch_dir_sync_after_rename: false,
         }
     }
 }
@@ -242,6 +251,15 @@ pub enum IntentError {
     UnsupportedPlatform,
     #[error("INTENT_NO_DISPATCH_INELIGIBLE: {reason}")]
     NoDispatchIneligible { reason: &'static str },
+    /// Rename published the new bytes; directory sync did not confirm durability.
+    /// On-disk disposition may already be the new record or still the prior one
+    /// after a crash; callers must not treat this as known-[`Disposition::Pending`]
+    /// or as a durable terminal success.
+    #[error(
+        "INTENT_PUBLISH_DURABILITY_UNCERTAIN: rename succeeded; directory sync failed; \
+         on-disk disposition may be the new or prior record"
+    )]
+    PublishDurabilityUncertain,
 }
 
 impl IntentError {
@@ -264,6 +282,7 @@ impl IntentError {
             Self::Competing => "INTENT_STATE_COMPETING",
             Self::UnsupportedPlatform => "INTENT_UNSUPPORTED_PLATFORM",
             Self::NoDispatchIneligible { .. } => "INTENT_NO_DISPATCH_INELIGIBLE",
+            Self::PublishDurabilityUncertain => "INTENT_PUBLISH_DURABILITY_UNCERTAIN",
         }
     }
 }
@@ -643,6 +662,9 @@ mod fsio {
         last_seen: Option<[u8; 32]>,
         generation: u64,
         current: Option<IntentRecord>,
+        /// One-shot test seam from [`super::OperationIntentConfig`]. When set,
+        /// the next `NoDispatch` write fails after rename at directory sync.
+        fail_no_dispatch_dir_sync_after_rename: bool,
     }
 
     impl std::fmt::Debug for IntentStore {
@@ -716,6 +738,7 @@ mod fsio {
                 last_seen: None,
                 generation: 0,
                 current: None,
+                fail_no_dispatch_dir_sync_after_rename: false,
             };
             store.discard_staged_leftovers()?;
             let retained = store.read_record()?;
@@ -862,7 +885,8 @@ mod fsio {
             )
             .map_err(|e| io_error("stage record", e))?;
             let mut file = File::from(fd);
-            let result = (|| {
+            // Pre-rename phase: any failure here leaves the prior target bytes.
+            if let Err(error) = (|| -> Result<(), IntentError> {
                 file.write_all(&bytes).map_err(|e| IntentError::Io {
                     operation: "write staged record",
                     kind: e.kind(),
@@ -871,23 +895,48 @@ mod fsio {
                     operation: "fsync staged record",
                     kind: e.kind(),
                 })?;
-                rustix::fs::renameat(
-                    &self.dir,
-                    staged.as_str(),
-                    &self.dir,
-                    self.record_name().as_str(),
-                )
-                .map_err(|e| io_error("publish record", e))?;
-                rustix::fs::fsync(&self.dir).map_err(|e| io_error("fsync store directory", e))
-            })();
-            if result.is_err() {
+                Ok(())
+            })() {
                 let _ = rustix::fs::unlinkat(&self.dir, staged.as_str(), AtFlags::empty());
-                return result;
+                return Err(error);
+            }
+            if let Err(error) = rustix::fs::renameat(
+                &self.dir,
+                staged.as_str(),
+                &self.dir,
+                self.record_name().as_str(),
+            ) {
+                let _ = rustix::fs::unlinkat(&self.dir, staged.as_str(), AtFlags::empty());
+                return Err(io_error("publish record", error));
+            }
+            // Rename succeeded: the target may already expose `bytes`. Do not
+            // unlink the staged name (it was consumed by rename). Directory
+            // sync confirms durability; failure is uncertain persistence.
+            if record.disposition == Disposition::NoDispatch
+                && self.fail_no_dispatch_dir_sync_after_rename
+            {
+                self.fail_no_dispatch_dir_sync_after_rename = false;
+                self.refresh_last_seen_from_target();
+                return Err(IntentError::PublishDurabilityUncertain);
+            }
+            if rustix::fs::fsync(&self.dir).is_err() {
+                self.refresh_last_seen_from_target();
+                return Err(IntentError::PublishDurabilityUncertain);
             }
             self.last_seen = Some(*blake3::hash(&bytes).as_bytes());
             self.generation = record.generation;
             self.current = Some(record.clone());
             Ok(())
+        }
+
+        /// After a post-rename directory-sync failure, align `last_seen` with
+        /// the live target so a later under-lock retry is not false-Competing.
+        /// Does not adopt the write as durable success (`current` / generation
+        /// stay pre-publish).
+        fn refresh_last_seen_from_target(&mut self) {
+            if let Ok(Some(on_disk)) = self.read_bytes() {
+                self.last_seen = Some(*blake3::hash(&on_disk).as_bytes());
+            }
         }
 
         /// Durably persist a new `pending` intent. The caller dispatches only
@@ -997,12 +1046,17 @@ mod fsio {
         /// current record is `pending`, and the caller has established
         /// zero connector/executor handoff for this operation (enforced by
         /// [`super::OperationSession::mark_no_dispatch`]). Uses stage → fsync
-        /// → rename → dir fsync via [`Self::write`]. On any error the prior
-        /// `pending` bytes remain.
+        /// → rename → dir fsync via [`Self::write`]. **Before** the rename, a
+        /// failed step leaves the prior `pending` bytes. **After** a successful
+        /// rename, a directory-sync failure returns
+        /// [`IntentError::PublishDurabilityUncertain`]: the target may already
+        /// hold `no_dispatch` bytes and must not be forced back to pending.
         ///
         /// # Errors
         /// Any [`IntentError`]; the caller must not acknowledge terminal
-        /// no-dispatch and must leave the operation inspectable as pending.
+        /// no-dispatch success. On pre-rename failure the prior
+        /// [`Disposition::Pending`] remains; on post-rename directory-sync
+        /// failure persistence is uncertain.
         pub fn mark_no_dispatch(&mut self, refusal_reason: &str) -> Result<(), IntentError> {
             closed("refusal_reason", refusal_reason)?;
             let Some(mut record) = self.current.clone() else {
@@ -1039,6 +1093,13 @@ mod fsio {
         #[must_use]
         pub(crate) fn current_record(&self) -> Option<&IntentRecord> {
             self.current.as_ref()
+        }
+
+        /// Arm the one-shot post-rename directory-sync fault for the next
+        /// `NoDispatch` write. Used only from [`super::OperationSession::open`]
+        /// when the test config requests it.
+        pub(crate) fn arm_no_dispatch_directory_sync_after_rename(&mut self) {
+            self.fail_no_dispatch_dir_sync_after_rename = true;
         }
     }
 }
@@ -1101,7 +1162,10 @@ impl OperationSession {
     /// Any [`IntentError`]; nothing has been dispatched.
     pub fn open(config: &OperationIntentConfig) -> Result<Self, IntentError> {
         let binding = ValidBinding::from(&config.binding)?;
-        let (store, retained) = IntentStore::open(&config.store_dir, &binding)?;
+        let (mut store, retained) = IntentStore::open(&config.store_dir, &binding)?;
+        if config.test_fail_no_dispatch_dir_sync_after_rename {
+            store.arm_no_dispatch_directory_sync_after_rename();
+        }
         let closed_no_dispatch = retained
             .clone()
             .filter(|r| matches!(r.disposition, Disposition::NoDispatch));
@@ -1167,7 +1231,11 @@ impl OperationSession {
     /// Durably resolve this session's fresh pending as proven-no-dispatch.
     ///
     /// Requires: pending created in this session (`fresh_pending`), zero
-    /// handoffs, exclusive store lock held. Write failure leaves pending.
+    /// handoffs, exclusive store lock held. Pre-rename write failure leaves
+    /// the prior [`Disposition::Pending`]; post-rename directory-sync failure
+    /// is [`IntentError::PublishDurabilityUncertain`] (persistence may already
+    /// show [`Disposition::NoDispatch`] — do not invent a fresh key or erase
+    /// evidence).
     ///
     /// # Errors
     /// [`IntentError::NoDispatchIneligible`] when the fence is not met;

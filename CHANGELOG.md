@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authority, provider effect, cost reservation and Muneral reconcile join are
   NOT_MEASURED.
 
+- G05 round 4: ND07 phase boundary — comments/tests distinguish pre-rename
+  failure (prior Pending remains) from post-rename directory-sync failure
+  (`INTENT_PUBLISH_DURABILITY_UNCERTAIN`; reopen may show Pending or valid
+  NoDispatch; no terminal-success ack, no dispatch, no fresh-key retry). Bounded
+  test-only write fault seam; driver wording no longer claims "was not written"
+  for the post-rename case (`crates/core/src/operation_intent.rs`,
+  `crates/core/tests/g05_round2_nd_controls.rs`).
+
 - G05 round 3: discriminating controls for the two no-dispatch fences that
   round 2 left untested — recovered Pending/Unknown cannot become
   `no_dispatch` via `mark_no_dispatch` (session + driver), and a counted
@@ -79,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - G05 round 2: `crates/core/tests/g05_round2_nd_controls.rs` covers ND01
   (protected vs legacy), ND02 (fresh no-dispatch), ND03/ND04 (recovered
   Unknown/Pending never no-dispatch), ND05 (restart after no-dispatch), ND06
-  (late attempt under closed key), ND07 (terminal write failure), ND08 (repeat
+  (late attempt under closed key), ND07 (pre-rename write failure / post-rename
+  directory-sync uncertainty / successful terminal write), ND08 (repeat
   vs new op), ND11 (no budget assertion), ND12 (v1 + unknown version). ND09 and
   ND10 are documented NOT_MEASURED in that file.
 

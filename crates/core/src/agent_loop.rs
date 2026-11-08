@@ -3004,7 +3004,10 @@ same call again, unchanged, ends the run."
     ///
     /// On refusal of a fresh pending with zero handoff, durably resolves the
     /// same operation as proven-no-dispatch before acknowledging the refusal
-    /// (ND02). Write failure leaves Pending and says so (ND07).
+    /// (ND02). ND07: a pre-rename write failure leaves pending bytes; a
+    /// post-rename directory-sync failure leaves persistence uncertain (do not
+    /// claim durable terminal success, do not dispatch, do not mint a fresh
+    /// key).
     ///
     /// # Errors
     /// [`ConnectorError::EffectGuardRefused`] (or identity refusal) — nothing
@@ -3033,15 +3036,20 @@ same call again, unchanged, ends the run."
                             return Err(effect_guard_refused(&error));
                         }
                         Err(resolve_err) => {
-                            // ND07: leave Pending inspectable; do not claim
-                            // terminal no-dispatch. Intent file never asserts
-                            // a native budget release (ND11).
+                            // ND07: do not acknowledge terminal no-dispatch.
+                            // Pre-rename: prior pending bytes remain. Post-rename
+                            // directory-sync failure: on-disk may already be
+                            // no_dispatch — do not invent pending or a fresh key.
+                            // Intent file never asserts a native budget release
+                            // (ND11). finish_turn drops the in-memory active
+                            // handle only; the durable idempotency_key on the
+                            // record is unchanged.
                             intent.finish_turn();
                             return Err(ConnectorError::EffectGuardRefused {
                                 code,
                                 detail: format!(
                                     "{error}; INTENT_NO_DISPATCH_UNRESOLVED: durable \
-                                     no-dispatch was not written ({})",
+                                     no-dispatch was not confirmed ({})",
                                     resolve_err.code()
                                 ),
                             });
