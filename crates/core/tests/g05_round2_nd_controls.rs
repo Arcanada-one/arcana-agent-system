@@ -277,7 +277,7 @@ async fn nd02_fresh_pending_guard_refuse_writes_no_dispatch() {
     assert_eq!(body["version"], RECORD_VERSION_NO_DISPATCH);
     assert_eq!(body["refusal_reason"], "EFFECT_PRECONDITION_UNDISCHARGED");
     assert!(body["outcome_ref"].is_null());
-    assert!(!body["idempotency_key"].as_str().unwrap().is_empty());
+    assert_ne!(body["idempotency_key"].as_str().unwrap(), "");
 }
 
 /// ND03: previous attempt Unknown; current guard refuses before its own call →
