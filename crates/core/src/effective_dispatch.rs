@@ -130,8 +130,25 @@ impl EffectiveDispatchState {
     }
 }
 
+/// Composition-root route protection for G05/KC-protected execution.
+///
+/// Trusted and not request-selectable: only [`crate::agent_loop::DriverConfig`]
+/// carries this flag. An untrusted request field cannot switch protection off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RouteProtection {
+    /// Outside the G05/KC protected-execution guarantee. Missing
+    /// [`EffectiveDispatchConfig`] keeps pre-G05 behaviour.
+    #[default]
+    LegacyOutsideGuarantee,
+    /// Requires the effective-dispatch gate and durable intent. A missing gate
+    /// or required trusted input is a typed unavailable refusal before any
+    /// model/tool effect — never a silent legacy fallback.
+    Protected,
+}
+
 /// Opt-in G05 gate. `None` on [`crate::agent_loop::DriverConfig`] keeps the
-/// pre-G05 path (existing tests unchanged).
+/// pre-G05 path (existing tests unchanged) for
+/// [`RouteProtection::LegacyOutsideGuarantee`] routes.
 #[derive(Clone)]
 pub struct EffectiveDispatchConfig {
     pub state: Arc<Mutex<EffectiveDispatchState>>,

@@ -39,8 +39,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Record schema version. A record with another value is refused, not guessed.
+/// Record schema version for Pending / Unknown / Reconciled. A record with
+/// another value is refused, not guessed. Retained v1 bytes keep their meaning.
 pub const RECORD_VERSION: u32 = 1;
+/// Compatible schema version for a terminal proven-no-dispatch resolution
+/// ([`Disposition::NoDispatch`] + `refusal_reason`). Readers accept both
+/// [`RECORD_VERSION`] and this value; writers bump only when recording
+/// no-dispatch. No contract digest is pinned to this schema in-tree.
+pub const RECORD_VERSION_NO_DISPATCH: u32 = 2;
 /// Largest record file accepted or written, in bytes.
 pub const MAX_RECORD_BYTES: usize = 4096;
 /// Largest number of directory entries the private store directory may hold.
@@ -115,13 +121,21 @@ pub enum Disposition {
     Unknown,
     /// A reply was observed for the key by a process of this attempt.
     Reconciled,
+    /// Terminal proven-no-dispatch (G05): this exact operation was refused
+    /// before any connector/executor handoff. Not an observed reply. Carries
+    /// [`IntentRecord::refusal_reason`]. Written only as
+    /// [`RECORD_VERSION_NO_DISPATCH`].
+    NoDispatch,
 }
 
 impl Disposition {
     /// True while the operation may still have an effect nobody has seen.
+    ///
+    /// [`Self::NoDispatch`] is terminal (proven unused), so it is not
+    /// unresolved — unlike a recovered [`Self::Pending`].
     #[must_use]
     pub const fn is_unresolved(self) -> bool {
-        !matches!(self, Self::Reconciled)
+        matches!(self, Self::Pending | Self::Unknown)
     }
 }
 
@@ -155,6 +169,11 @@ pub struct IntentRecord {
     pub disposition: Disposition,
     /// `blake3` of the connector response id, hex, once a reply was observed.
     pub outcome_ref: Option<String>,
+    /// Typed refusal code retained with [`Disposition::NoDispatch`] (e.g.
+    /// `EFFECT_PRECONDITION_UNDISCHARGED`). Absent on every other disposition.
+    /// Skipped when `None` so v1 sealed bytes re-serialize identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_reason: Option<String>,
 }
 
 impl IntentRecord {
@@ -221,6 +240,8 @@ pub enum IntentError {
     Competing,
     #[error("INTENT_UNSUPPORTED_PLATFORM: durable intent needs a unix filesystem")]
     UnsupportedPlatform,
+    #[error("INTENT_NO_DISPATCH_INELIGIBLE: {reason}")]
+    NoDispatchIneligible { reason: &'static str },
 }
 
 impl IntentError {
@@ -242,6 +263,7 @@ impl IntentError {
             Self::ParentChanged => "INTENT_PARENT_CHANGED",
             Self::Competing => "INTENT_STATE_COMPETING",
             Self::UnsupportedPlatform => "INTENT_UNSUPPORTED_PLATFORM",
+            Self::NoDispatchIneligible { .. } => "INTENT_NO_DISPATCH_INELIGIBLE",
         }
     }
 }
@@ -374,10 +396,27 @@ fn seal(body: &IntentRecord) -> Result<Vec<u8>, IntentError> {
     Ok(bytes)
 }
 
-/// Disposition and `outcome_ref` pairs the store may persist. Shared by [`unseal`]
-/// (reject a retained record) and `IntentStore::mark` (refuse before write).
-fn disposition_outcome_valid(disposition: Disposition, outcome_ref: Option<&str>) -> bool {
-    !matches!((disposition, outcome_ref), (Disposition::Reconciled, None))
+/// Disposition / `outcome_ref` / `refusal_reason` pairs the store may persist.
+/// Shared by [`unseal`] (reject a retained record) and mark paths (refuse
+/// before write). v1 `Reconciled` still requires `outcome_ref` and forbids a
+/// forged no-dispatch shape.
+fn disposition_outcome_valid(
+    version: u32,
+    disposition: Disposition,
+    outcome_ref: Option<&str>,
+    refusal_reason: Option<&str>,
+) -> bool {
+    match disposition {
+        Disposition::Pending | Disposition::Unknown => {
+            outcome_ref.is_none() && refusal_reason.is_none()
+        }
+        Disposition::Reconciled => outcome_ref.is_some() && refusal_reason.is_none(),
+        Disposition::NoDispatch => {
+            version == RECORD_VERSION_NO_DISPATCH
+                && outcome_ref.is_none()
+                && refusal_reason.is_some_and(|r| !r.is_empty() && r.len() <= MAX_FIELD_BYTES)
+        }
+    }
 }
 
 fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
@@ -396,7 +435,13 @@ fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
         });
     }
     let record = envelope.body;
-    if record.version != RECORD_VERSION {
+    if record.version != RECORD_VERSION && record.version != RECORD_VERSION_NO_DISPATCH {
+        return Err(IntentError::Corrupt {
+            reason: "unsupported record version",
+        });
+    }
+    // v1 bytes cannot carry NoDispatch; that disposition exists only at v2.
+    if record.version == RECORD_VERSION && matches!(record.disposition, Disposition::NoDispatch) {
         return Err(IntentError::Corrupt {
             reason: "unsupported record version",
         });
@@ -411,7 +456,12 @@ fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
             .as_deref()
             .is_some_and(|r| !is_hex(r, 64))
         || crate::connector::IdempotencyKey::from_persisted(&record.idempotency_key).is_none()
-        || !disposition_outcome_valid(record.disposition, record.outcome_ref.as_deref())
+        || !disposition_outcome_valid(
+            record.version,
+            record.disposition,
+            record.outcome_ref.as_deref(),
+            record.refusal_reason.as_deref(),
+        )
     {
         return Err(IntentError::Corrupt {
             reason: "record field outside its closed shape",
@@ -456,8 +506,9 @@ mod fsio {
     use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags};
 
     use super::{
-        disposition_outcome_valid, hex, now_epoch_s, seal, unseal, Disposition, IntentError,
-        IntentRecord, NewIntent, ValidBinding, MAX_RECORD_BYTES, MAX_STORE_ENTRIES, RECORD_VERSION,
+        closed, disposition_outcome_valid, hex, now_epoch_s, seal, unseal, Disposition,
+        IntentError, IntentRecord, NewIntent, ValidBinding, MAX_RECORD_BYTES, MAX_STORE_ENTRIES,
+        RECORD_VERSION, RECORD_VERSION_NO_DISPATCH,
     };
 
     fn io_error(operation: &'static str, error: rustix::io::Errno) -> IntentError {
@@ -890,6 +941,7 @@ mod fsio {
                 reservation_ref: self.binding.reservation_ref.clone(),
                 disposition: Disposition::Pending,
                 outcome_ref: None,
+                refusal_reason: None,
             };
             self.write(&record)
         }
@@ -898,7 +950,9 @@ mod fsio {
         ///
         /// Transitions are validated with the same disposition and `outcome_ref`
         /// rule [`unseal`] applies on restart, so an invalid record is never
-        /// published.
+        /// published. [`Disposition::NoDispatch`] is refused here — use
+        /// [`Self::mark_no_dispatch`] so the fresh-pending / zero-handoff
+        /// fence stays in one place.
         ///
         /// # Errors
         /// Any [`IntentError`]. A failed transition leaves the stricter
@@ -908,13 +962,24 @@ mod fsio {
             disposition: Disposition,
             outcome: Option<&str>,
         ) -> Result<(), IntentError> {
+            if matches!(disposition, Disposition::NoDispatch) {
+                return Err(IntentError::NoDispatchIneligible {
+                    reason: "use mark_no_dispatch for the terminal no-dispatch path",
+                });
+            }
             let Some(mut record) = self.current.clone() else {
                 return Err(IntentError::Corrupt {
                     reason: "no operation to mark",
                 });
             };
+            if matches!(record.disposition, Disposition::NoDispatch) {
+                return Err(IntentError::NoDispatchIneligible {
+                    reason: "terminal no-dispatch cannot be re-marked",
+                });
+            }
             let outcome_ref = outcome.map(|o| hex(blake3::hash(o.as_bytes()).as_bytes()));
-            if !disposition_outcome_valid(disposition, outcome_ref.as_deref()) {
+            if !disposition_outcome_valid(record.version, disposition, outcome_ref.as_deref(), None)
+            {
                 return Err(IntentError::Corrupt {
                     reason: "record field outside its closed shape",
                 });
@@ -922,11 +987,60 @@ mod fsio {
             record.generation = self.generation.saturating_add(1);
             record.disposition = disposition;
             record.outcome_ref = outcome_ref;
+            record.refusal_reason = None;
             self.write(&record)
         }
-    }
 
-    use super::closed;
+        /// Durably resolve a **fresh** `pending` intent as terminal no-dispatch.
+        ///
+        /// Allowed only while this store still holds the exclusive lock, the
+        /// current record is `pending`, and the caller has established
+        /// zero connector/executor handoff for this operation (enforced by
+        /// [`super::OperationSession::mark_no_dispatch`]). Uses stage → fsync
+        /// → rename → dir fsync via [`Self::write`]. On any error the prior
+        /// `pending` bytes remain.
+        ///
+        /// # Errors
+        /// Any [`IntentError`]; the caller must not acknowledge terminal
+        /// no-dispatch and must leave the operation inspectable as pending.
+        pub fn mark_no_dispatch(&mut self, refusal_reason: &str) -> Result<(), IntentError> {
+            closed("refusal_reason", refusal_reason)?;
+            let Some(mut record) = self.current.clone() else {
+                return Err(IntentError::Corrupt {
+                    reason: "no operation to mark",
+                });
+            };
+            if record.disposition != Disposition::Pending {
+                return Err(IntentError::NoDispatchIneligible {
+                    reason: "no-dispatch requires a current pending record",
+                });
+            }
+            if !disposition_outcome_valid(
+                RECORD_VERSION_NO_DISPATCH,
+                Disposition::NoDispatch,
+                None,
+                Some(refusal_reason),
+            ) {
+                return Err(IntentError::Corrupt {
+                    reason: "record field outside its closed shape",
+                });
+            }
+            record.generation = self.generation.saturating_add(1);
+            record.version = RECORD_VERSION_NO_DISPATCH;
+            record.disposition = Disposition::NoDispatch;
+            record.outcome_ref = None;
+            record.refusal_reason = Some(refusal_reason.to_owned());
+            // Exact original identity/key retained; only disposition/version/
+            // generation/refusal_reason change.
+            self.write(&record)
+        }
+
+        /// The record this writer last read or wrote, if any.
+        #[must_use]
+        pub(crate) fn current_record(&self) -> Option<&IntentRecord> {
+            self.current.as_ref()
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -955,6 +1069,11 @@ impl IntentStore {
     pub fn mark(&mut self, _d: Disposition, _o: Option<&str>) -> Result<(), IntentError> {
         Err(IntentError::UnsupportedPlatform)
     }
+    /// # Errors
+    /// Always: unsupported platform.
+    pub fn mark_no_dispatch(&mut self, _reason: &str) -> Result<(), IntentError> {
+        Err(IntentError::UnsupportedPlatform)
+    }
 }
 
 /// One run's view of the store: the open store, the retained unresolved
@@ -963,7 +1082,15 @@ impl IntentStore {
 pub struct OperationSession {
     pub(crate) store: IntentStore,
     pub(crate) held: Option<IntentRecord>,
+    /// Terminal no-dispatch retained for this scope, if any. Used to return
+    /// the same refusal for a repeated closed operation (ND05 / ND08).
+    pub(crate) closed_no_dispatch: Option<IntentRecord>,
     pub(crate) replay_verified: bool,
+    /// `true` only after [`Self::persist_pending`] succeeds in this session
+    /// and before any mark / handoff. Recovered Pending/Unknown never sets it.
+    fresh_pending: bool,
+    /// Connector/executor handoffs counted for the fresh pending operation.
+    handoff_count: u64,
 }
 
 impl OperationSession {
@@ -975,10 +1102,16 @@ impl OperationSession {
     pub fn open(config: &OperationIntentConfig) -> Result<Self, IntentError> {
         let binding = ValidBinding::from(&config.binding)?;
         let (store, retained) = IntentStore::open(&config.store_dir, &binding)?;
+        let closed_no_dispatch = retained
+            .clone()
+            .filter(|r| matches!(r.disposition, Disposition::NoDispatch));
         Ok(Self {
             store,
             held: retained.filter(|r| r.disposition.is_unresolved()),
+            closed_no_dispatch,
             replay_verified: config.same_key_replay_verified,
+            fresh_pending: false,
+            handoff_count: 0,
         })
     }
 
@@ -988,12 +1121,29 @@ impl OperationSession {
         self.held.as_ref()
     }
 
+    /// The retained terminal no-dispatch, if a previous process wrote one.
+    #[must_use]
+    pub const fn closed_no_dispatch(&self) -> Option<&IntentRecord> {
+        self.closed_no_dispatch.as_ref()
+    }
+
+    /// Count a connector or executor handoff for the current fresh pending.
+    /// After this, [`Self::mark_no_dispatch`] refuses (ND02 / ND06 fence).
+    pub fn note_handoff(&mut self) {
+        self.handoff_count = self.handoff_count.saturating_add(1);
+    }
+
     /// Durably persist a new `pending` intent (see [`IntentStore::persist_pending`]).
     ///
     /// # Errors
     /// Any [`IntentError`]; the request must then not be dispatched.
     pub fn persist_pending(&mut self, new: &NewIntent) -> Result<(), IntentError> {
-        self.store.persist_pending(new)
+        self.store.persist_pending(new)?;
+        self.fresh_pending = true;
+        self.handoff_count = 0;
+        self.closed_no_dispatch = None;
+        self.held = None;
+        Ok(())
     }
 
     /// Move the current operation to `unknown` or `reconciled`.
@@ -1005,6 +1155,43 @@ impl OperationSession {
         disposition: Disposition,
         outcome: Option<&str>,
     ) -> Result<(), IntentError> {
-        self.store.mark(disposition, outcome)
+        self.store.mark(disposition, outcome)?;
+        self.fresh_pending = false;
+        if matches!(disposition, Disposition::Reconciled) {
+            self.held = None;
+            self.closed_no_dispatch = None;
+        }
+        Ok(())
+    }
+
+    /// Durably resolve this session's fresh pending as proven-no-dispatch.
+    ///
+    /// Requires: pending created in this session (`fresh_pending`), zero
+    /// handoffs, exclusive store lock held. Write failure leaves pending.
+    ///
+    /// # Errors
+    /// [`IntentError::NoDispatchIneligible`] when the fence is not met;
+    /// any store [`IntentError`] when the durable write fails.
+    pub fn mark_no_dispatch(&mut self, refusal_reason: &str) -> Result<(), IntentError> {
+        if !self.fresh_pending {
+            return Err(IntentError::NoDispatchIneligible {
+                reason: "no-dispatch requires a fresh pending created in this invocation",
+            });
+        }
+        if self.handoff_count != 0 {
+            return Err(IntentError::NoDispatchIneligible {
+                reason: "no-dispatch requires zero connector/executor handoff",
+            });
+        }
+        if self.held.is_some() {
+            return Err(IntentError::NoDispatchIneligible {
+                reason: "recovered unresolved intent cannot become no-dispatch",
+            });
+        }
+        self.store.mark_no_dispatch(refusal_reason)?;
+        self.fresh_pending = false;
+        self.closed_no_dispatch = self.store.current_record().cloned();
+        self.held = None;
+        Ok(())
     }
 }

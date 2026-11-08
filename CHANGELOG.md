@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authority, provider effect, cost reservation and Muneral reconcile join are
   NOT_MEASURED.
 
+- G05 round 2: composition-root `DriverConfig::route_protection`
+  (`RouteProtection::Protected` vs `LegacyOutsideGuarantee`). A protected route
+  with a missing gate or durable intent refuses with
+  `EFFECT_PROTECTED_GATE_UNAVAILABLE` /
+  `EFFECT_PROTECTED_INTENT_UNAVAILABLE` before any model/tool effect; ordinary
+  legacy routes keep the opt-in gate behaviour and stay labelled outside the
+  guarantee. A request field cannot select protection. Fresh Pending refused by
+  the gate before any connector/executor handoff is durably resolved as
+  IntentRecord v2 `Disposition::NoDispatch` with `refusal_reason` (exact key /
+  identity / generation retained) under the exclusive lock before the refusal
+  is returned; recovered Pending/Unknown never becomes no-dispatch; v1
+  Reconciled meaning and validation are unchanged; unknown versions refuse.
+  The intent file does not assert or release a native budget reservation.
+  ND09/ND10 remain NOT_MEASURED (no native witness adapter / real handoff fence).
+
 - G07: a durable, private, versioned model-operation intent record on the `arcana-core`
   `ModelConnector` call boundary (`crates/core/src/operation_intent.rs`, opt-in through
   `DriverConfig::operation_intent`). Order: validate the native binding, verify the private
@@ -52,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redispatch), AC6 (after reconcile a later operation remains possible), plus
   tool-effect boundary and clarification-is-not-free controls, all against mock
   connectors.
+
+- G05 round 2: `crates/core/tests/g05_round2_nd_controls.rs` covers ND01
+  (protected vs legacy), ND02 (fresh no-dispatch), ND03/ND04 (recovered
+  Unknown/Pending never no-dispatch), ND05 (restart after no-dispatch), ND06
+  (late attempt under closed key), ND07 (terminal write failure), ND08 (repeat
+  vs new op), ND11 (no budget assertion), ND12 (v1 + unknown version). ND09 and
+  ND10 are documented NOT_MEASURED in that file.
 
 - G07 stage 2: `crates/core/tests/driver_restart_identity.rs` now asserts the safe property
   that PR #276 had pinned as a defect (restart after an unknown outcome mints no fresh key,
