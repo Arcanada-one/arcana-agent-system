@@ -27,13 +27,21 @@ use crate::connector::{
 };
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
-use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor};
+use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor, CapabilityOutput};
 use crate::hooks::HookContext;
 use crate::prompt_budget::{
     self, DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
     MC_FIELD_MAX_UTF16_UNITS,
 };
 use crate::tool_dialect::{self, DialectMatch};
+
+mod in_flight;
+mod recovery;
+
+use self::recovery::{
+    connector_fatal_detail, in_flight_poll_pause, jitter_permille, retry_line, FatalCause,
+    RetryBudget, RetryClass,
+};
 
 /// Maximum exact first-dispatch prompt size accepted by the driver.
 pub const MAX_FIRST_DISPATCH_PROMPT_BYTES: usize = 1_048_576;
@@ -46,12 +54,10 @@ pub const MAX_FIRST_DISPATCH_PROMPT_UTF16_CODE_UNITS: usize = MC_FIELD_MAX_UTF16
 
 /// Re-dispatches allowed after a transient connector failure, per turn.
 ///
-/// Two, because the failure this exists for is a slow turn, and Model
-/// Connector has already spent its own attempts by the time the client sees
-/// one: measured 2026-09-23, a `deepseek` dispatch is tried twice server-side
-/// (30 s each) before the caller is told anything. A third client attempt
-/// after that is a genuine second chance; a tenth is a way to spend an hour
-/// and a budget on an upstream that is simply down.
+/// Two: Model Connector has already spent its own server-side attempts by the
+/// time the client sees a failure (a `deepseek` dispatch is tried twice, 30 s
+/// each), so a third attempt is a genuine second chance and a tenth only
+/// spends time and budget on an upstream that is down.
 pub const DEFAULT_CONNECTOR_RETRY_LIMIT: u32 = 2;
 
 /// Pause before re-dispatching when the upstream named no `retryAfter`, and
@@ -60,41 +66,31 @@ pub const DEFAULT_CONNECTOR_RETRY_BACKOFF: Duration = Duration::from_secs(2);
 
 /// Re-dispatches allowed after a transient GATEWAY failure, per turn.
 ///
-/// Five, against two for the failures Model Connector itself reports, because
-/// the two classes fail for different reasons and heal on different clocks —
-/// see [`ConnectorError::is_edge_gateway_failure`]. Measured on pilot A2-204c5
-/// (2026-09-23): a 94-turn run with the work already done — the test written,
-/// four mutants run — died on **three** consecutive `HTTP 502 … error code:
-/// 502` from `connector.arcanada.ai`, 16 bytes of Cloudflare, spread over
-/// about four seconds because the policy was two retries two seconds apart.
-/// Four seconds is not a serious attempt to outlast an edge.
-///
-/// The schedule below is what makes five affordable: the run now spends about
-/// a minute finding out, instead of four seconds.
+/// Five, against two for failures Model Connector itself reports: the classes
+/// heal on different clocks (see [`ConnectorError::is_edge_gateway_failure`]).
+/// A gateway failure is a few bytes of Cloudflare, and two retries two seconds
+/// apart are not a serious attempt to outlast an edge. The backoff schedule
+/// makes five affordable: about a minute of sleep instead of four seconds.
 pub const DEFAULT_EDGE_RETRY_LIMIT: u32 = 5;
 
 /// Ceiling on one pause of the gateway backoff schedule.
 ///
 /// The schedule doubles, so without a ceiling the fifth pause would be 32 s
-/// and a sixth — if the limit is ever raised — 64 s, which is longer than most
-/// edges take to heal and longer than an operator expects one turn to stall.
+/// and a sixth 64 s, longer than most edges take to heal and than an operator
+/// expects one turn to stall.
 const MAX_EDGE_RETRY_PAUSE: Duration = Duration::from_secs(30);
 
 /// Total time one turn may spend ASLEEP between re-dispatches, across every
 /// retry class.
 ///
-/// A per-pause cap bounds one wait; this bounds the sum, which is the number
-/// an unattended run's operator actually cares about. It binds hardest on the
-/// path the per-pause cap cannot reach: an upstream-named `retryAfter` is
-/// honoured up to [`MAX_RETRY_AFTER`] (60 s) each, so five of them would park
-/// a turn for five minutes. Two are as long as this budget allows.
+/// A per-pause cap bounds one wait; this bounds the sum, which is what an
+/// unattended run's operator cares about. It binds hardest where the per-pause
+/// cap cannot reach: an upstream-named `retryAfter` is honoured up to
+/// [`MAX_RETRY_AFTER`] (60 s) each, so two exhaust this budget.
 ///
 /// The default gateway schedule does NOT reach it: 2 + 4 + 8 + 16 + 30 = 60 s
-/// nominal, and jitter only ever shortens a pause (see
-/// [`edge_backoff_pause`]), so the worst case added wall time for five
-/// gateway re-dispatches is 60 s of sleep on top of the five dispatches
-/// themselves. The budget is the backstop for the schedules this file does
-/// not control.
+/// nominal, and jitter only shortens a pause (see [`edge_backoff_pause`]). The
+/// budget is the backstop for schedules this file does not control.
 pub const DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET: Duration = Duration::from_secs(120);
 
 /// What one dispatch is assumed to be allowed upstream when the connector
@@ -102,61 +98,54 @@ pub const DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET: Duration = Duration::from_secs(1
 ///
 /// Two minutes: the largest per-request default Model Connector applies to a
 /// connector that names none (`src/connectors/orq/orq.connector.ts:88`,
-/// `120_000` ms; the plain API base is `30_000`). It is a floor for the one
-/// decision it feeds — how long to wait for an answer already paid for — and
-/// understating that is the defect this exists for, so the real client states
-/// its own and never reaches this number.
+/// `120_000` ms; the plain API base is `30_000`). It is a floor for the decision
+/// it feeds (how long to wait for an answer already paid for): understating it
+/// abandons paid turns, so the real client states its own.
 pub const ASSUMED_UPSTREAM_DISPATCH_BUDGET: Duration = Duration::from_secs(120);
 
 /// Grace on top of the upstream's own budget before the loop stops waiting for
 /// an answer it has already bought.
 ///
-/// Model Connector settles an intent — `state: 'completed'` with the stored
-/// response — in the SAME transaction that writes the request row
-/// (`src/connectors/connectors.service.ts:1355-1385`, measured on `3911773`),
-/// so the answer becomes replayable one database round trip after the provider
-/// returns. Thirty seconds covers that with room to spare, and waiting it is
-/// free: the hold that makes the retry a replay rather than a second charge
-/// lives for thirty MINUTES (`src/billing/intent.ts:36`,
-/// `BILLING_HOLD_TTL_MS`), so nothing this margin can do risks paying twice.
+/// Model Connector settles an intent (`state: 'completed'` with the stored
+/// response) in the SAME transaction that writes the request row
+/// (`src/connectors/connectors.service.ts:1355-1385`), so the answer is
+/// replayable one database round trip after the provider returns. Thirty
+/// seconds covers that, and waiting it is free: the hold that makes a retry a
+/// replay lives for thirty MINUTES (`src/billing/intent.ts:36`,
+/// `BILLING_HOLD_TTL_MS`), so this margin cannot risk paying twice.
 pub const IN_FLIGHT_SETTLE_MARGIN: Duration = Duration::from_secs(30);
 
 /// First pause of the in-flight poll schedule, and the step it doubles from.
 ///
-/// Deliberately NOT `DriverConfig::connector_retry_backoff`: that number is
-/// how long to wait before asking a failed request AGAIN, while this one is
-/// how often to ask whether an answer that is being produced has landed. A
-/// caller that zeroes the retry backoff — every test in this repository does —
-/// must not turn the in-flight wait into a hot loop against the upstream.
+/// Deliberately NOT `DriverConfig::connector_retry_backoff`: that is how long
+/// to wait before asking a failed request AGAIN, this is how often to ask
+/// whether an answer being produced has landed. A caller that zeroes the retry
+/// backoff must not turn the in-flight wait into a hot loop.
 const IN_FLIGHT_POLL_BASE: Duration = Duration::from_secs(2);
 
 /// Ceiling on one pause of the in-flight poll schedule.
 ///
 /// Shorter than [`MAX_EDGE_RETRY_PAUSE`] on purpose: a poll is a cheap 409 and
-/// the thing being waited for arrives at a moment nobody can predict, so the
-/// cost of a long pause is answering late to a turn that is already finished.
+/// the answer arrives at an unpredictable moment, so a long pause only delays
+/// a turn that is already finished.
 const MAX_IN_FLIGHT_POLL_PAUSE: Duration = Duration::from_secs(15);
 
 /// Consecutive re-dispatches allowed after a reply that the model's output
 /// limit cut off, per run.
 ///
-/// One. The re-dispatch carries an instruction to work in smaller pieces, so
-/// it is a genuinely different request rather than the same one sent twice;
-/// but a model that is cut off again immediately after being told why is not
-/// going to split the work on the third ask either, and every attempt costs a
-/// turn and real money. The counter resets on any reply that parses, because a
-/// long run may legitimately hit the limit twice an hour apart — only
-/// back-to-back cut-offs mean the model cannot do what was asked.
+/// One. The re-dispatch tells the model to work in smaller pieces, so it is a
+/// different request; a model cut off again right after being told why will not
+/// split the work on a third ask, and every attempt costs a turn and money. The
+/// counter resets on any reply that parses: only back-to-back cut-offs mean the
+/// model cannot do what was asked.
 const TRUNCATION_RETRY_LIMIT: u32 = 1;
 
 /// Ceiling on an upstream-named `retryAfter`, so a hostile or mistaken value
 /// cannot park an unattended run for hours.
 ///
-/// Not hypothetical: measured 2026-09-23, an open circuit breaker upstream
-/// answers `retryAfter: 15681` for a cooldown of 15.7 SECONDS — the value is
-/// milliseconds on that path while the field is read as seconds everywhere
-/// else. Without this cap a run would wait four hours on a route that heals in
-/// half a minute.
+/// Not hypothetical: an open circuit breaker upstream answers
+/// `retryAfter: 15681` for a cooldown of 15.7 SECONDS (milliseconds on that
+/// path, read as seconds everywhere else); uncapped, a run would wait hours.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// Bounded prompt bytes for an explicitly measured first dispatch.
@@ -228,11 +217,9 @@ pub enum ContinueReason {
     /// pieces, bounded by [`TRUNCATION_RETRY_LIMIT`] and paid for out of the
     /// same `--max-turns` and cost budget as any other attempt.
     ///
-    /// The variant predates the behaviour: it was reserved for a streaming
-    /// connector that could resume from a token cursor, and sat inert under
-    /// the unary connector while the case it names — a reply cut off by the
-    /// output limit — was silently classified as an answer. It is the same
-    /// event, so it keeps the name rather than gaining a twin.
+    /// The variant was reserved for a streaming connector that could resume
+    /// from a token cursor; the unary connector uses it for the same event (a
+    /// reply cut off by the output limit), so it keeps the name.
     MaxOutputTokensRecovery,
     /// Context overflowed; compaction ran, retry with the compacted history.
     ReactiveCompactRetry,
@@ -295,46 +282,34 @@ const RECOVERABLE_DENIAL_LAYERS: [&str; 3] = ["schema", "registry", "workspace_b
 /// the run ends on [`TerminalReason::PermissionDenied`].
 ///
 /// One. A refusal at a correctable layer is a fact the model did not have when
-/// it wrote the call, and it is told exactly what the fact is; sending the same
-/// call again is the one thing that proves the fold-back is not working.
+/// it wrote the call, and it is told exactly what it is; sending the same call
+/// again proves the fold-back is not working.
 ///
-/// This replaced a flat cap of three *consecutive* refusals of any kind
-/// (A2-225). The cap was the wrong shape twice over. It ended runs over
-/// correctable mistakes — pilot A2-204c4 died on its 31st turn having done
-/// twenty tool calls of real work, because three refusals happened to land in
-/// a row — while a model alternating between two different bad calls was never
-/// caught by it at all. Distinct mistakes are now bounded by `max_turns` and
-/// the cost cap, like every other way a run can spend money; a repeat is
-/// terminal immediately, and says so.
+/// Refusals are counted per distinct call, not as a flat cap of consecutive
+/// refusals of any kind: a flat cap ends runs over correctable mistakes yet
+/// never catches a model alternating between two bad calls. Distinct mistakes
+/// are bounded by `max_turns` and the cost cap; a repeat is terminal at once.
 ///
-/// The memory is cleared by executed work and nothing else — in particular
-/// **not** by a [`ContinueReason::ConnectorRetry`] in the middle of it. The two
-/// budgets are independent: `RunState::connector_retries` asks "is the upstream
-/// answering", this asks "is the model writing callable calls", and a run that
-/// is failing at both must still stop. The reverse direction is deliberately
-/// not symmetric: any reply resets the retry budget, including a reply the
-/// cascade then refused, because a refused call is still proof the upstream is
-/// up. Pinned by `crates/core/tests/driver_retry_denial_independence.rs`.
-///
-/// Until A2-230 this constant was documentation and nothing else: the rule was
-/// carried by a `HashSet::insert` in `fold_denial`, which can only ever mean
-/// "one", so editing the number here changed no behaviour and broke no test —
-/// the worst kind of comment, one that reads like a knob. `RunState` now
-/// counts refusals per distinct call and this is the bound it is checked
-/// against, which is what makes
-/// `re_sending_an_already_refused_call_ends_the_run_and_says_why` go red if
-/// the number moves.
+/// The memory is cleared by executed work and nothing else, in particular
+/// **not** by a [`ContinueReason::ConnectorRetry`]. The two budgets are
+/// independent: `RunState::connector_retries` asks "is the upstream answering",
+/// this asks "is the model writing callable calls", and a run failing at both
+/// must still stop. The reverse is deliberately not symmetric: any reply resets
+/// the retry budget, including one the cascade then refused, because a refused
+/// call proves the upstream is up. Pinned by
+/// `crates/core/tests/driver_retry_denial_independence.rs`; the bound is
+/// checked by `re_sending_an_already_refused_call_ends_the_run_and_says_why`.
 pub const MAX_DENIALS_PER_DISTINCT_CALL: u32 = 1;
 
 /// Replies in an unexecutable tool-call format a run tolerates before it ends
 /// on [`TerminalReason::UnsupportedToolCallFormat`].
 ///
-/// Two, so the model gets exactly one correction — one fewer than
-/// a schema refusal's allowance, and on purpose. A schema denial tells the model
-/// something it could not have known before it called; the wire format is
-/// already stated verbatim in the system prompt, and the correction states it
-/// again with the offending reply in view. A model that ignores it twice is
-/// not going to read it the third time, and each attempt is a paid dispatch.
+/// Two, so the model gets exactly one correction, one fewer than a schema
+/// refusal's allowance: a schema denial tells the model something it could not
+/// have known, while the wire format is already in the system prompt and the
+/// correction restates it with the offending reply in view. A model that
+/// ignores it twice will not read it a third time, and each attempt is a paid
+/// dispatch.
 ///
 /// Like the denial streak, the counter is consecutive: any tool call that
 /// actually executes clears it, so a long run is not killed by two unrelated
@@ -344,16 +319,13 @@ pub const MAX_DIALECT_CORRECTIONS: u32 = 2;
 /// History entries at the newest end of the transcript that compaction folds
 /// only as a last resort.
 ///
-/// The newest turns are the ones the next reply answers. Folding them into a
+/// The newest turns are the ones the next reply answers; folding them into a
 /// summary hands the model a description of the question instead of the
-/// question — which is what the second compaction of pilot run A2-204c4 did on
-/// 2026-09-23 when it folded 73 of 74 foldable entries and left a
-/// 7 098-character request.
+/// question.
 ///
-/// Six: a reply, a call and its result, twice over. Enough to see what was
-/// just tried and what it returned. The guard will still fold into this tail
-/// if the transcript does not otherwise fit the hard budget at all — a run
-/// that stops is worse than a run that forgets — but only then, and
+/// Six: a reply, a call and its result, twice over. The guard still folds into
+/// this tail if the transcript does not otherwise fit the hard budget (a run
+/// that stops is worse than a run that forgets), and
 /// [`CompactionReport::verdict`] says so by landing below
 /// [`crate::prompt_budget::compaction_floor`].
 pub const KEEP_RECENT_ENTRIES: usize = 6;
@@ -390,61 +362,45 @@ pub enum TerminalReason {
     AuditFatal,
     /// The run required an action and the model never executed a tool call.
     ///
-    /// Distinct from [`Self::Completed`] on purpose. A model asked to create a
-    /// file answered `The file has been created successfully.` in one turn,
-    /// called nothing, and the run reported success and exited `0` — a receipt
-    /// for work that no tool ever did. Only [`DriverConfig::require_action`]
-    /// runs can end here; an interactive turn is allowed to be a conversation.
+    /// Distinct from [`Self::Completed`] on purpose: a model that answers "The
+    /// file has been created" without calling a tool must not yield a success
+    /// receipt for work no tool did. Only [`DriverConfig::require_action`]
+    /// runs can end here; an interactive turn may be a conversation.
     NoAction,
     /// Two replies in a row were cut off by the model's output limit before
     /// the `tool_call` block they had opened was complete.
     ///
-    /// Distinct from [`Self::NoAction`] on purpose, and the reason this
-    /// variant exists. Measured 2026-09-23: asked for a 3000-word file,
-    /// `DeepSeek` emitted ~9148 output tokens of `tool_call` and stopped without
-    /// a closing fence; the loop read the fragment as prose, reported that the
-    /// model had answered without acting, and charged for it. "It would not
-    /// act" and "it was not allowed to finish" call for opposite responses —
-    /// the second is fixed by asking for smaller pieces or a model with a
-    /// larger output limit, never by telling the model to try harder.
+    /// Distinct from [`Self::NoAction`] on purpose: "it would not act" and "it
+    /// was not allowed to finish" call for opposite responses. The second is
+    /// fixed by asking for smaller pieces or a model with a larger output
+    /// limit, never by telling the model to try harder.
     ResponseTruncated,
     /// The model kept asking for a tool in a format this runner cannot
     /// execute, after being told the one it reads.
     ///
-    /// Distinct from [`Self::NoAction`] on purpose, and the reason this
-    /// variant exists. "The model would not act" and "the model acted in a
-    /// dialect we threw away" look identical in a marker line and call for
-    /// opposite fixes — the second is fixed in the runner or the prompt, never
-    /// by telling the model to try harder. Measured 2026-09-23 on
-    /// `deepseek-v4-flash`: the first turn of a real task arrived as `DeepSeek`'s
-    /// own `invoke` markup, was read as prose, and the run reported
-    /// `{"completed":true,"reason":"Completed"}` with nothing done.
+    /// Distinct from [`Self::NoAction`] on purpose: "the model would not act"
+    /// and "the model acted in a dialect we threw away" look identical in a
+    /// marker line but are fixed differently (in the runner or the prompt, never
+    /// by telling the model to try harder).
     UnsupportedToolCallFormat,
     /// The request could not be made to fit the connector's request contract.
     ///
     /// Distinct from [`Self::ContextWindowExhausted`] on purpose. That one is
-    /// about the MODEL — its context window — and is answered by choosing a
-    /// model with a bigger one. This one is about the WIRE: Model Connector's
-    /// `/execute` caps `prompt` and `systemPrompt` at
-    /// [`crate::prompt_budget::MC_FIELD_MAX_UTF16_UNITS`] UTF-16 units each and
-    /// rejects an over-long field with an HTTP 400 before any model is
-    /// reached, so a larger model would not help and the run is charged
-    /// nothing for the refusal.
-    ///
-    /// Measured 2026-09-23: a pilot run that had executed five tool calls and
-    /// cloned a repository died at turn 10 on exactly that 400, reported as
-    /// `ConnectorFatal` — a verdict that names the connector for a limit the
-    /// caller had overrun and could have honoured.
+    /// about the MODEL's context window and is answered by a bigger model. This
+    /// one is about the WIRE: Model Connector's `/execute` caps `prompt` and
+    /// `systemPrompt` at [`crate::prompt_budget::MC_FIELD_MAX_UTF16_UNITS`]
+    /// UTF-16 units each and rejects an over-long field with an HTTP 400 before
+    /// any model is reached, so a larger model would not help and the refusal
+    /// is not charged. Reporting it as `ConnectorFatal` would blame the
+    /// connector for a limit the caller overran.
     RequestTooLarge,
 }
 
 impl TerminalReason {
     /// One sentence a paying customer can act on.
     ///
-    /// The three CLI print sites used to format this enum with `{:?}`, so the
-    /// operator was shown `ConnectorFatal` and `ContextWindowExhausted`
-    /// verbatim. A variant name is an implementation detail; it is fine as a
-    /// trailing parenthetical for support, but it cannot be the whole message.
+    /// A variant name is an implementation detail: fine as a trailing
+    /// parenthetical for support, not as the whole message.
     #[must_use]
     pub const fn explain(&self) -> &'static str {
         match self {
@@ -484,9 +440,7 @@ impl TerminalReason {
     ///
     /// Callers turn this into a process exit code, so it lives beside
     /// [`Self::explain`] rather than being re-derived as `!= Completed` at each
-    /// site — the interactive session and `demo` disagreed on exactly that
-    /// comparison, and the session reported success on a run where every turn
-    /// had failed.
+    /// site, where the call sites can disagree.
     #[must_use]
     pub const fn is_success(&self) -> bool {
         matches!(self, Self::Completed)
@@ -521,7 +475,7 @@ impl TurnOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Turn-interpretation seam (D-REQ-06 / V-AC-5)
+// Turn-interpretation seam
 // ---------------------------------------------------------------------------
 
 /// Deterministic classification of a connector response into the driver's
@@ -576,19 +530,18 @@ const CODE_FENCE: &str = "```";
 /// Label for this runner's own encoding, used in corrections and log lines.
 const CANONICAL_DIALECT: &str = "a fenced `tool_call` block";
 
-/// Classify a [`ConnectorResponse`] into an [`AssistantAction`] (D-REQ-06).
-///
+/// Classify a [`ConnectorResponse`] into an [`AssistantAction`].
+/// Classify a [`ConnectorResponse`] into an [`AssistantAction`].
 /// Convention: a single fenced block tagged `tool_call` whose body parses as
 /// `{"name": <string>, "input": <json>}` is an intended tool call. A block
 /// that was opened and never closed is [`AssistantAction::Truncated`].
 ///
-/// Four outcomes, not two. A reply that names a tool in a way we recognise —
-/// this runner's fence with an unusable body, `DeepSeek`'s native `invoke`
-/// markup, a bare `OpenAI`-shaped JSON object — is an
-/// [`AssistantAction::MalformedToolCall`], never an answer. Reading such a
-/// reply as prose is what let a run end `Completed` having done nothing
-/// (`crate::tool_dialect`). Only a reply with no tool-call attempt in it at
-/// all is [`AssistantAction::Final`].
+/// Four outcomes, not two. A reply that names a tool in a way we recognise
+/// (this runner's fence with an unusable body, `DeepSeek`'s native `invoke`
+/// markup, a bare `OpenAI`-shaped JSON object) is an
+/// [`AssistantAction::MalformedToolCall`], never an answer: reading it as prose
+/// would end a run `Completed` having done nothing (`crate::tool_dialect`).
+/// Only a reply with no tool-call attempt in it is [`AssistantAction::Final`].
 ///
 /// Fail-closed still holds where it matters: the fallback is never an
 /// unchecked dispatch. A [`AssistantAction::MalformedToolCall`] executes
@@ -597,17 +550,13 @@ const CANONICAL_DIALECT: &str = "a fenced `tool_call` block";
 #[must_use]
 pub fn interpret(resp: &ConnectorResponse) -> AssistantAction {
     match scan_tool_call(&resp.result) {
-        // An open fence is the only local evidence of truncation there is.
-        // Model Connector's response carries no finish/stop reason to read
-        // instead: its `ConnectorResponse` has no such field
-        // (`src/connectors/interfaces/connector.interface.ts:42`), and the
-        // DeepSeek adapter does not even decode the provider's
-        // `choices[].finish_reason` — its response interface omits the key and
-        // `parseResponse` returns only the message content
-        // (`src/connectors/deepseek/deepseek.connector.ts:4,82`). Read
-        // 2026-09-23 on model-connector `3911773`. If that contract ever grows
-        // the field, it belongs here as the primary signal and this scan
-        // becomes the fallback.
+        // An open fence is the only local evidence of truncation: Model
+        // Connector's `ConnectorResponse` has no finish/stop reason
+        // (`src/connectors/interfaces/connector.interface.ts:42`) and the
+        // DeepSeek adapter drops the provider's `choices[].finish_reason`
+        // (`src/connectors/deepseek/deepseek.connector.ts:4,82`). If that
+        // contract grows the field, it becomes the primary signal and this scan
+        // the fallback.
         ToolCallBlock::Unterminated => AssistantAction::Truncated {
             bytes: resp.result.len(),
         },
@@ -632,11 +581,9 @@ pub fn interpret(resp: &ConnectorResponse) -> AssistantAction {
 
 /// The operator's line for a reply rejected as an unreadable tool call.
 ///
-/// A pure function and not an inline `format!` because the part that matters
-/// is the tail: `saved` is where the reply itself was kept, and an operator
-/// who cannot find that path has the same nothing the A2-204c3 post-mortem
-/// had. Pinning the line in a test is only possible if building it is separate
-/// from printing it.
+/// A pure function so the line can be pinned in a test. The tail matters:
+/// `saved` is where the reply itself was kept, and an operator who cannot find
+/// that path has nothing to diagnose from.
 #[must_use]
 pub fn rejected_format_line(dialect: &str, detail: &str, saved: Option<&str>) -> String {
     format!(
@@ -657,10 +604,8 @@ pub fn truncated_reply_line(bytes: usize, saved: Option<&str>) -> String {
 
 /// The operator's line for a tool call the permission cascade refused.
 ///
-/// Before A2-249 a denial printed nothing at all: the reason went to the model
-/// as a tool result and the operator's log showed a gap between one turn and
-/// the next. Pilot A2-240b lost 21 of its 100 paid turns that way, and its log
-/// is silent about every one of them.
+/// A denial must reach the operator's log: the reason goes to the model as a
+/// tool result, so without this line the log shows a silent gap between turns.
 #[must_use]
 pub fn denied_call_line(layer: &str, tool: &str, reason: &str, saved: Option<&str>) -> String {
     format!(
@@ -690,10 +635,8 @@ enum ToolCallBlock<'a> {
 
 /// Locate the first `tool_call` block and report whether it is complete.
 ///
-/// The three outcomes used to be two: a missing closing fence returned `None`
-/// exactly like malformed JSON, so the one anomaly that means "the model was
-/// interrupted" was indistinguishable from the ones that mean "the model wrote
-/// something we cannot use".
+/// Three outcomes: a missing closing fence is distinct from malformed JSON,
+/// because only the former means "the model was interrupted".
 fn scan_tool_call(result: &str) -> ToolCallBlock<'_> {
     let Some(open) = result.find(TOOL_CALL_FENCE) else {
         return ToolCallBlock::Absent;
@@ -713,18 +656,12 @@ fn scan_tool_call(result: &str) -> ToolCallBlock<'_> {
 
 /// Offset of the fence that CLOSES the block, or `None` if it never closed.
 ///
-/// The closing fence is the first ```` ``` ```` that starts a line. It used to
-/// be the first one anywhere, and a payload is allowed to contain fences: the
-/// body of the block is JSON, so a real newline can never occur inside one of
-/// its string literals, which makes "at the start of a line" exactly the line
-/// between the model's markup and its data.
-///
-/// Measured before this rule existed (A2-278, live run of work item
-/// `d931525f-c134-4c6b-85e1-9cdf94e8ab8b`, 2026-09-24): asked for a how-to
-/// page, the model emitted a valid `write` call whose `content` held
-/// ```` ```json ````; the body was cut there, the slice was not JSON, and the
-/// run ended `UnsupportedToolCallFormat` with nothing written. Every
-/// documentation page with a code block in it was unwritable.
+/// The closing fence is the first ```` ``` ```` that starts a line, not the
+/// first one anywhere: a payload may contain fences, and since the body is JSON
+/// a real newline cannot occur inside one of its string literals, so "at the
+/// start of a line" is exactly the line between the model's markup and its
+/// data. Taking the first fence anywhere cuts a valid `write` call whose
+/// `content` holds ```` ```json ```` and leaves a slice that is not JSON.
 fn closing_fence(rest: &str) -> Option<usize> {
     let mut from = 0usize;
     while let Some(hit) = rest.get(from..)?.find(CODE_FENCE) {
@@ -741,10 +678,9 @@ fn closing_fence(rest: &str) -> Option<usize> {
 /// Judge a complete block body.
 ///
 /// Always a verdict, never a fall-through: either the call, or a
-/// [`AssistantAction::MalformedToolCall`] that says what was wrong. It used to
-/// return `None` for a body that was not valid JSON or had no `name`, and the
-/// caller turned that `None` into [`AssistantAction::Final`] — the runner's
-/// own format, misspelt, delivered as an answer to the operator's question.
+/// [`AssistantAction::MalformedToolCall`] that says what was wrong. Returning
+/// `None` for invalid JSON or a missing `name` would deliver the runner's own
+/// misspelt format as [`AssistantAction::Final`].
 fn parse_tool_call(body: &str) -> AssistantAction {
     let malformed = |detail: String| AssistantAction::MalformedToolCall {
         dialect: CANONICAL_DIALECT,
@@ -773,26 +709,18 @@ fn parse_tool_call(body: &str) -> AssistantAction {
         );
     };
     // `arguments` / `parameters` / `args` are accepted as `input`, and so are
-    // arguments written as plain siblings of `name`. The reader here was
-    // `value.get("input").cloned().unwrap_or(Value::Null)`, so a model that
-    // used any other spelling had its arguments silently discarded and its
-    // call dispatched empty — a `bash` with no command, refused for a reason
-    // that was never the model's mistake.
+    // arguments written as plain siblings of `name`; reading only `input` would
+    // silently discard them and dispatch an empty call.
     //
     // The sibling form is safe to dispatch *here* because the model opened
     // this runner's own `tool_call` fence: inside markup whose only purpose is
     // to carry a call, the keys that are not `name` are the call's arguments
-    // and can be nothing else (`crate::tool_dialect`, A2-219). Measured live
-    // the same day on `deepseek-flash`: `{"name": "bash", "command": …,
-    // "timeout_seconds": 600}` in a correct fence, corrected instead of run.
+    // (`crate::tool_dialect`).
     //
-    // No spelling and no siblings is the same defect with nothing to recover:
-    // a `null` dispatched into a tool that wants an object is a schema denial
-    // we can see coming, and the model is better served by being told its call
-    // has no arguments than by being told `null` is not an object. Measured
-    // live on 2026-09-23 — audit `input_hash 03f88b99c3d8073b`,
-    // `blake3("null")` — this is the one remaining way that hash could still
-    // be written.
+    // No spelling and no siblings leaves nothing to recover: a `null` dispatched
+    // into a tool that wants an object is a schema denial we can see coming, and
+    // telling the model its call has no arguments serves it better than
+    // "`null` is not an object".
     let Some(input) = tool_dialect::declared_call_arguments(&value) else {
         return malformed(format!(
             "your `tool_call` block named `{name}` but carried no arguments; put them in an \
@@ -806,19 +734,18 @@ fn parse_tool_call(body: &str) -> AssistantAction {
 }
 
 // ---------------------------------------------------------------------------
-// Conversation history (D-REQ-03)
+// Conversation history
 // ---------------------------------------------------------------------------
 
 /// A run of older history entries replaced by one line that says what they
 /// were.
 ///
-/// Compaction used to be deletion: the oldest tool result was `Vec::remove`d
-/// and nothing anywhere recorded that it had existed. A model whose earlier
-/// work silently stops being in the transcript re-does it — and an operator
-/// reading the log cannot tell a run that never called a tool from one whose
-/// call was quietly dropped. The span therefore keeps the *shape* of what it
-/// swallowed: how many entries, how many were the model's own turns, which
-/// tools ran and how often, and how much text went away.
+/// Compaction records what it removed instead of deleting silently: a model
+/// whose earlier work vanishes from the transcript re-does it, and an operator
+/// cannot tell a run that never called a tool from one whose call was dropped.
+/// The span keeps the *shape* of what it swallowed: how many entries, how many
+/// were the model's own turns, which tools ran and how often, and how much text
+/// went away.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompactedSpan {
     /// History entries folded into this span.
@@ -962,11 +889,11 @@ fn history_units(history: &[HistoryEntry]) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Context-window guard (D-REQ-04 / V-AC-4)
+// Context-window guard
 // ---------------------------------------------------------------------------
 
-/// Verdict of the context-window guard. Public so the V-AC-4 test can assert
-/// the compaction classification directly.
+/// Verdict of the context-window guard. Public so tests can assert the
+/// compaction classification directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextVerdict {
     /// History is within budget; no compaction needed.
@@ -987,14 +914,12 @@ pub struct CompactionReport {
     pub verdict: ContextVerdict,
     /// Tool results shortened in place.
     pub elided_results: usize,
-    /// Entries that are not tool results — model replies, tool-call arguments,
-    /// injected context — shortened in place because one of them alone was a
-    /// large share of the budget.
+    /// Entries that are not tool results (model replies, tool-call arguments,
+    /// injected context) shortened in place because one alone was a large share
+    /// of the budget.
     ///
-    /// Non-zero means the transcript overflowed partly because the *model*
-    /// wrote too much in one turn, which no ingestion bound covers. It is a
-    /// different fact from `elided_results` and a reader should not have to
-    /// guess which one happened.
+    /// Non-zero means the *model* wrote too much in one turn, which no ingestion
+    /// bound covers; it is a different fact from `elided_results`.
     pub bounded_entries: usize,
     /// Entries folded into a [`HistoryEntry::Compacted`] span.
     pub folded_entries: usize,
@@ -1014,7 +939,7 @@ impl CompactionReport {
     /// The sentence the run prints when it changed the transcript.
     ///
     /// Only when it changed something: a guard that narrates every no-op turn
-    /// teaches the operator to skip its lines, including the one that matters.
+    /// teaches the operator to skip its lines.
     #[must_use]
     pub fn stated(&self) -> Option<String> {
         if self.verdict == ContextVerdict::Ok {
@@ -1037,10 +962,9 @@ shortened, {folded} earlier entr(ies) folded into a summary ({before} → {after
 
 /// The text of one entry, when the guard is allowed to shorten it.
 ///
-/// [`HistoryEntry::Task`] is excluded because the task statement is the one
-/// thing a run cannot afford to lose — a run that forgets what it was asked is
-/// worse than a run that stops — and [`HistoryEntry::Compacted`] because a
-/// summary of folded entries is already the short form of something.
+/// [`HistoryEntry::Task`] is excluded because a run that forgets what it was
+/// asked is worse than a run that stops, and [`HistoryEntry::Compacted`]
+/// because a summary is already the short form of something.
 fn shrinkable_text(entry: &mut HistoryEntry) -> Option<(&mut String, bool)> {
     match entry {
         HistoryEntry::Task(_) | HistoryEntry::Compacted(_) => None,
@@ -1053,11 +977,9 @@ fn shrinkable_text(entry: &mut HistoryEntry) -> Option<(&mut String, bool)> {
 /// How short one entry has to become for the transcript to reach its target,
 /// never shorter than `hard_floor` and never shorter than a usable elision.
 ///
-/// This is the whole anti-overshoot rule, in one line: cut what the transcript
-/// is over by, not everything the entry has. The guard that produced the
-/// 7 098-character request cut to a fixed floor whether or not the floor was
-/// needed, so each step removed far more than the step's own arithmetic asked
-/// for.
+/// The anti-overshoot rule: cut what the transcript is over by, not everything
+/// the entry has. Cutting to a fixed floor whether or not it is needed removes
+/// far more than the arithmetic asks for.
 fn shrink_to(entry_units: usize, excess: usize, hard_floor: usize) -> usize {
     entry_units
         .saturating_sub(excess)
@@ -1066,7 +988,7 @@ fn shrink_to(entry_units: usize, excess: usize, hard_floor: usize) -> usize {
 }
 
 /// Bring `history` within `budget` UTF-16 units, degrading in authority order,
-/// and report what that cost (D-REQ-04).
+/// and report what that cost.
 ///
 /// The order is not arbitrary. A tool result is the cheapest thing to lose
 /// part of — its full text is on disk and the model is told where — so results
@@ -1077,21 +999,19 @@ fn shrink_to(entry_units: usize, excess: usize, hard_floor: usize) -> usize {
 /// framing is never touched at all: a run that forgets its own task is worse
 /// than a run that stops.
 ///
-/// # The band (A2-225)
+/// # The band
 ///
 /// Every stage aims at [`crate::prompt_budget::compaction_target`] and stops
 /// at the first moment it is reached, and no single stage may remove more than
-/// [`crate::prompt_budget::entry_ceiling`] at once. Together those two say the
-/// pass lands at or above [`crate::prompt_budget::compaction_floor`] whenever
-/// there was that much material to keep — which the old guard did not, and on
-/// 2026-09-23 it took a 179 037-character transcript to 7 098 by folding 73
-/// entries to reach one oversized entry at the newest end.
+/// [`crate::prompt_budget::entry_ceiling`] at once. Together those two land
+/// the pass at or above [`crate::prompt_budget::compaction_floor`] whenever
+/// there was that much material to keep.
 ///
-/// That oversized entry is the reason for stage 0. A tool result is bounded at
-/// ingestion; a model reply is not, and an entry larger than the whole budget
-/// cannot be compensated for by folding anything else. The guard now shortens
-/// it — keeping head and tail, saying how much went — instead of deleting the
-/// rest of the run and still not fitting.
+/// Stage 0 exists because a tool result is bounded at ingestion but a model
+/// reply is not, and an entry larger than the whole budget cannot be
+/// compensated for by folding anything else. The guard shortens it, keeping
+/// head and tail and saying how much went, instead of deleting the rest of the
+/// run and still not fitting.
 #[must_use]
 pub fn guard_context(history: &mut Vec<HistoryEntry>, budget: usize) -> CompactionReport {
     let units_before = history_units(history);
@@ -1132,16 +1052,13 @@ pub fn guard_context(history: &mut Vec<HistoryEntry>, budget: usize) -> Compacti
 /// Stage 0 — no single entry may be a large share of the budget.
 ///
 /// Whole-history stages cannot fix an entry that is itself bigger than the
-/// budget, and trying is what destroys the transcript: folding is oldest-first,
-/// so reaching one oversized entry at the newest end costs every entry in front
-/// of it. Order here is oldest-first only for determinism; an entry is touched
-/// because of its own size, wherever it sits.
+/// budget: folding is oldest-first, so reaching one oversized entry at the
+/// newest end costs every entry in front of it. Order here is oldest-first only
+/// for determinism; an entry is touched because of its own size.
 ///
 /// A tool result shortened here is reported as an elided result, not a bounded
-/// entry: it is the same act stage 1 performs, and a reader counting "how many
-/// tool results lost text" should get one number. `bounded_entries` is
-/// therefore exactly the count of *model-written* entries that were too big,
-/// which is the fact nothing else in the report carries.
+/// entry (the same act as stage 1), so `bounded_entries` is exactly the count
+/// of *model-written* entries that were too big.
 fn bound_oversized_entries(
     history: &mut [HistoryEntry],
     report: &mut CompactionReport,
@@ -1180,8 +1097,7 @@ fn bound_oversized_entries(
 /// A tool result is the cheapest thing to lose part of: its full text is on
 /// disk and the elision marker names the file. The floor is what is left when
 /// the transcript has to survive at all; reaching it is not the goal, fitting
-/// is. The guard this replaced cut every result to a fixed floor whether or not
-/// the floor was needed.
+/// is.
 fn elide_tool_results(
     history: &mut [HistoryEntry],
     report: &mut CompactionReport,
@@ -1264,7 +1180,7 @@ pub const fn compaction_continue(verdict: ContextVerdict) -> Option<ContinueReas
 }
 
 // ---------------------------------------------------------------------------
-// Driver (D-REQ-01/02/05/07)
+// Driver
 // ---------------------------------------------------------------------------
 
 /// Immutable driver configuration.
@@ -1283,9 +1199,8 @@ pub struct DriverConfig {
     /// Serialized-history ceiling, in UTF-16 code units → compaction, then
     /// [`TerminalReason::RequestTooLarge`].
     ///
-    /// Units, not bytes: `String::len` is what this used to be measured in,
-    /// and it is the wrong number by a factor of three on Russian or Chinese
-    /// text and by a factor of two on emoji — in the direction that sends an
+    /// Units, not bytes: `String::len` is off by a factor of three on Russian
+    /// or Chinese text and two on emoji, in the direction that sends an
     /// over-limit request. See [`crate::prompt_budget`].
     pub context_budget_units: usize,
     /// Ceiling on one tool result carried into the transcript, in UTF-16 code
@@ -1294,54 +1209,44 @@ pub struct DriverConfig {
     pub tool_result_budget_units: usize,
     /// Where a tool result too large to carry is kept in full.
     ///
-    /// `None` — the default, and what every test gets — means nothing is
-    /// written to disk and the elision marker tells the model to narrow its
-    /// call instead. A headless run sets it to a directory inside the
-    /// workspace, so the path in the marker is one the model is allowed to
-    /// read.
+    /// `None` (the default) means nothing is written to disk and the elision
+    /// marker tells the model to narrow its call instead. A headless run sets
+    /// it to a directory inside the workspace, so the path in the marker is one
+    /// the model is allowed to read.
     pub tool_output_spill_dir: Option<std::path::PathBuf>,
     /// Where a reply this loop refused to act on is kept, verbatim.
     ///
-    /// `None` — the default, and what every test gets unless it says
-    /// otherwise — means a rejected reply survives only as the log line saying
-    /// it was rejected. That is exactly what a live run had when it died
-    /// `UnsupportedToolCallFormat` on the one call that mattered: the audit log
-    /// keeps `input_hash`/`output_hash` and no text, the transcript is never
-    /// written to disk, and the reply the runner threw away was therefore
-    /// unknowable afterwards — so the defect could be described but not
-    /// diagnosed (A2-219, `/home/dev/aup/arc2/runs/A2-204c3/log`). A headless
-    /// run sets this to a directory inside the workspace.
+    /// `None` (the default) means a rejected reply survives only as the log
+    /// line saying it was rejected: the audit log keeps `input_hash` /
+    /// `output_hash` and no text, and the transcript is never written to disk,
+    /// so the discarded reply could not be diagnosed afterwards. A headless run
+    /// sets this to a directory inside the workspace.
     ///
-    /// It holds what the *model* sent, not what the runner made of it. A
-    /// correction is only ever as good as the reply it was written against.
+    /// It holds what the *model* sent, not what the runner made of it; a
+    /// correction is only as good as the reply it was written against.
     pub rejected_reply_dir: Option<std::path::PathBuf>,
     /// Where a tool call the permission cascade refused is kept, with the
     /// reason it was refused for.
     ///
-    /// `None` — the default, and what every test gets unless it says
-    /// otherwise — means a denial survives as `decision`/`layer`/`input_hash`
-    /// in the audit log and a `reason_hash` beside them, and the call itself
-    /// is gone. That is what pilot A2-240b had: 21 of its 100 paid turns were
-    /// cascade refusals, the largest single sink of the run, and none of them
-    /// could be read afterwards (A2-249). A headless run sets this to a
-    /// directory inside the workspace.
+    /// `None` (the default) means a denial survives as `decision` / `layer` /
+    /// `input_hash` and a `reason_hash` in the audit log, and the call itself is
+    /// gone. A headless run sets this to a directory inside the workspace.
     ///
-    /// It holds what the *model* wrote and what the cascade said back — the
-    /// two halves a correction has to be judged against. It is the workspace
-    /// counterpart of [`Self::rejected_reply_dir`], and it is where the
-    /// reason text lives precisely because the audit log refuses it: a
-    /// refusal sentence quotes the argument or the path that caused it.
+    /// It holds what the *model* wrote and what the cascade said back, the two
+    /// halves a correction is judged against. It is the workspace counterpart
+    /// of [`Self::rejected_reply_dir`], and the reason text lives here because
+    /// the audit log refuses it: a refusal sentence quotes the argument or path
+    /// that caused it.
     pub denied_call_dir: Option<std::path::PathBuf>,
     /// Append the exact request of every dispatch to this file.
     ///
     /// Off unless the operator names a path: a transcript is the whole
     /// conversation in clear text, so keeping one is a decision about their
-    /// disk, not something a runner should start doing on its own.
+    /// disk.
     ///
     /// Appended per dispatch rather than written once at the end, because
     /// compaction means the last request is not a superset of the earlier
-    /// ones — the turns a run folds away are precisely the ones a
-    /// post-mortem cannot otherwise see.
+    /// ones, and the folded turns are what a post-mortem cannot otherwise see.
     pub transcript_path: Option<std::path::PathBuf>,
     /// Opt-in paired-corpus metadata. The driver attaches it only to the first
     /// connector attempt; later tool-loop turns never inherit it.
@@ -1349,10 +1254,10 @@ pub struct DriverConfig {
     /// Exact prompt override applied only to the measured first connector
     /// attempt. It is invalid without `first_dispatch_measurement`.
     pub first_dispatch_prompt: Option<FirstDispatchPromptV0>,
-    /// Per-turn model-selection policy (D-REQ-01). The classifier keys a
+    /// Per-turn model-selection policy. The classifier keys a
     /// [`crate::dispatch::TaskType`] off the turn context and the policy maps it
-    /// to the model id written onto `ExecuteRequest.model`. The former static
-    /// `model` above seeds this policy's `Default` fallback in [`Driver::new`].
+    /// to the model id written onto `ExecuteRequest.model`; the static `model`
+    /// seeds this policy's `Default` fallback in [`Driver::new`].
     pub policy: ModelPolicy,
     /// Require at least one executed tool call before the run may be called
     /// completed.
@@ -1365,10 +1270,8 @@ pub struct DriverConfig {
     /// before it gives up with [`TerminalReason::ConnectorFatal`].
     ///
     /// Bounded on purpose, and reset by any attempt that returns a response:
-    /// an upstream that is down stays down, and burning the whole turn budget
-    /// on it would replace one honest error with a slow one. Each retry
-    /// consumes a turn and is checked against the cost cap like any other
-    /// attempt, so neither budget can be exceeded by retrying.
+    /// an upstream that is down stays down. Each retry consumes a turn and is
+    /// checked against the cost cap like any other attempt.
     pub connector_retry_limit: u32,
     /// Consecutive transient GATEWAY failures the loop will re-dispatch before
     /// it gives up. Separate from `connector_retry_limit` because an edge
@@ -1462,14 +1365,13 @@ pub struct RunOutput {
     /// Tool calls that reached the capability executor in this run.
     ///
     /// Intent, where [`Self::tool_calls`] is evidence: it counts the refused
-    /// and the failed as well as the executed. A model that called tools
-    /// constantly and got the arguments wrong reports a large number here and
-    /// a small one there — pilot A2-240b made 98 attempts and reported 72,
-    /// and 72 alone reads as "the model barely used its tools" (A2-249).
+    /// and the failed as well as the executed, so a model that called tools
+    /// constantly with wrong arguments shows a large number here and a small
+    /// one there.
     ///
     /// A reply this runner could not parse as a call never reached the
-    /// executor and is not counted; `RunOutput` has no field for those yet,
-    /// and inventing one here would make this number mean two things.
+    /// executor and is not counted; a separate field would make this number
+    /// mean two things.
     pub tool_calls_attempted: u32,
     /// Tool calls the permission cascade or a pre-tool hook refused.
     ///
@@ -1478,20 +1380,19 @@ pub struct RunOutput {
     pub tool_calls_denied: u32,
     /// The tools that actually executed, by name, in call order.
     ///
-    /// [`Self::tool_calls`] is this list's length, and the length alone was
-    /// what let pilot A2-278's runs 2 and 4 be reported as completed: nine and
-    /// three calls, every one of them a `read` or a `grep`, nothing written,
-    /// and a closing sentence describing a file that does not exist. A count
-    /// cannot tell reading from writing; the names can.
+    /// [`Self::tool_calls`] is this list's length, and a count cannot tell
+    /// reading from writing: a run of nine `read`/`grep` calls with nothing
+    /// written must not be reported as completed work; the names can.
     ///
     /// Names, not effects. `bash` can change a file and `read` cannot, but a
-    /// `write` that produced the bytes already there changed nothing — what
-    /// the run DID is decided by comparing the tree, not by reading this list.
+    /// `write` that produced the bytes already there changed nothing; what the
+    /// run DID is decided by comparing the tree, not by reading this list.
     pub executed_tools: Vec<String>,
     /// Cost accounting snapshot at termination.
     pub cost: CostSnapshot,
     /// The ordered sequence of model ids selected, one per connector call
-    /// (D-REQ-05). Mirrors each `ExecuteRequest.model` in call order, making the
+    /// The ordered sequence of model ids selected, one per connector call.
+    /// Mirrors each `ExecuteRequest.model` in call order, making the
     /// ≥2-distinct-selections property runtime-verifiable.
     pub selected_models: Vec<String>,
     /// Opaque, explicitly unverified receipt returned for the first dispatch.
@@ -1504,11 +1405,9 @@ pub struct RunOutput {
     /// What ended the run, in the words of whatever refused it.
     ///
     /// [`TerminalReason`] is a closed set of causes; this is the one detail
-    /// that cause carried — which cascade layer refused, which tool, and the
-    /// validation error itself. Pilot run A2-204c4 ended `PermissionDenied`
-    /// with `error: null` in its done-marker and `the permission cascade
-    /// refused the tool call` on stderr, and an operator reading that could not
-    /// tell a policy refusal from a misspelt argument.
+    /// that cause carried (which cascade layer refused, which tool, the
+    /// validation error itself), so an operator can tell a policy refusal from
+    /// a misspelt argument.
     pub terminal_detail: Option<String>,
 }
 
@@ -1516,7 +1415,7 @@ pub struct RunOutput {
 /// the shared cost/cancel handles.
 ///
 /// It adds **no new** `Tool`/`PermissionLayer`/`ToolHook` — every collaborator
-/// is consumed through its existing signature (D-REQ-05 / V-AC-7).
+/// is consumed through its existing signature.
 pub struct Driver<'a> {
     connector: &'a dyn ModelConnector,
     executor: &'a CapabilityExecutor,
@@ -1528,10 +1427,9 @@ pub struct Driver<'a> {
 /// The request one dispatch of this turn carries, kept whole.
 ///
 /// A poll for an answer the turn has already bought re-sends exactly this,
-/// rather than rebuilding it from the history: the two are supposed to be the
-/// same bytes — the key only replays while they are — and rebuilding them was
-/// measured at 13 prompt builds and 1.04 MB of transcript for one waited turn
-/// of 80 000 characters (A2-245).
+/// rather than rebuilding it from the history: the two must be the same
+/// bytes (the key only replays while they are), and rebuilding costs a prompt
+/// build and a transcript block per poll.
 struct Dispatch<'a> {
     prompt: &'a str,
     model: &'a str,
@@ -1570,9 +1468,8 @@ enum StepResult {
 /// What the loop tells a model that answered without acting.
 ///
 /// Phrased as a fact about the machine, not as encouragement: the model is
-/// told what did NOT happen and what encoding would make it happen. An earlier
-/// live transcript had the model insisting the file existed; asking it to
-/// verify with a tool call gives it a way to be right that still produces
+/// told what did NOT happen and what encoding would make it happen. Asking it
+/// to verify with a tool call gives it a way to be right that still produces
 /// evidence.
 const NO_ACTION_NUDGE: &str =
     "NOTHING WAS EXECUTED. Your last reply contained no tool call, so no \
@@ -1583,9 +1480,9 @@ before you answer in prose.";
 
 /// What the loop tells a model whose reply the output limit cut off.
 ///
-/// It names the cause, because the model cannot see it: from where the model
-/// sits the turn simply ended. Without that, the obvious next move is to send
-/// the same oversized block again and be cut off at the same token.
+/// It names the cause, because the model cannot see it: from where it sits the
+/// turn simply ended, and the obvious next move is to send the same oversized
+/// block again and be cut off at the same token.
 const TRUNCATION_NUDGE: &str =
     "YOUR LAST REPLY WAS CUT OFF by your own output limit in the middle of a `tool_call` block. \
 Nothing ran, and the half-written call was discarded — do not try to continue it. \
@@ -1608,11 +1505,9 @@ a format this runner cannot execute";
 ///
 /// Model Connector opens a hold, calls the provider and settles the charge in
 /// the same transaction as the request row **before** the response is written
-/// to the socket. A2-230 measured the consequence and said so in the log: a
-/// turn the edge cut may already have been executed and billed, so every
-/// re-dispatch was "a second provider call and a second charge" — and A2-230
-/// had just raised the gateway budget from two re-dispatches to five, which
-/// multiplied the exposure it was describing.
+/// to the socket. A turn the edge cut may therefore already have been executed
+/// and billed, and without a key every re-dispatch is a second provider call
+/// and a second charge.
 ///
 /// A caller-supplied key closes it. `src/billing/intent.ts`: "An intent key is
 /// supplied by the CALLER and identifies the thing they wanted done, not the
@@ -1624,19 +1519,18 @@ a format this runner cannot execute";
 ///
 /// The server checks the payload fingerprint BEFORE the intent state, and
 /// answers a key reused for a different payload with `idempotency_key_reused`
-/// rather than replaying the first one. So a key that is stable across an
+/// rather than replaying the first one. So a key stable across an
 /// attempt-series is only correct if the payload is too, and this type does
 /// not assume it: it records [`ExecuteRequest::intent_fingerprint`] alongside
 /// the key and mints a fresh key if the payload ever changes under it.
 ///
-/// That check exists because the invariant is not local. The prompt is
-/// recomposed from history on every attempt, the model id comes from a policy
-/// keyed on the turn index, and the remaining cost budget is recomputed — three
-/// values, three different owners, and the key's correctness depends on all
-/// three being unchanged between a failed attempt and its re-dispatch. Today
-/// they are. A fingerprint that disagrees is a defect somewhere upstream of
-/// here, and this turns it into a named warning and one extra charge instead
-/// of a `422` that ends the run.
+/// The invariant is not local: the prompt is recomposed from history on every
+/// attempt, the model id comes from a policy keyed on the turn index, and the
+/// remaining cost budget is recomputed — three values with three owners that
+/// must all be unchanged between a failed attempt and its re-dispatch. A
+/// fingerprint that disagrees is a defect upstream of here, and this turns it
+/// into a named warning and one extra charge instead of a `422` that ends the
+/// run.
 /// What [`TurnIntentSeries::stamp`] did with the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IntentDecision {
@@ -1664,10 +1558,9 @@ struct TurnIntentSeries {
     /// When the request the key in force identifies FIRST left this client.
     ///
     /// Lives here rather than in [`RunState`] because it measures the same
-    /// thing the key does — one upstream request — and the two have to be
-    /// minted and released together. A re-dispatch under the SAME key does not
-    /// move it: that is the whole point, and it is the clock the in-flight
-    /// wait is bounded against (A2-241).
+    /// thing the key does (one upstream request) and the two are minted and
+    /// released together. A re-dispatch under the SAME key does not move it; it
+    /// is the clock the in-flight wait is bounded against.
     dispatched_at: Option<Instant>,
 }
 
@@ -1684,14 +1577,11 @@ impl TurnIntentSeries {
     /// Stamp `req` with the key its attempt-series is dispatched under, and say
     /// which of the three things happened.
     ///
-    /// Returned rather than logged in place, because the three cases are not
-    /// equally newsworthy and only the caller can print: [`IntentDecision::New`]
-    /// is every ordinary turn and must be silent, while
-    /// [`IntentDecision::Replaced`] is a defect and must not be. Deciding that
-    /// here with an `eprintln!` made the difference unobservable from a test,
-    /// and a mutant that stopped [`Self::finish_turn`] releasing the key —
-    /// which would put the defect line on every turn of every run — passed the
-    /// whole suite.
+    /// Returned rather than logged in place, because only the caller can print
+    /// and the cases differ in newsworthiness: [`IntentDecision::New`] is every
+    /// ordinary turn and must be silent, while [`IntentDecision::Replaced`] is
+    /// a defect and must not be. Deciding that here with an `eprintln!` would
+    /// make the difference unobservable from a test.
     fn stamp(&mut self, req: &mut ExecuteRequest, now: Instant) -> IntentDecision {
         let fingerprint = req.intent_fingerprint();
         let (key, decision) = match self.active.as_ref() {
@@ -1707,10 +1597,9 @@ impl TurnIntentSeries {
                 self.turn = self.turn.saturating_add(1);
                 let key = IdempotencyKey::for_turn(self.run, self.turn);
                 self.active = Some((key.clone(), fingerprint));
-                // A fresh key is a fresh upstream request, so the clock it is
-                // waited against starts here — including on `Replaced`, where
-                // the payload changed and the previous request's elapsed time
-                // says nothing about this one.
+                // A fresh key is a fresh upstream request, so its wait clock
+                // starts here, including on `Replaced`, where the previous
+                // request's elapsed time says nothing about this one.
                 self.dispatched_at = Some(now);
                 (key, decision)
             }
@@ -1722,10 +1611,9 @@ impl TurnIntentSeries {
     /// A reply arrived, so the next dispatch is a new logical turn.
     ///
     /// Called on any response of any shape, for the same reason the retry
-    /// budget resets there: the thing the key identifies is the question, and
-    /// an answered question is not asked again. Carrying the key past a reply
-    /// would make the next turn replay the previous turn's answer, and the run
-    /// would sit answering its own opening question until `max_turns`.
+    /// budget resets there: the key identifies the question, and an answered
+    /// question is not asked again. Carrying the key past a reply would make the
+    /// next turn replay the previous turn's answer.
     fn finish_turn(&mut self) {
         self.active = None;
         self.dispatched_at = None;
@@ -1739,10 +1627,9 @@ impl TurnIntentSeries {
     /// Drop the key in force without ending the turn, so the next attempt of
     /// this same turn mints a fresh one.
     ///
-    /// The one caller is the `idempotency_key_reused` path: the server has
-    /// told us this key belongs to a different payload, so nothing of ours was
-    /// dispatched or charged under it and reusing it can only be refused
-    /// again.
+    /// The one caller is the `idempotency_key_reused` path: the key belongs to
+    /// a different payload, so nothing of ours was dispatched or charged under
+    /// it and reusing it can only be refused again.
     fn abandon_key(&mut self) {
         self.active = None;
         self.dispatched_at = None;
@@ -1751,9 +1638,8 @@ impl TurnIntentSeries {
 
 /// Mutable state threaded through every step of one run.
 ///
-/// It exists so a new per-run fact (the executed-tool-call count, the spent
-/// nudge) is added in one place rather than as another `&mut` parameter on a
-/// signature that already had four.
+/// It exists so a new per-run fact is added in one place rather than as
+/// another `&mut` parameter on a signature that already had four.
 struct RunState {
     history: Vec<HistoryEntry>,
     /// Connector attempts consumed; enforces `max_turns`.
@@ -1771,9 +1657,9 @@ struct RunState {
     ///
     /// Counts the re-dispatches of a request that FAILED — a refusal Model
     /// Connector authored, or an edge verdict in front of it. It deliberately
-    /// does not count the polls of `in_flight_polls`: A2-240 shared one
-    /// counter between the two, so a single 524 spent "1 of 5" and the wait
-    /// for the answer that 524 interrupted started at "2 of 5".
+    /// does not count the polls of `in_flight_polls`: sharing one counter would
+    /// let the edge failure that preceded a conflict shrink the wait for the
+    /// answer it interrupted.
     connector_retries: u32,
     /// Polls made over the whole run, for the `max_turns` exemption below.
     ///
@@ -1782,10 +1668,10 @@ struct RunState {
     in_flight_polls_total: u32,
     /// Polls made while THIS turn's answer is still being produced upstream.
     ///
-    /// Its own counter because it measures a different fact — not "how often
-    /// has the upstream refused us" but "how often have we asked whether the
-    /// answer has landed" — and because it is not what bounds the wait. The
-    /// bound is the clock: see [`Driver::wait_out_in_flight`].
+    /// Its own counter because it measures a different fact (how often we
+    /// asked whether the answer has landed, not how often the upstream refused
+    /// us) and is not what bounds the wait; the clock is: see
+    /// [`Driver::wait_out_in_flight`].
     in_flight_polls: u32,
     /// Time already slept between re-dispatches of the current turn.
     connector_retry_pause_spent: Duration,
@@ -1797,9 +1683,7 @@ struct RunState {
     /// [`MAX_DENIALS_PER_DISTINCT_CALL`] ends the run.
     ///
     /// A map rather than a set because the bound is a NUMBER of refusals per
-    /// distinct call, and a set can only ever express "one". The constant used
-    /// to be documented as the rule while the code was a `HashSet::insert`, so
-    /// editing it changed nothing and no test noticed (A2-230).
+    /// distinct call, and a set can only express "one".
     refused_calls: std::collections::HashMap<String, u32>,
     /// What refused the run, carried out of the step that decided to stop.
     terminal_detail: Option<String>,
@@ -1863,8 +1747,7 @@ impl RunState {
     /// Attempts this turn has made, the failed first dispatch included — the
     /// number an operator counts in the log.
     ///
-    /// The sum of both counters, so splitting them (A2-241) did not quietly
-    /// halve the number the terminal verdict reports.
+    /// The sum of both counters, so the terminal verdict reports every attempt.
     fn turn_attempts(&self) -> u32 {
         self.connector_retries
             .saturating_add(self.in_flight_polls)
@@ -1876,19 +1759,16 @@ impl RunState {
     /// It is proof the model can still finish a turn, so the truncation budget
     /// starts over here rather than counting cut-offs across a whole run.
     ///
-    /// It used to go in verbatim, at any size. A tool result has been bounded
-    /// at ingestion since this loop was written, and a reply was the one thing
-    /// that could enter the transcript unbounded: `entry_ceiling` reached it
-    /// only from inside compaction, once the budget was already blown. On
-    /// pilot A2-240b one reply added 48 228 units in a single turn and the
-    /// compaction it forced folded 28 earlier entries into a summary — the
-    /// history of thirty-six turns, spent on one turn's output (A2-249).
+    /// A reply is bounded here, before it enters the transcript: tool results
+    /// are bounded at ingestion, and an unbounded reply would only meet
+    /// `entry_ceiling` inside compaction, after the budget was blown and the
+    /// history folded to make room for one turn's output.
     ///
     /// `ceiling` is [`prompt_budget::entry_ceiling`] of the run's budget: the
-    /// same number compaction would have imposed, applied before the damage
-    /// instead of after it. Nothing else changes — the call the loop executes
-    /// and the answer it delivers are both taken from the complete reply,
-    /// which this function is given after both have been read.
+    /// same number compaction would impose, applied before the damage. Nothing
+    /// else changes: the call the loop executes and the answer it delivers are
+    /// both taken from the complete reply, which this function is given after
+    /// both have been read.
     fn accept_reply(&mut self, text: &str, ceiling: usize) {
         self.truncation_retries = 0;
         self.history
@@ -1929,23 +1809,65 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Empty output for a config that must not start a run.
+    fn invalid_run_output(&self, reason: TerminalReason) -> RunOutput {
+        RunOutput {
+            reason,
+            final_text: None,
+            turns: 0,
+            tool_calls: 0,
+            executed_tools: Vec::new(),
+            tool_calls_attempted: 0,
+            tool_calls_denied: 0,
+            cost: self.cost.snapshot(),
+            selected_models: Vec::new(),
+            first_dispatch_observation: None,
+            compactions: 0,
+            terminal_detail: None,
+        }
+    }
+
+    /// Build the terminal [`RunOutput`] once the loop has decided to stop.
+    ///
+    /// An operator abort is recorded here (not in the step that noticed it), so
+    /// a Ctrl-C during a connector call still leaves an audit line even when no
+    /// tool ran.
+    fn finish_run(
+        &self,
+        mut state: RunState,
+        step: StepResult,
+        reason: TerminalReason,
+    ) -> RunOutput {
+        let final_text = match step {
+            StepResult::Terminal(_, text) => text,
+            StepResult::Continue(_) => None,
+        };
+        let cost = self.cost.snapshot();
+        let reason = if reason == TerminalReason::AbortedByOperator {
+            self.record_abort(state.attempts, &state.selected, &cost)
+        } else {
+            reason
+        };
+        RunOutput {
+            reason,
+            final_text,
+            turns: state.attempts,
+            tool_calls: state.tool_calls,
+            executed_tools: std::mem::take(&mut state.executed_tools),
+            tool_calls_attempted: state.tool_calls_attempted,
+            tool_calls_denied: state.denied,
+            cost,
+            selected_models: state.selected,
+            first_dispatch_observation: state.first_dispatch_observation,
+            compactions: state.compactions,
+            terminal_detail: state.terminal_detail.take(),
+        }
+    }
+
     /// Drive `task` to a terminal outcome — the single public entrypoint.
     pub async fn run(&self, task: &str) -> RunOutput {
         if let Some(reason) = self.config.invalid_reason() {
-            return RunOutput {
-                reason,
-                final_text: None,
-                turns: 0,
-                tool_calls: 0,
-                executed_tools: Vec::new(),
-                tool_calls_attempted: 0,
-                tool_calls_denied: 0,
-                cost: self.cost.snapshot(),
-                selected_models: Vec::new(),
-                first_dispatch_observation: None,
-                compactions: 0,
-                terminal_detail: None,
-            };
+            return self.invalid_run_output(reason);
         }
         let mut state = RunState::new(task);
         loop {
@@ -1957,30 +1879,7 @@ impl<'a> Driver<'a> {
             match reduce(outcome) {
                 LoopControl::Reloop => {}
                 LoopControl::Stop(reason) => {
-                    let final_text = match step {
-                        StepResult::Terminal(_, text) => text,
-                        StepResult::Continue(_) => None,
-                    };
-                    let cost = self.cost.snapshot();
-                    let reason = if reason == TerminalReason::AbortedByOperator {
-                        self.record_abort(state.attempts, &state.selected, &cost)
-                    } else {
-                        reason
-                    };
-                    return RunOutput {
-                        reason,
-                        final_text,
-                        turns: state.attempts,
-                        tool_calls: state.tool_calls,
-                        executed_tools: std::mem::take(&mut state.executed_tools),
-                        tool_calls_attempted: state.tool_calls_attempted,
-                        tool_calls_denied: state.denied,
-                        cost,
-                        selected_models: state.selected,
-                        first_dispatch_observation: state.first_dispatch_observation,
-                        compactions: state.compactions,
-                        terminal_detail: state.terminal_detail.take(),
-                    };
+                    return self.finish_run(state, step, reason);
                 }
             }
         }
@@ -1988,29 +1887,24 @@ impl<'a> Driver<'a> {
 
     /// Write the operator-abort record, and report whether the audit held.
     ///
-    /// A Ctrl-C used to leave nothing behind at all: the dispatch had been sent
-    /// and would be charged, and the only local evidence of it was a dead
-    /// process. The tool-level `decision`/`result` pair cannot cover this,
-    /// because an abort during the connector call has no tool to attribute to.
+    /// A Ctrl-C otherwise leaves no record: the dispatch was sent and will be
+    /// charged. The tool-level `decision`/`result` pair cannot cover it, because
+    /// an abort during the connector call has no tool to attribute to.
     ///
     /// Returns [`TerminalReason::AuditFatal`] when the append fails. An abort
-    /// the operator was told about but that was never recorded is precisely the
-    /// state Law-5 forbids, and the driver already treats a failed audit append
-    /// as fatal everywhere else; reporting a clean abort over a broken log
-    /// would make this one site the exception.
+    /// the operator was told about but that was never recorded is the state
+    /// Law-5 forbids, and a failed audit append is fatal everywhere else.
     fn record_abort(
         &self,
         attempts: u32,
         selected: &[String],
         cost: &crate::cost::CostSnapshot,
     ) -> TerminalReason {
-        // Both figures are named for their scope, because they do not share
-        // one. `attempts` counts connector calls in THIS run; the `CostTracker`
-        // is owned by the session and shared across every run in it, so its
-        // snapshot is cumulative. A field called plainly `cost_usd_micros`
-        // beside a per-run turn count reads as the cost of the aborted turn —
-        // measured live, an abort on the second turn of a session recorded 20
-        // micro-USD next to `turns: 1` when that turn had cost 11.
+        // Both figures are named for their scope: `attempts` counts connector
+        // calls in THIS run, while the `CostTracker` is owned by the session and
+        // shared across every run in it, so its snapshot is cumulative. A
+        // plainly named `cost_usd_micros` beside a per-run turn count would read
+        // as the cost of the aborted turn.
         let fields = serde_json::json!({
             "reason": "aborted_by_operator",
             "run_turns": attempts,
@@ -2030,11 +1924,10 @@ impl<'a> Driver<'a> {
     /// without spending a turn, or a transcript that cannot be made to fit.
     fn fit_request(&self, state: &mut RunState) -> Option<StepResult> {
         let report = guard_context(&mut state.history, self.config.context_budget_units);
-        // The run says what it did. A model whose earlier turns were
+        // The run says what it did: a model whose earlier turns were
         // summarised behind its back, and an operator reading only the log,
-        // otherwise have no way to know the request changed shape — and a
-        // shorter answer from a compacted transcript would look like a worse
-        // model rather than a smaller question.
+        // would otherwise take a shorter answer for a worse model rather than a
+        // smaller question.
         if let Some(line) = report.stated() {
             eprintln!("{line}");
         }
@@ -2054,12 +1947,11 @@ impl<'a> Driver<'a> {
     /// refuse it if it is over the wall.
     ///
     /// The wall, not the budget. [`Self::fit_request`] has already compacted
-    /// to `context_budget_units`; this is the contract Model Connector will
-    /// enforce with an HTTP 400, and the only request that can reach it is one
-    /// the guard could not shrink or an exact first-dispatch prompt the caller
-    /// supplied. Refusing here costs nothing and names the limit; sending it
-    /// spends a roundtrip to be told the same thing by a validator that calls
-    /// it `ConnectorFatal`.
+    /// to `context_budget_units`; this is the contract Model Connector enforces
+    /// with an HTTP 400, reachable only by a request the guard could not shrink
+    /// or an exact first-dispatch prompt the caller supplied. Refusing here
+    /// costs nothing and names the limit; sending it spends a roundtrip to be
+    /// told the same thing as `ConnectorFatal`.
     ///
     /// # Errors
     /// The terminal step to return when the request cannot be sent.
@@ -2091,32 +1983,40 @@ impl<'a> Driver<'a> {
         Ok(prompt)
     }
 
+    /// Refuse a step that must not spend another connector ask.
+    ///
+    /// `max_turns` caps the QUESTIONS this run may ask. A poll under a key
+    /// already in flight asks nothing: it collects an answer that has been
+    /// bought, and the 409 it gets back is not charged. Counting polls would
+    /// make the wait eat the budget it is waiting inside (one wait can span
+    /// two dozen polls), trading `ConnectorFatal` for `MaxTurns` and
+    /// abandoning the same paid-for answer.
+    ///
+    /// `RunOutput::turns` still reports `attempts` in full: the exemption is
+    /// about what the run is ALLOWED, not about hiding what it did.
+    fn refuse_before_ask(&self, state: &RunState) -> Option<StepResult> {
+        if self.cancel.is_cancelled() {
+            return Some(StepResult::Terminal(
+                TerminalReason::AbortedByOperator,
+                None,
+            ));
+        }
+        if state.attempts.saturating_sub(state.in_flight_polls_total) >= self.config.max_turns {
+            return Some(StepResult::Terminal(TerminalReason::MaxTurns, None));
+        }
+        if self.cost.check_budget(self.config.max_cost_usd).is_err() {
+            return Some(StepResult::Terminal(TerminalReason::MaxCostUsd, None));
+        }
+        None
+    }
+
     /// One step: guards → select model → connector attempt → interpret → (tool
     /// turn | final). `attempts` is the shared connector-attempt counter that
     /// enforces `max_turns`; `selected` accumulates the ordered per-step model
     /// ids.
     async fn step(&self, state: &mut RunState) -> StepResult {
-        if self.cancel.is_cancelled() {
-            return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
-        }
-        // `max_turns` caps the QUESTIONS this run may ask. A poll under a key
-        // already in flight asks nothing: it collects an answer that has been
-        // bought and is being written, and Model Connector charges nothing for
-        // the 409 it replies with. Counting them would make the wait this file
-        // now performs eat the budget it is waiting inside — measured, not
-        // feared: with the shipped `--max-turns 24` and the client's own
-        // dispatch budget, one wait can span two dozen polls, so a run would
-        // trade `ConnectorFatal` for `MaxTurns` and abandon exactly the same
-        // paid-for answer (A2-241).
-        //
-        // `RunOutput::turns` still reports `attempts` in full, polls included:
-        // the exemption is about what the run is ALLOWED, not about hiding
-        // what it did.
-        if state.attempts.saturating_sub(state.in_flight_polls_total) >= self.config.max_turns {
-            return StepResult::Terminal(TerminalReason::MaxTurns, None);
-        }
-        if self.cost.check_budget(self.config.max_cost_usd).is_err() {
-            return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
+        if let Some(step) = self.refuse_before_ask(state) {
+            return step;
         }
         if let Some(step) = self.fit_request(state) {
             return step;
@@ -2128,12 +2028,12 @@ impl<'a> Driver<'a> {
         };
         let history = &mut state.history;
         let attempts = &mut state.attempts;
-        // Per-step multi-model dispatch (D-REQ-01/03/05): classify the step
-        // context, select the model, record it, and route it through the
-        // connector on `ExecuteRequest.model`. Selection keys off the current
-        // connector-attempt index (`*attempts`) before that counter is consumed
-        // by the `max_turns`-enforcing increment below, preserving the
-        // zero-based turn index the classifier expects on the first attempt.
+        // Per-step multi-model dispatch: classify the step context, select the
+        // model, record it, and route it through the connector on
+        // `ExecuteRequest.model`. Selection keys off the current
+        // connector-attempt index (`*attempts`) before the `max_turns`-enforcing
+        // increment below consumes it, preserving the zero-based turn index the
+        // classifier expects on the first attempt.
         let ctx = SelectionContext {
             history,
             turn: *attempts,
@@ -2149,9 +2049,8 @@ impl<'a> Driver<'a> {
             return step;
         }
         // The request this turn is sending, kept for as long as the turn may
-        // need to send it again. A poll under the same key is the same
-        // question, so it re-sends these bytes instead of rebuilding them
-        // (A2-245).
+        // need to send it again: a poll under the same key re-sends these bytes
+        // instead of rebuilding them.
         let dispatch = Dispatch {
             prompt: &prompt,
             model: &choice.model_id,
@@ -2168,13 +2067,21 @@ impl<'a> Driver<'a> {
         if self.cost.check_budget(self.config.max_cost_usd).is_err() {
             return StepResult::Terminal(TerminalReason::MaxCostUsd, None);
         }
-        match interpret(&resp) {
+        self.settle_reply(state, &resp).await
+    }
+
+    /// Turn a connector reply into the step's continue/terminal outcome.
+    ///
+    /// Owns the post-dispatch branches that used to sit inline in [`Self::step`]:
+    /// truncation recovery, final text (with abort delivery and the no-action
+    /// nudge), tool admission, and malformed-tool correction.
+    async fn settle_reply(&self, state: &mut RunState, resp: &ConnectorResponse) -> StepResult {
+        match interpret(resp) {
             // Handled before the history is written: the fragment is
-            // deliberately NOT kept. Feeding a half-emitted call back would
-            // put words in the model's mouth that it never finished saying,
-            // and the fragment is large by construction — the live one was
-            // ~9148 output tokens — so carrying it would shrink the window for
-            // the retry that has to succeed.
+            // deliberately NOT kept. Feeding a half-emitted call back would put
+            // words in the model's mouth, and it is large by construction, so
+            // carrying it would shrink the window for the retry that has to
+            // succeed.
             AssistantAction::Truncated { bytes } => {
                 self.recover_from_truncation(state, bytes, &resp.result)
             }
@@ -2182,19 +2089,17 @@ impl<'a> Driver<'a> {
                 state.accept_reply(&resp.result, self.reply_ceiling());
                 // An answer that arrived is DELIVERED even when the operator
                 // interrupted: it is already paid for, and withholding it would
-                // be a second harm. But the verdict still says they stopped the
-                // run, so the exit code is 130 and the abort is audited. The
-                // alternative — reporting a clean `Completed` — makes Ctrl-C
-                // inert on the commonest shape there is, a task answered in one
-                // dispatch, and tells a wrapper script the run was never
-                // interrupted at all.
+                // be a second harm. The verdict still says they stopped the run,
+                // so the exit code is 130 and the abort is audited; reporting a
+                // clean `Completed` would make Ctrl-C inert on a task answered in
+                // one dispatch.
                 if self.cancel.is_cancelled() {
                     return StepResult::Terminal(TerminalReason::AbortedByOperator, Some(text));
                 }
                 // A run that required an action and executed nothing did not
                 // complete, whatever its prose says. Tell the model once that
-                // nothing ran — measured live, most models then act — and end
-                // on `NoAction` if the second answer is empty too.
+                // nothing ran, and end on `NoAction` if the second answer is
+                // empty too.
                 if self.config.require_action && state.tool_calls == 0 {
                     if state.nudge_spent {
                         return StepResult::Terminal(TerminalReason::NoAction, Some(text));
@@ -2208,13 +2113,11 @@ impl<'a> Driver<'a> {
                 StepResult::Terminal(TerminalReason::Completed, Some(text))
             }
             AssistantAction::ToolCall { name, input } => {
-                // Re-check between the answer and the side effect. The
-                // top-of-step check already stops the NEXT billable dispatch,
-                // but a tool turn is where the run touches the world — an
-                // operator who pressed Ctrl-C while the model was deciding
-                // should not then watch a bash command run. The final-text
+                // Re-check between the answer and the side effect: a tool turn
+                // is where the run touches the world, so Ctrl-C while the model
+                // was deciding must not let a bash command run. The final-text
                 // branch above deliberately does NOT check: that answer is
-                // already paid for, and discarding it would be a second harm.
+                // already paid for.
                 state.accept_reply(&resp.result, self.reply_ceiling());
                 if self.cancel.is_cancelled() {
                     return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
@@ -2239,12 +2142,11 @@ impl<'a> Driver<'a> {
     /// Decide what a reply cut off by the output limit means for the run:
     /// one more ask for smaller pieces, or a verdict that names the cause.
     ///
-    /// Not a connector retry — the connector did its job and the answer is
-    /// paid for. What failed is that the model could not say what it wanted to
-    /// say inside one reply, so re-sending the same request unchanged would
-    /// buy the same cut-off at the same token. The re-dispatch is a different
-    /// request: it carries [`TRUNCATION_NUDGE`], and the fragment is dropped
-    /// rather than echoed back.
+    /// Not a connector retry: the connector did its job and the answer is paid
+    /// for. The model could not say what it wanted inside one reply, so
+    /// re-sending the same request would buy the same cut-off at the same
+    /// token. The re-dispatch carries [`TRUNCATION_NUDGE`], and the fragment is
+    /// dropped rather than echoed back.
     fn recover_from_truncation(
         &self,
         state: &mut RunState,
@@ -2278,11 +2180,10 @@ impl<'a> Driver<'a> {
     /// correction naming the encoding that works, or a verdict that says the
     /// model asked for a tool in a dialect this runner threw away.
     ///
-    /// Not a `NoAction` nudge, though it lands near one. [`NO_ACTION_NUDGE`]
-    /// answers a model that produced no call at all; this answers a model that
-    /// produced one we could not read, and the difference is the whole point —
-    /// told "nothing was executed, so call a tool", a model that has just
-    /// called a tool has no way to work out what to change.
+    /// Not a `NoAction` nudge: [`NO_ACTION_NUDGE`] answers a model that
+    /// produced no call at all, while this answers one that produced a call we
+    /// could not read. Told "nothing was executed, so call a tool", a model that
+    /// just called a tool cannot work out what to change.
     ///
     /// Nothing executed: `tool_calls` is not incremented here, so a run whose
     /// every reply was in the wrong dialect still reports zero work done.
@@ -2293,15 +2194,13 @@ impl<'a> Driver<'a> {
         detail: &str,
         reply: &str,
     ) -> StepResult {
-        // The reply, verbatim, before the run is allowed to end on it. What
-        // the runner made of the reply is already in `detail`; what the model
+        // The reply, verbatim, before the run may end on it: what the model
         // actually sent is only here, and a correction can only be judged
         // against the text it was written for.
         let saved = self.save_rejected_reply(state, reply);
         // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
-        // The operator needs this line — it is the difference between "the
-        // model refused to work" and "this runner cannot read what the model
-        // sent", and only one of those is the model's fault.
+        // The operator needs this line to tell "the model refused to work" from
+        // "this runner cannot read what the model sent".
         eprintln!(
             "{}",
             rejected_format_line(dialect, detail, saved.as_deref())
@@ -2327,11 +2226,10 @@ No other markup is executed, whatever your training says. \
     /// Send this turn's request and hand back the response the loop will
     /// interpret, or the step that ends the turn without one.
     ///
-    /// The dispatch, the recovery and the "a response arrived" bookkeeping are
-    /// one thing and live together: the response may come from the first call
-    /// or from a poll inside the in-flight wait (A2-245), and a counter reset
-    /// that ran on only one of those two paths would be a defect no single
-    /// test could see.
+    /// The dispatch, the recovery and the "a response arrived" bookkeeping live
+    /// together: the response may come from the first call or from a poll inside
+    /// the in-flight wait, and a counter reset on only one of those paths would
+    /// be a defect no single test could see.
     ///
     /// # Errors
     /// The step to return when there is no response to interpret.
@@ -2364,10 +2262,9 @@ No other markup is executed, whatever your training says. \
                 }
             }
         };
-        // A response — of any shape — means the upstream is answering again, so
-        // the retry budget starts over. Counting retries across a whole run
-        // would let three slow turns spread over an hour end it as if the
-        // connector had failed three times in a row.
+        // A response of any shape means the upstream is answering again, so the
+        // retry budget starts over; counting retries across a whole run would
+        // end it after three slow turns spread over an hour.
         state.connector_retries = 0;
         state.in_flight_polls = 0;
         state.connector_retry_pause_spent = Duration::ZERO;
@@ -2377,392 +2274,6 @@ No other markup is executed, whatever your training says. \
         // late and already paid for.
         state.intent.finish_turn();
         Ok(resp)
-    }
-
-    /// Decide what a failed connector attempt means for the run: another
-    /// dispatch, or the end of it.
-    ///
-    /// Retrying is safe here because a `/execute` dispatch has no local side
-    /// effect — the tools run on this side of the wire, and the only thing a
-    /// second attempt can spend twice is money, which the cost cap already
-    /// bounds. It is NOT a guarantee about the upstream: a connector that runs
-    /// tools server-side could act twice on a request whose answer never
-    /// arrived, which is why the retry is bounded and the upstream's own
-    /// `retryable` flag is respected rather than second-guessed.
-    async fn recover_or_stop(
-        &self,
-        state: &mut RunState,
-        failure: &ConnectorError,
-        first_dispatch: bool,
-        dispatch: &Dispatch<'_>,
-    ) -> Recovered {
-        if first_dispatch {
-            state.first_dispatch_observation = failure.first_dispatch_observation().cloned();
-        }
-        // The clock the terminal verdict reports. Started at the first failure
-        // of the streak, not at the start of the run: "94 turns" and "three
-        // 502s over four seconds" are different facts and the second one is
-        // what says whether the retry policy was a serious attempt.
-        //
-        // Hoisted above the loop, so a second lap — the in-flight wait handing
-        // back a refusal of a different class — measures the same streak rather
-        // than starting a new one.
-        let started = *state
-            .connector_failure_since
-            .get_or_insert_with(Instant::now);
-        // The loop exists for exactly one transition: the in-flight wait owns
-        // its own re-dispatches (A2-245), so when a poll is refused by
-        // something that is NOT "still in flight", that refusal has to be
-        // judged here, by the counters that belong to it, without going back
-        // out through `step()` and rebuilding the request to be told the same
-        // thing again.
-        let mut polled: Option<ConnectorError> = None;
-        loop {
-            let error = polled.as_ref().unwrap_or(failure);
-            // The connector's own message is the diagnosis — `ConnectorError`
-            // carries `HTTP {status}: {message}`, e.g. `HTTP 404: Connector
-            // "arcana-repl" not found`. Mapping to `ConnectorFatal` without it left
-            // the operator a verdict and no evidence, and cost a four-commit bisect
-            // and two wrong root causes to recover what this one line says.
-            // `eprintln!` rather than `tracing`: the CLI installs no subscriber, so
-            // a log line here is discarded.
-            eprintln!("arcana: connector dispatch failed: {error}");
-            // A size refusal is not a connector failure: the request was ours and
-            // it was too big. Retrying sends the same oversized body again, and
-            // reporting `ConnectorFatal` points the operator at a service that did
-            // exactly what its contract says.
-            if error.is_request_too_large() {
-                return Recovered::Step(StepResult::Terminal(
-                    TerminalReason::RequestTooLarge,
-                    None,
-                ));
-            }
-            // Not a transient failure, whatever the envelope's `retryable`
-            // flag says (A2-290). The upstream was aborted for spending the
-            // WHOLE per-attempt budget this client itself stated, and a
-            // re-dispatch of this turn sends byte-identical bytes under that
-            // identical budget — the same experiment, not a second chance.
-            //
-            // Stopping here rather than after the class's re-dispatches is the
-            // money decision. Model Connector reports an aborted attempt as
-            // `usage: 0` while the provider has already been fed the whole
-            // prompt, so `max_cost_usd` cannot see this class at all: measured
-            // on A2-278 run 5 (deepseek-v4-pro, a ~37 000-token turn), the run
-            // ended `ConnectorFatal` after 15 attempts having spent two more
-            // full 120 s budgets of provider compute that the cost tracker
-            // recorded as $0. The verdict names the budget and the model
-            // because those are the two things an operator changes.
-            if error.is_upstream_attempt_timeout() {
-                let turn_attempts = state.turn_attempts();
-                state.terminal_detail = Some(connector_fatal_detail(
-                    error,
-                    turn_attempts,
-                    started.elapsed(),
-                    FatalCause::UpstreamAttemptBudgetExhausted {
-                        attempt_budget: self.connector.upstream_attempt_budget(),
-                        model: dispatch.model,
-                    },
-                ));
-                return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
-            }
-            let class = RetryClass::of(error);
-            let limit = if class.is_patient() {
-                self.config.edge_retry_limit
-            } else {
-                self.config.connector_retry_limit
-            };
-            // Attempts of THIS turn, the failed first dispatch included — the
-            // number an operator counts in the log, not either retry counter.
-            let attempts = state.turn_attempts();
-            // The key belongs to a DIFFERENT payload, so nothing of ours was
-            // dispatched or charged under it, and sending it again can only be
-            // refused again. Model Connector marks this non-retryable and says in
-            // the same breath what the recovery is — "Use a fresh key for a new
-            // request" — so dropping the key and re-dispatching is the upstream's
-            // own instruction rather than a second-guess of its flag. It should
-            // never fire: `TurnIntentSeries::stamp` compares the payload itself
-            // and mints a new key before the server has to. This is the backstop
-            // for the case that comparison failed to predict, and it says so.
-            let reused_key = error.is_idempotency_key_reused();
-            if reused_key {
-                eprintln!(
-                    "arcana: the Idempotency-Key this turn was dispatched under belongs to a \
-                 different request — re-dispatching under a fresh key; this is a defect in \
-                 arcana, not in the connector"
-                );
-                state.intent.abandon_key();
-            }
-            if !reused_key && !error.is_transient() {
-                state.terminal_detail = Some(connector_fatal_detail(
-                    error,
-                    attempts,
-                    started.elapsed(),
-                    FatalCause::NotRetryable,
-                ));
-                return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
-            }
-            // A turn whose answer is still being produced upstream is not a
-            // failed request at all, and it is not bounded by a count. It leaves
-            // here for a wait with its own counter, its own clock and — since
-            // A2-245 — its own re-dispatches.
-            if class == RetryClass::InFlight {
-                match self
-                    .wait_out_in_flight(state, error, started, dispatch)
-                    .await
-                {
-                    Polled::Answered(resp) => return Recovered::Answered(resp),
-                    Polled::Stop(step) => return Recovered::Step(step),
-                    // Not an in-flight refusal any more: back to the top with it,
-                    // where the counters that judge its class live.
-                    Polled::Refused(next) => {
-                        polled = Some(next);
-                        continue;
-                    }
-                }
-            }
-            if state.connector_retries >= limit {
-                state.terminal_detail = Some(connector_fatal_detail(
-                    error,
-                    attempts,
-                    started.elapsed(),
-                    FatalCause::RetriesSpent { limit, class },
-                ));
-                return Recovered::Step(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
-            }
-            let wait = match self.plan_counted_redispatch(state, error, started, class, limit) {
-                Ok(wait) => wait,
-                Err(step) => return Recovered::Step(step),
-            };
-            if !wait.is_zero() {
-                tokio::time::sleep(wait).await;
-            }
-            // The next step re-checks it too, but an operator who pressed Ctrl-C
-            // during the pause should not then watch another dispatch go out.
-            if self.cancel.is_cancelled() {
-                return Recovered::Step(StepResult::Terminal(
-                    TerminalReason::AbortedByOperator,
-                    None,
-                ));
-            }
-            return Recovered::Step(StepResult::Continue(ContinueReason::ConnectorRetry));
-        }
-    }
-
-    /// Book the next re-dispatch of a failed request on the counted budget and
-    /// say how long to sleep first — or refuse, with the verdict that says why.
-    ///
-    /// Split out of [`Self::recover_or_stop`] so the counted schedule and the
-    /// in-flight deadline read as the two separate policies they are.
-    ///
-    /// # Errors
-    /// The terminal step when the sleep budget is spent.
-    fn plan_counted_redispatch(
-        &self,
-        state: &mut RunState,
-        error: &ConnectorError,
-        started: Instant,
-        class: RetryClass,
-        limit: u32,
-    ) -> Result<Duration, StepResult> {
-        let requested = retry_pause(
-            error,
-            state.connector_retries.saturating_add(1),
-            self.config.connector_retry_backoff,
-            class,
-        );
-        let Some(wait) = plan_retry_pause(
-            requested,
-            state.connector_retry_pause_spent,
-            self.config.connector_retry_pause_budget,
-        ) else {
-            state.terminal_detail = Some(connector_fatal_detail(
-                error,
-                state.turn_attempts(),
-                started.elapsed(),
-                FatalCause::PauseBudgetSpent {
-                    budget: self.config.connector_retry_pause_budget,
-                },
-            ));
-            return Err(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
-        };
-        state.connector_retries = state.connector_retries.saturating_add(1);
-        state.connector_retry_pause_spent = state.connector_retry_pause_spent.saturating_add(wait);
-        eprintln!(
-            "{}",
-            retry_line(
-                error,
-                wait,
-                class,
-                RetryBudget::Counted {
-                    attempt: state.connector_retries,
-                    limit,
-                },
-            )
-        );
-        Ok(wait)
-    }
-
-    /// How long one dispatch may legitimately take upstream before the loop
-    /// stops waiting for its answer.
-    ///
-    /// Asked of the connector rather than configured here: the number that
-    /// matters is the one the CALLER already told the upstream it may spend
-    /// (`ExecuteRequest.timeout`, widened by the server's own attempts and
-    /// queue), and a second copy of it in `DriverConfig` could only drift from
-    /// the first.
-    fn in_flight_budget(&self) -> Duration {
-        self.connector
-            .upstream_dispatch_budget()
-            .unwrap_or(ASSUMED_UPSTREAM_DISPATCH_BUDGET)
-            .saturating_add(IN_FLIGHT_SETTLE_MARGIN)
-    }
-
-    /// Wait out a turn Model Connector is still computing, under the key it
-    /// was dispatched with.
-    ///
-    /// This is the patient path, and A2-240 is what it is for: a 144k-token
-    /// turn, cut by Cloudflare at its ~100 s origin timeout while the
-    /// Connector went on producing the answer. `arcana` did the expensive part
-    /// right — it re-dispatched under the SAME `Idempotency-Key`, so no second
-    /// charge — and then threw the answer away after 41 s, because the wait
-    /// was five sleeps out of a counter it shared with the edge schedule.
-    ///
-    /// Three things are therefore deliberate here:
-    ///
-    /// * The counter is `RunState::in_flight_polls`, not
-    ///   `RunState::connector_retries`. The edge re-dispatch that PRECEDED the
-    ///   conflict — the 524 — must not subtract from the wait for the answer
-    ///   that same 524 interrupted. They are different facts about different
-    ///   upstreams.
-    /// * The bound is a deadline, not a count. It runs from the moment the
-    ///   request first left this client ([`TurnIntentSeries::dispatched_at`],
-    ///   which a re-dispatch under the same key does not move) and lasts as
-    ///   long as that request may legitimately run plus
-    ///   [`IN_FLIGHT_SETTLE_MARGIN`]. A count cannot express that: it is
-    ///   whatever the schedule happens to add up to, and jitter shortened
-    ///   A2-240's nominal 60 s to 41 s.
-    /// * The wait owns its re-dispatches. It used to return
-    ///   [`ContinueReason::ConnectorRetry`] after every pause, so every poll
-    ///   re-entered [`Self::step`]: the prompt rebuilt from the history, a
-    ///   block appended to the operator's transcript and a `dispatch` event to
-    ///   the audit log — for a request that is not being re-asked but
-    ///   collected. Measured on the `CutThenStillComputing` fixture with a
-    ///   turn of 80 000 characters: **13 prompt builds and 1 040 782 bytes of
-    ///   transcript for one waited turn**, against two dispatches' worth
-    ///   (A2-245). A poll now re-sends the bytes the dispatch already built
-    ///   ([`Dispatch`]) — which is also the only way they are guaranteed to be
-    ///   the same bytes, and the key replays only while they are.
-    ///
-    /// Waiting is also the cheap choice, and that is measured rather than
-    /// assumed: the hold that makes the retry a replay rather than a second
-    /// dispatch lives 30 minutes (`src/billing/intent.ts:36`), so every wait
-    /// this method can schedule is far inside the window where a retry is
-    /// free. The expensive choice is the one this replaces — abandoning a turn
-    /// that was bought.
-    ///
-    /// The pauses here are NOT charged to `connector_retry_pause_budget`: that
-    /// budget bounds how long a turn may sleep between attempts at a FAILED
-    /// request, and spending it here would put a second, shorter and unrelated
-    /// bound on a wait that already has one.
-    async fn wait_out_in_flight(
-        &self,
-        state: &mut RunState,
-        refusal: &ConnectorError,
-        started: Instant,
-        dispatch: &Dispatch<'_>,
-    ) -> Polled {
-        let budget = self.in_flight_budget();
-        // The most recent conflict, once this loop has collected one of its
-        // own. The verdict has to quote the refusal that ENDED the wait, not
-        // the one that started it.
-        let mut latest: Option<ConnectorError> = None;
-        loop {
-            let error = latest.as_ref().unwrap_or(refusal);
-            // `started` (the first failure of the streak) is the fallback, not
-            // the preference: it is later than the dispatch and so can only
-            // shorten the wait, which is the safe direction for a bound that
-            // must not be a guess. In practice the key is always in force here
-            // — the conflict is an answer TO it.
-            let dispatched = state.intent.dispatched_at().unwrap_or(started);
-            let waited = Instant::now().saturating_duration_since(dispatched);
-            let Some(remaining) = budget
-                .checked_sub(waited)
-                .filter(|remaining| !remaining.is_zero())
-            else {
-                state.terminal_detail = Some(connector_fatal_detail(
-                    error,
-                    state.turn_attempts(),
-                    started.elapsed(),
-                    FatalCause::InFlightWaitSpent {
-                        waited,
-                        budget,
-                        polls: state.in_flight_polls,
-                        redispatches: state.connector_retries,
-                        redispatch_limit: self.config.edge_retry_limit,
-                    },
-                ));
-                return Polled::Stop(StepResult::Terminal(TerminalReason::ConnectorFatal, None));
-            };
-            state.in_flight_polls = state.in_flight_polls.saturating_add(1);
-            state.in_flight_polls_total = state.in_flight_polls_total.saturating_add(1);
-            // Clamped to what is left, so the last poll lands ON the deadline
-            // rather than past it: an answer that settles in the final second
-            // is still an answer this turn paid for.
-            let wait =
-                in_flight_poll_pause(state.in_flight_polls, jitter_permille()).min(remaining);
-            eprintln!(
-                "{}",
-                retry_line(
-                    error,
-                    wait,
-                    RetryClass::InFlight,
-                    RetryBudget::Deadline {
-                        poll: state.in_flight_polls,
-                        waited,
-                        budget,
-                    },
-                )
-            );
-            if !wait.is_zero() {
-                tokio::time::sleep(wait).await;
-            }
-            // The step-level check cannot see this loop any more, and an
-            // operator who pressed Ctrl-C during a poll must not then watch
-            // another request go out.
-            if self.cancel.is_cancelled() {
-                return Polled::Stop(StepResult::Terminal(
-                    TerminalReason::AbortedByOperator,
-                    None,
-                ));
-            }
-            // The poll itself: the same bytes under the same key, and nothing
-            // else. `first_dispatch` is `false` because it is not one — the
-            // measurement metadata belongs to the attempt that opened the key,
-            // exactly as it did when a poll was a whole `step()`.
-            //
-            // `attempts` is still incremented, so `RunOutput::turns` keeps
-            // reporting every poll: what A2-241 exempted from `max_turns` is
-            // what the run is ALLOWED, never what it did.
-            state.attempts = state.attempts.saturating_add(1);
-            match self
-                .call_connector(
-                    &mut state.intent,
-                    dispatch.prompt,
-                    Some(dispatch.model),
-                    false,
-                )
-                .await
-            {
-                Ok(resp) => return Polled::Answered(Box::new(resp)),
-                Err(next) if RetryClass::of(&next) == RetryClass::InFlight => {
-                    // The same line a poll printed when it was a step of its
-                    // own: the wait got quieter in cost, not in evidence.
-                    eprintln!("arcana: connector dispatch failed: {next}");
-                    latest = Some(next);
-                }
-                Err(next) => return Polled::Refused(next),
-            }
-        }
     }
 
     /// Build the request, call the connector, and record its cost.
@@ -2778,27 +2289,23 @@ No other markup is executed, whatever your training says. \
         model: Option<&str>,
         first_dispatch: bool,
     ) -> Result<ConnectorResponse, ConnectorError> {
-        // Borrowed, not moved: the caller keeps the request so a poll for the
-        // answer it bought can send it again without rebuilding it (A2-245).
-        // The copy made here is the one the wire needs either way.
+        // Borrowed, not moved: the caller keeps the request so a poll can send
+        // it again without rebuilding it. The copy made here is the one the
+        // wire needs either way.
         let mut req = ExecuteRequest::new(self.config.connector_id.clone(), prompt);
         req.model = model.map(ToOwned::to_owned);
         req.system_prompt = self.config.system_prompt.clone();
         // `self.config.max_turns` is deliberately NOT forwarded as the wire
-        // field `maxTurns`. They are two different quantities: the config value
-        // caps how many connector attempts THIS loop makes, while `maxTurns` is
-        // a per-request passthrough that Model Connector validates as
-        // `z.number().int().min(1).max(100)` and hands to CLI connectors
-        // (`claude-code --max-turns`) for one invocation. Conflating them made
-        // every `arcana run --max-turns 120` die on its first dispatch with an
-        // HTTP 400 before the model was ever reached — a run-level budget
-        // rejected as a per-request one (A2-202).
+        // field `maxTurns`. The config value caps how many connector attempts
+        // THIS loop makes, while `maxTurns` is a per-request passthrough that
+        // Model Connector validates as `z.number().int().min(1).max(100)` and
+        // hands to CLI connectors (`claude-code --max-turns`); forwarding it
+        // makes a run-level budget fail as a per-request one with an HTTP 400.
         //
-        // Nothing is substituted for it: no run-level number is a correct
-        // per-request cap, the upstream work of one request stays bounded by
-        // `maxBudgetUsd` below, and a caller who genuinely wants to cap an
-        // upstream agentic CLI sets `max_turns` explicitly on its own request
-        // (`arcana_tools::model_call`).
+        // Nothing is substituted: no run-level number is a correct per-request
+        // cap, the upstream work of one request stays bounded by `maxBudgetUsd`
+        // below, and a caller who wants to cap an upstream agentic CLI sets
+        // `max_turns` on its own request (`arcana_tools::model_call`).
         req.max_budget_usd = self.remaining_cost_budget();
         if first_dispatch {
             req.first_dispatch_measurement = self.config.first_dispatch_measurement.clone();
@@ -2839,34 +2346,25 @@ No other markup is executed, whatever your training says. \
 
     /// Decide what a cascade denial does to the run.
     ///
-    /// A denial used to be terminal at every layer, including `schema` — which
-    /// only ever means the arguments did not match the tool's published JSON
-    /// schema. Measured on 2026-09-23 with `deepseek-flash`: turn 1 called
-    /// `bash` with arguments the schema rejected, the run ended on
-    /// `PermissionDenied` with `tool_calls: 0` and `rc 1`, and the model was
-    /// never told what was wrong, so it had no way to be right. The doc comment
-    /// on [`Self::run_tool_turn`] already promised that a dispatch error folds
-    /// back as a recoverable tool result; a malformed call is the same kind of
-    /// mistake and now follows the same rule.
+    /// `schema` only ever means the arguments did not match the tool's
+    /// published JSON schema, so a malformed call folds back as a recoverable
+    /// tool result, the same rule [`Self::run_tool_turn`] documents for a
+    /// dispatch error. The model is told what was wrong; otherwise it cannot be
+    /// right.
     ///
-    /// A2-225 changed what bounds the fold-back. It used to be a count —
-    /// three consecutive refusals of any kind and the run was over — and pilot
-    /// A2-204c4 died on it after twenty executed tool calls, because three
-    /// refusals happened to land in a row at the end. The bound is now the
-    /// **repeat**: a call already refused at this layer, sent again
-    /// unchanged, ends the run, because the fold-back has demonstrably not
-    /// worked. Genuinely new mistakes keep getting answered, bounded by
-    /// `max_turns` and the cost cap like everything else a run spends.
+    /// The bound on the fold-back is the **repeat**: a call already refused at
+    /// this layer, sent again unchanged, ends the run, because the fold-back has
+    /// demonstrably not worked. Genuinely new mistakes keep getting answered,
+    /// bounded by `max_turns` and the cost cap.
     ///
     /// Only [`RECOVERABLE_DENIAL_LAYERS`] fold back at all; a policy layer is
-    /// terminal on its first refusal, as before.
+    /// terminal on its first refusal.
     ///
     /// Nothing executed either way: `tool_calls` is not incremented here, so a
     /// run whose every call was refused still reports zero work done. It is
-    /// counted in `tool_calls_denied` instead, and written out, because "the
+    /// counted in `tool_calls_denied` and written out instead, because "the
     /// model called tools and every call was refused" and "the model never
-    /// called a tool" are opposite facts that used to produce the same
-    /// artefacts (A2-249).
+    /// called a tool" are opposite facts.
     fn fold_denial(
         &self,
         state: &mut RunState,
@@ -2877,21 +2375,18 @@ No other markup is executed, whatever your training says. \
     ) -> StepResult {
         // Counted and written out before the run decides what the denial
         // means, so a terminal policy refusal leaves the same evidence as a
-        // correctable one — a run that ENDS on a denial is the case where
-        // the call that was refused matters most.
+        // correctable one; the refused call matters most when the run ends.
         state.denied = state.denied.saturating_add(1);
         let saved = self.save_denied_call(state, name, layer, reason, input);
         // `eprintln!` rather than `tracing`: the CLI installs no subscriber.
-        // Without this line a refused turn is a gap in the operator's log —
-        // pilot A2-240b lost 21 turns to denials and its log names none.
+        // Without this line a refused turn is a gap in the operator's log.
         eprintln!(
             "{}",
             denied_call_line(layer, name, reason, saved.as_deref())
         );
         // Whatever ends the run says which layer refused, which tool, and what
-        // the error was. `PermissionDenied` alone made a misspelt argument and
-        // an operator-written policy rule read identically in the done-marker,
-        // where the pilot reported `"error": null`.
+        // the error was; `PermissionDenied` alone makes a misspelt argument and
+        // an operator-written policy rule read identically.
         let detail = format!("{layer} layer refused `{name}`: {reason}");
         if !denial_is_recoverable(layer) {
             state.terminal_detail = Some(detail);
@@ -2914,9 +2409,9 @@ No other markup is executed, whatever your training says. \
             return StepResult::Terminal(TerminalReason::PermissionDenied, None);
         }
         // Phrased as a fact about the machine, like `NO_ACTION_NUDGE`: what did
-        // not happen, why, and what the model has to change. The one rule it is
-        // on is stated, because a model that does not know re-sending is fatal
-        // cannot choose to try something else instead.
+        // not happen, why, and what the model has to change. The rule it is on is
+        // stated, because a model that does not know re-sending is fatal cannot
+        // choose to try something else.
         state.history.push(HistoryEntry::ToolResult {
             name: name.to_owned(),
             content: format!(
@@ -2931,12 +2426,10 @@ same call again, unchanged, ends the run."
     /// Bound one tool result before it enters the transcript, keeping the
     /// whole of it where the model can still get at it.
     ///
-    /// A single command decides whether the rest of the run happens: `git
-    /// clone`, `cargo test` and `find` all return more text than an entire
-    /// request may contain, and the old loop carried every character of it
-    /// into every later turn until the connector refused the request. Bounding
-    /// at ingestion — rather than trimming later, when the transcript is
-    /// already too big — is what makes the request fit *by construction*.
+    /// A single command (`git clone`, `cargo test`, `find`) can return more text
+    /// than an entire request may contain. Bounding at ingestion, rather than
+    /// trimming once the transcript is already too big, makes the request fit
+    /// *by construction*.
     ///
     /// Nothing is destroyed. With a spill directory configured the untouched
     /// output is written to a file inside the workspace and the elision marker
@@ -2960,10 +2453,10 @@ same call again, unchanged, ends the run."
     /// full disk into a second, different failure would hide the first.
     ///
     /// The file is named for the turn it belongs to, so it lines up with the
-    /// `dispatch` audit records and with the `turns` count in the done
-    /// marker. The reply is written as bytes with nothing prepended — a
-    /// header would mean the file is no longer what the model sent, which is
-    /// the one property it exists to have.
+    /// `dispatch` audit records and the `turns` count in the done marker. The
+    /// reply is written as bytes with nothing prepended: a header would mean the
+    /// file is no longer what the model sent, the one property it exists to
+    /// have.
     fn save_rejected_reply(&self, state: &mut RunState, reply: &str) -> Option<String> {
         let dir = self.config.rejected_reply_dir.as_ref()?;
         state.rejected = state.rejected.saturating_add(1);
@@ -2991,21 +2484,17 @@ same call again, unchanged, ends the run."
     /// going to correct or end on this call, and a full disk must not become a
     /// second, different failure that hides the first.
     ///
-    /// JSON rather than the verbatim bytes a rejected reply gets, because
-    /// there are no verbatim bytes to keep: the input reaching here has been
-    /// parsed out of the reply, and the reply itself is already the thing
-    /// `.arcana/rejected/` exists for. The record is therefore a statement
-    /// about the denial — turn, tool, layer, reason, input — plus the audit's
-    /// own `input_hash`, which is the only way to join this file to the
-    /// `decision` record that refused it.
+    /// JSON rather than verbatim bytes, because the input reaching here has
+    /// been parsed out of the reply, and the reply itself is already what
+    /// `.arcana/rejected/` holds. The record is a statement about the denial
+    /// (turn, tool, layer, reason, input) plus the audit's own `input_hash`,
+    /// the only way to join this file to the `decision` record that refused it.
     ///
     /// This is where the reason text lives. The audit log stores its hash and
-    /// not the sentence, because the sentence quotes what the model wrote —
-    /// `"…" is not of type "integer"` from the schema layer, the path itself
-    /// from the workspace boundary. That file is under `$XDG_STATE_HOME` and
-    /// is never rotated; this one is in the workspace the run was confined to,
-    /// beside a `.arcana/rejected/` file that would have held the same text
-    /// inside the whole reply anyway.
+    /// not the sentence, because the sentence quotes what the model wrote (the
+    /// schema layer's `"…" is not of type "integer"`, the workspace boundary's
+    /// path). That log is under `$XDG_STATE_HOME` and never rotated; this file
+    /// is in the workspace the run was confined to.
     fn save_denied_call(
         &self,
         state: &mut RunState,
@@ -3033,12 +2522,10 @@ same call again, unchanged, ends the run."
     /// Record the size of the request this turn is about to send.
     ///
     /// Sizes, never text: this crate's audit log is hashes-only for anything
-    /// that could carry prompt content, and that rule is what makes it safe to
-    /// keep under `$XDG_STATE_HOME` forever. But "how big was the request"
-    /// is not content, and without it a run that died against the connector's
-    /// 100 000-unit field limit left nothing at all to reconstruct from —
-    /// the A2-216 post-mortem had to estimate the split from a token count and
-    /// say so (`/home/dev/aup/arc2/runs/A2-216/report.md`, § 2).
+    /// that could carry prompt content, which is what makes it safe to keep
+    /// under `$XDG_STATE_HOME` forever. "How big was the request" is not
+    /// content, and without it a run that died against the connector's
+    /// 100 000-unit field limit leaves nothing to reconstruct from.
     ///
     /// Written BEFORE the dispatch and fail-closed, like every other append in
     /// this crate: a turn whose size could not be recorded must not be one the
@@ -3065,9 +2552,9 @@ same call again, unchanged, ends the run."
     /// Append this dispatch's exact request to the operator's transcript file.
     ///
     /// Only when they asked for one. The system prompt is written with the
-    /// first dispatch alone — it does not change during a run, and repeating
-    /// it every turn would treble a file whose reason for existing is that it
-    /// is readable.
+    /// first dispatch alone: it does not change during a run, and repeating it
+    /// every turn would treble a file whose reason for existing is that it is
+    /// readable.
     fn save_transcript(&self, state: &mut RunState, turn: u32, prompt: &str) {
         let Some(path) = self.config.transcript_path.as_ref() else {
             return;
@@ -3129,59 +2616,62 @@ same call again, unchanged, ends the run."
     /// results into `history`. A dispatch error folds back as a tool-result
     /// string (recoverable, bounded by `max_turns`) rather than terminating,
     /// and so does a denial at one of the [`RECOVERABLE_DENIAL_LAYERS`].
-    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
-        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
-        // The call as the model wrote it, kept for the refusal fingerprint.
-        // The executor consumes the value, and a denial has to be able to say
-        // whether this is the same call the model already sent.
-        let attempted = input.clone();
-        // Counted before the attempt, not after it: this is the number that
-        // says what the model tried, and a call that is about to be refused
-        // was still a call.
-        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
-        let capability = match self.executor.execute(&ctx, name, input).await {
-            Ok(capability) => capability,
-            Err(CapabilityError::Cancelled) => {
-                return StepResult::Terminal(TerminalReason::AbortedByOperator, None);
+    /// Map a capability-executor failure onto the step outcome for this turn.
+    fn fold_capability_error(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        err: CapabilityError,
+        attempted: &Value,
+    ) -> StepResult {
+        match err {
+            CapabilityError::Cancelled => {
+                StepResult::Terminal(TerminalReason::AbortedByOperator, None)
             }
-            Err(CapabilityError::Denied { layer, reason }) => {
-                return self.fold_denial(state, name, layer, &reason, &attempted);
+            CapabilityError::Denied { layer, reason } => {
+                self.fold_denial(state, name, layer, &reason, attempted)
             }
-            Err(CapabilityError::HookAborted) => {
+            CapabilityError::HookAborted => {
                 // A refusal by operator-owned code, audited as `Denied` at the
-                // `hook` layer, so it is counted as one. No file: the abort
-                // reaches this loop without the hook's reason, and a record
-                // whose `reason` had to be invented would be worse than none.
+                // `hook` layer, so counted as one. No file: the abort reaches
+                // this loop without the hook's reason, and an invented `reason`
+                // would be worse than no record.
                 state.denied = state.denied.saturating_add(1);
-                return StepResult::Terminal(TerminalReason::AbortedByHook, None);
+                StepResult::Terminal(TerminalReason::AbortedByHook, None)
             }
-            Err(
-                CapabilityError::AuditFailure {
-                    phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
-                    ..
-                }
-                | CapabilityError::AuditLatched,
-            ) => {
-                return StepResult::Terminal(TerminalReason::AuditFatal, None);
+            CapabilityError::AuditFailure {
+                phase: AuditFailurePhase::Decision | AuditFailurePhase::Result,
+                ..
             }
-            Err(CapabilityError::Tool(err)) => {
+            | CapabilityError::AuditLatched => {
+                StepResult::Terminal(TerminalReason::AuditFatal, None)
+            }
+            CapabilityError::Tool(err) => {
                 state.history.push(HistoryEntry::ToolResult {
                     name: name.to_owned(),
                     content: format!("dispatch error: {err}"),
                 });
-                return StepResult::Continue(ContinueReason::ToolResultsReady);
+                StepResult::Continue(ContinueReason::ToolResultsReady)
             }
-        };
+        }
+    }
+
+    /// Fold a successful capability into history and continue the run.
+    fn accept_tool_capability(
+        &self,
+        state: &mut RunState,
+        name: &str,
+        capability: CapabilityOutput,
+    ) -> StepResult {
         // Counted here and nowhere else: the executor returned, so the tool
         // ran. A denied or hook-aborted call left through an arm above, and a
         // dispatch error folds back as a tool result without reaching this
         // line, because a tool that failed to dispatch did no work either.
         state.tool_calls = state.tool_calls.saturating_add(1);
         state.executed_tools.push(name.to_owned());
-        // The refusal memory is consecutive, so a call that ran clears it.
-        // Otherwise a long, mostly-healthy run that made the same slip twice an
-        // hour apart would die on the second — and the bound is meant for a
-        // model stuck in one place, not for a run with a long memory.
+        // The refusal memory is consecutive, so a call that ran clears it:
+        // the bound is meant for a model stuck in one place, not a long run
+        // that made the same slip twice an hour apart.
         state.refused_calls.clear();
         // Same argument for the format streak: a call that executed is proof
         // the model can write one this runner reads.
@@ -3201,366 +2691,28 @@ same call again, unchanged, ends the run."
             StepResult::Continue(ContinueReason::ToolResultsReady)
         }
     }
-}
 
-/// Which clock a transient failure heals on, which decides how patiently the
-/// loop waits for it.
-///
-/// Three classes, and the split is about WHO is not answering, not about
-/// severity — see [`ConnectorError::is_edge_gateway_failure`] for the first
-/// half of the argument and [`ConnectorError::is_idempotency_conflict`] for
-/// the second.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RetryClass {
-    /// Model Connector authored the refusal. It has already spent its own
-    /// server-side attempts by the time the client sees one, so a long
-    /// client-side wait on top buys little: two flat re-dispatches.
-    Connector,
-    /// The network edge in front of Model Connector. The request never reached
-    /// a decision, and an edge heals in tens of seconds: five re-dispatches on
-    /// the exponential schedule.
-    EdgeGateway,
-    /// The first attempt of THIS turn is still running upstream, and Model
-    /// Connector is refusing to start a second one under the same key.
-    ///
-    /// The most patient class of the three, and the cheapest: the answer is
-    /// being produced and already paid for, and the alternative to waiting is
-    /// abandoning a turn that was bought. Model Connector's own message is
-    /// explicit that the wrong recovery is a new key — "do not reissue it
-    /// under a new key or it will be dispatched and charged twice."
-    InFlight,
-}
-
-impl RetryClass {
-    fn of(error: &ConnectorError) -> Self {
-        if error.is_idempotency_conflict() {
-            Self::InFlight
-        } else if error.is_edge_gateway_failure() {
-            Self::EdgeGateway
-        } else {
-            Self::Connector
+    async fn run_tool_turn(&self, state: &mut RunState, name: &str, input: Value) -> StepResult {
+        let ctx = HookContext::new(self.cancel.clone(), self.cost.clone());
+        // The call as the model wrote it, kept for the refusal fingerprint.
+        // The executor consumes the value, and a denial has to be able to say
+        // whether this is the same call the model already sent.
+        let attempted = input.clone();
+        // Counted before the attempt, not after it: this is the number that
+        // says what the model tried, and a call that is about to be refused
+        // was still a call.
+        state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
+        match self.executor.execute(&ctx, name, input).await {
+            Ok(capability) => self.accept_tool_capability(state, name, capability),
+            Err(err) => self.fold_capability_error(state, name, err, &attempted),
         }
-    }
-
-    /// Whether this class gets the deeper budget and the exponential schedule.
-    const fn is_patient(self) -> bool {
-        matches!(self, Self::EdgeGateway | Self::InFlight)
-    }
-
-    /// The class as a terminal verdict names it.
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Connector => "transient connector failure",
-            Self::EdgeGateway => "transient gateway failure in front of the Model Connector",
-            Self::InFlight => "request still in flight upstream under this turn's Idempotency-Key",
-        }
-    }
-}
-
-/// How long to wait before re-dispatching a transient failure.
-///
-/// An upstream that named a `retryAfter` knows better than we do — up to
-/// [`MAX_RETRY_AFTER`], past which an unattended run would be parked for
-/// longer than any operator expects a single turn to take. It wins over both
-/// schedules below, because it is the only one of the three that is a
-/// statement about this particular upstream at this particular moment.
-///
-/// Failing that: a gateway failure gets the exponential schedule, and anything
-/// else keeps the flat `fallback` it has always had. `retry` is 1-based — the
-/// first re-dispatch of the turn is 1.
-fn retry_pause(
-    error: &ConnectorError,
-    retry: u32,
-    fallback: Duration,
-    class: RetryClass,
-) -> Duration {
-    if let Some(secs) = error.retry_after_secs() {
-        return Duration::from_secs(secs).min(MAX_RETRY_AFTER);
-    }
-    if class.is_patient() {
-        return edge_backoff_pause(retry, fallback, jitter_permille());
-    }
-    fallback
-}
-
-/// One pause of the bounded exponential gateway schedule, with jitter.
-///
-/// Nominal is `base * 2^(retry - 1)`, capped at [`MAX_EDGE_RETRY_PAUSE`]: with
-/// the shipped 2 s base that is **2 s, 4 s, 8 s, 16 s, 30 s** — 60 s of sleep
-/// across the five re-dispatches [`DEFAULT_EDGE_RETRY_LIMIT`] allows, which is
-/// the worst-case wall time this schedule adds to a turn.
-///
-/// Jitter only ever SHORTENS a pause (the factor is `0.5 ..= 1.0` of nominal),
-/// so the worst case above is a real ceiling rather than an average. Jitter is
-/// not decoration: an edge that drops a burst of requests hands every client
-/// the same failure at the same instant, and a fleet of runs that all wake at
-/// exactly 2 s re-creates the burst that took the edge down. `permille` is the
-/// randomness, passed in so the schedule is a pure function and can be pinned.
-fn edge_backoff_pause(retry: u32, base: Duration, permille: u32) -> Duration {
-    backoff_pause(retry, base, MAX_EDGE_RETRY_PAUSE, permille)
-}
-
-/// One pause of the in-flight poll schedule.
-///
-/// The same doubling with the same jitter, on its own base and its own
-/// ceiling: **2, 4, 8, 15, 15, …** seconds nominal. It has no count limit
-/// because the count is not what bounds it — see
-/// [`Driver::wait_out_in_flight`] — so the ceiling is what decides how stale
-/// an already-settled answer may get, and 15 s is that answer.
-fn in_flight_poll_pause(poll: u32, permille: u32) -> Duration {
-    backoff_pause(
-        poll,
-        IN_FLIGHT_POLL_BASE,
-        MAX_IN_FLIGHT_POLL_PAUSE,
-        permille,
-    )
-}
-
-/// Bounded exponential backoff with jitter, shared by both schedules.
-fn backoff_pause(retry: u32, base: Duration, cap: Duration, permille: u32) -> Duration {
-    let steps = retry.saturating_sub(1).min(16);
-    let nominal = base.saturating_mul(1_u32 << steps).min(cap);
-    // 500..=1000 permille of nominal. Integer arithmetic on nanos: the pauses
-    // are seconds-scale, so u128 cannot overflow and no float rounding can
-    // push a pause above nominal.
-    let factor = 500 + u128::from(permille.min(1000)) / 2;
-    let nanos = nominal.as_nanos() * factor / 1000;
-    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
-}
-
-/// Jitter source: the sub-second part of the wall clock.
-///
-/// Deliberately not a `rand` dependency. The property needed here is that two
-/// runners failing on the same edge burst do not wake together, and the
-/// nanosecond the process reaches this line is already uncorrelated between
-/// them. A clock that refuses to answer yields the full pause, which is the
-/// conservative direction.
-fn jitter_permille() -> u32 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(1000, |since| since.subsec_nanos() % 1001)
-}
-
-/// Clamp a requested pause to what is left of the turn's sleep budget.
-///
-/// `None` means the budget is spent and the run must stop instead of sleeping
-/// again — a bound on the sum of pauses, which no per-pause cap can express.
-fn plan_retry_pause(requested: Duration, spent: Duration, budget: Duration) -> Option<Duration> {
-    let remaining = budget.checked_sub(spent).unwrap_or(Duration::ZERO);
-    if remaining.is_zero() {
-        return None;
-    }
-    Some(requested.min(remaining))
-}
-
-/// Why the loop stopped re-dispatching.
-#[derive(Debug, Clone, Copy)]
-enum FatalCause<'a> {
-    /// The same request would fail the same way — a 404 connector id, a bad
-    /// key, an envelope the upstream marked non-retryable.
-    NotRetryable,
-    /// Every re-dispatch this class is allowed has been made.
-    RetriesSpent { limit: u32, class: RetryClass },
-    /// The turn has slept as long as it may.
-    PauseBudgetSpent { budget: Duration },
-    /// The upstream attempt was aborted for consuming the whole per-attempt
-    /// budget this client sent, and a re-dispatch could only repeat it
-    /// (A2-290).
-    UpstreamAttemptBudgetExhausted {
-        /// What one attempt was allowed, when the connector states it.
-        attempt_budget: Option<Duration>,
-        /// The model the turn was dispatched to — half of what an operator
-        /// has to change, the other half being the budget.
-        model: &'a str,
-    },
-    /// The answer was still being produced upstream when the time that
-    /// request may legitimately take ran out (A2-241).
-    InFlightWaitSpent {
-        /// Since the request first left this client.
-        waited: Duration,
-        /// Upstream dispatch budget plus [`IN_FLIGHT_SETTLE_MARGIN`].
-        budget: Duration,
-        /// Polls made under the turn's key.
-        polls: u32,
-        /// Re-dispatches of a FAILED request this turn made — a separate
-        /// budget, named so the verdict cannot be read as "retries spent".
-        redispatches: u32,
-        redispatch_limit: u32,
-    },
-}
-
-/// The line a run that died on the connector leaves behind, in the marker's
-/// `error` field and on stderr.
-///
-/// Pilot A2-204c5 ended `ConnectorFatal` with `"error": null` and the single
-/// stderr line `the Model Connector could not complete the request` — which
-/// named neither the status, nor how many times it had been tried, nor over
-/// how long. Three 502s in four seconds and an upstream down for an hour read
-/// identically, and only one of them is a retry policy that was too short.
-/// A2-225 gave denials this treatment; this is the connector's half.
-fn connector_fatal_detail(
-    error: &ConnectorError,
-    attempts: u32,
-    elapsed: Duration,
-    cause: FatalCause<'_>,
-) -> String {
-    let why = match cause {
-        FatalCause::NotRetryable => {
-            "not retryable — the same request would fail the same way".to_owned()
-        }
-        FatalCause::RetriesSpent { limit, class } => format!(
-            "the {limit} re-dispatch(es) allowed for a {} are spent",
-            class.label()
-        ),
-        FatalCause::PauseBudgetSpent { budget } => format!(
-            "the {}s this turn may spend waiting between re-dispatches are spent",
-            budget.as_secs()
-        ),
-        FatalCause::UpstreamAttemptBudgetExhausted {
-            attempt_budget,
-            model,
-        } => {
-            let budget = attempt_budget.map_or_else(
-                || "the per-attempt budget".to_owned(),
-                |budget| {
-                    format!(
-                        "the {}s this client allows one upstream attempt",
-                        budget.as_secs()
-                    )
-                },
-            );
-            format!(
-                "not retryable — the upstream attempt was aborted for spending {budget}, and a \
-                 re-dispatch would send the same prompt to {model} under the same budget. Raise \
-                 the per-attempt budget or dispatch to a faster model; re-running it as it \
-                 stands only buys another aborted attempt, which the provider charges for and \
-                 Model Connector reports as usage 0"
-            )
-        }
-        // Both budgets, deliberately. The one that ran out is a clock, and an
-        // operator who reads "re-dispatches are spent" would go looking for a
-        // limit to raise that has nothing to do with why the turn was
-        // abandoned — which is exactly the wrong lesson A2-240's own verdict
-        // taught.
-        FatalCause::InFlightWaitSpent {
-            waited,
-            budget,
-            polls,
-            redispatches,
-            redispatch_limit,
-        } => format!(
-            "the answer was still being produced upstream after {} of the {} this turn's \
-request may legitimately take, across {polls} poll(s) under its Idempotency-Key — the \
-separate budget of {redispatch_limit} re-dispatch(es) for a FAILED request is untouched at \
-{redispatches}, so raising it would change nothing here; it is the clock that ran out",
-            format_elapsed(waited),
-            format_elapsed(budget),
-        ),
-    };
-    format!(
-        "{} after {attempts} attempt(s) over {} — {why}: {}",
-        error.status_label(),
-        format_elapsed(elapsed),
-        error.detail_text()
-    )
-}
-
-/// The line printed before each re-dispatch.
-///
-/// Pure so its shape can be pinned without capturing stdio. It carries the one
-/// fact an operator reconciling a bill at 3 a.m. needs and no layer above will
-/// tell them: what this re-dispatch costs.
-///
-/// A2-230 could only say the bad half of that — Model Connector settles the
-/// charge before the response reaches the socket, `arcana` sent no
-/// `Idempotency-Key`, so a re-dispatch of a cut request "may be a paid
-/// duplicate". Since A2-234 the same key goes out with every attempt of a
-/// turn, so the sentence states the outcome instead of the risk: a request
-/// that was executed and billed comes back as a replay.
-fn retry_line(
-    error: &ConnectorError,
-    wait: Duration,
-    class: RetryClass,
-    budget: RetryBudget,
-) -> String {
-    let headline = match class {
-        RetryClass::Connector => String::new(),
-        RetryClass::EdgeGateway => format!(
-            "{} is the gateway in front of the Model Connector, not the Model Connector — ",
-            error.status_label()
-        ),
-        RetryClass::InFlight => "the first attempt of this turn is still running upstream — \
-waiting for the answer it is already producing rather than dispatching a second paid one, "
-            .to_owned(),
-    };
-    let charge = match class {
-        RetryClass::InFlight => "",
-        _ if error.response_may_have_been_completed_upstream() => {
-            " — the cut request may already have been executed and charged upstream, so the \
-re-dispatch carries the same Idempotency-Key and is replayed rather than charged again"
-        }
-        _ => "",
-    };
-    format!(
-        "arcana: {headline}retrying this turn in {} ({}){charge}",
-        format_elapsed(wait),
-        budget.render()
-    )
-}
-
-/// Which budget the parenthetical in [`retry_line`] is reporting against.
-///
-/// Two shapes because there are two bounds, and A2-240 printed the wrong one:
-/// every conflict said "n of 5" while the thing that would end the wait was a
-/// clock, so the log answered a question nobody had asked and hid the one that
-/// mattered.
-#[derive(Debug, Clone, Copy)]
-enum RetryBudget {
-    /// Re-dispatches of a failed request: `2 of 5`.
-    Counted { attempt: u32, limit: u32 },
-    /// Waiting for an answer already paid for: `polled 3 times, 27s of 140s`.
-    Deadline {
-        poll: u32,
-        waited: Duration,
-        budget: Duration,
-    },
-}
-
-impl RetryBudget {
-    fn render(self) -> String {
-        match self {
-            Self::Counted { attempt, limit } => format!("{attempt} of {limit}"),
-            Self::Deadline {
-                poll,
-                waited,
-                budget,
-            } => format!(
-                "poll {poll}, {} of the {} this request may take",
-                format_elapsed(waited),
-                format_elapsed(budget)
-            ),
-        }
-    }
-}
-
-/// A duration as an operator reads it: whole seconds past ten, one decimal
-/// below, so `0.3s` and `63s` both say something.
-fn format_elapsed(d: Duration) -> String {
-    if d.as_secs() >= 10 {
-        // Rounded through the integer parts rather than through `f64`: this
-        // string ends up in a done-marker a script may parse.
-        let rounded = d.as_secs() + u64::from(d.subsec_millis() >= 500);
-        format!("{rounded}s")
-    } else {
-        format!("{:.1}s", d.as_secs_f64())
     }
 }
 
 /// Exhaustive reduction of a [`TurnOutcome`] to a loop directive.
 ///
 /// Delegates to per-branch matchers so that adding a `ContinueReason` or a
-/// `TerminalReason` variant is a compile error the driver must resolve
-/// (D-REQ-02).
+/// `TerminalReason` variant is a compile error the driver must resolve.
 fn reduce(outcome: TurnOutcome) -> LoopControl {
     match outcome {
         TurnOutcome::Continue(reason) => reduce_continue(reason),
@@ -3619,13 +2771,9 @@ mod terminal_reason_tests {
 
     /// Every variant, so a new one cannot be added without deciding what the
     /// operator is told when it fires.
-    /// The list said "every variant" and held ten of them while the enum had
-    /// twelve: `ResponseTruncated` and `UnsupportedToolCallFormat` were added
-    /// with their explanations and never checked here, because a `const` array
-    /// with an explicit length is not an exhaustive match and the compiler has
-    /// nothing to say about it. Kept as an array rather than a match on a
-    /// sample value so the length is visible; the test below asserts it
-    /// against the enum's own count.
+    /// A `const` array with an explicit length is not an exhaustive match, so
+    /// the compiler cannot flag a missing variant; the test below asserts the
+    /// length against the enum's own count.
     const ALL: [TerminalReason; 13] = [
         TerminalReason::Completed,
         TerminalReason::MaxTurns,
@@ -3727,9 +2875,8 @@ mod terminal_reason_tests {
 
     #[test]
     fn the_context_window_verdict_tells_the_user_what_to_do() {
-        // Measured: a 1 MB prompt is rejected locally in 35 ms with no network
-        // call, which is the right decision — but the operator was shown only
-        // `ContextWindowExhausted` and no way to act on it.
+        // A 1 MB prompt is rejected locally with no network call, which is the
+        // right decision, but the operator must be shown a way to act on it.
         let explained = TerminalReason::ContextWindowExhausted.explain();
         assert!(explained.contains("context window"), "{explained}");
         assert!(explained.contains("shorten"), "{explained}");
@@ -3739,10 +2886,12 @@ mod terminal_reason_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod connector_retry_tests {
-    use super::{
+    use super::recovery::{
         connector_fatal_detail, edge_backoff_pause, in_flight_poll_pause, jitter_permille,
-        plan_retry_pause, retry_line, retry_pause, FatalCause, Instant, IntentDecision,
-        RetryBudget, RetryClass, TurnIntentSeries, DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
+        plan_retry_pause, retry_line, retry_pause, FatalCause, RetryBudget, RetryClass,
+    };
+    use super::{
+        Instant, IntentDecision, TurnIntentSeries, DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
         DEFAULT_EDGE_RETRY_LIMIT, MAX_EDGE_RETRY_PAUSE, MAX_IN_FLIGHT_POLL_PAUSE, MAX_RETRY_AFTER,
     };
     use crate::connector::{
@@ -3942,11 +3091,10 @@ mod connector_retry_tests {
 
     /// The retry log says the thing an operator reconciling a bill needs.
     ///
-    /// A2-230 could only warn — "may be a paid duplicate" — because no key was
-    /// sent. A2-234 sends one, so the same line now states the outcome: the
-    /// re-dispatch is replayed. The word "duplicate" is deliberately gone; a
-    /// line that still warned would send an operator hunting a second charge
-    /// that is not there.
+    /// With a key sent on every attempt, the line states the outcome (the
+    /// re-dispatch is replayed) rather than warning of a paid duplicate; a line
+    /// that still warned would send an operator hunting a second charge that is
+    /// not there.
     #[test]
     fn a_gateway_retry_says_the_re_dispatch_is_replayed_not_charged_again() {
         let line = retry_line(
@@ -4017,15 +3165,14 @@ mod connector_retry_tests {
         );
     }
 
-    /// A conflict is not a failure of this turn and the line must not read
-    /// like one: the answer is being produced upstream and is already paid
-    /// for. Model Connector's own instruction — do not reissue under a new key
-    /// — is what the wait implements.
+    /// A conflict is not a failure of this turn and the line must not read like
+    /// one: the answer is being produced upstream and is already paid for.
+    /// Model Connector's own instruction — do not reissue under a new key — is
+    /// what the wait implements.
     ///
-    /// And since A2-241 the parenthetical reports the budget that will
-    /// actually end the wait. "3 of 5" was the edge schedule's counter, shared
-    /// and irrelevant: it told an operator the turn had two tries left when
-    /// what it had was 113 seconds.
+    /// The parenthetical reports the budget that will actually end the wait: an
+    /// edge-schedule counter ("3 of 5") would tell an operator the turn had two
+    /// tries left when what it had was a clock.
     #[test]
     fn an_in_flight_conflict_line_says_it_is_waiting_not_re_asking() {
         let line = retry_line(
@@ -4051,10 +3198,9 @@ mod connector_retry_tests {
         );
     }
 
-    /// The in-flight schedule is its own: its own base, its own ceiling, and
-    /// no dependence on `connector_retry_backoff` — which every test in this
-    /// repository sets to zero, and which would otherwise turn the wait into a
-    /// hot loop against an upstream that is busy producing our answer.
+    /// The in-flight schedule is its own: its own base, its own ceiling, and no
+    /// dependence on `connector_retry_backoff`, which tests set to zero and
+    /// which would otherwise turn the wait into a hot loop.
     #[test]
     fn the_in_flight_poll_schedule_doubles_to_its_own_ceiling() {
         let nominal: Vec<Duration> = (1..=6)
@@ -4080,9 +3226,9 @@ mod connector_retry_tests {
         }
     }
 
-    /// The verdict names BOTH budgets. A line that only said "re-dispatches
-    /// are spent" — which is what A2-240 printed — sends an operator to raise
-    /// a limit that had nothing to do with why the turn was abandoned.
+    /// The verdict names BOTH budgets: a line that only said "re-dispatches
+    /// are spent" would send an operator to raise a limit unrelated to why the
+    /// turn was abandoned.
     #[test]
     fn the_in_flight_verdict_names_the_clock_and_the_untouched_counter() {
         let detail = connector_fatal_detail(
@@ -4157,11 +3303,10 @@ mod connector_retry_tests {
 
         series.finish_turn();
         let mut next_turn = ExecuteRequest::new("deepseek", "and the next question");
-        // `New`, not `Replaced`: an ordinary turn boundary is not a defect and
-        // must not be reported as one. A `finish_turn` that failed to release
-        // the key would still mint a fresh key here — the payload differs —
-        // and would put the defect line on every turn of every run, which is
-        // exactly the mutant this assertion exists to kill.
+        // `New`, not `Replaced`: an ordinary turn boundary is not a defect. A
+        // `finish_turn` that failed to release the key would still mint a fresh
+        // key here (the payload differs) and put the defect line on every turn
+        // of every run, which is the mutant this assertion exists to kill.
         assert_eq!(
             series.stamp(&mut next_turn, Instant::now()),
             IntentDecision::New
@@ -4238,7 +3383,7 @@ mod connector_retry_tests {
         }
     }
 
-    /// The three facts the pilot's `"error": null` did not carry.
+    /// The three facts the done-marker error field must carry.
     #[test]
     fn the_fatal_detail_carries_status_attempts_and_elapsed() {
         let detail = connector_fatal_detail(
@@ -4279,11 +3424,9 @@ mod connector_retry_tests {
 /// denial.
 ///
 /// The constant this checks is a fail-closed default: a name that is not on
-/// it is terminal. That is the safe direction, but it is also silent. A future
-/// edit could add `hook_bridge` or `rule` to the set and make an
-/// operator-owned refusal retryable without any test turning red. Measured on
-/// `92a4a7a`, before this test existed: adding `destructive_command_floor`
-/// broke three tests, adding `hook_bridge` or `rule` broke none.
+/// it is terminal. That is the safe direction, but it is also silent: adding
+/// `hook_bridge` or `rule` to the set would make an operator-owned refusal
+/// retryable without any test turning red.
 ///
 /// The table below is that decision written down once: every name, the site
 /// that emits it, and whether folding it back to the model is intended. The

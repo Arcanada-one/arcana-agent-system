@@ -14,6 +14,14 @@
 //!    answers with some other contract, or with bytes that were edited after
 //!    they were stamped, gets `CONTRACT_DIGEST_MISMATCH` — also before the
 //!    first model call.
+//!
+//! Between 3 and 4, step 3b asks Muneral for the dependency verdict
+//! (`GET /tasks/:id/readiness`). A work item whose dependencies are unfinished,
+//! or whose readiness cannot be established, stops there with
+//! `WORK_ITEM_NOT_READY` / `WORK_ITEM_READINESS_UNKNOWN`. Readiness is a
+//! different instrument from authority: it never grants anything, and
+//! `ready: true` only lets the run reach step 4.
+//!
 //! 4. Authenticate task/project/subject, independent issuer and current
 //!    generation through a trusted task-run authority provider. A digest or
 //!    Argana source label is not authority. The production mapping is absent:
@@ -31,7 +39,7 @@ use std::path::{Path, PathBuf};
 use arcana_connectors::contract_source::{
     ArganaContractClient, ContractSource, FileContractSource,
 };
-use arcana_connectors::muneral::{MuneralClient, WorkItem};
+use arcana_connectors::muneral::{MuneralClient, WorkItem, WorkItemReadiness};
 use arcana_core::contract::{verify, ContractBinding, ContractRefusal};
 use arcana_core::contract_authority::{
     admit_then, AdmittedContract, UnavailableContractAuthority, WorkItemScope,
@@ -100,6 +108,13 @@ async fn run_async(request: WorkItemRequest) -> i32 {
         Err(code) => return code,
     };
 
+    // Step 3b. After a verified binding and before the authority gate: the
+    // contract refusals above keep their precedence (and cost no readiness
+    // request), and a "ready" answer only lets the run reach authority.
+    if let Err(code) = require_ready(&client, &request.id).await {
+        return code;
+    }
+
     // A matching hash proves bytes, not permission. Neither local file claims,
     // Muneral task revision nor the KB-reader M2M token provides task-run
     // authority. No purpose-correct production adapter is published yet.
@@ -120,6 +135,65 @@ async fn run_async(request: WorkItemRequest) -> i32 {
         Ok(code) => code,
         Err(err) => refuse(err.code(), &err.to_string()),
     }
+}
+
+/// Refusal code: Muneral answered, and the work item is not ready.
+pub const NOT_READY: &str = "WORK_ITEM_NOT_READY";
+
+/// Refusal code: readiness could not be established.
+pub const READINESS_UNKNOWN: &str = "WORK_ITEM_READINESS_UNKNOWN";
+
+/// Step 3b. `Ok` only for a 200 answer about THIS task that agrees with itself
+/// and says `ready: true`; every other outcome is a refusal printed here and
+/// returned as the exit code.
+async fn require_ready(client: &MuneralClient, id: &str) -> Result<(), i32> {
+    let readiness = client.readiness(id).await.map_err(|err| {
+        refuse(
+            READINESS_UNKNOWN,
+            &format!("Muneral's readiness for {id} could not be established: {err}"),
+        )
+    })?;
+    judge_readiness(id, &readiness)
+}
+
+fn judge_readiness(id: &str, readiness: &WorkItemReadiness) -> Result<(), i32> {
+    if readiness.task_id != id {
+        return Err(refuse(
+            READINESS_UNKNOWN,
+            &format!(
+                "Muneral answered readiness for another task ({}), not for {id}",
+                readiness.task_id
+            ),
+        ));
+    }
+    if !readiness.is_consistent() {
+        return Err(refuse(
+            READINESS_UNKNOWN,
+            &format!(
+                "Muneral's readiness for {id} contradicts itself: ready={}, {} blocker(s), {} dependenc(ies)",
+                readiness.ready,
+                readiness.blocked_by.len(),
+                readiness.dependency_count
+            ),
+        ));
+    }
+    println!(
+        "readiness: ready={} dependencies={} blocked_by={}",
+        readiness.ready,
+        readiness.dependency_count,
+        readiness.blocked_by.len()
+    );
+    if readiness.ready {
+        return Ok(());
+    }
+    Err(refuse(
+        NOT_READY,
+        &format!(
+            "work item {id} is not ready: {} of {} dependenc(ies) block it; refused before the first model call",
+            readiness.blocked_by.len(),
+            readiness.dependency_count
+        ),
+    ))
 }
 
 async fn execute_admitted(
