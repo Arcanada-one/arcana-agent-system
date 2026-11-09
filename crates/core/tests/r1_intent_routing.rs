@@ -400,25 +400,249 @@ fn mutant_always_expensive_killed_by_c1() {
     assert_ne!(decision_model_id(&baseline), decision_model_id(&mutated));
 }
 
-/// Honest survivor probe: mutating only ZeroLlm output whitespace is not killed
-/// by controls that ignore transform formatting beyond exact_ascii_uppercase.
+/// Round-2 kill: MCOST-MAX — among eligible profiles, lowest cost_rank wins;
+/// equal cost_rank ties break by profile_id ascending.
 #[test]
-fn mutant_survivor_whitespace_on_unrelated_transform_reported() {
-    // This mutant changes exact_identity only; c9 uses exact_ascii_uppercase, so
-    // the suite does not kill it. Reported as a survivor.
-    fn mutant_identity_trim(transform: &DeterministicTransform) -> String {
-        if transform.transform_id == "exact_identity" {
-            return transform.input.trim().to_owned();
+fn r2_mcost_max_cheapest_eligible_wins_tie_breaks_by_profile_id() {
+    let expected_cheapest = "PASS cheapest eligible cost_rank wins";
+    let mut req = base_request(StepIntent::BoundedSummary);
+    req.profiles = vec![
+        AdmittedProfile {
+            profile_id: "z_expensive".to_owned(),
+            model_id: "expensive-summary".to_owned(),
+            admitted: BTreeSet::from([StepCapability::BoundedSummary]),
+            cost_rank: 90,
+            bill_tier: CostTier::Expensive,
+            zero_llm: false,
+        },
+        AdmittedProfile {
+            profile_id: "a_cheap".to_owned(),
+            model_id: "cheap-summary".to_owned(),
+            admitted: BTreeSet::from([StepCapability::BoundedSummary]),
+            cost_rank: 10,
+            bill_tier: CostTier::Cheap,
+            zero_llm: false,
+        },
+    ];
+    match route_step(&req).expect(expected_cheapest) {
+        RoutingDecision::Model(choice) => {
+            assert_eq!(choice.model_id, "cheap-summary", "{expected_cheapest}");
+            assert_eq!(choice.tier, CostTier::Cheap, "{expected_cheapest}");
         }
-        execute_deterministic_transform(transform)
+        other => panic!("expected {expected_cheapest}, observed {other:?}"),
     }
-    let t = DeterministicTransform {
-        transform_id: "exact_ascii_uppercase".to_owned(),
-        input: "AbC".to_owned(),
+
+    let expected_tie = "PASS equal cost_rank ties break by profile_id";
+    req.profiles = vec![
+        AdmittedProfile {
+            profile_id: "beta".to_owned(),
+            model_id: "tie-beta".to_owned(),
+            admitted: BTreeSet::from([StepCapability::BoundedSummary]),
+            cost_rank: 10,
+            bill_tier: CostTier::Cheap,
+            zero_llm: false,
+        },
+        AdmittedProfile {
+            profile_id: "alpha".to_owned(),
+            model_id: "tie-alpha".to_owned(),
+            admitted: BTreeSet::from([StepCapability::BoundedSummary]),
+            cost_rank: 10,
+            bill_tier: CostTier::Cheap,
+            zero_llm: false,
+        },
+    ];
+    match route_step(&req).expect(expected_tie) {
+        RoutingDecision::Model(choice) => {
+            assert_eq!(choice.model_id, "tie-alpha", "{expected_tie}");
+        }
+        other => panic!("expected {expected_tie}, observed {other:?}"),
+    }
+}
+
+/// Round-2 kill: MF-TOOLS / MF-MODALITY / MF-FORMAT / MF-RISK / MF-BUDGET —
+/// each filter denied alone yields FilterDenied { filter }.
+#[test]
+fn r2_mf_named_filters_denied_alone() {
+    let assert_denied = |name: &'static str, filters: RoutingFilters| {
+        let mut req = base_request(StepIntent::BoundedSummary);
+        req.filters = filters;
+        match route_step(&req) {
+            Err(RoutingConflict::FilterDenied { filter }) => {
+                assert_eq!(filter, name, "denied filter name must be exact");
+            }
+            other => panic!("expected FilterDenied {{ filter: {name} }}, observed {other:?}"),
+        }
+    };
+
+    let mut tools = RoutingFilters::permissive();
+    tools.tools = FilterGate::Deny;
+    assert_denied("tools", tools);
+
+    let mut modality = RoutingFilters::permissive();
+    modality.modality = FilterGate::Deny;
+    assert_denied("modality", modality);
+
+    let mut format = RoutingFilters::permissive();
+    format.format = FilterGate::Deny;
+    assert_denied("format", format);
+
+    let mut risk = RoutingFilters::permissive();
+    risk.risk = FilterGate::Deny;
+    assert_denied("risk", risk);
+
+    let mut budget = RoutingFilters::permissive();
+    budget.budget = FilterGate::Deny;
+    assert_denied("budget", budget);
+}
+
+/// Round-2 kill: MF-CONTEXT-GE — context exactly at the limit is allowed;
+/// one unit over is ContextOversized.
+#[test]
+fn r2_mf_context_ge_boundary() {
+    let expected_at = "PASS context_units == context_limit_units is allowed";
+    let mut at_limit = base_request(StepIntent::BoundedSummary);
+    at_limit.filters.context_units = 90_000;
+    at_limit.filters.context_limit_units = 90_000;
+    match route_step(&at_limit).expect(expected_at) {
+        RoutingDecision::Model(choice) => {
+            assert_eq!(choice.model_id, "deepseek-v4-flash", "{expected_at}");
+        }
+        other => panic!("expected {expected_at}, observed {other:?}"),
+    }
+
+    let expected_over = "PASS context_units == limit + 1 is ContextOversized";
+    let mut over = base_request(StepIntent::BoundedSummary);
+    over.filters.context_units = 90_001;
+    over.filters.context_limit_units = 90_000;
+    match route_step(&over) {
+        Err(RoutingConflict::ContextOversized {
+            context_units: 90_001,
+            context_limit_units: 90_000,
+        }) => {}
+        other => panic!("expected {expected_over}, observed {other:?}"),
+    }
+}
+
+/// Round-2 kill: ME-ELIGIBLE-ANY — a profile admitting only part of a
+/// multi-capability requirement is not eligible (even when every required
+/// capability exists somewhere in the catalogue).
+#[test]
+fn r2_me_eligible_any_partial_profile_not_eligible() {
+    let expected = "PASS no profile admits the full multi-cap set → NoEligibleProfile";
+    let mut req = base_request(StepIntent::Planning);
+    req.trusted = TrustedStepIntent::new(StepIntent::Planning).with_required(BTreeSet::from([
+        StepCapability::Planning,
+        StepCapability::Verification,
+    ]));
+    // Every required capability exists on some profile, but none admits both.
+    // MissingCapability must not fire; eligibility (all) must refuse.
+    req.profiles = vec![
+        AdmittedProfile {
+            profile_id: "planning_only".to_owned(),
+            model_id: "partial-planner".to_owned(),
+            admitted: BTreeSet::from([StepCapability::Planning]),
+            cost_rank: 10,
+            bill_tier: CostTier::Cheap,
+            zero_llm: false,
+        },
+        AdmittedProfile {
+            profile_id: "verification_only".to_owned(),
+            model_id: "partial-verifier".to_owned(),
+            admitted: BTreeSet::from([StepCapability::Verification]),
+            cost_rank: 20,
+            bill_tier: CostTier::Cheap,
+            zero_llm: false,
+        },
+    ];
+    match route_step(&req) {
+        Err(RoutingConflict::NoEligibleProfile) => {}
+        other => panic!("expected {expected}, observed {other:?}"),
+    }
+}
+
+/// Round-2 kill: MR-REQUIRED-IGNORE — an explicit with_required set is used
+/// instead of the intent default capability set.
+#[test]
+fn r2_mr_required_ignore_explicit_with_required() {
+    let expected = "PASS with_required(Planning) on BoundedSummary intent selects planning profile";
+    let mut req = base_request(StepIntent::BoundedSummary);
+    req.trusted = TrustedStepIntent::new(StepIntent::BoundedSummary)
+        .with_required(BTreeSet::from([StepCapability::Planning]));
+    match route_step(&req).expect(expected) {
+        RoutingDecision::Model(choice) => {
+            // Intent default would pick deepseek-v4-flash; explicit Planning
+            // requires general_reasoning.
+            assert_eq!(choice.model_id, "grok-3-latest", "{expected}");
+            assert_eq!(choice.tier, CostTier::Expensive, "{expected}");
+        }
+        other => panic!("expected {expected}, observed {other:?}"),
+    }
+}
+
+/// Round-2 kill: MD-ZEROLLM-ANY — admitting DeterministicTransform without
+/// zero_llm must not yield ZeroLlm.
+#[test]
+fn r2_md_zerollm_any_non_zero_llm_profile_does_not_yield_zero_llm() {
+    let expected =
+        "PASS non-zero_llm DeterministicTransform profile → DeterministicContractMissing";
+    let mut req = base_request(StepIntent::DeterministicTransform);
+    req.profiles = vec![AdmittedProfile {
+        profile_id: "det_non_zero".to_owned(),
+        model_id: "llm-det".to_owned(),
+        admitted: BTreeSet::from([StepCapability::DeterministicTransform]),
+        cost_rank: 0,
+        bill_tier: CostTier::Cheap,
+        zero_llm: false,
+    }];
+    req.deterministic = Some(DeterministicTransform {
+        transform_id: "exact_identity".to_owned(),
+        input: "keep".to_owned(),
+    });
+    match route_step(&req) {
+        Err(RoutingConflict::DeterministicContractMissing) => {}
+        other => panic!("expected {expected}, observed {other:?}"),
+    }
+}
+
+/// Round-2 kill: MD-CONTRACT-SKIP — DeterministicTransform without a transform
+/// contract → DeterministicContractMissing.
+#[test]
+fn r2_md_contract_skip_missing_transform_contract() {
+    let expected = "PASS DeterministicTransform without contract → DeterministicContractMissing";
+    let mut req = base_request(StepIntent::DeterministicTransform);
+    req.deterministic = None;
+    match route_step(&req) {
+        Err(RoutingConflict::DeterministicContractMissing) => {}
+        other => panic!("expected {expected}, observed {other:?}"),
+    }
+}
+
+/// Round-2 kill: MT-IDENTITY-TRIM — exact_identity keeps leading and trailing
+/// whitespace (does not trim).
+#[test]
+fn r2_mt_identity_trim_preserves_whitespace() {
+    let expected = "PASS exact_identity preserves leading/trailing whitespace";
+    let input = "  keep pads  ";
+    let transform = DeterministicTransform {
+        transform_id: "exact_identity".to_owned(),
+        input: input.to_owned(),
     };
     assert_eq!(
-        mutant_identity_trim(&t),
-        execute_deterministic_transform(&t)
+        execute_deterministic_transform(&transform),
+        input,
+        "{expected}"
     );
-    // Survivor: no control assertion failed for this mutant.
+
+    let mut req = base_request(StepIntent::DeterministicTransform);
+    req.deterministic = Some(transform);
+    match route_step(&req).expect(expected) {
+        RoutingDecision::ZeroLlm {
+            transform_id,
+            output,
+        } => {
+            assert_eq!(transform_id, "exact_identity", "{expected}");
+            assert_eq!(output, input, "{expected}");
+        }
+        other => panic!("expected {expected}, observed {other:?}"),
+    }
 }
