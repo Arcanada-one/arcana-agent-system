@@ -499,7 +499,8 @@ SYSTEMD_ALLOWED = {
                  "CPUWeight", "IOWeight", "Environment", "StandardOutput", "StandardError", "ProtectSystem",
                  "NoNewPrivileges", "PrivateTmp", "ProtectHome", "ProtectKernelTunables",
                  "ProtectKernelModules", "ProtectControlGroups", "RestrictSUIDSGID", "LockPersonality",
-                 "RestrictRealtime", "SystemCallArchitectures", "ReadOnlyPaths", "ReadWritePaths"},
+                 "RestrictRealtime", "SystemCallArchitectures", "ReadOnlyPaths", "ReadWritePaths",
+                 "StateDirectory"},
     "Timer": {"OnCalendar", "Persistent", "RandomizedDelaySec", "Unit"},
     "Install": {"WantedBy", "RequiredBy"},
 }
@@ -628,6 +629,10 @@ def _systemd_path_list_is_valid(value: str) -> bool:
 def _systemd_value_is_valid(section: str, key: str, value: str) -> bool:
     if section != "Service":
         return True
+    if key == "StateDirectory":
+        # This bounded grammar supports plain directory basenames only. systemd ownership
+        # modifiers and specifiers remain outside this parser's verified source subset.
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value))
     lowered = value.lower()
     if key in SYSTEMD_BOOLEAN_DIRECTIVES:
         return lowered in SYSTEMD_BOOLEAN_VALUES
@@ -2462,6 +2467,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("repo", nargs="?", type=Path, help="repository (git mode) or directory (--worktree)")
     ap.add_argument("--out", type=Path, help="graph JSON to write")
+    ap.add_argument("--workflow-context-summary-out", action="append", metavar="BASENAME",
+                    help="write a value-free workflow uncertainty sidecar beside --out")
     ap.add_argument("--rev", default="HEAD", help="commit to build from (git mode)")
     ap.add_argument("--subdir", default="", help="restrict to a sub-tree of the commit (paths become relative to it)")
     ap.add_argument("--worktree", action="store_true", help="read files from disk instead of git objects (dirty recorded)")
@@ -2474,16 +2481,52 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-graph", type=Path, default=None, help="with --pilot: write the pilot graph here")
     ap.add_argument("--receipt", type=Path, default=None, help="with --selftest: write the ReadinessReceipt/v1 here")
     a = ap.parse_args(argv)
+    summary_names = a.workflow_context_summary_out or []
+    if len(summary_names) > 1:
+        ap.error("--workflow-context-summary-out may be supplied only once")
+    if summary_names and not a.out:
+        ap.error("--workflow-context-summary-out requires --out")
+    if summary_names and a.selftest:
+        ap.error("--workflow-context-summary-out cannot be used with --selftest")
+    if summary_names:
+        import workflow_context_diagnostics  # noqa: E402
+        try:
+            workflow_context_diagnostics.validate_summary_basename(summary_names[0], a.out)
+        except workflow_context_diagnostics.SummaryError as exc:
+            ap.error(str(exc))
     if a.selftest:
         return selftest(a.receipt, a.pilot, a.pilot_graph, a.pilot_rev)
     if not a.repo or not a.out:
         ap.error("repo and --out are required (or --selftest)")
     disabled = {x.strip() for x in a.disable.split(",") if x.strip()}
     t0 = time.monotonic()
-    doc = build(a.repo, rev=a.rev, subdir=a.subdir, worktree=a.worktree, built_at=a.built_at, disabled=disabled,
-                work_item_pattern=a.work_item_pattern)
-    a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_bytes(dump_graph(doc))
+    summary_target = None
+    if summary_names:
+        try:
+            summary_target = workflow_context_diagnostics.SummaryOutputTarget(a.out, summary_names[0])
+        except workflow_context_diagnostics.SummaryError as exc:
+            ap.error(str(exc))
+    try:
+        doc = build(a.repo, rev=a.rev, subdir=a.subdir, worktree=a.worktree, built_at=a.built_at, disabled=disabled,
+                    work_item_pattern=a.work_item_pattern)
+        if summary_target is not None:
+            try:
+                summary = workflow_context_diagnostics.project_workflow_context(doc)
+                payload = (json.dumps(summary, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+                           + "\n").encode("utf-8")
+                summary_target.write(payload)
+            except workflow_context_diagnostics.SummaryError as exc:
+                ap.error(str(exc))
+        try:
+            a.out.parent.mkdir(parents=True, exist_ok=True)
+            a.out.write_bytes(dump_graph(doc))
+        except Exception:
+            if summary_target is not None:
+                summary_target.remove_created()
+            raise
+    finally:
+        if summary_target is not None:
+            summary_target.close()
     m = doc["manifest"]
     print(f"{a.out}: {m['node_count']} nodes, {m['edge_count']} edges, digest {m['graph_digest'][:23]}…, "
           f"source {m['source_commit'][:12]} ({m['source_tree']}{', DIRTY' if m['dirty'] else ''}), {round(time.monotonic() - t0, 3)} s")
