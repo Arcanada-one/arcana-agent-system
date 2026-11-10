@@ -5,9 +5,9 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-11-07T21:34:47Z",
+ "captured_at_utc": "2026-11-10T23:57:26Z",
  "change_set": {
-  "base": "ed52641bf7979bab48a6468350b147234f55f2f9",
+  "base": "f71ef2dc6be9f6b33892939ea06820971f8cac98",
   "files": [
    {
     "kind": "doc",
@@ -53,9 +53,18 @@
     ],
     "path": "crates/core/tests/driver_idempotent_turn.rs",
     "status": "M"
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json"
+    ],
+    "path": "receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
+    "status": "A"
    }
   ],
-  "head": "9f122d7dab58390918e036c3629f2e63f9829476",
+  "head": "6f2b45ae74b255425c10f9e4f1af38f6fc229978",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -63,19 +72,19 @@
  "graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:2c5835c19f2dc9f42fcbd3e7c913fdca52ce71dbd396ded19f8429e722143e8a",
-  "path": "/home/dev/aup/claude-work/arasga01/w275/vout/graph-ed52641bf797.json",
-  "source_commit": "ed52641bf7979bab48a6468350b147234f55f2f9"
+  "graph_digest": "sha256:e61365c686e1dcee1a847dc1670be9cc254c9b78d254200c2dd3af28a2fe0d3b",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/graph-f71ef2dc6be9.json",
+  "source_commit": "f71ef2dc6be9f6b33892939ea06820971f8cac98"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:cbd5bd56506b338e47aa99425ec3b05b06aecd46c7003a9295aa62f4d680c3f5",
-  "path": "/home/dev/aup/claude-work/arasga01/w275/vout/graph-head-9f122d7dab58.json",
-  "source_commit": "9f122d7dab58390918e036c3629f2e63f9829476",
+  "graph_digest": "sha256:29bfb51349057d5f057ff69baa3c12a2fe61b7b738d6332cd358138c8ec2ef5d",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/graph-head-6f2b45ae74b2.json",
+  "source_commit": "6f2b45ae74b255425c10f9e4f1af38f6fc229978",
   "staleness": {
-   "checked_at_utc": "2026-11-07T21:35:18Z",
-   "checked_nodes": 460,
+   "checked_at_utc": "2026-11-10T23:58:22Z",
+   "checked_nodes": 462,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -1971,11 +1980,11 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261107T213447Z-9f122d7d",
+ "receipt_id": "car-verify-20261110T235726Z-6f2b45ae",
  "receipt_path": "receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
  "repo": {
-  "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/aup/claude-work/arasga01/aras"
+  "name": "tmp/r1stack.bundle",
+  "path": "/home/dev/aup/claude-work/r1stack/arcana-agent-system"
  },
  "revision_selection": {
   "base": [
@@ -2158,21 +2167,38 @@
    "deployable_unit:crates/core",
    "deployable_unit:crates/skills",
    "deployable_unit:crates/tools",
-   "document:CHANGELOG.md"
+   "document:CHANGELOG.md",
+   "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-07T21:35:18Z",
+  "checked_at_utc": "2026-11-10T23:58:22Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [],
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:64cd22bc211d82385a7f013429a4cb961264a4e4de1feb5c05dc6a7e291aac89"
+   },
+   "entity": "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-KCLIVE-11-g07-pr275.json for work item KCLIVE-11",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
+    "work_item": "KCLIVE-11"
+   }
+  }
+ ],
  "tree": {
-  "commit": "9f122d7dab58390918e036c3629f2e63f9829476",
+  "commit": "6f2b45ae74b255425c10f9e4f1af38f6fc229978",
   "dirty": false
  },
  "verdicts": [
@@ -2898,7 +2924,7 @@
  "verifiers": [
   {
    "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
-   "duration_s": 0.01,
+   "duration_s": 0.05,
    "entities": [
     "code_unit:crates/cli/src/demo.rs",
     "code_unit:crates/cli/src/interrupt.rs",
@@ -3082,13 +3108,13 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/claude-work/arasga01/w275/vout/v-fitness.json",
-   "started_at_utc": "2026-11-07T21:35:22Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/v-fitness.json",
+   "started_at_utc": "2026-11-10T23:58:30Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.01,
+   "duration_s": 0.02,
    "entities": [
     "document:CHANGELOG.md"
    ],
@@ -3098,13 +3124,25 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/claude-work/arasga01/w275/vout/v-doc-reference.txt",
-   "started_at_utc": "2026-11-07T21:35:22Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/v-doc-reference.txt",
+   "started_at_utc": "2026-11-10T23:58:30Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
  "verify": {
-  "events": [],
+  "events": [
+   {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-KCLIVE-11-g07-pr275.json is the previous version of the one this run is writing, for the same work item KCLIVE-11 — superseded by construction, so it owes this change no verdict"
+   },
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "1 affected entity(ies) owe no verdict (receipt: 1): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
   "required_by_entity": {
    "code_unit:crates/cli/src/demo.rs": [
     "fitness_rules"
@@ -3372,12 +3410,13 @@
    ],
    "document:CHANGELOG.md": [
     "doc_reference"
-   ]
+   ],
+   "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json": []
   },
   "seconds": {
-   "prepare": 1.8,
-   "total": 35.23,
-   "verifiers": 0.02
+   "prepare": 3.13,
+   "total": 64.09,
+   "verifiers": 0.07
   }
  },
  "work_item": "KCLIVE-11"
