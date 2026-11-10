@@ -816,12 +816,11 @@ def structural_exclusions_rederived(repo: impact.Repo, doc: dict, base: str, hea
                                     before: impact.GraphIndex, after: impact.GraphIndex) -> tuple[set[str], list[str]]:
     """Which of the receipt's claimed exclusions survive an independent re-derivation (DEC-AUP-0034).
 
-    The receipt does not get to assert its own coverage. Every condition is checked here from the
-    matrix and from Git — the node type carries neither a mandatory nor a selectable verifier, the
-    change set does not contain the path, and `git cat-file` at both revisions yields the same bytes
-    AND the same digests the receipt printed. A claim that fails any of them buys nothing: the entity
-    goes back to owing a verdict, and the discrepancy is named so a reader sees a forged exclusion
-    rather than a quietly smaller impact set."""
+    The receipt does not get to assert its own coverage. DEC-AUP-0034 claims are checked against graph
+    identity, the verifier matrix, the change set, and byte-identical Git blobs. The separately marked
+    DEC-AUP-0035 claim is checked against its own receipt path, work item, verifier-matrix status, and
+    the superseded Git blob. A claim that fails its class's conditions buys nothing: the entity goes
+    back to owing a verdict, and the discrepancy is named rather than silently shrinking impact."""
     claims = doc.get("structural_exclusions")
     if not claims:
         return set(), ([] if claims in (None, []) else ["structural_exclusions is not a list"])
@@ -835,19 +834,57 @@ def structural_exclusions_rederived(repo: impact.Repo, doc: dict, base: str, hea
             problems.append("malformed structural exclusion entry")
             continue
         eid = claim["entity"]
-        node = after.nodes.get(eid) or before.nodes.get(eid) or {}
-        ntype = node.get("type") or eid.split(":", 1)[0]
-        spec = matrix["node_types"].get(ntype)
-        path = node.get("path") or claim.get("path")
-        if not isinstance(spec, dict) or (spec.get("mandatory") or []) or (spec.get("selectable") or []):
-            problems.append(f"structural exclusion claims a node type the matrix does verify: {eid}")
-            continue
         if claim.get("rule") == "DEC-AUP-0035":
+            # DEC-AUP-0035 is a separate class: its changed prior receipt may not be
+            # represented as a graph node (and a forged non-receipt must still be read
+            # from Git). Re-derive this class from its own typed path and blob contract;
+            # DEC-AUP-0034's graph-identity/byte-identity checks below remain unchanged.
+            path = claim.get("path")
+            if (claim.get("node_type") != "receipt"
+                    or not isinstance(path, str) or not path
+                    or eid != "receipt:" + path):
+                problems.append(f"structural exclusion has invalid supersession identity: {eid}")
+                continue
+            spec = matrix["node_types"].get("receipt")
+            if not isinstance(spec, dict) or (spec.get("mandatory") or []) or (spec.get("selectable") or []):
+                problems.append(f"structural exclusion claims a node type the matrix does verify: {eid}")
+                continue
             ok, why = _superseded_self_rederived(repo, doc, claim, path, base, head)
             if ok:
                 accepted.add(eid)
             else:
                 problems.append(f"structural exclusion claims supersession it does not have: {eid} ({why})")
+            continue
+        before_node, after_node = before.nodes.get(eid), after.nodes.get(eid)
+        nodes = [node for node in (before_node, after_node) if isinstance(node, dict)]
+        if not nodes:
+            problems.append(f"structural exclusion names an entity absent from both graphs: {eid}")
+            continue
+        type_values = [node.get("type") for node in nodes]
+        path_values = [node.get("path") for node in nodes]
+        if (any(not isinstance(value, str) or not value for value in type_values)
+                or len(set(type_values)) != 1
+                or any(value is not None and not isinstance(value, str) for value in path_values)
+                or len(set(path_values)) != 1):
+            problems.append(f"structural exclusion graph identity is inconsistent across revisions: {eid}")
+            continue
+        ntype = type_values[0]
+        if eid.split(":", 1)[0] != ntype:
+            problems.append(f"structural exclusion entity prefix does not match graph type: {eid}")
+            continue
+        if claim.get("node_type") != ntype:
+            problems.append(f"structural exclusion node_type does not match graph type: {eid}")
+            continue
+        path = path_values[0]
+        if not isinstance(path, str) or not path:
+            problems.append(f"structural exclusion entity has no file-backed graph path: {eid}")
+            continue
+        if claim.get("path") != path:
+            problems.append(f"structural exclusion path does not match graph path: {eid}")
+            continue
+        spec = matrix["node_types"].get(ntype)
+        if not isinstance(spec, dict) or (spec.get("mandatory") or []) or (spec.get("selectable") or []):
+            problems.append(f"structural exclusion claims a node type the matrix does verify: {eid}")
             continue
         if path in changed:
             problems.append(f"structural exclusion claims an entity the change set contains: {eid}")

@@ -358,6 +358,59 @@ SYSTEMD_POLICY_ROWS = tuple(MappingProxyType(row) for row in (
  {"key":"sample.calendar","repo":"Arcanada-one/vocatlas-factory","commit":"85d60cae056a8363eb9ccc6582919afb9c79cdcc","tree":"3787902eec17b7773268f96bcc6e7cd8d953161b","path":"deploy/systemd-user/prime-daily-sample.timer","mode":"100644","type":"blob","oid":"1695ad5657ddb1b724d3a7eda69a08019f605902","bytes":180,"sha256":"333d678a7baa8d328765d90d68dff744bd5004b2ce1e19f1e4db3bde66e5eee3","section":"Timer","directive":"OnCalendar","line":5,"expected":"*-*-* 06:20:00 UTC"},
 ))
 
+# A separate, prospective owner declaration. These exact source identities and
+# directive/value sequences are intentionally not folded into the PRIME policy
+# projection: the declaration is new and still requires independent review.
+_WORKSPACE_SERVICE_PATH = "dev-tools/kb-feeder/deploy/kb-timer-watch.service"
+_WORKSPACE_TIMER_PATH = "dev-tools/kb-feeder/deploy/kb-timer-watch.timer"
+_WORKSPACE_SOURCE_IDENTITY = {
+    "repo": "Arcanada-one/arcanada-workspace",
+    "commit": "c7578beba776b899e5c4efa475aa95dfb6327352",
+    "tree": "8a4fbf0793ee296fbc3438c1b7dcb7b81f77d9cf",
+    "mode": "100644",
+    "type": "blob",
+}
+_WORKSPACE_POLICY = MappingProxyType({
+    _WORKSPACE_SERVICE_PATH: MappingProxyType({
+        "oid": "22cfe5b6ffbfaaeff0094b51253acb22402f2985",
+        "bytes": 1416,
+        "sha256": "797e52c83dbcce31477b5ffb54408ad38b04fd192cd140956207a560af5003e8",
+        "directives": (
+            ("Unit", "Description", "Arcanada timer and knowledge-lane watch (off-host alarm)"),
+            ("Unit", "Wants", "network-online.target"),
+            ("Unit", "After", "network-online.target"),
+            ("Service", "Type", "oneshot"),
+            ("Service", "User", "root"),
+            ("Service", "Group", "root"),
+            ("Service", "Environment", "KB_TIMER_WATCH_LANES=1"),
+            ("Service", "Environment", "KB_TIMER_WATCH_READER_GATE=1"),
+            ("Service", "Environment", "KB_TIMER_WATCH_STATE=/var/lib/kb-timer-watch/state.json"),
+            ("Service", "Environment", "KB_TIMER_WATCH_OBSERVER_STATUS=/var/lib/kb-feeder/status.json"),
+            ("Service", "Environment", "KB_TIMER_WATCH_OPSBOT_KEY_FILE=/etc/kb-feeder/opsbot.key"),
+            ("Service", "Environment", "KB_TIMER_WATCH_OPSBOT_AGENT=kb-feeder"),
+            ("Service", "ExecStart", "/usr/bin/python3 -I /opt/kb-feeder/current/deploy/kb-timer-watch.py"),
+            ("Service", "StateDirectory", "kb-timer-watch"),
+            ("Service", "ReadOnlyPaths", "-/var/lib/kb-feeder/status.json"),
+            ("Service", "NoNewPrivileges", "yes"),
+            ("Service", "PrivateTmp", "yes"),
+            ("Service", "ProtectSystem", "strict"),
+            ("Service", "ProtectHome", "yes"),
+        ),
+    }),
+    _WORKSPACE_TIMER_PATH: MappingProxyType({
+        "oid": "016e81342f5ec2c37a0422c6b27f6e0cd105f791",
+        "bytes": 378,
+        "sha256": "cfa6f2ae765b5c0ada2cc48c7f338728c4957349b5a3eb82d64f3ae4ba823f1d",
+        "directives": (
+            ("Unit", "Description", "Run the timer and knowledge-lane watch every ten minutes"),
+            ("Timer", "OnCalendar", "*:2/10"),
+            ("Timer", "RandomizedDelaySec", "60"),
+            ("Timer", "Persistent", "true"),
+            ("Install", "WantedBy", "timers.target"),
+        ),
+    }),
+})
+
 
 def systemd_policy_compare(rows, observations):
     """The single production comparator; callers cannot select it as production policy input."""
@@ -407,7 +460,39 @@ def systemd_observations(parsed, rows):
     return observations, errors
 
 
+def systemd_exact_directives_match(parsed: dict, expected: tuple) -> bool:
+    """Require the full ordered directive inventory, including repeated keys."""
+    actual = []
+    for section, directives in parsed.items():
+        for directive, item in directives.items():
+            values = item if isinstance(item, list) else [item]
+            actual.extend((section, directive, row["value"]) for row in values)
+    return tuple(actual) == expected
+
+
 def systemd_evaluate_unit(path: str, identity: dict, raw: bytes):
+    if path in _WORKSPACE_POLICY:
+        policy = _WORKSPACE_POLICY[path]
+        expected_identity = {**_WORKSPACE_SOURCE_IDENTITY, "path": path,
+                             "oid": policy["oid"], "bytes": policy["bytes"],
+                             "sha256": policy["sha256"]}
+        if (not isinstance(identity, dict)
+                or any(identity.get(key) != value for key, value in expected_identity.items())
+                or len(raw) != policy["bytes"] or hashlib.sha256(raw).hexdigest() != policy["sha256"]):
+            return {"verdict": "failed", "reason": "SYSTEMD_UNIT_SOURCE_IDENTITY_MISMATCH", "results": []}
+        try:
+            parsed = build_graph.parse_systemd_unit(path, raw)
+        except build_graph.SystemdParseError as exc:
+            return {"verdict": "failed", "reason": str(exc), "results": []}
+        if not systemd_exact_directives_match(parsed, policy["directives"]):
+            return {"verdict": "failed", "reason": "SYSTEMD_POLICY_VALUE_MISMATCH", "results": []}
+        return {"verdict": "verified", "reason": "prospective owner policy comparison complete", "results": [
+            {"key": f"workspace.{path.rsplit('/', 1)[-1]}.{index}",
+             "entity": "systemd_unit:" + path, "verifier": "systemd_unit_semantics",
+             "verdict": "verified", "expected": value, "actual": value,
+             "reason": "exact source declaration matches"}
+            for index, (_section, directive, value) in enumerate(policy["directives"], 1)
+        ]}
     applicable = [r for r in SYSTEMD_POLICY_ROWS if r["path"] == path]
     if applicable and not all(systemd_identity_matches(r, identity, raw) for r in applicable):
         return {"verdict": "failed", "reason": "SYSTEMD_UNIT_SOURCE_IDENTITY_MISMATCH", "results": []}

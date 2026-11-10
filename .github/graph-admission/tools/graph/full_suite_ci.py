@@ -868,8 +868,15 @@ ROOT_TYPECHECK_RECORD_KEYS = ROOT_TYPECHECK_BASE_KEYS | {
 }
 
 
+# Cached per process: None until probed, then True/False. Older gh (e.g. 2.62.0) lacks
+# --allow-escape-sequences; job logs with ANSI then need the flag on newer gh, but the
+# unknown-flag path must keep today's argv so collectors do not regress on old runners.
+_GH_API_ALLOW_ESCAPE_SEQUENCES = None
+
+
 def _github_with_token(endpoint, token):
     """Read one GitHub endpoint with only the explicitly supplied ephemeral token."""
+    global _GH_API_ALLOW_ESCAPE_SEQUENCES
     if not isinstance(token, str) or not token:
         raise ValueError("explicit Auth GITHUB_TOKEN is absent; ambient credentials are not a fallback")
     cli = shutil.which("gh")
@@ -878,8 +885,19 @@ def _github_with_token(endpoint, token):
     env = {key: value for key, value in os.environ.items()
            if key not in {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"}}
     env["GH_TOKEN"] = token
-    proc = subprocess.run([cli, "api", "--hostname", "github.com", endpoint], capture_output=True,
-                          timeout=60, env=env)
+    argv = [cli, "api", "--hostname", "github.com"]
+    if _GH_API_ALLOW_ESCAPE_SEQUENCES is False:
+        proc = subprocess.run(argv + [endpoint], capture_output=True, timeout=60, env=env)
+    else:
+        # Prefer the flag so ANSI-bearing job logs are printable; fall back only when gh
+        # itself rejects the flag (unknown), never on ordinary API/auth failures.
+        proc = subprocess.run(argv + ["--allow-escape-sequences", endpoint],
+                              capture_output=True, timeout=60, env=env)
+        if proc.returncode and b"unknown flag: --allow-escape-sequences" in (proc.stderr or b""):
+            _GH_API_ALLOW_ESCAPE_SEQUENCES = False
+            proc = subprocess.run(argv + [endpoint], capture_output=True, timeout=60, env=env)
+        elif proc.returncode == 0:
+            _GH_API_ALLOW_ESCAPE_SEQUENCES = True
     if proc.returncode:
         raise ValueError("explicit-token GitHub read refused or unavailable")
     if len(proc.stdout) > MAX_BYTES:
@@ -1110,6 +1128,8 @@ def collect_root_typecheck(repo, repository, source, base, event_file, evidence_
     root = _typecheck_record(repo, evidence_root)
     record = {"schema": ROOT_TYPECHECK_SCHEMA, "scope": "root_tsconfig_typecheck",
               "repository": repository, "source_commit": source, "base": base, "head": source,
+              "entity": "deployable_unit:.", "workflow": ROOT_TYPECHECK_WORKFLOW,
+              "job_key": ROOT_TYPECHECK_JOB, "command": ROOT_TYPECHECK_COMMAND, "cwd": ".",
               "verdict": "not_measured", "errors": []}
     log_raw = None
     try:

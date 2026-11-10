@@ -124,6 +124,8 @@
      "doc",
      "lockfile",
      "global_config",
+     "source_file",
+     "systemd_unit",
      "test",
      "receipt",
      "other"

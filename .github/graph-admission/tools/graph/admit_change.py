@@ -83,7 +83,9 @@ CHECK_IDS = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10
 # would report a permanent survivor for a check that does not block by design. They are held to the
 # property instead — asserted in the selftest — and their behaviour is measured by the dedicated
 # gate2a mutation battery in ci_gate.py, where the four mutants of the card each flip the verdict.
-INFORMATIONAL_CHECK_IDS = ["C14", "C15", "C17", "C20"]
+# C17/C20/C22 are the same class (policy verdict `admit`, never raise the gate). C22 is DEC-AUP-0181
+# dark-launch OPEN_PR_BUDGET_EXCEEDED — must stay classified here or informational:policy-fully-classified fails.
+INFORMATIONAL_CHECK_IDS = ["C14", "C15", "C17", "C20", "C22"]
 # How many C18 coverage problems the one-line human rendering shows before it says how many it is
 # not showing. The JSON check entry always carries every one of them (A2-274).
 C18_PROBLEMS_SHOWN = 20
@@ -436,9 +438,14 @@ def diff_digest(repo: Path, base: str, head: str) -> str:
 
     This is the expiry of a structural exemption. A calendar TTL (gate2a's 30 days) survives an
     amend, an added file and a force-push; this digest survives none of them, which is the honest
-    lifetime of an assertion about ONE diff."""
+    lifetime of an assertion about ONE diff.
+
+    Blob names MUST be full 40-hex object ids. `git diff --raw` otherwise abbreviates to a
+    clone-dependent `core.abbrev` length (unique among THAT repository's objects), so the same
+    committed range yielded different digests across clones and C21 refused a correctly signed
+    DecisionExemption on independent remasure. Force `core.abbrev=40` for this read only."""
     rows = []
-    for line in git(repo, "diff", "--raw", "-M", base, head).splitlines():
+    for line in git(repo, "-c", "core.abbrev=40", "diff", "--raw", "-M", base, head).splitlines():
         if not line.startswith(":"):
             continue
         meta, _, rest = line.partition("\t")
@@ -2330,6 +2337,194 @@ def _selftest_output(raw: bytes) -> dict:
     return out
 
 
+# Keep the prior source-derived local ceiling for four bounded nested batteries plus
+# setup/cleanup and remaining suite work. The separate 1800-second heavy-pool wait is
+# outside the systemd scope and is not charged to RuntimeMaxSec.
+_BUNDLE_SELFTEST_SCOPE_BUDGET_SECONDS = 4 * (1800 + 30 + 50) + 1800 + 30 + 110 + 2
+
+
+def _run_bundle_selftest_observed(argv: list[str], *, timeout: int, env: dict[str, str],
+                                 phase: str) -> subprocess.CompletedProcess:
+    """Run one battery in a uniquely named user scope and retain its evidence privately."""
+    import datetime
+    import json
+    import re
+    import uuid
+
+    root_value = env.get("AUP_BUNDLE_SELFTEST_CAPTURE_ROOT")
+    if not root_value:
+        return subprocess.run(argv, capture_output=True, timeout=timeout, env=env)
+    root = Path(root_value)
+    if root_value and (root.is_symlink() or not root.is_dir() or (root.stat().st_mode & 0o077)):
+        raise OSError("selftest capture root must be an existing private directory (mode 0700)")
+    run_dir = Path(tempfile.mkdtemp(prefix="bundle-selftest-", dir=root))
+    os.chmod(run_dir, 0o700)
+    unit_id = f"arc2-batt-{uuid.uuid4()}"
+    unit_name = unit_id + ".scope"
+    stop_seconds = 10
+    wrapped_argv = ["systemd-run", "--user", "--scope", "--collect", f"--unit={unit_id}",
+                    "-p", f"RuntimeMaxSec={timeout}", "-p", f"TimeoutStopSec={stop_seconds}s",
+                    "--", *argv]
+    metadata = {"phase": phase, "argv": argv, "systemd_run_argv": wrapped_argv,
+                "unit": unit_name, "timeout_seconds": timeout,
+                "timeout_stop_seconds": stop_seconds,
+                "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "observer_pid": os.getpid(), "systemd_run_pid": None}
+
+    def save(name: str, value: dict) -> None:
+        fd = os.open(run_dir / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb", buffering=0) as stream:
+            payload = (json.dumps(value, sort_keys=True) + "\n").encode()
+            view = memoryview(payload)
+            while view:
+                written = stream.write(view)
+                if written is None or written <= 0:
+                    raise OSError("short write while recording durable selftest evidence")
+                view = view[written:]
+            os.fsync(stream.fileno())
+        dir_fd = os.open(run_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def capture(name: str, payload: bytes) -> None:
+        fd = os.open(run_dir / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb", buffering=0) as stream:
+            view = memoryview(payload)
+            while view:
+                written = stream.write(view)
+                if written is None or written <= 0:
+                    raise OSError("short write while retaining raw selftest output")
+                view = view[written:]
+            os.fsync(stream.fileno())
+        dir_fd = os.open(run_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    save("start.json", metadata)
+    timed_out = False
+    stop_status = None
+    try:
+        proc = subprocess.Popen(wrapped_argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    except OSError as exc:
+        stderr = str(exc).encode("utf-8", errors="replace")
+        capture("stdout.raw", b"")
+        capture("stderr.raw", stderr)
+        metadata.update({"finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                         "start_failure": True, "operation": "systemd-run", "stderr_file": "stderr.raw",
+                         "exception": type(exc).__name__, "exit_status": None,
+                         "completion_proof": "NOT_MEASURED"})
+        save("failure.json", metadata)
+        raise OSError(f"operation=systemd-run; stderr={run_dir / 'stderr.raw'}: {exc}") from exc
+    metadata["systemd_run_pid"] = proc.pid
+    client_unresolved = False
+    stop_result = None
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout + 30)
+        completed = subprocess.CompletedProcess(wrapped_argv, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = exc.output or b""
+        stderr = exc.stderr or b""
+        try:
+            stop_result = subprocess.run(["systemctl", "--user", "stop", unit_name], capture_output=True,
+                                         timeout=5, env=env, check=False)
+            stop_status = stop_result.returncode
+        except (OSError, subprocess.TimeoutExpired) as stop_exc:
+            stop_status = None
+            metadata["stop_error"] = type(stop_exc).__name__
+        try:
+            final_stdout, final_stderr = proc.communicate(timeout=15)
+            stdout = final_stdout or stdout
+            stderr = final_stderr or stderr
+            scope_status = proc.returncode
+        except subprocess.TimeoutExpired:
+            client_unresolved = True
+            scope_status = proc.returncode
+        completed = subprocess.CompletedProcess(wrapped_argv, scope_status, stdout, stderr)
+    capture("stdout.raw", completed.stdout or b"")
+    capture("stderr.raw", completed.stderr or b"")
+    show_argv = ["systemctl", "--user", "show", "-p", "Result,ActiveState", unit_name]
+    cgls_argv = ["systemd-cgls", "--user-unit", unit_name]
+    observation_errors = {}
+    try:
+        show = subprocess.run(show_argv, capture_output=True, timeout=5, env=env, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        show = None
+        observation_errors["systemctl_show"] = type(exc).__name__
+    try:
+        cgls = subprocess.run(cgls_argv, capture_output=True, timeout=5, env=env, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        cgls = None
+        observation_errors["systemd_cgls"] = type(exc).__name__
+    show_text = ((show.stdout or b"").decode("utf-8", errors="replace") if show else "")
+    cgls_text = (((cgls.stdout or b"") + (cgls.stderr or b"")).decode("utf-8", errors="replace")
+                 if cgls else "")
+    properties = dict(line.split("=", 1) for line in show_text.splitlines() if "=" in line)
+    no_cgroup = bool(cgls and cgls.returncode != 0 and any(
+        phrase in cgls_text.lower() for phrase in ("no cgroup found", "not found", "does not exist", "no such file or directory")))
+    empty_cgroup = bool(cgls and cgls.returncode == 0
+                        and not re.search(r"(?m)^\s*[├└]─\s*\d+\b", cgls_text))
+    proof_measured = (not client_unresolved and bool(show and show.returncode == 0)
+                      and {"Result", "ActiveState"} <= properties.keys()
+                      and properties["ActiveState"] in {"inactive", "failed"}
+                      and (no_cgroup or empty_cgroup))
+    timed_out = timed_out or properties.get("Result", "").lower() == "timeout"
+    primary_returncode = completed.returncode
+    effective_returncode = primary_returncode
+    wrapper_exit_status = None
+    if client_unresolved and primary_returncode is None:
+        # 124 describes this wrapper's bounded control outcome; it is not a
+        # measured exit status from systemd-run or the battery process.
+        wrapper_exit_status = 124
+        effective_returncode = wrapper_exit_status
+    elif timed_out and effective_returncode == 0:
+        effective_returncode = 124
+    if not proof_measured and effective_returncode == 0:
+        effective_returncode = 125
+    metadata.update({"finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                     "systemd_run_exit_status": primary_returncode,
+                     "exit_status": effective_returncode, "timed_out": timed_out,
+                     "wrapper_exit_status": wrapper_exit_status,
+                     "wrapper_outcome_reason": (
+                         "client remained unresolved after bounded exact-unit stop and communicate"
+                         if wrapper_exit_status is not None else None),
+                     "stop_exit_status": stop_status,
+                     "stop_stdout": ((stop_result.stdout or b"").decode("utf-8", errors="replace")
+                                     if stop_result else ""),
+                     "stop_stderr": ((stop_result.stderr or b"").decode("utf-8", errors="replace")
+                                     if stop_result else ""),
+                     "client_unresolved": client_unresolved,
+                     "show_argv": show_argv, "show_exit_status": show.returncode if show else None,
+                     "show_stdout": show_text,
+                     "show_stderr": (show.stderr or b"").decode("utf-8", errors="replace") if show else "",
+                     "cgls_argv": cgls_argv, "cgls_exit_status": cgls.returncode if cgls else None,
+                     "cgls_stdout": (cgls.stdout or b"").decode("utf-8", errors="replace") if cgls else "",
+                     "cgls_stderr": (cgls.stderr or b"").decode("utf-8", errors="replace") if cgls else "",
+                     "observation_errors": observation_errors,
+                     "completion_proof": "measured" if proof_measured else "NOT_MEASURED",
+                     "result": properties.get("Result"), "active_state": properties.get("ActiveState"),
+                     "start_failure": ("NOT_MEASURED" if primary_returncode is None
+                                       else primary_returncode != 0),
+                     "operation": ("systemd-run" if primary_returncode is not None
+                                   and primary_returncode != 0 else None),
+                     "stderr_file": "stderr.raw"})
+    save("completion.json", metadata)
+    stderr_out = completed.stderr
+    if not proof_measured:
+        refusal = (f"completion proof NOT_MEASURED; client_unresolved={client_unresolved}; "
+                   f"primary_status={primary_returncode}; evidence={run_dir}\n").encode()
+        stderr_out = refusal + (stderr_out or b"")
+    if completed.returncode != 0:
+        stderr_out = (f"operation=systemd-run; evidence={run_dir / 'stderr.raw'}\n".encode()
+                      + (stderr_out or b""))
+    result = subprocess.CompletedProcess(argv, effective_returncode, completed.stdout, stderr_out)
+    result.completion_proof_measured = proof_measured
+    return result
+
 def _bundle_selftest(bundle_root: Path, *, evidence: dict | None = None,
                      legacy_base: bool = False) -> tuple[int | None, int | None, str]:
     """→ (exit code, measured arm count, tail); retain full stdout/stderr in `evidence`.
@@ -2339,7 +2534,8 @@ def _bundle_selftest(bundle_root: Path, *, evidence: dict | None = None,
     (its fixture set is not bundled); this remains explicit non-coverage.
     """
     report = evidence if evidence is not None else {}
-    report.update({"exit_code": None, "arms": None, "complete": False, "summary": None})
+    report.update({"exit_code": None, "arms": None, "complete": False, "summary": None,
+                   "completion_proof": "NOT_MEASURED"})
     script = bundle_root / "tools/graph/ci_gate.py"
     if not script.exists():
         report["reason"] = "no tools/graph/ci_gate.py in this bundle"
@@ -2347,11 +2543,16 @@ def _bundle_selftest(bundle_root: Path, *, evidence: dict | None = None,
     # Preserve the existing recursion guard and time bound. No new signer, environment authority,
     # retry, or alternate battery is introduced by retaining the output.
     try:
-        r = subprocess.run([sys.executable, str(script), "--selftest"], capture_output=True,
-                           timeout=1800,
-                           env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "AUP_GATE4B_NESTED": "1"})
+        argv = [sys.executable, str(script), "--selftest"]
+        child_env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "AUP_GATE4B_NESTED": "1"}
+        r = _run_bundle_selftest_observed(argv, timeout=1800, env=child_env,
+                                          phase="BASE" if legacy_base else "HEAD")
         stdout, stderr = r.stdout or b"", r.stderr or b""
-        report.update({"exit_code": r.returncode, "complete": True})
+        proof_measured = getattr(r, "completion_proof_measured", True)
+        report.update({"exit_code": r.returncode, "complete": proof_measured,
+                       "completion_proof": "measured" if proof_measured else "NOT_MEASURED"})
+        if not proof_measured:
+            report["reason"] = "systemd scope/client completion proof was NOT_MEASURED"
     except subprocess.TimeoutExpired as exc:
         stdout, stderr = exc.stdout or b"", exc.stderr or b""
         report["reason"] = "the bundle's ci_gate.py --selftest did not finish within 1800 s"
@@ -2781,12 +2982,14 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
                          declaration_rel: str = DEFAULT_DECLARATION_REL,
                          verifier_job: str | None = None,
                          verifier_conclusion: str | None = None,
-                         base_branch: str | None = None) -> dict:
+                         base_branch: str | None = None,
+                         composition: bool = False) -> dict:
     """B1-B5. The anchor is B2 and only B2: on a bundle-refresh pull request every byte of the head
     checkout is written by the pull request, so evidence collected by the head bundle is evidence the
     artefact under review collected about itself. B2 verifies the head manifest with the BASE tree's
     sshsig.py against the BASE tree's public key — a self-update is judged by the gate it replaces."""
-    ev: dict = {"case": "gate_self_update", "checks": [], "eligible": False, "coverage_gap": []}
+    ev: dict = {"case": "mixed_bundle_composition" if composition else "gate_self_update",
+                "checks": [], "eligible": False, "coverage_gap": []}
     b1m = True
     rel = bundle_rel.strip("/")
     wd = Path(workdir)
@@ -2813,7 +3016,30 @@ def evaluate_self_update(repo: Path, base: str, head: str, files: list[dict], wo
     ev["program_ref_pin_updates"] = pin_only
     ev["declared_derived_artefacts"] = derived
     ev["self_update_receipt"] = receipt_ev
-    b1 = _chk(ev, "B1", "SELF_UPDATE_SHAPE", not outside_real,
+    changed_managed = sorted(set(changed) & (managed_base | managed_head))
+    bundle_prefix = rel.rstrip("/") + "/"
+    unknown_bundle_paths = sorted(p for p in changed if p.startswith(bundle_prefix)
+                                  and p not in (managed_base | managed_head))
+    if composition:
+        # This verdict authenticates only the managed segment. Every outside path remains in the
+        # unchanged base..head range and must be admitted by the ordinary gate that calls this
+        # evidence function; none is removed from its receipt, impact set, verifier or canary duties.
+        composition_shape_ok = bool(man_b and man_h and changed_managed and not unknown_bundle_paths)
+        b1 = _chk(ev, "B1", "MIXED_COMPOSITION_MANAGED_SEGMENT", composition_shape_ok,
+                  (f"the exact changed managed segment has {len(changed_managed)} path(s), all classified by the BASE/HEAD signed manifests; "
+                   f"{len(outside_real)} outside path(s) are retained for ordinary full-range admission"
+                   + (f"; unknown paths inside the bundle directory: {unknown_bundle_paths[:4]}"
+                      if unknown_bundle_paths else "")
+                   if composition_shape_ok else
+                   "both BASE and HEAD manifests and at least one exact changed managed path are required, "
+                   "and no changed path under the bundle directory may be unlisted"))
+        ev["composition_scope"] = {"managed_changed_paths": changed_managed,
+                                   "ordinary_full_range_paths": sorted(set(changed) - set(changed_managed)),
+                                   "unknown_bundle_paths": unknown_bundle_paths,
+                                   "ordinary_range": {"base": base, "head": head,
+                                                      "all_changed_paths": sorted(changed)}}
+    else:
+        b1 = _chk(ev, "B1", "SELF_UPDATE_SHAPE", not outside_real,
               (f"{len(outside_real)} changed path(s) are neither bundle-managed, nor an exactly validated canonical caller pin/read-scope amendment "
                f"update, nor a declared derived artefact ({'; '.join(outside_real[:3])}) — this is an ordinary "
                f"change wearing a bundle refresh's clothes"
@@ -3447,6 +3673,21 @@ def cashed_canary_ids(doc: dict, boundary_inferred: set[str]) -> set[str]:
     return out
 
 
+def _git_valid_structural_exclusions(repo_path: Path, doc: dict, base: str, head: str) -> set[str]:
+    """Return only DEC-AUP-0034 exclusions independently re-derived from the bound Git trees.
+
+    C12 may discharge an inferred boundary obligation only for an exclusion that survives the same
+    matrix, changed-path, blob identity, and receipt-hash checks used by impact_pair coverage.
+    Invalid claims remain in the gate's coverage diagnostics; they never reduce this set.
+    """
+    repo = impact_pair.impact.Repo(repo_path)
+    before = impact_pair.index_at(repo, base)
+    after = impact_pair.index_at(repo, head)
+    accepted, _problems = impact_pair.structural_exclusions_rederived(
+        repo, doc, base, head, before, after)
+    return accepted
+
+
 def canary_coverage(repo: Path, rows: list[dict], cashed: set[str] | None = None, *,
                     head: str | None = None) -> tuple[set[str], list[str]]:
     """Which entities a receipt's canary rows ACTUALLY cover (DEC-AUP-0037 R1/R2).
@@ -4032,6 +4273,12 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         # verdicts and discharges nothing — while `schema_check`, which does apply it, called the
         # same bytes conformant.
         imp = doc.get("impact_set") or {}
+        try:
+            structural_exclusions = _git_valid_structural_exclusions(repo, doc, base, head)
+        except (impact.Refusal, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+            # Coverage already reports its own refusal (C18). Fail closed here: an exclusion that
+            # cannot be re-derived still owes the ordinary canary obligation.
+            structural_exclusions = set()
         boundary_inferred = []
         for section in ("deterministic_core", "inferred_tail"):
             for e in imp.get(section) or []:
@@ -4046,7 +4293,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         # caller receipt into a C12 refusal.
         canary_entities, canary_problems = canary_coverage(
             repo, doc.get("verifiers") or [],
-            cashed=cashed_canary_ids(doc, set(boundary_inferred) - set(valid_exempt)), head=head)
+            cashed=cashed_canary_ids(
+                doc, set(boundary_inferred) - set(valid_exempt) - structural_exclusions), head=head)
         for problem in canary_problems:
             add("C12", f"{Path(rec['path']).name}: {problem}")
         # An exact eligible DEC-AUP-0167 record may carry a C1 canary measurement that remains
@@ -4056,7 +4304,8 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         stage_nm_c1 = {entity for entity in stage_nm_entities
                        if verdict_of.get(entity) == "not_measured"}
         boundary = [e for e in boundary_inferred
-                    if e not in canary_entities and e not in valid_exempt and e not in stage_nm_c1]
+                    if e not in canary_entities and e not in valid_exempt
+                    and e not in structural_exclusions and e not in stage_nm_c1]
         if boundary:
             add("C12", f"{Path(rec['path']).name}: {len(boundary)} boundary entity(ies) reached over an "
                        f"inferred/observed edge with no canary", sorted(set(boundary)))
@@ -4995,28 +5244,35 @@ def make_fixtures(base: str, head: str, repo: Path | None = None) -> dict[str, d
     F: dict[str, dict] = {}
     if repo is not None:
         prepare_gate_fixture_outputs(repo, base, head, compile_types=False)
+    canonical_receipt: dict | None = None
 
     def fresh_receipt():
-        r = base_receipt(base, head)
-        if repo is not None:
-            ir = impact_pair.impact.Repo(repo)
-            q = impact_pair.query(impact_pair.index_at(ir, base), impact_pair.index_at(ir, head),
-                                 ir.diff_files(base, head), repo=ir, base=base, head=head,
-                                 tree_commit=head, tree_dirty=False)
-            q["head_graph"]["staleness"]["checked_at_utc"] = impact_pair.build_graph.FIXED_BUILT_AT
-            for key in ("graph", "head_graph", "revision_selection", "impact_set"):
-                r[key] = q[key]
-            r["verify"] = {"required_by_entity": impact_pair.mandatory_by_entity(
-                impact_pair.index_at(ir, base), impact_pair.index_at(ir, head), q)}
-            for vid, kind, command, output in (
-                ("v-fitness", "fitness_rules", "verify.fitness_violations(actual fixture head)", "fitness.json"),
-                ("v-contract", "contract_diff", "contract_diff.run_diff(actual fixture base, head)", "contract.json")):
-                r["verifiers"].append({"id": vid, "kind": kind, "command": command,
-                                       "entities": [v["entity"] for v in r["verdicts"]], "exit_code": 0,
-                                       "output_ref": "verifier-out/" + output})
-                for verdict in r["verdicts"]:
-                    verdict["verifier_ids"].append(vid)
-        return r
+        nonlocal canonical_receipt
+        if canonical_receipt is None:
+            r = base_receipt(base, head)
+            if repo is not None:
+                ir = impact_pair.impact.Repo(repo)
+                base_index = impact_pair.index_at(ir, base)
+                head_index = impact_pair.index_at(ir, head)
+                q = impact_pair.query(base_index, head_index, ir.diff_files(base, head),
+                                      repo=ir, base=base, head=head,
+                                      tree_commit=head, tree_dirty=False)
+                q["head_graph"]["staleness"]["checked_at_utc"] = impact_pair.build_graph.FIXED_BUILT_AT
+                for key in ("graph", "head_graph", "revision_selection", "impact_set"):
+                    r[key] = q[key]
+                r["verify"] = {"required_by_entity": impact_pair.mandatory_by_entity(
+                    base_index, head_index, q)}
+                for vid, kind, command, output in (
+                    ("v-fitness", "fitness_rules", "verify.fitness_violations(actual fixture head)", "fitness.json"),
+                    ("v-contract", "contract_diff", "contract_diff.run_diff(actual fixture base, head)", "contract.json")):
+                    r["verifiers"].append({"id": vid, "kind": kind, "command": command,
+                                           "entities": [v["entity"] for v in r["verdicts"]], "exit_code": 0,
+                                           "output_ref": "verifier-out/" + output})
+                    for verdict in r["verdicts"]:
+                        verdict["verifier_ids"].append(vid)
+            canonical_receipt = r
+        # Each mutant owns a fully independent tree; mutations cannot contaminate later fixtures.
+        return copy.deepcopy(canonical_receipt)
 
     def add(name, expect, codes, desc, mutate=None, extra=None, **kw):
         r = fresh_receipt()
@@ -5713,7 +5969,7 @@ def cmd_gate(a) -> int:
 # DEC-AUP-0167 is an externally adopted delivery authority.  It deliberately does not live in
 # the candidate Program policy bundle: a candidate policy or stage document cannot adopt itself.
 STAGE_AUTHORITY_PATH = Path("/home/dev/aup/root-orch/STAGE-DELIVERY-DEC-AUP-0167.md")
-STAGE_AUTHORITY_SHA256 = "sha256:50dab9d0c3d03ca52e3163f7c56edb61acab214adc548a5c533cdf248e9ae17e"
+STAGE_AUTHORITY_SHA256 = "sha256:2a901098cf76366eae4159f7c254830ec10619be79205bb283fc6568b50355e6"
 STAGE_AUTHORITY_SOURCE_PATH = "governance/decisions/DEC-AUP-0167.md"
 STAGE_EVIDENCE_SCHEMA_PATH = PROGRAM_ROOT / "contracts/graph-verified-change/stage-evidence.v1.json"
 CURRENT_SOURCE_OUTCOME_FILES = (
