@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-11-10T19:58:58Z",
+ "captured_at_utc": "2026-11-10T20:00:14Z",
  "change_set": {
   "base": "45406dcec1fea865bc9b3bfe7acb8d57720273dc",
   "files": [
@@ -111,7 +111,7 @@
     "status": "A"
    }
   ],
-  "head": "5c6868212e5aed65e1cd198139132b78dad3d5f7",
+  "head": "6259865a2050ee8f89126c76d5a10a9b22c01d06",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -126,11 +126,11 @@
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:fd1a6d2dd17498b0a64d4af401a03d169f8a371acf0788f04ca9d2ca07d97fe9",
-  "path": "/home/dev/aup/claude-work/arasr1c/graph-work/reissue-work/verifier-out/graph-head-5c6868212e5a.json",
-  "source_commit": "5c6868212e5aed65e1cd198139132b78dad3d5f7",
+  "graph_digest": "sha256:803bcc6165433ebb24261818cfc82c86d7b88dea1b7a8abaf60a2c82a98ee9f3",
+  "path": "/home/dev/aup/claude-work/arasr1c/graph-work/reissue2-work/verifier-out/graph-head-6259865a2050.json",
+  "source_commit": "6259865a2050ee8f89126c76d5a10a9b22c01d06",
   "staleness": {
-   "checked_at_utc": "2026-11-10T19:59:36Z",
+   "checked_at_utc": "2026-11-10T20:01:03Z",
    "checked_nodes": 479,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -139,7 +139,7 @@
  },
  "host": "aras-r1c-local",
  "host_redacted": true,
- "host_sha256": "239158e075feba3ba7816f57ba84fea86b5beae4004260528d1358bf4b9fc8ed",
+ "host_sha256": "af7646aad6e3b3eab031c204bafe13c8f7fb0890391908bba542a81469a2a409",
  "impact_set": {
   "deterministic_core": [
    {
@@ -2546,7 +2546,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261110T195858Z-5c686821",
+ "receipt_id": "car-verify-20261110T200014Z-6259865a",
  "receipt_path": "receipts/graph/change-admission-ARAS-R1-intent-routing.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -2724,7 +2724,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-10T19:59:36Z",
+  "checked_at_utc": "2026-11-10T20:01:02Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2733,7 +2733,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:a5007a88984e775dd1e382242ef6ca5a864229ec8eb4d2413ae8ba38a6c15294"
+    "head": "sha256:5c76b739b7a0b7e9380dbaea7630b5a876607076c3c57b7b5325ec1371fff38c"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS-R1-intent-routing.json",
    "node_type": "receipt",
@@ -2747,7 +2747,7 @@
   }
  ],
  "tree": {
-  "commit": "5c6868212e5aed65e1cd198139132b78dad3d5f7",
+  "commit": "6259865a2050ee8f89126c76d5a10a9b22c01d06",
   "dirty": false
  },
  "verdicts": [
@@ -3609,8 +3609,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/claude-work/arasr1c/graph-work/reissue-work/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-11-10T19:59:45Z",
+   "output_ref": "/home/dev/aup/claude-work/arasr1c/graph-work/reissue2-work/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-11-10T20:01:15Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   }
  ],
@@ -3884,8 +3884,8 @@
    "receipt:receipts/graph/change-admission-ARAS-R1-intent-routing.json": []
   },
   "seconds": {
-   "prepare": 3.45,
-   "total": 46.7,
+   "prepare": 4.26,
+   "total": 61.75,
    "verifiers": 0.01
   }
  },
