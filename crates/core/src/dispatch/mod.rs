@@ -2,9 +2,9 @@
 //!
 //! Legacy history heuristics live in [`legacy_policy`]. Trusted step-intent
 //! routing (KCLIVE-11 / DRA025–032 R1) lives in [`intent_route`]. The driver
-//! still calls [`classify`] + [`ModelPolicy::select`] until a later stack
-//! that owns `agent_loop.rs` wires [`TrustedStepIntent`] into
-//! [`SelectionContext`].
+//! calls [`route_step`] when [`crate::agent_loop::DriverConfig::trusted_step`]
+//! is set; otherwise it keeps [`classify`] + [`ModelPolicy::select`] for
+//! unmigrated conversational paths.
 
 mod intent_route;
 mod legacy_policy;

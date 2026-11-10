@@ -1,9 +1,11 @@
 //! Trusted step-intent parsing for plan / task-run inputs (R1).
 //!
-//! The Driver path still classifies from conversation history until a later
-//! stack that owns `agent_loop.rs` threads [`TrustedStepIntent`] into
-//! [`SelectionContext`]. This module is the free-file surface for callers that
-//! already have a typed label (CLI flag, skill stage, Muneral plan step).
+//! Callers that already have a typed label (CLI flag, skill stage, Muneral
+//! plan step) parse it here and set
+//! [`arcana_core::agent_loop::DriverConfig::trusted_step`] so the driver
+//! routes via [`arcana_core::dispatch::route_step`]. Without that field the
+//! driver keeps the legacy history heuristic for unmigrated conversational
+//! paths.
 
 use arcana_core::dispatch::{
     fixture_admitted_catalogue, route_step, CatalogueAvailability, RoutingConflict, RoutingFilters,
