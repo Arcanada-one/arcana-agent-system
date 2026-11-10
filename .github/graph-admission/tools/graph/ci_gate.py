@@ -101,6 +101,10 @@ BUNDLE_FILES = [
     "tools/graph/origin_association.py",
     "tools/graph/verify.py",
     "tools/graph/contract_diff.py",
+    # contract_diff.py imports this at module scope for the Pydantic schema-lite frontend.
+    # Without it, a vendored gate raises ModuleNotFoundError on import and SELF_UPDATE_SELFTEST
+    # refuses the head bundle (measured: hosted CI run 42233570494 on PR #549).
+    "tools/graph/python_contracts.py",
     "tools/graph/metadata_contract_proof.py",
     "tools/graph/metadata_contract_observer.cjs",
     # verify.py's own chain: canary_evidence at module scope, process_observation from there.
@@ -1498,6 +1502,20 @@ CALLER_DEPENDENCY_SETUP_FILES = (
     ".arcana/derived-artefacts.v1.json",
 )
 
+# A separate, source-bound setup profile for the canonical MUN full suite. Keep the
+# older web-only profile above stable: its narrower contract and output remain valid.
+CALLER_FULL_SUITE_SETUP_SCHEMA = "CallerFullSuiteDependencySetup/v1"
+CALLER_FULL_SUITE_SETUP_POLICY = "pnpm-frozen-workspace-full-suite/v1"
+CALLER_FULL_SUITE_SETUP_FILES = (
+    ".github/workflows/ci.yml",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "apps/api/package.json",
+    "apps/web/package.json",
+    "packages/types/package.json",
+)
+
 
 def _strict_json_object(text: str, label: str) -> dict:
     """Parse one JSON object without accepting duplicate keys or non-object roots."""
@@ -1692,6 +1710,355 @@ def cmd_candidate_dependency_setup_plan(a) -> int:
     return 0
 
 
+def validate_candidate_full_suite_dependency_setup(manifest: dict, repo_path: str | Path,
+                                                   repository: str, base: str, head: str) -> dict:
+    """Return a source-bound, non-executing plan for MUN's distinct full-suite closure."""
+    if not isinstance(manifest, dict) or set(manifest) != {
+            "schema", "policy", "repository", "base", "head", "working_directory", "scope", "files"}:
+        raise ValueError("full-suite dependency setup fields are missing or unsupported")
+    if (manifest.get("schema") != CALLER_FULL_SUITE_SETUP_SCHEMA
+            or manifest.get("policy") != CALLER_FULL_SUITE_SETUP_POLICY):
+        raise ValueError("full-suite dependency setup profile is unsupported")
+    if repository != CALLER_DEPENDENCY_SETUP_REPOSITORY or manifest.get("repository") != repository:
+        raise ValueError("full-suite dependency setup repository does not match the supported caller")
+    if (manifest.get("working_directory") != "."
+            or manifest.get("scope") != "root+apps/api+apps/web+packages/types"):
+        raise ValueError("full-suite dependency setup scope is unsupported")
+    if (not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40}", base)
+            or not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head)
+            or base == head or manifest.get("base") != base or manifest.get("head") != head):
+        raise ValueError("full-suite dependency setup range does not match the current candidate")
+
+    repo = Path(repo_path).resolve(strict=True)
+    if not repo.is_dir():
+        raise ValueError("candidate workspace is unavailable")
+    actual_head = _candidate_setup_git(repo, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    _candidate_setup_git(repo, "cat-file", "-e", f"{base}^{{commit}}")
+    _candidate_setup_git(repo, "merge-base", "--is-ancestor", base, head)
+    if actual_head != head:
+        raise ValueError("candidate workspace HEAD differs from the full-suite setup subject")
+
+    pins = manifest.get("files")
+    if not isinstance(pins, dict) or set(pins) != set(CALLER_FULL_SUITE_SETUP_FILES):
+        raise ValueError("full-suite dependency setup file set is incomplete or unsupported")
+    checked, raw_by_path = {}, {}
+    for relative in CALLER_FULL_SUITE_SETUP_FILES:
+        pin = pins.get(relative)
+        if (not isinstance(pin, dict) or set(pin) != {"blob_oid", "sha256", "bytes"}
+                or not isinstance(pin.get("blob_oid"), str)
+                or not re.fullmatch(r"[0-9a-f]{40}", pin["blob_oid"])
+                or not isinstance(pin.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])
+                or not isinstance(pin.get("bytes"), int) or isinstance(pin.get("bytes"), bool)
+                or pin["bytes"] < 0):
+            raise ValueError(f"full-suite dependency setup pin is malformed: {relative}")
+        path, cursor = repo / relative, repo
+        for component in Path(relative).parts:
+            cursor = cursor / component
+            try:
+                mode = cursor.lstat().st_mode
+            except OSError as exc:
+                raise ValueError(f"full-suite dependency setup source is missing: {relative}") from exc
+            if cursor == path and not stat.S_ISREG(mode):
+                raise ValueError(f"full-suite dependency setup source is not a regular file: {relative}")
+            if cursor != path and not stat.S_ISDIR(mode):
+                raise ValueError(f"full-suite dependency setup source path is unsafe: {relative}")
+        raw = path.read_bytes()
+        row = _candidate_setup_git(repo, "ls-tree", "-z", "--full-tree", head, "--", relative)
+        rows = [item for item in row.split(b"\0") if item]
+        if len(rows) != 1 or b"\t" not in rows[0]:
+            raise ValueError(f"full-suite dependency setup Git tree row is missing or ambiguous: {relative}")
+        metadata, recorded_path = rows[0].split(b"\t", 1)
+        try:
+            mode_text, kind, oid = metadata.decode("ascii").split(" ")
+            path_text = recorded_path.decode("utf-8")
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError(f"full-suite dependency setup Git tree row is malformed: {relative}") from exc
+        if (path_text != relative or mode_text != "100644" or kind != "blob" or oid != pin["blob_oid"]
+                or git_blob_oid_of_bytes(raw) != pin["blob_oid"] or len(raw) != pin["bytes"]
+                or hashlib.sha256(raw).hexdigest() != pin["sha256"]):
+            raise ValueError(f"full-suite dependency setup source pin mismatch: {relative}")
+        checked[relative], raw_by_path[relative] = dict(pin), raw
+
+    try:
+        root = _strict_json_object(raw_by_path["package.json"].decode("utf-8"), "package.json")
+        api = _strict_json_object(raw_by_path["apps/api/package.json"].decode("utf-8"), "apps/api/package.json")
+        web = _strict_json_object(raw_by_path["apps/web/package.json"].decode("utf-8"), "apps/web/package.json")
+        types = _strict_json_object(raw_by_path["packages/types/package.json"].decode("utf-8"),
+                                    "packages/types/package.json")
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("full-suite package inputs are malformed") from exc
+    if (root.get("packageManager") != "pnpm@11.5.2"
+            or (root.get("engines") or {}).get("node") != "24.22.1"
+            or (root.get("scripts") or {}).get("test") != "turbo run test"
+            or (root.get("scripts") or {}).get("build") != "turbo run build"):
+        raise ValueError("root package manager, Node pin, or full-suite commands differ from supported source")
+    if (api.get("name") != "@muneral/api"
+            or (api.get("scripts") or {}).get("test") !=
+            "NODE_OPTIONS=--experimental-vm-modules jest --passWithNoTests --runInBand"
+            or (api.get("dependencies") or {}).get("@muneral/types") != "workspace:*"):
+        raise ValueError("API package full-suite contract differs from supported source")
+    if (web.get("name") != "@muneral/web" or (web.get("scripts") or {}).get("test") != "vitest run"
+            or (web.get("dependencies") or {}).get("@muneral/types") != "workspace:*"):
+        raise ValueError("web package full-suite contract differs from supported source")
+    if (types.get("name") != "@muneral/types" or (types.get("scripts") or {}).get("build") != "tsc"):
+        raise ValueError("types package build contract differs from supported source")
+
+    workspace = raw_by_path["pnpm-workspace.yaml"].decode("utf-8")
+    lock = raw_by_path["pnpm-lock.yaml"].decode("utf-8")
+    importer_block = re.search(r"(?ms)^importers:\n(.*?)(?=^[^ \n][^\n]*:\s*(?:#.*)?$|\Z)", lock)
+    importer_text = importer_block.group(1) if importer_block else ""
+    importer_matches = list(re.finditer(r"(?m)^  ([^ \n][^:\n]*):\s*$", importer_text))
+    importer_paths = {match.group(1) for match in importer_matches}
+    importer_sections = {
+        match.group(1): importer_text[match.end():
+            (importer_matches[index + 1].start() if index + 1 < len(importer_matches) else len(importer_text))]
+        for index, match in enumerate(importer_matches)
+    }
+    if (not re.search(r"(?m)^lockfileVersion:\s*['\"]?9\.0['\"]?\s*$", lock)
+            or not re.search(r"(?m)^  - ['\"]apps/\*['\"]\s*$", workspace)
+            or not re.search(r"(?m)^  - ['\"]packages/\*['\"]\s*$", workspace)
+            or not {".", "apps/api", "apps/web", "packages/types"}.issubset(importer_paths)
+            or not all(re.search(r"(?m)^      '?@muneral/types'?:\s*$",
+                                 importer_sections.get(path, ""))
+                       for path in ("apps/api", "apps/web"))):
+        raise ValueError("workspace and lockfile do not bind the supported full-suite importer closure")
+
+    workflow = raw_by_path[".github/workflows/ci.yml"].decode("utf-8")
+    required_literals = (
+        'COREPACK_HOME="${RUNNER_TEMP}/corepack-bin"',
+        'corepack enable --install-directory "${COREPACK_HOME}"',
+        'echo "${COREPACK_HOME}" >> "${GITHUB_PATH}"',
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "node-version: 24.22.1", "pnpm install --frozen-lockfile",
+        "pnpm --filter @muneral/types build", "pnpm build", "pnpm test",
+    )
+    if any(literal not in workflow for literal in required_literals):
+        raise ValueError("canonical CI setup or full-suite commands differ from supported source")
+    github_path_lines = [line.strip() for line in workflow.splitlines() if "GITHUB_PATH" in line]
+    if (github_path_lines != ['echo "${COREPACK_HOME}" >> "${GITHUB_PATH}"']
+            or "node_modules/.bin" in workflow
+            or re.search(r"(?im)^\s*(?:export\s+)?PATH\s*=", workflow)):
+        raise ValueError("canonical CI setup widens PATH beyond the pinned Corepack directory")
+
+    return {
+        "schema": "CallerFullSuiteDependencySetupPlan/v1",
+        "policy": CALLER_FULL_SUITE_SETUP_POLICY,
+        "repository": repository, "base": base, "head": head,
+        "working_directory": ".", "scope": "root+apps/api+apps/web+packages/types",
+        "package_manager": root["packageManager"], "node_version": root["engines"]["node"],
+        "files": checked,
+        "setup_argv": [["pnpm", "install", "--frozen-lockfile"],
+                       ["pnpm", "--filter", "@muneral/types", "build"]],
+        "suite_commands": [["pnpm", "build"], ["pnpm", "test"]],
+        "path_policy": {"github_path_entry": "${RUNNER_TEMP}/corepack-bin",
+                        "candidate_node_modules_bin_exported": False},
+        "execution": "not_performed",
+    }
+
+
+def cmd_candidate_full_suite_dependency_setup_plan(a) -> int:
+    """Validate full-suite source pins and emit a plan; never install or run the suite."""
+    try:
+        raw = os.environ.get("CANDIDATE_DEPENDENCY_SETUP", "")
+        if not raw:
+            raise ValueError("full-suite dependency setup manifest is absent")
+        manifest = _strict_json_object(raw, "full-suite dependency setup manifest")
+        plan = validate_candidate_full_suite_dependency_setup(
+            manifest, a.repo, a.repository, a.base, a.head)
+    except (OSError, ValueError) as exc:
+        print(f"CANDIDATE_FULL_SUITE_DEPENDENCY_SETUP_REFUSED: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(plan, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+# Auth's graph caller has no dependency-setup input. This separate profile is selected only
+# for that exact repository and recognizes its checked-in root/account-SPA CI closure.
+AUTH_DEPENDENCY_SETUP_POLICY = "auth-pnpm-frozen-root-account-spa/v1"
+AUTH_DEPENDENCY_SETUP_FILES = (
+    ".github/workflows/ci.yml", ".nvmrc", "package.json", "pnpm-lock.yaml",
+    "pnpm-workspace.yaml", "account-spa/package.json", "account-spa/tsconfig.json",
+    "prisma.config.ts", "prisma/schema.prisma",
+    "vendor/arcanada-access-contracts-dac7c5ede606698b10c2c5edd0c07ff21a798f83.tgz",
+)
+AUTH_DEPENDENCY_SETUP_UNCHANGED = (
+    ".github/workflows/ci.yml", ".nvmrc", "package.json", "pnpm-workspace.yaml",
+    "account-spa/tsconfig.json", "prisma.config.ts", "prisma/schema.prisma",
+    "vendor/arcanada-access-contracts-dac7c5ede606698b10c2c5edd0c07ff21a798f83.tgz",
+)
+AUTH_DEPENDENCY_SETUP_REPO = "Arcanada-one/auth-arcana"
+AUTH_DEPENDENCY_SETUP_NODE = "24.22.1"
+AUTH_DEPENDENCY_SETUP_PNPM = "10.30.3"
+AUTH_DEPENDENCY_SETUP_REGISTRY = "https://registry.npmjs.org/"
+
+
+def _candidate_setup_blob(repo: Path, revision: str, relative: str) -> tuple[str, bytes]:
+    row = _candidate_setup_git(repo, "ls-tree", "-z", "--full-tree", revision, "--", relative)
+    rows = [item for item in row.split(b"\0") if item]
+    if len(rows) != 1 or b"\t" not in rows[0]:
+        raise ValueError(f"Auth dependency source is missing or ambiguous: {relative}")
+    metadata, recorded = rows[0].split(b"\t", 1)
+    try:
+        mode, kind, oid = metadata.decode("ascii").split(" ")
+        path_text = recorded.decode("utf-8")
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"Auth dependency source tree row is malformed: {relative}") from exc
+    if path_text != relative or mode != "100644" or kind != "blob":
+        raise ValueError(f"Auth dependency source is not a regular committed file: {relative}")
+    raw = _candidate_setup_git(repo, "show", f"{revision}:{relative}")
+    return oid, raw
+
+
+def _candidate_setup_blob_oid(repo: Path, revision: str, relative: str) -> str:
+    """Read only tree metadata, suitable for config files whose contents must stay private."""
+    row = _candidate_setup_git(repo, "ls-tree", "-z", "--full-tree", revision, "--", relative)
+    rows = [item for item in row.split(b"\0") if item]
+    if len(rows) != 1 or b"\t" not in rows[0]:
+        raise ValueError(f"Auth dependency source is missing or ambiguous: {relative}")
+    metadata, recorded = rows[0].split(b"\t", 1)
+    try:
+        mode, kind, oid = metadata.decode("ascii").split(" ")
+        path_text = recorded.decode("utf-8")
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"Auth dependency source tree row is malformed: {relative}") from exc
+    if path_text != relative or mode != "100644" or kind != "blob":
+        raise ValueError(f"Auth dependency source is not a regular committed file: {relative}")
+    return oid
+
+
+def validate_candidate_auth_dependency_setup(repo_path: str | Path, repository: str,
+                                            base: str, head: str) -> dict:
+    """Validate exact Auth dependency inputs and return fixed, non-executing setup argv."""
+    if repository != AUTH_DEPENDENCY_SETUP_REPO:
+        raise ValueError("Auth dependency setup repository is unsupported")
+    if (not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40}", base)
+            or not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head)
+            or base == head):
+        raise ValueError("Auth dependency setup range is malformed")
+    repo = Path(repo_path).resolve(strict=True)
+    if not repo.is_dir():
+        raise ValueError("Auth candidate workspace is unavailable")
+    actual_head = _candidate_setup_git(repo, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    _candidate_setup_git(repo, "cat-file", "-e", f"{base}^{{commit}}")
+    _candidate_setup_git(repo, "merge-base", "--is-ancestor", base, head)
+    if actual_head != head:
+        raise ValueError("Auth dependency setup subject differs from checked-out HEAD")
+
+    checked, source = {}, {}
+    for relative in AUTH_DEPENDENCY_SETUP_FILES:
+        oid, raw = _candidate_setup_blob(repo, head, relative)
+        path = repo / relative
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != raw:
+            raise ValueError(f"Auth dependency source differs from exact committed bytes: {relative}")
+        checked[relative] = {"blob_oid": oid, "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+        source[relative] = raw
+
+    # The project npm configuration may contain private settings. Never read or emit it;
+    # require its Git object to stay identical to base and override registry/config in the plan.
+    for relative in AUTH_DEPENDENCY_SETUP_UNCHANGED + (".npmrc",):
+        base_oid = (_candidate_setup_blob_oid(repo, base, relative) if relative == ".npmrc"
+                    else _candidate_setup_blob(repo, base, relative)[0])
+        head_oid = checked.get(relative, {}).get("blob_oid")
+        if relative == ".npmrc":
+            head_oid = _candidate_setup_blob_oid(repo, head, relative)
+            npmrc = repo / relative
+            if npmrc.is_symlink() or not npmrc.is_file():
+                raise ValueError("Auth project npm configuration is not a regular committed file")
+            _candidate_setup_git(repo, "diff", "--quiet", head, "--", relative)
+        if base_oid != head_oid:
+            raise ValueError(f"Auth dependency policy source changed in candidate range: {relative}")
+
+    try:
+        root = _strict_json_object(source["package.json"].decode("utf-8"), "Auth package.json")
+        spa = _strict_json_object(source["account-spa/package.json"].decode("utf-8"),
+                                  "Auth account-spa/package.json")
+        tsconfig = _strict_json_object(source["account-spa/tsconfig.json"].decode("utf-8"),
+                                       "Auth account-spa/tsconfig.json")
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("Auth dependency package inputs are malformed") from exc
+    if (source[".nvmrc"].decode("utf-8").strip() != AUTH_DEPENDENCY_SETUP_NODE
+            or root.get("packageManager") != f"pnpm@{AUTH_DEPENDENCY_SETUP_PNPM}"
+            or (root.get("scripts") or {}).get("test") != "vitest run"
+            or (root.get("scripts") or {}).get("postinstall") != "prisma generate"):
+        raise ValueError("Auth Node, pnpm, or root test pin differs from supported source")
+    if (spa.get("name") != "@arcanada/account-spa"
+            or "@testing-library/jest-dom" not in (spa.get("devDependencies") or {})
+            or "vite" not in (spa.get("devDependencies") or {})
+            or "vitest" not in (spa.get("devDependencies") or {})):
+        raise ValueError("Auth account-SPA typecheck/test dependency contract is incomplete")
+    if set((tsconfig.get("compilerOptions") or {}).get("types", [])) != {
+            "vite/client", "@testing-library/jest-dom"}:
+        raise ValueError("Auth account-SPA TypeScript ambient type contract is unsupported")
+
+    workspace = source["pnpm-workspace.yaml"].decode("utf-8")
+    allowed_builds = ("onlyBuiltDependencies:\n"
+                      "  - '@nestjs/core'\n  - '@prisma/engines'\n  - '@swc/core'\n"
+                      "  - esbuild\n  - prisma\n")
+    lock = source["pnpm-lock.yaml"].decode("utf-8")
+    workflow = source[".github/workflows/ci.yml"].decode("utf-8")
+    importer = re.search(r"(?ms)^  account-spa:\n(.*?)(?=^  [^ \n][^\n]*:\s*$|^packages:\s*$|\Z)", lock)
+    importer_text = importer.group(1) if importer else ""
+    lock_dependencies = {
+        "@testing-library/jest-dom": ("^6.6.3", "6.9.1"),
+        "vite": (">=6.4.3 <7", "6.4.4"),
+        "vitest": ("^4.1.11", "4.1.11"),
+    }
+    lock_inputs_match = bool(importer_text)
+    for package, (specifier, locked_version) in lock_dependencies.items():
+        pattern = (r"(?m)^      '?" + re.escape(package) + r"'?:\n"
+                   r"        specifier: ([^\n]+)\n        version: ([^\n(]+)")
+        match = re.search(pattern, importer_text)
+        recorded_specifier = match.group(1).strip("'\"") if match else None
+        lock_inputs_match = lock_inputs_match and bool(
+            match and recorded_specifier == specifier and match.group(2) == locked_version)
+    if (not re.search(r"(?m)^lockfileVersion:\s*['\"]?9\.0['\"]?\s*$", lock)
+            or not re.search(r"(?m)^\s+-\s+account-spa\s*$", workspace)
+            or allowed_builds not in workspace
+            or not lock_inputs_match
+            or re.search(r"(?m)^\s+tarball:\s*(?!file:vendor/arcanada-access-contracts-[0-9a-f]{40}\.tgz\s*$)", lock)):
+        raise ValueError("Auth workspace lockfile does not bind the supported frozen dependency closure")
+    required_ci = (
+        "pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413",
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "node-version-file: .nvmrc", "pnpm install --frozen-lockfile",
+        "pnpm exec prisma generate", "pnpm exec tsc --noEmit",
+        "pnpm --filter @arcanada/account-spa exec tsc --noEmit",
+        "pnpm --filter @arcanada/account-spa test", "pnpm test",
+    )
+    if any(literal not in workflow for literal in required_ci):
+        raise ValueError("Auth CI source does not declare the fixed root/account-SPA dependency closure")
+
+    return {
+        "schema": "AuthCallerDependencySetupPlan/v1",
+        "policy": AUTH_DEPENDENCY_SETUP_POLICY,
+        "repository": repository, "base": base, "head": head,
+        "working_directory": ".", "scope": "root+account-spa",
+        "node_version": AUTH_DEPENDENCY_SETUP_NODE,
+        "pnpm_version": AUTH_DEPENDENCY_SETUP_PNPM,
+        "registry": AUTH_DEPENDENCY_SETUP_REGISTRY,
+        "files": checked,
+        "setup_argv": [
+            ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile",
+             "--registry=https://registry.npmjs.org/"],
+            ["pnpm", "exec", "prisma", "generate"],
+        ],
+        "execution": "not_performed",
+        "project_npmrc_content_read": False,
+    }
+
+
+def cmd_candidate_auth_dependency_setup_plan(a) -> int:
+    """Validate canonical Auth source and emit fixed setup data; never install dependencies."""
+    try:
+        plan = validate_candidate_auth_dependency_setup(a.repo, a.repository, a.base, a.head)
+    except (OSError, ValueError) as exc:
+        print(f"CANDIDATE_AUTH_DEPENDENCY_SETUP_REFUSED: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(plan, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def cmd_run(a) -> int:
     repo = Path(a.repo).resolve()
     tools = Path(a.tools).resolve()
@@ -1824,24 +2191,65 @@ def cmd_run(a) -> int:
             files_status = [{"path": f, "status": status.get(f, "M")} for f in files]
             su_case, su_ev = admit_mod.structural_case(
                 repo, base, head, files_status, bundle_rel, getattr(a, "base_branch", None))
-            if su_case != "gate_self_update":
+            if su_case == "gate_self_update":
+                managed_base, base_manifest = admit_mod.bundle_paths_at(repo, base, bundle_rel)
+                managed_head, head_manifest = admit_mod.bundle_paths_at(repo, head, bundle_rel)
+                executable_suffixes = {".py", ".js", ".mjs", ".cjs", ".sh", ".bash", ".zsh"}
+                def executable_payload_paths(paths, manifest):
+                    return {path for entry in (manifest or {}).get("files", [])
+                            if isinstance(entry, dict) and entry.get("verified_by_the_job") is not False
+                            and isinstance(entry.get("path"), str)
+                            and Path(entry["path"]).suffix.lower() in executable_suffixes
+                            for path in [f"{prefix}{entry['path']}"] if path in paths}
+                executable_edits = set(edited) & (
+                    executable_payload_paths(managed_base, base_manifest)
+                    | executable_payload_paths(managed_head, head_manifest))
+                base_ref = (base_manifest or {}).get("program_ref")
+                head_ref = (head_manifest or {}).get("program_ref")
+                # Refuse stale-ref executable edits before their native B3 selftest recurses.
+                if (executable_edits and isinstance(base_ref, str) and base_ref
+                        and base_ref == head_ref and not su_ev.get("program_ref_pin_updates")):
+                    return fail("BUNDLE_MODIFIED_BY_PR",
+                                "managed executable source changed while the signed program_ref stayed stale and no paired canonical caller-pin update was validated")
+                result["self_update"] = su_ev
+                result["checks"].append({"code": "SELF_UPDATE_CANDIDATE", "verdict": "not_measured",
+                                         "detail": (f"this pull request refreshes the vendored gate bundle itself "
+                                                    f"(program_ref {str((su_ev.get('program_ref') or {}).get('base'))[:12]} → "
+                                                    f"{str((su_ev.get('program_ref') or {}).get('head'))[:12]}) and changes "
+                                                    f"NOTHING else. The gate below must find a receipt carrying a "
+                                                    f"GATE_SELF_UPDATE exemption and re-measure its full battery. "
+                                                    f"`not_measured` is not a pass (DEC-AUP-0008 I4).")})
+            elif su_case is None:
+                # The remote canonical workflow has already completed its native pre-payload
+                # signature, active-workflow, BASE-key-continuity and exact-inventory checks.
+                # Recheck the BASE-key continuity and bundle batteries in the authenticated tools,
+                # then keep this exact final range on the ordinary CAR path below.
+                composition = admit_mod.evaluate_self_update(
+                    repo, base, head, files_status,
+                    work / "mixed-bundle-composition", bundle_rel,
+                    verifier_job=getattr(a, "verifier_job", None),
+                    verifier_conclusion=getattr(a, "verifier_conclusion", None),
+                    base_branch=getattr(a, "base_branch", None), composition=True)
+                if not composition.get("eligible"):
+                    failed = [c for c in composition.get("checks", [])
+                              if c.get("verdict") != "verified"]
+                    return fail("BUNDLE_COMPOSITION_REFUSED",
+                                "; ".join(f"{c.get('code')}: {c.get('detail')}" for c in failed[:5])
+                                or "the BASE-key managed-segment proof is incomplete")
+                result["bundle_composition"] = composition
+                result["checks"].append({"code": "BUNDLE_COMPOSITION_AUTHENTICATED", "verdict": "verified",
+                                         "detail": ("the changed managed segment passed BASE-key continuity, "
+                                                    "head selftest, monotonicity and workflow integrity; every "
+                                                    "outside path remains in the exact final base..head range and "
+                                                    "is still subject to the ordinary CAR, impact, verifier and "
+                                                    "canary checks below")})
+            else:
                 return fail("BUNDLE_MODIFIED_BY_PR",
                             f"this pull request edits or removes {len(edited)} file(s) under the vendored gate bundle "
-                            f"({', '.join(sorted(edited)[:3])}) — a bundle refresh is its own pull request, gated on its own"
-                            + (f"; and it is not one: {su_ev.get('reason') or 'the changed set is not exactly the '
-                               'bundle-managed paths'}" if su_ev.get("outside_the_bundle") or su_ev.get("reason") else ""))
-            result["self_update"] = su_ev
-            result["checks"].append({"code": "SELF_UPDATE_CANDIDATE", "verdict": "not_measured",
-                                     "detail": (f"this pull request refreshes the vendored gate bundle itself "
-                                                f"(program_ref {str((su_ev.get('program_ref') or {}).get('base'))[:12]} → "
-                                                f"{str((su_ev.get('program_ref') or {}).get('head'))[:12]}) and changes "
-                                                f"NOTHING else. BUNDLE_MODIFIED_BY_PR is therefore not the answer, and "
-                                                f"neither is a pass: the gate below must find a receipt carrying a "
-                                                f"GATE_SELF_UPDATE exemption, and it re-measures that exemption's whole "
-                                                f"battery — signature continuity against the key of the BASE tree, the "
-                                                f"head bundle's own selftest, and check-id/arm monotonicity. "
-                                                f"`not_measured` is not a pass (DEC-AUP-0008 I4).")})
-        if touched and not result.get("self_update"):
+                            f"({', '.join(sorted(edited)[:3])}) — neither a managed-only refresh nor a valid mixed-range "
+                            "composition is established"
+                            + (f"; classifier: {su_ev.get('reason')}" if su_ev.get("reason") else ""))
+        if touched and not result.get("self_update") and not result.get("bundle_composition"):
             # …and NOT on the self-update path: there the bundle is REFRESHED, not installed, and
             # saying «ADDS the vendored gate bundle» about a diff of six modified files is a check text
             # that misdescribes what it measured. Caught by replaying the real muneral refresh locally.
@@ -2341,7 +2749,7 @@ def selftest() -> int:
         if f["path"].endswith("admit_change.py"):
             f["sha256"] = sha256_file(tp2)
     mp2.write_text(json.dumps(man2, indent=1, sort_keys=True) + "\n")
-    subprocess.run(["git", "-C", str(repo2), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo2), "add", "--", ".github/graph-admission"], check=True)
     subprocess.run(["git", "-C", str(repo2), "-c", "user.email=f@x", "-c", "user.name=f",
                     "commit", "-q", "-m", "edit a vendored tool"], check=True)
     edited_head = admit_change.git(repo2, "rev-parse", "HEAD").strip()
@@ -2359,7 +2767,7 @@ def selftest() -> int:
     # stop: someone who HOLDS the signing key. Re-sign the tampered bundle correctly and the signature
     # is valid; BUNDLE_MODIFIED_BY_PR is then the only thing standing, and it must still stand.
     sign_bundle(repo2 / ".github/graph-admission")
-    subprocess.run(["git", "-C", str(repo2), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo2), "add", "--", ".github/graph-admission"], check=True)
     subprocess.run(["git", "-C", str(repo2), "-c", "user.email=f@x", "-c", "user.name=f",
                     "commit", "-q", "-m", "re-sign the tampered bundle with the trusted key"], check=True)
     resigned_head = admit_change.git(repo2, "rev-parse", "HEAD").strip()
@@ -4656,6 +5064,24 @@ def main(argv=None) -> int:
     dependency_setup.add_argument("--base", required=True)
     dependency_setup.add_argument("--head", required=True)
     dependency_setup.set_defaults(fn=cmd_candidate_dependency_setup_plan)
+
+    full_suite_setup = sub.add_parser(
+        "full-suite-dependency-setup-plan",
+        help="validate the distinct full-suite caller dependency source and return a non-executing plan")
+    full_suite_setup.add_argument("--repo", required=True)
+    full_suite_setup.add_argument("--repository", required=True)
+    full_suite_setup.add_argument("--base", required=True)
+    full_suite_setup.add_argument("--head", required=True)
+    full_suite_setup.set_defaults(fn=cmd_candidate_full_suite_dependency_setup_plan)
+
+    auth_dependency_setup = sub.add_parser(
+        "candidate-auth-dependency-setup-plan",
+        help="validate canonical Auth caller inputs and return its fixed non-executing setup plan")
+    auth_dependency_setup.add_argument("--repo", required=True)
+    auth_dependency_setup.add_argument("--repository", required=True)
+    auth_dependency_setup.add_argument("--base", required=True)
+    auth_dependency_setup.add_argument("--head", required=True)
+    auth_dependency_setup.set_defaults(fn=cmd_candidate_auth_dependency_setup_plan)
 
     b = sub.add_parser("bundle", help="vendor the gate tools of a pinned program SHA into a caller repository")
     b.add_argument("--out", required=True)
