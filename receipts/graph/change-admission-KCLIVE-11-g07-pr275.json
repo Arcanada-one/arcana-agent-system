@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-11-10T23:57:26Z",
+ "captured_at_utc": "2026-11-10T23:58:50Z",
  "change_set": {
   "base": "f71ef2dc6be9f6b33892939ea06820971f8cac98",
   "files": [
@@ -64,7 +64,7 @@
     "status": "A"
    }
   ],
-  "head": "6f2b45ae74b255425c10f9e4f1af38f6fc229978",
+  "head": "58f71e6ef2728b9dfd679cfb20072e3ac38b2c47",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -73,17 +73,17 @@
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:e61365c686e1dcee1a847dc1670be9cc254c9b78d254200c2dd3af28a2fe0d3b",
-  "path": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/graph-f71ef2dc6be9.json",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-2/graph-f71ef2dc6be9.json",
   "source_commit": "f71ef2dc6be9f6b33892939ea06820971f8cac98"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:29bfb51349057d5f057ff69baa3c12a2fe61b7b738d6332cd358138c8ec2ef5d",
-  "path": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/graph-head-6f2b45ae74b2.json",
-  "source_commit": "6f2b45ae74b255425c10f9e4f1af38f6fc229978",
+  "graph_digest": "sha256:c5f5411d320e7f29f1ea77a9f6a8ea1065ef30fac536c98677f4e8a0120ef2de",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-2/graph-head-58f71e6ef272.json",
+  "source_commit": "58f71e6ef2728b9dfd679cfb20072e3ac38b2c47",
   "staleness": {
-   "checked_at_utc": "2026-11-10T23:58:22Z",
+   "checked_at_utc": "2026-11-10T23:59:59Z",
    "checked_nodes": 462,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -1980,7 +1980,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261110T235726Z-6f2b45ae",
+ "receipt_id": "car-verify-20261110T235850Z-58f71e6e",
  "receipt_path": "receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
  "repo": {
   "name": "tmp/r1stack.bundle",
@@ -2175,7 +2175,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-10T23:58:22Z",
+  "checked_at_utc": "2026-11-10T23:59:59Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2184,7 +2184,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:64cd22bc211d82385a7f013429a4cb961264a4e4de1feb5c05dc6a7e291aac89"
+    "head": "sha256:b73f6c0795b17e0830da55d722603c32002fb3ea89502d2fc77cbc825c5703bc"
    },
    "entity": "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json",
    "node_type": "receipt",
@@ -2198,7 +2198,7 @@
   }
  ],
  "tree": {
-  "commit": "6f2b45ae74b255425c10f9e4f1af38f6fc229978",
+  "commit": "58f71e6ef2728b9dfd679cfb20072e3ac38b2c47",
   "dirty": false
  },
  "verdicts": [
@@ -2924,7 +2924,7 @@
  "verifiers": [
   {
    "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
-   "duration_s": 0.05,
+   "duration_s": 0.01,
    "entities": [
     "code_unit:crates/cli/src/demo.rs",
     "code_unit:crates/cli/src/interrupt.rs",
@@ -3108,13 +3108,13 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/v-fitness.json",
-   "started_at_utc": "2026-11-10T23:58:30Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-2/v-fitness.json",
+   "started_at_utc": "2026-11-11T00:00:09Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
    "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
-   "duration_s": 0.02,
+   "duration_s": 0.01,
    "entities": [
     "document:CHANGELOG.md"
    ],
@@ -3124,8 +3124,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-1/v-doc-reference.txt",
-   "started_at_utc": "2026-11-10T23:58:30Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l1-receipt-work/verifier-out-2/v-doc-reference.txt",
+   "started_at_utc": "2026-11-11T00:00:09Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
@@ -3414,9 +3414,9 @@
    "receipt:receipts/graph/change-admission-KCLIVE-11-g07-pr275.json": []
   },
   "seconds": {
-   "prepare": 3.13,
-   "total": 64.09,
-   "verifiers": 0.07
+   "prepare": 3.66,
+   "total": 78.42,
+   "verifiers": 0.02
   }
  },
  "work_item": "KCLIVE-11"
