@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- G05: a final effective-dispatch guard on the `arcana-core` model-request and
+  tool-effect boundaries (`crates/core/src/effective_dispatch.rs`, opt-in through
+  `DriverConfig::effective_dispatch`). Immediately before each consequential
+  effect the driver requires CoverageComplete for every mandatory member,
+  PreconditionsDischarged individually (coverage/necessity is not discharge;
+  attributed claims are not pass), current authority, and a durable effect
+  identity/reservation through the existing G07 intent store (no second ledger).
+  Bindings are re-checked after every await and immediately before the effect.
+  A read-only clarification is not free permission for a model/network call.
+  Where ARAS has no native field the operation refuses with a typed `EFFECT_*`
+  code and never invents a value. New `ConnectorError::EffectGuardRefused`.
+  Existing contract digests and fail-closed defaults are unchanged. Native
+  authority, provider effect, cost reservation and Muneral reconcile join are
+  NOT_MEASURED.
+
+- G05 round 4: ND07 phase boundary — comments/tests distinguish pre-rename
+  failure (prior Pending remains) from post-rename directory-sync failure
+  (`INTENT_PUBLISH_DURABILITY_UNCERTAIN`; reopen may show Pending or valid
+  NoDispatch; no terminal-success ack, no dispatch, no fresh-key retry). Bounded
+  test-only write fault seam; driver wording no longer claims "was not written"
+  for the post-rename case (`crates/core/src/operation_intent.rs`,
+  `crates/core/tests/g05_round2_nd_controls.rs`).
+
+- G05 ND07 closure: direct `OperationSession` same-session retry after an
+  injected post-rename directory-sync fault asserts no false
+  `INTENT_STATE_COMPETING` and no in-memory terminal adoption; the test-only
+  seam is compile-gated (`cfg(any(test, feature = "intent-test-faults",
+  debug_assertions))`, absent from normal release builds). A real non-seam
+  directory-fsync fault on a Pending write remains NOT_MEASURED
+  (`crates/core/tests/operation_intent_store.rs`).
+
+- G05 round 3: discriminating controls for the two no-dispatch fences that
+  round 2 left untested — recovered Pending/Unknown cannot become
+  `no_dispatch` via `mark_no_dispatch` (session + driver), and a counted
+  `note_handoff` blocks proven-no-dispatch; post-handoff connector/executor
+  failures stay pending/unknown with no retained-refusal shortcut on the next
+  attempt (`crates/core/tests/g05_round3_fence_controls.rs`). No production
+  code change.
+
+- G05 round 2: composition-root `DriverConfig::route_protection`
+  (`RouteProtection::Protected` vs `LegacyOutsideGuarantee`). A protected route
+  with a missing gate or durable intent refuses with
+  `EFFECT_PROTECTED_GATE_UNAVAILABLE` /
+  `EFFECT_PROTECTED_INTENT_UNAVAILABLE` before any model/tool effect; ordinary
+  legacy routes keep the opt-in gate behaviour and stay labelled outside the
+  guarantee. A request field cannot select protection. Fresh Pending refused by
+  the gate before any connector/executor handoff is durably resolved as
+  IntentRecord v2 `Disposition::NoDispatch` with `refusal_reason` (exact key /
+  identity / generation retained) under the exclusive lock before the refusal
+  is returned; recovered Pending/Unknown never becomes no-dispatch; v1
+  Reconciled meaning and validation are unchanged; unknown versions refuse.
+  The intent file does not assert or release a native budget reservation.
+  ND09/ND10 remain NOT_MEASURED (no native witness adapter / real handoff fence).
+
 - G07: a durable, private, versioned model-operation intent record on the `arcana-core`
   `ModelConnector` call boundary (`crates/core/src/operation_intent.rs`, opt-in through
   `DriverConfig::operation_intent`). Order: validate the native binding, verify the private
@@ -29,6 +83,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Muneral reconcile join are NOT_MEASURED.
 
 ### Tests
+
+- G05: `crates/core/tests/effective_dispatch_guard.rs` covers AC1 (A proven /
+  B unknown → zero effects), AC2 (covered but undischarged → typed refusal),
+  AC3 (synthetic authority positive control, exactly one dispatch), AC4
+  (revocation/expiry across await), AC5 (unresolved prior intent → no fresh-key
+  redispatch), AC6 (after reconcile a later operation remains possible), plus
+  tool-effect boundary and clarification-is-not-free controls, all against mock
+  connectors.
+
+- G05 round 2: `crates/core/tests/g05_round2_nd_controls.rs` covers ND01
+  (protected vs legacy), ND02 (fresh no-dispatch), ND03/ND04 (recovered
+  Unknown/Pending never no-dispatch), ND05 (restart after no-dispatch), ND06
+  (late attempt under closed key), ND07 (pre-rename write failure / post-rename
+  directory-sync uncertainty / successful terminal write), ND08 (repeat
+  vs new op), ND11 (no budget assertion), ND12 (v1 + unknown version). ND09 and
+  ND10 are documented NOT_MEASURED in that file.
 
 - G07 stage 2: `crates/core/tests/driver_restart_identity.rs` now asserts the safe property
   that PR #276 had pinned as a defect (restart after an unknown outcome mints no fresh key,

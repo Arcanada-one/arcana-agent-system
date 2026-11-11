@@ -27,6 +27,9 @@ use crate::connector::{
 };
 use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
+use crate::effective_dispatch::{
+    EffectGuardError, EffectKind, EffectiveDispatchConfig, RouteProtection,
+};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor, CapabilityOutput};
 use crate::hooks::HookContext;
 use crate::operation_intent::{
@@ -1292,6 +1295,16 @@ pub struct DriverConfig {
     /// dispatch go through the private intent record
     /// ([`crate::operation_intent`]) and refuses when a native field is missing.
     pub operation_intent: Option<OperationIntentConfig>,
+    /// G05: final effective-dispatch guard. `None` (the default) leaves the
+    /// pre-G05 path unchanged; `Some` requires `CoverageComplete`,
+    /// `PreconditionsDischarged` per mandatory member, current authority and a
+    /// durable reservation through [`Self::operation_intent`] immediately
+    /// before every model/tool effect (re-checked after awaits).
+    pub effective_dispatch: Option<EffectiveDispatchConfig>,
+    /// G05: composition-root route protection. Default
+    /// [`RouteProtection::LegacyOutsideGuarantee`] keeps ordinary legacy
+    /// routes outside the protected-execution guarantee. Not request-selectable.
+    pub route_protection: RouteProtection,
 }
 
 impl DriverConfig {
@@ -1322,6 +1335,8 @@ impl DriverConfig {
             connector_retry_backoff: DEFAULT_CONNECTOR_RETRY_BACKOFF,
             connector_retry_pause_budget: DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
             operation_intent: None,
+            effective_dispatch: None,
+            route_protection: RouteProtection::LegacyOutsideGuarantee,
         }
     }
 
@@ -1610,6 +1625,24 @@ impl TurnIntentSeries {
             return Ok(self.stamp(req, now));
         };
         let fingerprint = req.intent_fingerprint();
+        // ND05 / ND08: a terminal no-dispatch for this exact fingerprint
+        // returns the retained refusal — no fresh dispatch under the closed key.
+        if let Some(closed) = session.closed_no_dispatch().cloned() {
+            if IntentRecord::fingerprint_bytes(&closed) == Some(fingerprint) {
+                let reason = closed
+                    .refusal_reason
+                    .as_deref()
+                    .unwrap_or("EFFECT_NO_DISPATCH_RETAINED");
+                return Err(ConnectorError::EffectGuardRefused {
+                    code: "INTENT_NO_DISPATCH_RETAINED",
+                    detail: format!(
+                        "INTENT_NO_DISPATCH_RETAINED: operation under Idempotency-Key {} \
+                         was durably resolved as proven-no-dispatch ({reason}); generation {}",
+                        closed.idempotency_key, closed.generation
+                    ),
+                });
+            }
+        }
         if let Some(held) = session.held.clone() {
             // An unresolved operation from an earlier process holds the
             // identity. Never a fresh key, even for identical text.
@@ -2444,6 +2477,9 @@ No other markup is executed, whatever your training says. \
         model: Option<&str>,
         first_dispatch: bool,
     ) -> Result<ConnectorResponse, ConnectorError> {
+        // ND01: protected routes refuse before any model effect when the gate
+        // or durable intent is absent. Legacy routes skip this check.
+        self.ensure_protected_route_ready()?;
         // Borrowed, not moved: the caller keeps the request so a poll can send
         // it again without rebuilding it. The copy made here is the one the
         // wire needs either way.
@@ -2477,6 +2513,16 @@ No other markup is executed, whatever your training says. \
                     .map(|key| key.as_str().to_owned())
                     .unwrap_or_default(),
             });
+        }
+        // G05: final effective-dispatch guard. Durable reservation already
+        // happened above; re-check coverage/discharge/authority after the
+        // await inside `admit` and immediately before the connector effect.
+        self.admit_effective_dispatch(intent, EffectKind::ModelRequest)
+            .await?;
+        // ND02 / ND06: count the model handoff before the connector call so a
+        // later refusal cannot claim proven-no-dispatch after handoff began.
+        if let Some(session) = intent.session.as_mut() {
+            session.note_handoff();
         }
         match self.connector.execute(req).await {
             Ok(resp) => {
@@ -2864,10 +2910,164 @@ same call again, unchanged, ends the run."
         // says what the model tried, and a call that is about to be refused
         // was still a call.
         state.tool_calls_attempted = state.tool_calls_attempted.saturating_add(1);
-        match self.executor.execute(&ctx, name, input).await {
-            Ok(capability) => self.accept_tool_capability(state, name, capability),
-            Err(err) => self.fold_capability_error(state, name, err, &attempted),
+        // ND01: protected tool routes refuse before any tool effect when the
+        // gate or durable intent is absent.
+        if let Err(error) = self.ensure_protected_route_ready() {
+            state.terminal_detail = Some(error.to_string());
+            return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
         }
+        // G05: tool-effect boundary. Reuse the existing intent store (no
+        // second ledger): reserve a durable identity for this effect, then
+        // admit coverage/discharge/authority, re-checking after the await.
+        if self.config.effective_dispatch.is_some() {
+            let mut tool_req = ExecuteRequest::new("tool.effect", attempted.to_string());
+            tool_req.model = Some(name.to_owned());
+            match state.intent.stamp_durable(&mut tool_req, Instant::now()) {
+                Ok(IntentDecision::Refused) => {
+                    let key = state
+                        .intent
+                        .active_key()
+                        .map(|key| key.as_str().to_owned())
+                        .unwrap_or_default();
+                    state.terminal_detail = Some(format!(
+                        "reconcile required — unresolved prior intent under Idempotency-Key {key}; \
+                         tool effect was not executed"
+                    ));
+                    return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    state.terminal_detail = Some(error.to_string());
+                    return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+                }
+            }
+            if let Err(error) = self
+                .admit_effective_dispatch(&mut state.intent, EffectKind::ToolEffect)
+                .await
+            {
+                state.intent.finish_turn();
+                state.terminal_detail = Some(error.to_string());
+                return StepResult::Terminal(TerminalReason::ConnectorFatal, None);
+            }
+            if let Some(session) = state.intent.session.as_mut() {
+                session.note_handoff();
+            }
+        }
+        match self.executor.execute(&ctx, name, input).await {
+            Ok(capability) => {
+                if self.config.effective_dispatch.is_some() {
+                    state.intent.note_reply(&format!("tool:{name}"));
+                    state.intent.finish_turn();
+                }
+                self.accept_tool_capability(state, name, capability)
+            }
+            Err(err) => {
+                if self.config.effective_dispatch.is_some() {
+                    state.intent.note_no_reply();
+                }
+                self.fold_capability_error(state, name, err, &attempted)
+            }
+        }
+    }
+
+    /// ND01: a protected route requires the composition-root gate and durable
+    /// intent. Missing either is typed unavailable before any effect. Legacy
+    /// routes are labelled outside the guarantee and keep pre-G05 behaviour.
+    fn ensure_protected_route_ready(&self) -> Result<(), ConnectorError> {
+        match self.config.route_protection {
+            RouteProtection::LegacyOutsideGuarantee => Ok(()),
+            RouteProtection::Protected => {
+                if self.config.effective_dispatch.is_none() {
+                    return Err(ConnectorError::EffectGuardRefused {
+                        code: "EFFECT_PROTECTED_GATE_UNAVAILABLE",
+                        detail: "EFFECT_PROTECTED_GATE_UNAVAILABLE: protected route requires \
+                                 DriverConfig::effective_dispatch; missing gate is not a \
+                                 legacy fallback"
+                            .to_owned(),
+                    });
+                }
+                if self.config.operation_intent.is_none() {
+                    return Err(ConnectorError::EffectGuardRefused {
+                        code: "EFFECT_PROTECTED_INTENT_UNAVAILABLE",
+                        detail: "EFFECT_PROTECTED_INTENT_UNAVAILABLE: protected route requires \
+                                 DriverConfig::operation_intent for durable effect identity"
+                            .to_owned(),
+                    });
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// G05 final guard: `CoverageComplete`, `PreconditionsDischarged`, current
+    /// authority, and a durable reservation through the existing intent store.
+    ///
+    /// On refusal of a fresh pending with zero handoff, durably resolves the
+    /// same operation as proven-no-dispatch before acknowledging the refusal
+    /// (ND02). ND07: a pre-rename write failure leaves pending bytes; a
+    /// post-rename directory-sync failure leaves persistence uncertain (do not
+    /// claim durable terminal success, do not dispatch, do not mint a fresh
+    /// key).
+    ///
+    /// # Errors
+    /// [`ConnectorError::EffectGuardRefused`] (or identity refusal) — nothing
+    /// may be dispatched.
+    async fn admit_effective_dispatch(
+        &self,
+        intent: &mut TurnIntentSeries,
+        kind: EffectKind,
+    ) -> Result<(), ConnectorError> {
+        let Some(gate) = self.config.effective_dispatch.as_ref() else {
+            return Ok(());
+        };
+        // Reservation is the existing intent store: a session must be open and
+        // a key must be in force from `stamp_durable`. Never invent one.
+        let reserved = intent.session.is_some() && intent.active.is_some();
+        match gate.admit(reserved, kind).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let code = error.code();
+                if let Some(session) = intent.session.as_mut() {
+                    match session.mark_no_dispatch(code) {
+                        Ok(()) => {
+                            // Durable no-dispatch committed under the lock
+                            // before the refusal is returned (ND02).
+                            intent.finish_turn();
+                            return Err(effect_guard_refused(&error));
+                        }
+                        Err(resolve_err) => {
+                            // ND07: do not acknowledge terminal no-dispatch.
+                            // Pre-rename: prior pending bytes remain. Post-rename
+                            // directory-sync failure: on-disk may already be
+                            // no_dispatch — do not invent pending or a fresh key.
+                            // Intent file never asserts a native budget release
+                            // (ND11). finish_turn drops the in-memory active
+                            // handle only; the durable idempotency_key on the
+                            // record is unchanged.
+                            intent.finish_turn();
+                            return Err(ConnectorError::EffectGuardRefused {
+                                code,
+                                detail: format!(
+                                    "{error}; INTENT_NO_DISPATCH_UNRESOLVED: durable \
+                                     no-dispatch was not confirmed ({})",
+                                    resolve_err.code()
+                                ),
+                            });
+                        }
+                    }
+                }
+                // No session: local refusal only (legacy / no durable store).
+                intent.finish_turn();
+                Err(effect_guard_refused(&error))
+            }
+        }
+    }
+}
+
+fn effect_guard_refused(error: &EffectGuardError) -> ConnectorError {
+    ConnectorError::EffectGuardRefused {
+        code: error.code(),
+        detail: error.to_string(),
     }
 }
 

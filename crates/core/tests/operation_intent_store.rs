@@ -477,3 +477,77 @@ fn mark_reconciled_without_outcome_is_refused_before_persistence() {
     assert_eq!(after, before, "invalid transition must not publish");
     assert_eq!(disposition_of(&after), "pending");
 }
+
+/// ND07 same-session retry under the held lock after a post-rename
+/// directory-sync fault: refresh of `last_seen` prevents false Competing, and
+/// uncertain publish must not adopt terminal in-memory success.
+///
+/// Chosen option: same-session retry of `mark_no_dispatch` is a supported
+/// under-lock operation (the documented purpose of
+/// `refresh_last_seen_from_target`), not a typed refusal. This test is the
+/// discriminating control for mutants M-C (refresh is a no-op → Competing) and
+/// M-D (uncertain publish adopts current/generation → in-memory terminal).
+#[test]
+fn nd07_same_session_retry_after_uncertain_publish_is_not_competing() {
+    let (_root, dir) = store();
+    let mut config = OperationIntentConfig::new(&dir, binding("task-a"));
+    config.arm_test_fail_no_dispatch_dir_sync_after_rename();
+    let mut session = OperationSession::open(&config).unwrap();
+    session.persist_pending(&intent(1)).unwrap();
+    let key = intent(1).idempotency_key.clone();
+    let generation_before = session
+        .locked_generation()
+        .expect("pending generation under lock");
+
+    let first = session
+        .mark_no_dispatch("EFFECT_PRECONDITION_UNDISCHARGED")
+        .unwrap_err();
+    assert_eq!(
+        first.code(),
+        "INTENT_PUBLISH_DURABILITY_UNCERTAIN",
+        "{first}"
+    );
+
+    // Between failure and retry: not terminal in memory (kills M-D).
+    assert!(
+        session.closed_no_dispatch().is_none(),
+        "uncertain publish must not set closed_no_dispatch"
+    );
+    assert_eq!(
+        session.locked_disposition(),
+        Some(Disposition::Pending),
+        "uncertain publish must not adopt NoDispatch into current"
+    );
+    assert_eq!(
+        session.locked_generation(),
+        Some(generation_before),
+        "uncertain publish must not adopt the write generation"
+    );
+
+    // Same session, same lock: retry must not be false-Competing (kills M-C).
+    let retry = session.mark_no_dispatch("EFFECT_PRECONDITION_UNDISCHARGED");
+    if let Err(error) = &retry {
+        assert_ne!(
+            error.code(),
+            "INTENT_STATE_COMPETING",
+            "same-session retry must not be INTENT_STATE_COMPETING: {error}"
+        );
+    }
+    retry.expect("same-session retry after last_seen refresh should confirm NoDispatch");
+
+    let closed = session
+        .closed_no_dispatch()
+        .expect("confirmed no-dispatch after successful retry");
+    assert_eq!(closed.idempotency_key, key);
+    drop(session);
+
+    let reopened = open(&dir, "task-a").unwrap();
+    if let Some(record) = reopened.closed_no_dispatch() {
+        assert_eq!(record.idempotency_key, key);
+        assert_eq!(record.disposition, Disposition::NoDispatch);
+    } else {
+        let held = reopened.held().expect("Pending or NoDispatch after reopen");
+        assert_eq!(held.idempotency_key, key);
+        assert_eq!(held.disposition, Disposition::Pending);
+    }
+}

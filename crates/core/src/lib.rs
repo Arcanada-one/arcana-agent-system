@@ -8,6 +8,7 @@ pub mod contract;
 pub mod contract_authority;
 pub mod cost;
 pub mod dispatch;
+pub mod effective_dispatch;
 pub mod execution;
 pub mod hooks;
 pub mod kb;

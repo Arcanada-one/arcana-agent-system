@@ -11,6 +11,10 @@
 //! The write ordering is the one `arcana-credential-broker` uses for its state
 //! file: stage a temp file with `create_new`, write, `fsync` the file, `rename`
 //! over the target, `fsync` the parent directory, and fail closed on any step.
+//! Phase-specific durability: **before** the rename, a failed step leaves the
+//! prior target bytes unchanged; **after** a successful rename, a directory
+//! fsync failure means persistence is uncertain (the target may already hold
+//! the new bytes) and must not be treated as a confirmed prior-Pending state.
 //! The broker's quota ledger, committed-key types, policy grants and status
 //! vocabulary are deliberately NOT reused; this module has its own record.
 //!
@@ -39,8 +43,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Record schema version. A record with another value is refused, not guessed.
+/// Record schema version for Pending / Unknown / Reconciled. A record with
+/// another value is refused, not guessed. Retained v1 bytes keep their meaning.
 pub const RECORD_VERSION: u32 = 1;
+/// Compatible schema version for a terminal proven-no-dispatch resolution
+/// ([`Disposition::NoDispatch`] + `refusal_reason`). Readers accept both
+/// [`RECORD_VERSION`] and this value; writers bump only when recording
+/// no-dispatch. No contract digest is pinned to this schema in-tree.
+pub const RECORD_VERSION_NO_DISPATCH: u32 = 2;
 /// Largest record file accepted or written, in bytes.
 pub const MAX_RECORD_BYTES: usize = 4096;
 /// Largest number of directory entries the private store directory may hold.
@@ -89,6 +99,14 @@ pub struct OperationIntentConfig {
     /// an unresolved earlier operation then stays unknown and the request is
     /// refused, even if the text is identical.
     pub same_key_replay_verified: bool,
+    /// Test-only seam: when true, the next durable write of a `NoDispatch`
+    /// record fails after rename at the directory-sync step.
+    ///
+    /// Present only under `cfg(any(test, feature = "intent-test-faults", debug_assertions))`. A
+    /// normal release build of this crate does not expose the field; arm it
+    /// only from tests that enable the feature.
+    #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+    pub test_fail_no_dispatch_dir_sync_after_rename: bool,
 }
 
 impl OperationIntentConfig {
@@ -99,7 +117,17 @@ impl OperationIntentConfig {
             store_dir: store_dir.into(),
             binding,
             same_key_replay_verified: false,
+            #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+            test_fail_no_dispatch_dir_sync_after_rename: false,
         }
+    }
+
+    /// Arm the one-shot post-rename directory-sync fault for the next
+    /// `NoDispatch` write. Available only to tests that compile with
+    /// `intent-test-faults` (or unit tests of this crate).
+    #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+    pub fn arm_test_fail_no_dispatch_dir_sync_after_rename(&mut self) {
+        self.test_fail_no_dispatch_dir_sync_after_rename = true;
     }
 }
 
@@ -115,13 +143,21 @@ pub enum Disposition {
     Unknown,
     /// A reply was observed for the key by a process of this attempt.
     Reconciled,
+    /// Terminal proven-no-dispatch (G05): this exact operation was refused
+    /// before any connector/executor handoff. Not an observed reply. Carries
+    /// [`IntentRecord::refusal_reason`]. Written only as
+    /// [`RECORD_VERSION_NO_DISPATCH`].
+    NoDispatch,
 }
 
 impl Disposition {
     /// True while the operation may still have an effect nobody has seen.
+    ///
+    /// [`Self::NoDispatch`] is terminal (proven unused), so it is not
+    /// unresolved — unlike a recovered [`Self::Pending`].
     #[must_use]
     pub const fn is_unresolved(self) -> bool {
-        !matches!(self, Self::Reconciled)
+        matches!(self, Self::Pending | Self::Unknown)
     }
 }
 
@@ -155,6 +191,11 @@ pub struct IntentRecord {
     pub disposition: Disposition,
     /// `blake3` of the connector response id, hex, once a reply was observed.
     pub outcome_ref: Option<String>,
+    /// Typed refusal code retained with [`Disposition::NoDispatch`] (e.g.
+    /// `EFFECT_PRECONDITION_UNDISCHARGED`). Absent on every other disposition.
+    /// Skipped when `None` so v1 sealed bytes re-serialize identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_reason: Option<String>,
 }
 
 impl IntentRecord {
@@ -221,6 +262,17 @@ pub enum IntentError {
     Competing,
     #[error("INTENT_UNSUPPORTED_PLATFORM: durable intent needs a unix filesystem")]
     UnsupportedPlatform,
+    #[error("INTENT_NO_DISPATCH_INELIGIBLE: {reason}")]
+    NoDispatchIneligible { reason: &'static str },
+    /// Rename published the new bytes; directory sync did not confirm durability.
+    /// On-disk disposition may already be the new record or still the prior one
+    /// after a crash; callers must not treat this as known-[`Disposition::Pending`]
+    /// or as a durable terminal success.
+    #[error(
+        "INTENT_PUBLISH_DURABILITY_UNCERTAIN: rename succeeded; directory sync failed; \
+         on-disk disposition may be the new or prior record"
+    )]
+    PublishDurabilityUncertain,
 }
 
 impl IntentError {
@@ -242,6 +294,8 @@ impl IntentError {
             Self::ParentChanged => "INTENT_PARENT_CHANGED",
             Self::Competing => "INTENT_STATE_COMPETING",
             Self::UnsupportedPlatform => "INTENT_UNSUPPORTED_PLATFORM",
+            Self::NoDispatchIneligible { .. } => "INTENT_NO_DISPATCH_INELIGIBLE",
+            Self::PublishDurabilityUncertain => "INTENT_PUBLISH_DURABILITY_UNCERTAIN",
         }
     }
 }
@@ -374,10 +428,27 @@ fn seal(body: &IntentRecord) -> Result<Vec<u8>, IntentError> {
     Ok(bytes)
 }
 
-/// Disposition and `outcome_ref` pairs the store may persist. Shared by [`unseal`]
-/// (reject a retained record) and `IntentStore::mark` (refuse before write).
-fn disposition_outcome_valid(disposition: Disposition, outcome_ref: Option<&str>) -> bool {
-    !matches!((disposition, outcome_ref), (Disposition::Reconciled, None))
+/// Disposition / `outcome_ref` / `refusal_reason` pairs the store may persist.
+/// Shared by [`unseal`] (reject a retained record) and mark paths (refuse
+/// before write). v1 `Reconciled` still requires `outcome_ref` and forbids a
+/// forged no-dispatch shape.
+fn disposition_outcome_valid(
+    version: u32,
+    disposition: Disposition,
+    outcome_ref: Option<&str>,
+    refusal_reason: Option<&str>,
+) -> bool {
+    match disposition {
+        Disposition::Pending | Disposition::Unknown => {
+            outcome_ref.is_none() && refusal_reason.is_none()
+        }
+        Disposition::Reconciled => outcome_ref.is_some() && refusal_reason.is_none(),
+        Disposition::NoDispatch => {
+            version == RECORD_VERSION_NO_DISPATCH
+                && outcome_ref.is_none()
+                && refusal_reason.is_some_and(|r| !r.is_empty() && r.len() <= MAX_FIELD_BYTES)
+        }
+    }
 }
 
 fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
@@ -396,7 +467,13 @@ fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
         });
     }
     let record = envelope.body;
-    if record.version != RECORD_VERSION {
+    if record.version != RECORD_VERSION && record.version != RECORD_VERSION_NO_DISPATCH {
+        return Err(IntentError::Corrupt {
+            reason: "unsupported record version",
+        });
+    }
+    // v1 bytes cannot carry NoDispatch; that disposition exists only at v2.
+    if record.version == RECORD_VERSION && matches!(record.disposition, Disposition::NoDispatch) {
         return Err(IntentError::Corrupt {
             reason: "unsupported record version",
         });
@@ -411,7 +488,12 @@ fn unseal(bytes: &[u8], scope: &str) -> Result<IntentRecord, IntentError> {
             .as_deref()
             .is_some_and(|r| !is_hex(r, 64))
         || crate::connector::IdempotencyKey::from_persisted(&record.idempotency_key).is_none()
-        || !disposition_outcome_valid(record.disposition, record.outcome_ref.as_deref())
+        || !disposition_outcome_valid(
+            record.version,
+            record.disposition,
+            record.outcome_ref.as_deref(),
+            record.refusal_reason.as_deref(),
+        )
     {
         return Err(IntentError::Corrupt {
             reason: "record field outside its closed shape",
@@ -456,8 +538,9 @@ mod fsio {
     use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags};
 
     use super::{
-        disposition_outcome_valid, hex, now_epoch_s, seal, unseal, Disposition, IntentError,
-        IntentRecord, NewIntent, ValidBinding, MAX_RECORD_BYTES, MAX_STORE_ENTRIES, RECORD_VERSION,
+        closed, disposition_outcome_valid, hex, now_epoch_s, seal, unseal, Disposition,
+        IntentError, IntentRecord, NewIntent, ValidBinding, MAX_RECORD_BYTES, MAX_STORE_ENTRIES,
+        RECORD_VERSION, RECORD_VERSION_NO_DISPATCH,
     };
 
     fn io_error(operation: &'static str, error: rustix::io::Errno) -> IntentError {
@@ -592,6 +675,10 @@ mod fsio {
         last_seen: Option<[u8; 32]>,
         generation: u64,
         current: Option<IntentRecord>,
+        /// One-shot test seam from [`super::OperationIntentConfig`]. When set,
+        /// the next `NoDispatch` write fails after rename at directory sync.
+        #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+        fail_no_dispatch_dir_sync_after_rename: bool,
     }
 
     impl std::fmt::Debug for IntentStore {
@@ -665,6 +752,8 @@ mod fsio {
                 last_seen: None,
                 generation: 0,
                 current: None,
+                #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+                fail_no_dispatch_dir_sync_after_rename: false,
             };
             store.discard_staged_leftovers()?;
             let retained = store.read_record()?;
@@ -811,7 +900,8 @@ mod fsio {
             )
             .map_err(|e| io_error("stage record", e))?;
             let mut file = File::from(fd);
-            let result = (|| {
+            // Pre-rename phase: any failure here leaves the prior target bytes.
+            if let Err(error) = (|| -> Result<(), IntentError> {
                 file.write_all(&bytes).map_err(|e| IntentError::Io {
                     operation: "write staged record",
                     kind: e.kind(),
@@ -820,23 +910,49 @@ mod fsio {
                     operation: "fsync staged record",
                     kind: e.kind(),
                 })?;
-                rustix::fs::renameat(
-                    &self.dir,
-                    staged.as_str(),
-                    &self.dir,
-                    self.record_name().as_str(),
-                )
-                .map_err(|e| io_error("publish record", e))?;
-                rustix::fs::fsync(&self.dir).map_err(|e| io_error("fsync store directory", e))
-            })();
-            if result.is_err() {
+                Ok(())
+            })() {
                 let _ = rustix::fs::unlinkat(&self.dir, staged.as_str(), AtFlags::empty());
-                return result;
+                return Err(error);
+            }
+            if let Err(error) = rustix::fs::renameat(
+                &self.dir,
+                staged.as_str(),
+                &self.dir,
+                self.record_name().as_str(),
+            ) {
+                let _ = rustix::fs::unlinkat(&self.dir, staged.as_str(), AtFlags::empty());
+                return Err(io_error("publish record", error));
+            }
+            // Rename succeeded: the target may already expose `bytes`. Do not
+            // unlink the staged name (it was consumed by rename). Directory
+            // sync confirms durability; failure is uncertain persistence.
+            #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+            if record.disposition == Disposition::NoDispatch
+                && self.fail_no_dispatch_dir_sync_after_rename
+            {
+                self.fail_no_dispatch_dir_sync_after_rename = false;
+                self.refresh_last_seen_from_target();
+                return Err(IntentError::PublishDurabilityUncertain);
+            }
+            if rustix::fs::fsync(&self.dir).is_err() {
+                self.refresh_last_seen_from_target();
+                return Err(IntentError::PublishDurabilityUncertain);
             }
             self.last_seen = Some(*blake3::hash(&bytes).as_bytes());
             self.generation = record.generation;
             self.current = Some(record.clone());
             Ok(())
+        }
+
+        /// After a post-rename directory-sync failure, align `last_seen` with
+        /// the live target so a later under-lock retry is not false-Competing.
+        /// Does not adopt the write as durable success (`current` / generation
+        /// stay pre-publish).
+        fn refresh_last_seen_from_target(&mut self) {
+            if let Ok(Some(on_disk)) = self.read_bytes() {
+                self.last_seen = Some(*blake3::hash(&on_disk).as_bytes());
+            }
         }
 
         /// Durably persist a new `pending` intent. The caller dispatches only
@@ -890,6 +1006,7 @@ mod fsio {
                 reservation_ref: self.binding.reservation_ref.clone(),
                 disposition: Disposition::Pending,
                 outcome_ref: None,
+                refusal_reason: None,
             };
             self.write(&record)
         }
@@ -898,7 +1015,9 @@ mod fsio {
         ///
         /// Transitions are validated with the same disposition and `outcome_ref`
         /// rule [`unseal`] applies on restart, so an invalid record is never
-        /// published.
+        /// published. [`Disposition::NoDispatch`] is refused here — use
+        /// [`Self::mark_no_dispatch`] so the fresh-pending / zero-handoff
+        /// fence stays in one place.
         ///
         /// # Errors
         /// Any [`IntentError`]. A failed transition leaves the stricter
@@ -908,13 +1027,24 @@ mod fsio {
             disposition: Disposition,
             outcome: Option<&str>,
         ) -> Result<(), IntentError> {
+            if matches!(disposition, Disposition::NoDispatch) {
+                return Err(IntentError::NoDispatchIneligible {
+                    reason: "use mark_no_dispatch for the terminal no-dispatch path",
+                });
+            }
             let Some(mut record) = self.current.clone() else {
                 return Err(IntentError::Corrupt {
                     reason: "no operation to mark",
                 });
             };
+            if matches!(record.disposition, Disposition::NoDispatch) {
+                return Err(IntentError::NoDispatchIneligible {
+                    reason: "terminal no-dispatch cannot be re-marked",
+                });
+            }
             let outcome_ref = outcome.map(|o| hex(blake3::hash(o.as_bytes()).as_bytes()));
-            if !disposition_outcome_valid(disposition, outcome_ref.as_deref()) {
+            if !disposition_outcome_valid(record.version, disposition, outcome_ref.as_deref(), None)
+            {
                 return Err(IntentError::Corrupt {
                     reason: "record field outside its closed shape",
                 });
@@ -922,11 +1052,73 @@ mod fsio {
             record.generation = self.generation.saturating_add(1);
             record.disposition = disposition;
             record.outcome_ref = outcome_ref;
+            record.refusal_reason = None;
             self.write(&record)
         }
-    }
 
-    use super::closed;
+        /// Durably resolve a **fresh** `pending` intent as terminal no-dispatch.
+        ///
+        /// Allowed only while this store still holds the exclusive lock, the
+        /// current record is `pending`, and the caller has established
+        /// zero connector/executor handoff for this operation (enforced by
+        /// [`super::OperationSession::mark_no_dispatch`]). Uses stage → fsync
+        /// → rename → dir fsync via [`Self::write`]. **Before** the rename, a
+        /// failed step leaves the prior `pending` bytes. **After** a successful
+        /// rename, a directory-sync failure returns
+        /// [`IntentError::PublishDurabilityUncertain`]: the target may already
+        /// hold `no_dispatch` bytes and must not be forced back to pending.
+        ///
+        /// # Errors
+        /// Any [`IntentError`]; the caller must not acknowledge terminal
+        /// no-dispatch success. On pre-rename failure the prior
+        /// [`Disposition::Pending`] remains; on post-rename directory-sync
+        /// failure persistence is uncertain.
+        pub fn mark_no_dispatch(&mut self, refusal_reason: &str) -> Result<(), IntentError> {
+            closed("refusal_reason", refusal_reason)?;
+            let Some(mut record) = self.current.clone() else {
+                return Err(IntentError::Corrupt {
+                    reason: "no operation to mark",
+                });
+            };
+            if record.disposition != Disposition::Pending {
+                return Err(IntentError::NoDispatchIneligible {
+                    reason: "no-dispatch requires a current pending record",
+                });
+            }
+            if !disposition_outcome_valid(
+                RECORD_VERSION_NO_DISPATCH,
+                Disposition::NoDispatch,
+                None,
+                Some(refusal_reason),
+            ) {
+                return Err(IntentError::Corrupt {
+                    reason: "record field outside its closed shape",
+                });
+            }
+            record.generation = self.generation.saturating_add(1);
+            record.version = RECORD_VERSION_NO_DISPATCH;
+            record.disposition = Disposition::NoDispatch;
+            record.outcome_ref = None;
+            record.refusal_reason = Some(refusal_reason.to_owned());
+            // Exact original identity/key retained; only disposition/version/
+            // generation/refusal_reason change.
+            self.write(&record)
+        }
+
+        /// The record this writer last read or wrote, if any.
+        #[must_use]
+        pub(crate) fn current_record(&self) -> Option<&IntentRecord> {
+            self.current.as_ref()
+        }
+
+        /// Arm the one-shot post-rename directory-sync fault for the next
+        /// `NoDispatch` write. Used only from [`super::OperationSession::open`]
+        /// when the test config requests it.
+        #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+        pub(crate) fn arm_no_dispatch_directory_sync_after_rename(&mut self) {
+            self.fail_no_dispatch_dir_sync_after_rename = true;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -955,6 +1147,11 @@ impl IntentStore {
     pub fn mark(&mut self, _d: Disposition, _o: Option<&str>) -> Result<(), IntentError> {
         Err(IntentError::UnsupportedPlatform)
     }
+    /// # Errors
+    /// Always: unsupported platform.
+    pub fn mark_no_dispatch(&mut self, _reason: &str) -> Result<(), IntentError> {
+        Err(IntentError::UnsupportedPlatform)
+    }
 }
 
 /// One run's view of the store: the open store, the retained unresolved
@@ -963,7 +1160,15 @@ impl IntentStore {
 pub struct OperationSession {
     pub(crate) store: IntentStore,
     pub(crate) held: Option<IntentRecord>,
+    /// Terminal no-dispatch retained for this scope, if any. Used to return
+    /// the same refusal for a repeated closed operation (ND05 / ND08).
+    pub(crate) closed_no_dispatch: Option<IntentRecord>,
     pub(crate) replay_verified: bool,
+    /// `true` only after [`Self::persist_pending`] succeeds in this session
+    /// and before any mark / handoff. Recovered Pending/Unknown never sets it.
+    fresh_pending: bool,
+    /// Connector/executor handoffs counted for the fresh pending operation.
+    handoff_count: u64,
 }
 
 impl OperationSession {
@@ -975,10 +1180,24 @@ impl OperationSession {
     pub fn open(config: &OperationIntentConfig) -> Result<Self, IntentError> {
         let binding = ValidBinding::from(&config.binding)?;
         let (store, retained) = IntentStore::open(&config.store_dir, &binding)?;
+        #[cfg(any(test, feature = "intent-test-faults", debug_assertions))]
+        let store = {
+            let mut store = store;
+            if config.test_fail_no_dispatch_dir_sync_after_rename {
+                store.arm_no_dispatch_directory_sync_after_rename();
+            }
+            store
+        };
+        let closed_no_dispatch = retained
+            .clone()
+            .filter(|r| matches!(r.disposition, Disposition::NoDispatch));
         Ok(Self {
             store,
             held: retained.filter(|r| r.disposition.is_unresolved()),
+            closed_no_dispatch,
             replay_verified: config.same_key_replay_verified,
+            fresh_pending: false,
+            handoff_count: 0,
         })
     }
 
@@ -988,12 +1207,44 @@ impl OperationSession {
         self.held.as_ref()
     }
 
+    /// The retained terminal no-dispatch, if a previous process wrote one.
+    #[must_use]
+    pub const fn closed_no_dispatch(&self) -> Option<&IntentRecord> {
+        self.closed_no_dispatch.as_ref()
+    }
+
+    /// Disposition of the in-memory record held under this session's exclusive
+    /// lock, if any. Distinct from [`Self::closed_no_dispatch`]: an uncertain
+    /// post-rename publish must refresh `last_seen` without adopting terminal
+    /// success here, so a same-session retry can observe `Pending`.
+    #[must_use]
+    pub fn locked_disposition(&self) -> Option<Disposition> {
+        self.store.current_record().map(|r| r.disposition)
+    }
+
+    /// Generation of the in-memory record under the lock, if any.
+    #[must_use]
+    pub fn locked_generation(&self) -> Option<u64> {
+        self.store.current_record().map(|r| r.generation)
+    }
+
+    /// Count a connector or executor handoff for the current fresh pending.
+    /// After this, [`Self::mark_no_dispatch`] refuses (ND02 / ND06 fence).
+    pub fn note_handoff(&mut self) {
+        self.handoff_count = self.handoff_count.saturating_add(1);
+    }
+
     /// Durably persist a new `pending` intent (see [`IntentStore::persist_pending`]).
     ///
     /// # Errors
     /// Any [`IntentError`]; the request must then not be dispatched.
     pub fn persist_pending(&mut self, new: &NewIntent) -> Result<(), IntentError> {
-        self.store.persist_pending(new)
+        self.store.persist_pending(new)?;
+        self.fresh_pending = true;
+        self.handoff_count = 0;
+        self.closed_no_dispatch = None;
+        self.held = None;
+        Ok(())
     }
 
     /// Move the current operation to `unknown` or `reconciled`.
@@ -1005,6 +1256,47 @@ impl OperationSession {
         disposition: Disposition,
         outcome: Option<&str>,
     ) -> Result<(), IntentError> {
-        self.store.mark(disposition, outcome)
+        self.store.mark(disposition, outcome)?;
+        self.fresh_pending = false;
+        if matches!(disposition, Disposition::Reconciled) {
+            self.held = None;
+            self.closed_no_dispatch = None;
+        }
+        Ok(())
+    }
+
+    /// Durably resolve this session's fresh pending as proven-no-dispatch.
+    ///
+    /// Requires: pending created in this session (`fresh_pending`), zero
+    /// handoffs, exclusive store lock held. Pre-rename write failure leaves
+    /// the prior [`Disposition::Pending`]; post-rename directory-sync failure
+    /// is [`IntentError::PublishDurabilityUncertain`] (persistence may already
+    /// show [`Disposition::NoDispatch`] — do not invent a fresh key or erase
+    /// evidence).
+    ///
+    /// # Errors
+    /// [`IntentError::NoDispatchIneligible`] when the fence is not met;
+    /// any store [`IntentError`] when the durable write fails.
+    pub fn mark_no_dispatch(&mut self, refusal_reason: &str) -> Result<(), IntentError> {
+        if !self.fresh_pending {
+            return Err(IntentError::NoDispatchIneligible {
+                reason: "no-dispatch requires a fresh pending created in this invocation",
+            });
+        }
+        if self.handoff_count != 0 {
+            return Err(IntentError::NoDispatchIneligible {
+                reason: "no-dispatch requires zero connector/executor handoff",
+            });
+        }
+        if self.held.is_some() {
+            return Err(IntentError::NoDispatchIneligible {
+                reason: "recovered unresolved intent cannot become no-dispatch",
+            });
+        }
+        self.store.mark_no_dispatch(refusal_reason)?;
+        self.fresh_pending = false;
+        self.closed_no_dispatch = self.store.current_record().cloned();
+        self.held = None;
+        Ok(())
     }
 }
