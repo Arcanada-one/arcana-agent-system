@@ -1,5 +1,5 @@
 //! Synthetic provider predicates only: no issuer keys, grants or live effects.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use arcana_core::contract::{digest_of, verify, ContractBinding, ContractDocument};
 use arcana_core::contract_authority::{
@@ -10,10 +10,12 @@ use async_trait::async_trait;
 use serde_json::json;
 
 fn binding() -> ContractBinding {
-    let text = "synthetic read-only contract";
+    // The allowlist lives inside the digested bytes: an envelope-only `tools`
+    // is refused (CONTRACT_POLICY_UNBOUND), so a fixture states it in the body.
+    let text = r#"{"role":"synthetic","tools":{"allow":["read"]}}{"revisions":[]}"#;
     let digest = digest_of(text.as_bytes());
     let doc: ContractDocument = serde_json::from_value(json!({
-        "digest": digest, "projection": text, "tools": {"allow": ["read"]},
+        "digest": digest, "canonical_bytes": text,
     }))
     .unwrap();
     verify(&digest, &doc).unwrap()
@@ -300,4 +302,68 @@ async fn executor_lineage_must_anchor_the_actual_acting_subject() {
         Refusal::SubjectMismatch,
     )
     .await;
+}
+
+/// SM-08 boundary, stated by test: admission is point-in-time. A provider that
+/// starts answering "revoked" AFTER admission changes nothing for the running
+/// continuation — the provider is asked exactly once and nothing re-asks it
+/// before an effect. A revocation before admission is refused (see
+/// `revocation_and_current_generation_refuse_old_bytes_including_aba`). This
+/// test records the limit; it does not claim an effect-time fence exists.
+#[tokio::test]
+async fn admission_is_not_a_lease_a_later_revocation_does_not_reach_the_continuation() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct Flip {
+        asked: AtomicUsize,
+        revoked: Arc<AtomicBool>,
+    }
+    #[async_trait]
+    impl ContractAuthorityProvider for Flip {
+        async fn authenticate(
+            &self,
+            _binding: &ContractBinding,
+            _scope: &WorkItemScope,
+        ) -> Result<Proof, Refusal> {
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            let mut p = proof();
+            p.revoked = self.revoked.load(Ordering::SeqCst);
+            Ok(p)
+        }
+    }
+    let revoked = Arc::new(AtomicBool::new(false));
+    let provider = Flip {
+        asked: AtomicUsize::new(0),
+        revoked: Arc::clone(&revoked),
+    };
+    let ran = admit_then(
+        binding(),
+        &scope(),
+        &provider,
+        Some(&trust()),
+        |_admitted| {
+            let revoked = Arc::clone(&revoked);
+            async move {
+                // Authority is revoked while the continuation is "mid-effect".
+                revoked.store(true, Ordering::SeqCst);
+                "effect-after-revocation-still-ran"
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(ran, "effect-after-revocation-still-ran");
+    assert_eq!(
+        provider.asked.load(Ordering::SeqCst),
+        1,
+        "no re-check exists"
+    );
+
+    // A fresh admission after the revocation IS refused.
+    let again = admit_then(binding(), &scope(), &provider, Some(&trust()), |_a| async {
+        panic!("revoked authority must not reach the continuation")
+    })
+    .await;
+    assert_eq!(again.err(), Some(Refusal::Revoked));
 }

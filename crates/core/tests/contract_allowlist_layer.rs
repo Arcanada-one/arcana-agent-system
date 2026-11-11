@@ -1,18 +1,19 @@
 //! The contract's allowlist, as the cascade sees it.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use arcana_core::contract::{digest_of, verify, ContractDocument, ContractTools};
+use arcana_core::contract::{digest_of, verify, ContractDocument};
 use arcana_core::permission::{ContractAllowlistLayer, LayerDecision, PermissionLayer};
 use serde_json::json;
 
 fn binding_admitting(tools: &[&str]) -> arcana_core::contract::ContractBinding {
-    let projection = "Role: reviewer.";
+    // The allowlist is stated inside the digested bytes; see `derive_policy`.
+    let bytes = format!(
+        "{{\"role\":\"reviewer\",\"tools\":{{\"allow\":{}}}}}{{\"revisions\":[]}}",
+        json!(tools)
+    );
     let doc = ContractDocument {
-        digest: digest_of(projection.as_bytes()),
-        projection: json!(projection),
-        tools: Some(ContractTools {
-            allow: tools.iter().map(|t| (*t).to_owned()).collect(),
-        }),
+        digest: digest_of(bytes.as_bytes()),
+        canonical_bytes: Some(bytes),
         ..ContractDocument::default()
     };
     verify(&doc.digest.clone(), &doc).expect("binds")

@@ -11,7 +11,7 @@ use arcana_core::contract::{
     digest_of, is_wellformed_digest, verify, AllowlistSource, CanonicalBlock, ContractDocument,
     ContractRefusal, ContractTools, DigestPreimage, Kc2Block, DEFAULT_ALLOWLIST,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// A source that renders its projection as a string — the simplest shape this
 /// client accepts, and the one a hand-written fixture takes.
@@ -84,7 +84,6 @@ fn canonical_bytes_are_preferred_over_the_projection() {
     let canonical = "{\"body\":1,\"manifest\":[]}";
     let doc = ContractDocument {
         digest: digest_of(canonical.as_bytes()),
-        projection: json!("a human-readable rendering that is NOT the preimage"),
         canonical_bytes: Some(canonical.to_owned()),
         ..ContractDocument::default()
     };
@@ -92,9 +91,10 @@ fn canonical_bytes_are_preferred_over_the_projection() {
 
     let binding = verify(&expected, &doc).expect("the declared preimage hashes to the digest");
     assert_eq!(binding.preimage(), DigestPreimage::CanonicalBytes);
-    // The projection is still carried — it is what the model is told — but it
-    // is not what was hashed, and the binding says so.
-    assert!(binding.projection().starts_with("a human-readable"));
+    // What the model is shown is the verified preimage itself, not an envelope
+    // rendering that the digest does not cover (a differing one is refused —
+    // see `opaque_text_preimage_cannot_carry_envelope_tools`).
+    assert_eq!(binding.projection(), canonical);
 }
 
 #[test]
@@ -114,11 +114,12 @@ fn a_contract_that_names_no_tools_grants_no_shell() {
 
 #[test]
 fn a_contract_that_names_tools_is_the_allowlist() {
-    let mut doc = document("Role: reviewer.");
-    doc.tools = Some(ContractTools {
-        allow: vec!["read".to_owned(), "grep".to_owned()],
-    });
-    doc.digest = digest_of(doc.projection_text().as_bytes());
+    let bytes = "{\"role\":\"r\",\"tools\":{\"allow\":[\"read\",\"grep\"]}}{\"revisions\":[]}";
+    let doc = ContractDocument {
+        digest: digest_of(bytes.as_bytes()),
+        canonical_bytes: Some(bytes.to_owned()),
+        ..ContractDocument::default()
+    };
     let binding = verify(&doc.digest.clone(), &doc).expect("binds");
 
     assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
@@ -216,12 +217,176 @@ fn canonical_bytes_b64_that_is_not_base64_is_unverifiable_not_a_mismatch() {
 
 #[test]
 fn an_explicit_empty_allowlist_admits_no_tools() {
-    let mut doc = document("Role: reviewer.");
-    doc.tools = Some(ContractTools { allow: vec![] });
+    let bytes = "{\"role\":\"r\",\"tools\":{\"allow\":[]}}{\"revisions\":[]}";
+    let doc = ContractDocument {
+        digest: digest_of(bytes.as_bytes()),
+        canonical_bytes: Some(bytes.to_owned()),
+        ..ContractDocument::default()
+    };
     let binding = verify(&doc.digest, &doc).expect("the fixture binds");
     assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
     assert!(binding.allowlist().is_empty());
     for tool in DEFAULT_ALLOWLIST.into_iter().chain(["bash"]) {
         assert!(!binding.admits(tool), "explicit empty must refuse {tool}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Envelope-to-bytes binding (KCLIVE-11, SM-06). The digest covers only
+// `canonical(body) ‖ canonical(closure_manifest)`; `projection` and `tools`
+// sit outside it. Each test keeps the BYTES (so the digest still matches) and
+// changes the envelope. Every one was run against a variant of `verify` that
+// skips `derive_policy` and failed there — see the PR's mutation record.
+// ---------------------------------------------------------------------------
+
+const ARGANA_BYTES: &[u8] = b"{\"role\":\"reviewer\"}{\"revisions\":[]}";
+const ARGANA_B64: &str = "eyJyb2xlIjoicmV2aWV3ZXIifXsicmV2aXNpb25zIjpbXX0=";
+
+fn argana_doc() -> ContractDocument {
+    ContractDocument {
+        digest: digest_of(ARGANA_BYTES),
+        projection: json!({"body": {"role": "reviewer"}, "closure_manifest": {"revisions": []}}),
+        canonical: Some(CanonicalBlock {
+            rule: None,
+            bytes_b64: Some(ARGANA_B64.to_owned()),
+            length: Some(ARGANA_BYTES.len() as u64),
+        }),
+        ..ContractDocument::default()
+    }
+}
+
+#[test]
+fn same_bytes_with_a_changed_projection_is_refused() {
+    let mut doc = argana_doc();
+    doc.projection = json!({"body": {"role": "deployer"}, "closure_manifest": {"revisions": []}});
+    let refusal = verify(&doc.digest.clone(), &doc).expect_err("projection not in the bytes");
+    assert_eq!(refusal.code(), "CONTRACT_POLICY_UNBOUND");
+}
+
+#[test]
+fn same_bytes_with_expanded_tools_is_refused() {
+    let mut doc = argana_doc();
+    doc.tools = Some(ContractTools {
+        allow: vec!["read".to_owned(), "bash".to_owned()],
+    });
+    let refusal = verify(&doc.digest.clone(), &doc).expect_err("a shell outside the bytes");
+    assert_eq!(refusal.code(), "CONTRACT_POLICY_UNBOUND");
+}
+
+#[test]
+fn same_bytes_with_omitted_or_narrowed_tools_is_not_silently_believed() {
+    // The bytes name no tools. An envelope that narrows them is as unbound as
+    // one that widens them: the effective set must come from the bytes only.
+    let mut doc = argana_doc();
+    doc.tools = Some(ContractTools { allow: vec![] });
+    let refusal = verify(&doc.digest.clone(), &doc).expect_err("empty list is not in the bytes");
+    assert_eq!(refusal.code(), "CONTRACT_POLICY_UNBOUND");
+
+    // And with no envelope tools the effective set is the no-shell default.
+    let binding = verify(&argana_doc().digest, &argana_doc()).expect("binds");
+    assert_eq!(binding.allowlist_source(), AllowlistSource::DefaultNoShell);
+    assert!(!binding.admits("bash"));
+    assert_eq!(
+        binding.policy_binding(),
+        arcana_core::contract::PolicyBinding::DerivedFromCanonicalBytes
+    );
+}
+
+#[test]
+fn tools_in_the_digested_body_are_the_effective_allowlist() {
+    let bytes = b"{\"role\":\"r\",\"tools\":{\"allow\":[\"read\",\"write\"]}}{\"revisions\":[]}";
+    let mut doc = ContractDocument {
+        digest: digest_of(bytes),
+        canonical: Some(CanonicalBlock {
+            rule: None,
+            bytes_b64: Some(base64_of(bytes)),
+            length: None,
+        }),
+        ..ContractDocument::default()
+    };
+    // No envelope tools at all: the bytes alone decide.
+    let binding = verify(&doc.digest.clone(), &doc).expect("binds");
+    assert_eq!(binding.allowlist_source(), AllowlistSource::Contract);
+    assert!(binding.admits("read") && binding.admits("write"));
+    assert!(!binding.admits("edit") && !binding.admits("bash"));
+    // The projection the model reads is derived from the same bytes.
+    assert!(binding.projection().contains("\"write\""));
+
+    // An envelope that agrees is accepted; one that widens is refused.
+    doc.tools = Some(ContractTools {
+        allow: vec!["read".to_owned(), "write".to_owned()],
+    });
+    assert!(verify(&doc.digest.clone(), &doc).is_ok());
+    doc.tools = Some(ContractTools {
+        allow: vec!["read".to_owned(), "write".to_owned(), "bash".to_owned()],
+    });
+    assert_eq!(
+        verify(&doc.digest.clone(), &doc)
+            .expect_err("widened")
+            .code(),
+        "CONTRACT_POLICY_UNBOUND"
+    );
+}
+
+#[test]
+fn a_projection_the_model_reads_comes_from_the_bytes_not_the_envelope() {
+    let mut doc = argana_doc();
+    doc.projection = Value::Null; // an omitted projection is not a way to blank the policy text
+    let binding = verify(&doc.digest.clone(), &doc).expect("binds");
+    assert!(binding.projection().contains("reviewer"));
+}
+
+#[test]
+fn opaque_text_preimage_cannot_carry_envelope_tools() {
+    // String-projection and plain `canonical_bytes` fallbacks: there is no
+    // structure in the digested text that could authenticate an allowlist.
+    let mut doc = document("Role: reviewer.");
+    doc.tools = Some(ContractTools {
+        allow: vec!["read".to_owned()],
+    });
+    let refusal = verify(&doc.digest.clone(), &doc).expect_err("unbound allowlist");
+    assert_eq!(refusal.code(), "CONTRACT_POLICY_UNBOUND");
+
+    // A plain canonical_bytes preimage must also be what the model is shown.
+    let canonical = "free text, not two JSON objects";
+    let bad = ContractDocument {
+        digest: digest_of(canonical.as_bytes()),
+        projection: json!("something else entirely"),
+        canonical_bytes: Some(canonical.to_owned()),
+        ..ContractDocument::default()
+    };
+    assert_eq!(
+        verify(&bad.digest.clone(), &bad)
+            .expect_err("projection unbound")
+            .code(),
+        "CONTRACT_POLICY_UNBOUND"
+    );
+}
+
+#[test]
+fn trailing_or_extra_json_in_the_preimage_is_not_two_halves() {
+    // Three objects, or trailing garbage, must not be read as body+manifest.
+    for bytes in [
+        &b"{\"a\":1}{\"b\":2}{\"c\":3}"[..],
+        &b"{\"a\":1}{\"b\":2} trailing"[..],
+        &b"[1][2]"[..],
+    ] {
+        let doc = ContractDocument {
+            digest: digest_of(bytes),
+            projection: json!({"body": {"a": 1}, "closure_manifest": {"b": 2}}),
+            canonical: Some(CanonicalBlock {
+                rule: None,
+                bytes_b64: Some(base64_of(bytes)),
+                length: None,
+            }),
+            ..ContractDocument::default()
+        };
+        let refusal = verify(&doc.digest.clone(), &doc).expect_err("not a structured preimage");
+        assert_eq!(refusal.code(), "CONTRACT_POLICY_UNBOUND");
+    }
+}
+
+fn base64_of(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }

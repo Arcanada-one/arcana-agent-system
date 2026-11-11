@@ -1,0 +1,22 @@
+import json,hashlib,subprocess,os,sys
+FZ="/home/dev/aup/claude-work/arasga02/frozen-exec"; SRC="/home/dev/aup/claude-work/arasga02/frozen-src"; OUT="/home/dev/aup/claude-work/arasga02/canary"
+def sha(p): return hashlib.sha256(open(p,'rb').read()).hexdigest()
+os.makedirs(OUT,exist_ok=True)
+commit=subprocess.check_output(['git','-C',SRC,'rev-parse','HEAD'],text=True).strip()
+tree=subprocess.check_output(['git','-C',SRC,'rev-parse','HEAD^{tree}'],text=True).strip()
+ms={"schema":"MeasuredGitSource/v1","commit":commit,"tree":tree,"dirty":False,"producer":{"tool":"git rev-parse HEAD/HEAD^{tree}; git status --porcelain","runtime":"deterministic local executor"},"captured_at_utc":subprocess.check_output(['date','-u','+%Y-%m-%dT%H:%M:%S.000000+00:00'],text=True).strip()}
+assert subprocess.check_output(['git','-C',SRC,'status','--porcelain'],text=True)==''
+msp=OUT+'/measured-source.json'; open(msp,'w').write(json.dumps(ms,indent=1,sort_keys=True)+'\n')
+files=[]
+for p in [FZ+'/run_work_item_refusal_evidence',FZ+'/arcana']: files.append({"path":p,"sha256":sha(p)})
+tracked=subprocess.check_output(['git','-C',SRC,'ls-files','-z'],text=True).split('\0')
+for t in sorted(x for x in tracked if x and (x.startswith('crates/') or x in('Cargo.toml','Cargo.lock'))):
+    p=SRC+'/'+t
+    if os.path.isfile(p): files.append({"path":p,"sha256":sha(p)})
+probe={"id":"run-work-item-refusal-evidence-all","kind":"process","argv":[FZ+'/run_work_item_refusal_evidence',"--nocapture"],"cwd":".","env_keys":["TMPDIR","USER","PATH","CARGO_BIN_EXE_arcana"],"timeout_seconds":120,"capture_limit_bytes":262144,
+ "expect":{"exit_codes":[0],"stdout_contains":["4 passed; 0 failed"]},"executable_sha256":sha(FZ+'/run_work_item_refusal_evidence'),"execution_files":files,"artifacts":[],
+ "entities":["code_unit:crates/cli/tests/run_work_item_refusal_evidence.rs"],"mutating":True}
+plan={"schema":"CanaryPlan/v2","id":"aras-kclive11-refusal-evidence-local","owner":"arasga02 worker for Agent-SWE, Muneral KCLIVE-11","environment":"owned scratch filesystem; wiremock on loopback; no network/credentials/provider/production","read_only":False,
+ "subject":{"schema":"GitCanarySubject/v1","commit":commit,"tree":tree,"evidence":{"path":"measured-source.json","sha256":sha(msp),"source_field":"commit"}},"probes":[probe]}
+open(OUT+'/canary-plan-frozen.json','w').write(json.dumps(plan,indent=1)+'\n')
+print(len(files),commit,tree)

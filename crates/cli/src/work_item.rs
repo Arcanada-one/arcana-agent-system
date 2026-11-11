@@ -40,7 +40,7 @@ use arcana_connectors::contract_source::{
     ArganaContractClient, ContractSource, FileContractSource,
 };
 use arcana_connectors::muneral::{MuneralClient, WorkItem, WorkItemReadiness};
-use arcana_core::contract::{verify, ContractBinding, ContractRefusal};
+use arcana_core::contract::{verify_with, ContractBinding, ContractRefusal, ReaderMode};
 use arcana_core::contract_authority::{
     admit_then, AdmittedContract, UnavailableContractAuthority, WorkItemScope,
 };
@@ -57,6 +57,9 @@ pub struct WorkItemRequest {
     /// Read the contract from this file instead of from Argana. The receipt
     /// records which was used. Neither source supplies admission authority.
     pub contract_file: Option<PathBuf>,
+    /// Strict profile to enforce (`--contract-profile`); `None` is the recorded
+    /// legacy route.
+    pub contract_profile: Option<String>,
     /// Files quoted into the brief as ground truth about this repository, in
     /// the order the dispatcher named them. See [`crate::ground_truth`].
     pub ground_truth: Vec<PathBuf>,
@@ -103,7 +106,13 @@ async fn run_async(request: WorkItemRequest) -> i32 {
     };
 
     // Step 3.
-    let (source, binding) = match bind_contract(request.contract_file.as_deref(), &digest).await {
+    let (source, binding) = match bind_contract(
+        request.contract_file.as_deref(),
+        request.contract_profile.as_deref(),
+        &digest,
+    )
+    .await
+    {
         Ok(bound) => bound,
         Err(code) => return code,
     };
@@ -305,6 +314,7 @@ async fn execute_admitted(
 /// refusal before the first model call and they all print the same way.
 async fn bind_contract(
     contract_file: Option<&Path>,
+    contract_profile: Option<&str>,
     digest: &str,
 ) -> Result<(Box<dyn ContractSource>, ContractBinding), i32> {
     let source: Box<dyn ContractSource> = resolve_source(contract_file)
@@ -314,15 +324,25 @@ async fn bind_contract(
         source.origin(),
         source.label()
     );
-    let binding = fetch_and_verify(source.as_ref(), digest)
+    let mode =
+        contract_profile.map_or(ReaderMode::Legacy, |profile| ReaderMode::Strict { profile });
+    let binding = fetch_and_verify(source.as_ref(), digest, mode)
         .await
         .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
     println!(
-        "contract verified: {} re-hashed over its {}; tools {:?} (from {})",
+        "contract verified: {} re-hashed over its {}; policy {}; tools {:?} (from {})",
         binding.digest(),
         binding.preimage().as_str(),
+        binding.policy_binding().as_str(),
         binding.allowlist(),
         binding.allowlist_source().as_str(),
+    );
+    println!(
+        "contract reader: route {}; profile {}; capability {}; schema parity {}",
+        binding.reader_route().as_str(),
+        binding.profile().unwrap_or("none"),
+        binding.reader_capability(),
+        binding.schema_parity().as_str(),
     );
     Ok((source, binding))
 }
@@ -415,9 +435,10 @@ fn resolve_source(file: Option<&Path>) -> Result<Box<dyn ContractSource>, Contra
 async fn fetch_and_verify(
     source: &dyn ContractSource,
     digest: &str,
+    mode: ReaderMode<'_>,
 ) -> Result<ContractBinding, ContractRefusal> {
     let document = source.fetch(digest).await?;
-    verify(digest, &document)
+    verify_with(digest, &document, mode)
 }
 
 /// `arcana <version> (<git sha>)` — what produced the receipt.

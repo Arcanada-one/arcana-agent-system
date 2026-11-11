@@ -27,6 +27,8 @@ fn print_version() {
     }
 }
 
+// `main` is only the subcommand dispatch table; each flag added to `run` lengthens it.
+#[allow(clippy::too_many_lines)]
 fn main() {
     let cli = Cli::parse();
 
@@ -91,6 +93,7 @@ fn main() {
             prompt,
             work_item,
             contract_file,
+            contract_profile,
             ground_truth,
             prompt_stdin,
             max_turns,
@@ -107,6 +110,7 @@ fn main() {
                 prompt,
                 work_item,
                 contract_file,
+                contract_profile,
                 ground_truth,
                 prompt_stdin,
                 max_turns,
@@ -137,6 +141,7 @@ fn run_headless(
     prompt: Option<String>,
     work_item: Option<String>,
     contract_file: Option<PathBuf>,
+    contract_profile: Option<String>,
     ground_truth: Vec<PathBuf>,
     prompt_stdin: bool,
     max_turns: u32,
@@ -162,6 +167,7 @@ fn run_headless(
         return arcana_cli::work_item::run(arcana_cli::work_item::WorkItemRequest {
             id,
             contract_file,
+            contract_profile,
             ground_truth,
             run: arcana_cli::run::RunRequest {
                 cwd,

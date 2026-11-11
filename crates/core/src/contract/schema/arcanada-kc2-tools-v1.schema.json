@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Arcanada KC2 tools profile arcanada-kc2-tools/v1: KnowledgeContract with a digest-covered, closed body.tools",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "KnowledgeContract"
+    },
+    "schema_version": {
+      "const": "arcanada-kc2-tools/v1"
+    },
+    "body": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/task"
+        },
+        "scope": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/scope"
+        },
+        "projection": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/projection"
+        },
+        "embedded": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/embedded"
+        },
+        "reduction": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/reduction"
+        },
+        "conflict_records": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/conflict_records"
+        },
+        "refusals": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/refusals"
+        },
+        "verdicts": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/verdicts"
+        },
+        "envelope_unverified": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/envelope_unverified"
+        },
+        "verdict": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/verdict"
+        },
+        "quarantined": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/quarantined"
+        },
+        "canonicalization": {
+          "$ref": "kc2-v2-body.schema.json#/$defs/canonicalization"
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "const": "arcanada-kc2-tools/v1"
+            },
+            "allow": {
+              "type": "array",
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "edit",
+                  "grep",
+                  "read",
+                  "write"
+                ]
+              },
+              "description": "[] is valid deny-all. Strict ascending order and marker agreement are enforced by the strict reader."
+            }
+          },
+          "required": [
+            "allow",
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "canonicalization",
+        "conflict_records",
+        "embedded",
+        "envelope_unverified",
+        "projection",
+        "quarantined",
+        "reduction",
+        "refusals",
+        "scope",
+        "task",
+        "tools",
+        "verdict",
+        "verdicts"
+      ],
+      "additionalProperties": false
+    },
+    "closure_manifest": {
+      "$ref": "kc2-v2-closure-manifest.schema.json"
+    },
+    "contract_digest": {
+      "$ref": "common-defs.schema.json#/$defs/digest"
+    }
+  },
+  "required": [
+    "body",
+    "closure_manifest",
+    "contract_digest",
+    "kind",
+    "schema_version"
+  ],
+  "additionalProperties": false
+}

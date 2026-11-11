@@ -34,7 +34,7 @@ use arcana_core::agent_loop::RunOutput;
 use arcana_core::connector::{
     ConnectorError, ConnectorResponse, ExecuteRequest, ModelConnector, Usage,
 };
-use arcana_core::contract::{digest_of, verify, ContractBinding, ContractDocument, ContractTools};
+use arcana_core::contract::{digest_of, verify, ContractBinding, ContractDocument};
 use async_trait::async_trait;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -212,13 +212,10 @@ async fn without_a_choice_the_tiered_policy_still_routes_per_turn() {
 /// assertion is about the model fields — but a receipt cannot be built without
 /// one, and a fixture is cheaper than a live contract.
 fn binding() -> ContractBinding {
-    let projection = "Role: reviewer. Deliverable: one review note.";
+    let bytes = r#"{"role":"reviewer","tools":{"allow":["read","write"]}}{"revisions":[]}"#;
     let document = ContractDocument {
-        digest: digest_of(projection.as_bytes()),
-        projection: serde_json::json!(projection),
-        tools: Some(ContractTools {
-            allow: vec!["read".to_owned(), "write".to_owned()],
-        }),
+        digest: digest_of(bytes.as_bytes()),
+        canonical_bytes: Some(bytes.to_owned()),
         ..ContractDocument::default()
     };
     verify(&document.digest.clone(), &document).expect("the fixture binds")

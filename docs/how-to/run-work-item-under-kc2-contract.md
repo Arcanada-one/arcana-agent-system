@@ -22,6 +22,44 @@ current generation through a trusted provider. Synthetic positive tests prove
 these predicates only; they are not live authority or an effect-time revocation
 fence. The empty-tools fallback remains a separate source obligation.
 
+## Envelope-to-bytes policy binding (KCLIVE-11)
+
+The digest covers only `canonical(body) ‖ canonical(closure_manifest)`. The
+document's `projection` and `tools` are outside it, so they never set policy on
+their own. When the verified preimage parses as those two JSON objects, the
+projection the model reads and the tool allowlist (`body.tools.allow`, absent
+means the no-shell default) are derived from the verified bytes; an envelope copy
+is only compared, and a difference refuses with `CONTRACT_POLICY_UNBOUND` before
+readiness, authority and any model call. An opaque text preimage cannot carry an
+envelope `tools` at all. The accepted Argana schema currently defines no tool
+field, so an Argana contract yields the default allowlist; a narrower
+read/write-only policy needs the owner to add it to the canonical body.
+
+## Profile contracts: the strict route is the only route (KCLIVE-11)
+
+A contract whose digested bytes carry `body.tools.profile` (or whose envelope `schema_version`
+names `arcanada-kc2-tools/vN`) is read only by the strict reader, selected with
+`--contract-profile arcanada-kc2-tools/v1`. Leaving the flag out does **not** read it as a legacy
+contract: the legacy route refuses it with `CONTRACT_PROFILE_ROUTE_REQUIRED` before readiness,
+authority and any model call. Contracts that predate the profile (no `tools`, or `tools: {allow}`)
+keep working without the flag and are bound exactly as before. The strict route in turn refuses a
+legacy contract (`CONTRACT_PROFILE_REQUIRED`).
+
+### C1: the canonical value domain this reader supports (reviewed decision)
+
+The normative canonical form is Python's: unbounded integers, every non-ASCII character escaped
+as `\uXXXX` (surrogate pairs above the BMP), and a lone escaped surrogate passes. The strict reader
+supports integers in `[-9223372036854775808, 18446744073709551615]` and all Unicode scalar values
+(non-BMP text as escaped surrogate pairs). It refuses, fail-closed with
+`CONTRACT_CANONICAL_INVALID` and a message that names this restriction, any integer outside that
+range (for example `18446744073709551616` in an open task value) and any lone surrogate escape.
+Why restricted: supporting bignums needs the `arbitrary_precision` feature of `serde_json`, which is workspace
+wide and would change how every number in the legacy route is held, and the profile and the
+producer need nothing above `u64`. The restriction is measured against the real chain (the
+producer, Argana and the pinned reader accept 2^64 and 2^200; this reader refuses). Reverse it if a
+producer legitimately emits such an integer: lift it with an arbitrary-precision type confined to
+`contract/strict.rs`, never by changing legacy canonicalisation.
+
 ## Prerequisites
 
 - The `arcana` binary installed (see [`install.md`](install.md)).

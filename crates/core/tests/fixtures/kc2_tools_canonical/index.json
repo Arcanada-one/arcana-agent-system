@@ -1,0 +1,234 @@
+[
+ {
+  "expect": "ACCEPT",
+  "file": "pos-control.json",
+  "group": "control",
+  "name": "pos-control",
+  "note": "valid profile contract, no defect",
+  "sha256": "46c60afc16ef3b1d45942a58c30bb131d2b3a6406d170fdce851a15a032d26a7"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-value-top.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-value-top",
+  "note": "unpaired high surrogate in a top-level value (kind)",
+  "sha256": "036c53080c262934eed619aafb9906ced231f95c6069879a31ba3bf5b96784f0"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-key-top.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-key-top",
+  "note": "unpaired high surrogate in a top-level key",
+  "sha256": "b7b1493f072c01583e815d622669bd26f45039445c0e6725df74f56419bc4b78"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-value-nested.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-value-nested",
+  "note": "unpaired high surrogate in body.task.goal",
+  "sha256": "2de5407aecde0d9744930d1ef84d5410ff81d480856cba4d8da26eadce989e7c"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-key-nested.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-key-nested",
+  "note": "unpaired high surrogate in a key of body.task.bounds",
+  "sha256": "aba4b6e73639930f70512e46ac623ad19336e901cab55fc583e56c9a54ff8201"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-value-in-array.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-value-in-array",
+  "note": "unpaired high surrogate in an array element",
+  "sha256": "0350540a111d644bc724e54a68b7e670e648b3493caec2e4d1871c34c6442502"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-low-value-top.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-low-value-top",
+  "note": "unpaired low surrogate in a top-level value (kind)",
+  "sha256": "761b031910478d88f862fef3d4eb4d2901e0a888e489e596803a7c1705b80fe6"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-low-key-top.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-low-key-top",
+  "note": "unpaired low surrogate in a top-level key",
+  "sha256": "d57d03cf9f81347ae940cd4f00ec7f306b2d8e46988284b301fbb845df39897a"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-low-value-nested.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-low-value-nested",
+  "note": "unpaired low surrogate in body.task.goal",
+  "sha256": "c77d6b764656898e56968222f1dc57275b44d18b26762c11236f68e70380e35c"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-low-key-nested.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-low-key-nested",
+  "note": "unpaired low surrogate in a key of body.task.bounds",
+  "sha256": "744a08f669630f2837616a3ca658300c4d3e70eac2bdf755290b21ca7acb7542"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-low-value-in-array.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-low-value-in-array",
+  "note": "unpaired low surrogate in an array element",
+  "sha256": "996bb3e5d2933f3410928498702fd405b98d60e7d58a9abfaa6c53a722e56ac9"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-reversed-pair.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-reversed-pair",
+  "note": "low then high escape: not a pair",
+  "sha256": "a8168555faacaac71b937ac78a7a43c330bf50e15e31cd669009d3a3af795780"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-then-ascii.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-then-ascii",
+  "note": "high escape followed by an ordinary character",
+  "sha256": "feff498ff3174406947b0902e9efb520e90f481cd3e51a3f55df9d2006a62e3c"
+ },
+ {
+  "expect": "CONTRACT_CANONICAL_INVALID",
+  "file": "neg-surrogate-high-at-end.json",
+  "group": "surrogate",
+  "name": "neg-surrogate-high-at-end",
+  "note": "high escape immediately before the closing quote",
+  "sha256": "23978a6cc917088f2c4e93a6ef28e3d8b002a6e6e43d8d3128d2597f970fc009"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-astral-pair-value.json",
+  "group": "surrogate",
+  "name": "pos-astral-pair-value",
+  "note": "valid supplementary scalar U+1F600 from a paired escape in a value",
+  "sha256": "ebf136041785b73a8bfbbb09df9bbf1b6d2cab0dd6b1314da92bf7fc011d8009"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-astral-pair-key.json",
+  "group": "surrogate",
+  "name": "pos-astral-pair-key",
+  "note": "valid supplementary scalar U+10000 from a paired escape in a key",
+  "sha256": "a3a024b93f94e1078b5a1212002721c26d6b3bf9b83bd141d7ef09bef328436a"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-2p63m1.json",
+  "group": "integer",
+  "name": "pos-int-2p63m1",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "93131522e80ae00a449378a4f1ade04637a0f27c158a13a469b48e6d9e38d94e"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-2p63.json",
+  "group": "integer",
+  "name": "pos-int-2p63",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "7964545e94b811db61414c4a6cafb7990b149b1cdaca0bed04c27ff092d17c28"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-m2p63.json",
+  "group": "integer",
+  "name": "pos-int-m2p63",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "19c78bad6808f82edca54c9755d009d6ad37fe1672819c66a18d0bd9b1aad6e3"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-m2p63m1.json",
+  "group": "integer",
+  "name": "pos-int-m2p63m1",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "7a286034e7841b93d38753c4d7160cf697a7d7fb41cacdc7b0db2bdaed4d7bc7"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-2p64m1.json",
+  "group": "integer",
+  "name": "pos-int-2p64m1",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "5563e3ef55e31fe8e5412abbb119d1ccaadd86a3dd54693d6e80e06723b50231"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-2p64.json",
+  "group": "integer",
+  "name": "pos-int-2p64",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "6bc4ac504f0cfdb5aca14532628fe13ded339e238c5a023e702749ae1f01078f"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-m2p64.json",
+  "group": "integer",
+  "name": "pos-int-m2p64",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "b774f44787aaa7965f02d4a42231b34c773032057b4cac16d00c17aa748df0e0"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-2p200.json",
+  "group": "integer",
+  "name": "pos-int-2p200",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "b476af3aee10277decc01ba41867b968f377310d3a295f39765b9058e8f528cc"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-m2p200.json",
+  "group": "integer",
+  "name": "pos-int-m2p200",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "589061548d24cc337d44cb8eb2342b6bc62a0516718a4f11b7461da2d0887461"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-1e4299.json",
+  "group": "integer",
+  "name": "pos-int-1e4299",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "9ba1cb3fc90a5b4a0f2476aff40688c4cb070b903d45851a03583d1430acdef6"
+ },
+ {
+  "expect": "ACCEPT",
+  "file": "pos-int-m1e4299.json",
+  "group": "integer",
+  "name": "pos-int-m1e4299",
+  "note": "exact integer in the open member body.task.bounds.n; the canonical form has no i64/u64 bound",
+  "sha256": "1123bbfea5d0ad23fc2fc3162c4f3842406b07db860a6fc4391d4323ded9c2ab"
+ },
+ {
+  "expect": "CONTRACT_READER_UNSUPPORTED",
+  "file": "cap-int-1e4300.json",
+  "group": "integer",
+  "name": "cap-int-1e4300",
+  "note": "4301 digits: beyond the Python reader's declared exact range; typed capability refusal, never rounded",
+  "sha256": "ba01b9a598f8df2df366c385273b98bd2e1df492f5d17b8cf387a2d53af1b0ad"
+ },
+ {
+  "expect": "CONTRACT_READER_UNSUPPORTED",
+  "file": "cap-int-m1e4300.json",
+  "group": "integer",
+  "name": "cap-int-m1e4300",
+  "note": "4301 digits: beyond the Python reader's declared exact range; typed capability refusal, never rounded",
+  "sha256": "0cf091ac44e09745d802743e665484a43e67f4cb8b8eb79e6838786267fcb51a"
+ }
+]

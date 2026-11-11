@@ -157,6 +157,17 @@ pub enum Cmd {
         /// same verdict as a binding checked against the live endpoint.
         #[arg(long, value_name = "PATH", requires = "work_item")]
         contract_file: Option<PathBuf>,
+        /// Read the contract with the STRICT profile reader for this profile
+        /// (`arcanada-kc2-tools/v1`) instead of the legacy compatibility route.
+        ///
+        /// Strict mode validates the digested bytes (closed body, exact canonical
+        /// form, explicit `body.tools.allow`) and never falls back to the default
+        /// tool set. A profile this build cannot enforce is refused with
+        /// `CONTRACT_READER_UNSUPPORTED` before any contract is read. Without the
+        /// flag the run takes the legacy route and the receipt records
+        /// `reader_route: "legacy"` — which never satisfies the strict profile.
+        #[arg(long, value_name = "PROFILE", requires = "work_item")]
+        contract_profile: Option<String>,
         /// Quote this file into the work item's brief as ground truth about
         /// this repository. Repeatable; the order is the order given.
         ///

@@ -1,0 +1,424 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Talomnia ontology: shared definitions",
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "logical_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*([.-][a-z0-9]+)*$"
+    },
+    "revision_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*([.-][a-z0-9]+)*@r[1-9][0-9]*$"
+    },
+    "iso_time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^evt-[a-z0-9-]+$"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^ev-[a-z0-9-]+$"
+    },
+    "authority_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.-]*$"
+    },
+    "capability_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9]+)+$"
+    },
+    "capability_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+$"
+    },
+    "provides_token": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9./_-]*$"
+    },
+    "typed_field": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "artifact_ref": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "Role",
+            "Skill",
+            "Blueprint",
+            "Constraint",
+            "SuccessCriterion",
+            "Policy",
+            "CapabilityDescription"
+          ]
+        },
+        "revision_id": {
+          "$ref": "common-defs.schema.json#/$defs/revision_id"
+        },
+        "content_digest": {
+          "$ref": "common-defs.schema.json#/$defs/digest"
+        }
+      },
+      "required": [
+        "content_digest",
+        "revision_id"
+      ],
+      "additionalProperties": false
+    },
+    "dependency": {
+      "type": "object",
+      "properties": {
+        "revision_id": {
+          "$ref": "common-defs.schema.json#/$defs/revision_id"
+        },
+        "content_digest": {
+          "$ref": "common-defs.schema.json#/$defs/digest"
+        },
+        "version_predicate": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "exact"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^r[1-9][0-9]*$"
+            }
+          },
+          "required": [
+            "kind",
+            "revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "content_digest",
+        "revision_id"
+      ],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "activity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "digest": {
+                "$ref": "common-defs.schema.json#/$defs/digest"
+              },
+              "source_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "recorded_at": {
+          "$ref": "common-defs.schema.json#/$defs/iso_time"
+        }
+      },
+      "required": [
+        "activity",
+        "derived_from",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    },
+    "predicate": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "minLength": 1
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "ne",
+            "le",
+            "ge",
+            "lt",
+            "gt",
+            "in",
+            "not_in",
+            "matches",
+            "forbids"
+          ]
+        },
+        "value": {
+          "type": [
+            "string",
+            "integer",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "subject",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "evaluation": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "enum": [
+            "selection",
+            "binding",
+            "execution",
+            "acceptance"
+          ]
+        },
+        "evaluator": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "evaluator",
+        "phase"
+      ],
+      "additionalProperties": false
+    },
+    "capability_type_ref": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "common-defs.schema.json#/$defs/capability_name"
+        },
+        "version": {
+          "$ref": "common-defs.schema.json#/$defs/capability_version"
+        },
+        "semantic_schema_digest": {
+          "$ref": "common-defs.schema.json#/$defs/digest"
+        }
+      },
+      "required": [
+        "name",
+        "semantic_schema_digest",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "integer",
+          "string"
+        ]
+      }
+    },
+    "tal_id": {
+      "type": "string",
+      "pattern": "^(tal|datarim)-[a-z0-9-]+$",
+      "description": "Artifact id in the frontmatter contract. tal- for Talomnia-authored artifacts; datarim- for artifacts that keep their imported Datarim graph identity after contract-grade evolution (TALO-0029)."
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "frontmatter_relation": {
+      "type": "object",
+      "properties": {
+        "rel": {
+          "enum": [
+            "constrained-by",
+            "constrains",
+            "derived-from",
+            "part-of",
+            "related",
+            "supersedes",
+            "used-by",
+            "uses",
+            "validated-by"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        }
+      },
+      "required": [
+        "rel",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "legacy_frontmatter_payload": {
+      "type": "object",
+      "properties": {
+        "legacy_frontmatter": {
+          "const": true
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10
+        },
+        "version_label": {
+          "$ref": "#/$defs/semver"
+        },
+        "origin": {
+          "enum": [
+            "created-in-talomnia",
+            "created-in-arcanada"
+          ]
+        },
+        "owner": {
+          "$ref": "#/$defs/authority_name"
+        },
+        "visibility": {
+          "enum": [
+            "private",
+            "public"
+          ]
+        },
+        "maturity": {
+          "enum": [
+            "draft",
+            "reviewed",
+            "validated",
+            "shared-internal",
+            "public-sanitized",
+            "deprecated"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "created": {
+          "$ref": "#/$defs/date"
+        },
+        "updated": {
+          "$ref": "#/$defs/date"
+        },
+        "body_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "relations_declared": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/frontmatter_relation"
+          }
+        },
+        "title_en": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "title_ru": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "description_ru": {
+          "type": "string",
+          "minLength": 10
+        }
+      },
+      "required": [
+        "body_digest",
+        "created",
+        "description",
+        "legacy_frontmatter",
+        "maturity",
+        "name",
+        "origin",
+        "owner",
+        "relations_declared",
+        "tags",
+        "updated",
+        "version_label",
+        "visibility"
+      ],
+      "additionalProperties": false
+    },
+    "human_title": {
+      "type": "object",
+      "description": "Human-readable bilingual title of the artifact, written for a person reading the Capability Atlas (TALO-0029, ADR-ONT-006). Both languages are required when the field is present: a card must never fall back to the other language.",
+      "properties": {
+        "en": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "ru": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "en",
+        "ru"
+      ],
+      "additionalProperties": false
+    },
+    "human_summary": {
+      "type": "object",
+      "description": "Human-readable bilingual summary written for a person: surfaces the artifact's substance (responsibility, perspective, decision scope; purpose; procedure intent) instead of a machine-register line (TALO-0029, ADR-ONT-006).",
+      "properties": {
+        "en": {
+          "type": "string",
+          "minLength": 40
+        },
+        "ru": {
+          "type": "string",
+          "minLength": 40
+        }
+      },
+      "required": [
+        "en",
+        "ru"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
