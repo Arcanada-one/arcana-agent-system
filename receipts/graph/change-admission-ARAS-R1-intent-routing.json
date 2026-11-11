@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-11-11T01:19:50Z",
+ "captured_at_utc": "2026-11-11T01:22:16Z",
  "change_set": {
   "base": "62fc939f1ecb0906a23bdf2b7d20a0df64bc1629",
   "files": [
@@ -120,7 +120,7 @@
     "status": "A"
    }
   ],
-  "head": "74228b889effbc68bceca3c3af5b12fc1f48007e",
+  "head": "43a8fd41523c3a978530f3ddc7aff4f2959f601d",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -129,17 +129,17 @@
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:ac97f1cc1626d96da3f4661312838eb93b9a2cf7cd590ac36906036b8669e51c",
-  "path": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-1/graph-62fc939f1ecb.json",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/graph-62fc939f1ecb.json",
   "source_commit": "62fc939f1ecb0906a23bdf2b7d20a0df64bc1629"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:c0a661f6c4c169d613655ec6da3e8df605dfef6db6c134c6246b86f09143a4db",
-  "path": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-1/graph-head-74228b889eff.json",
-  "source_commit": "74228b889effbc68bceca3c3af5b12fc1f48007e",
+  "graph_digest": "sha256:011252e53ecaaa07bf440e92d8c885f1bf45b0da616eb6abcbb7a4f571061fd1",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/graph-head-43a8fd41523c.json",
+  "source_commit": "43a8fd41523c3a978530f3ddc7aff4f2959f601d",
   "staleness": {
-   "checked_at_utc": "2026-11-11T01:21:13Z",
+   "checked_at_utc": "2026-11-11T01:23:03Z",
    "checked_nodes": 481,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
@@ -2547,14 +2547,13 @@
  },
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
-  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none",
-  "head tree 74228b889eff exported with git archive into /home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verify-workdir-1/export-74228b889eff (node_modules linked from the repository for []; workspace packages built: none); the repository was not written"
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261111T011950Z-74228b88",
+ "receipt_id": "car-verify-20261111T012216Z-43a8fd41",
  "receipt_path": "receipts/graph/change-admission-ARAS-R1-intent-routing.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -2734,7 +2733,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-11T01:21:13Z",
+  "checked_at_utc": "2026-11-11T01:23:03Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2743,7 +2742,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:878c6b585b099d962b3a8883decdf532d75f2aef54d11983473b67807f7ab091"
+    "head": "sha256:a9e410570f739e52b537de2b29c2e249b4180b6565901d4a6971d18b1e42c352"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS-R1-intent-routing.json",
    "node_type": "receipt",
@@ -2757,7 +2756,7 @@
   }
  ],
  "tree": {
-  "commit": "9c42445c688863c2595c76757e0fe7ab3d74c375",
+  "commit": "43a8fd41523c3a978530f3ddc7aff4f2959f601d",
   "dirty": false
  },
  "verdicts": [
@@ -3627,8 +3626,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-1/v-fitness.json",
-   "started_at_utc": "2026-11-11T01:21:19Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/v-fitness.json",
+   "started_at_utc": "2026-11-11T01:23:09Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3643,8 +3642,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-1/v-doc-reference.txt",
-   "started_at_utc": "2026-11-11T01:21:19Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/v-doc-reference.txt",
+   "started_at_utc": "2026-11-11T01:23:09Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
@@ -3921,8 +3920,8 @@
    "receipt:receipts/graph/change-admission-ARAS-R1-intent-routing.json": []
   },
   "seconds": {
-   "prepare": 2.35,
-   "total": 88.65,
+   "prepare": 2.16,
+   "total": 53.13,
    "verifiers": 0.02
   }
  },
