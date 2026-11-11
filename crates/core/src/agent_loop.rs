@@ -26,7 +26,11 @@ use crate::connector::{
     ModelConnector, UnverifiedFirstDispatchObservationV0,
 };
 use crate::cost::{CostSnapshot, CostTracker};
-use crate::dispatch::{classify, ModelPolicy, SelectionContext};
+use crate::dispatch::{
+    classify, fixture_admitted_catalogue, route_step, AdmittedProfile, CatalogueAvailability,
+    DeterministicTransform, ModelChoice, ModelPolicy, RoutingConflict, RoutingDecision,
+    RoutingFilters, RoutingRequest, SelectionContext, TrustedStepIntent, UntrustedObservation,
+};
 use crate::effective_dispatch::{
     EffectGuardError, EffectKind, EffectiveDispatchConfig, RouteProtection,
 };
@@ -400,6 +404,13 @@ pub enum TerminalReason {
     /// is not charged. Reporting it as `ConnectorFatal` would blame the
     /// connector for a limit the caller overran.
     RequestTooLarge,
+    /// Trusted step-intent routing refused the step before any model dispatch.
+    ///
+    /// Covers hard-filter denial, missing/ineligible pin, missing capability,
+    /// oversized context, unavailable catalogue, and other
+    /// [`crate::dispatch::RoutingConflict`] outcomes. Distinct from
+    /// [`Self::ConnectorFatal`]: nothing was sent to a provider.
+    SelectionConflict,
 }
 
 impl TerminalReason {
@@ -438,6 +449,10 @@ impl TerminalReason {
             Self::UnsupportedToolCallFormat => {
                 "the model asked for a tool in a format this runner cannot execute, and \
                  repeated it after being told the expected one; nothing was executed"
+            }
+            Self::SelectionConflict => {
+                "trusted step-intent routing refused the step before any model was called; \
+                 check filters, required capabilities, and any explicit model pin"
             }
         }
     }
@@ -1305,6 +1320,30 @@ pub struct DriverConfig {
     /// [`RouteProtection::LegacyOutsideGuarantee`] keeps ordinary legacy
     /// routes outside the protected-execution guarantee. Not request-selectable.
     pub route_protection: RouteProtection,
+    /// Trusted current-plan step intent for R1 model selection.
+    ///
+    /// `None` (the default) keeps the legacy history heuristic
+    /// ([`classify`] + [`ModelPolicy::select`]) for conversational /
+    /// unmigrated paths. `Some` replaces that decision with
+    /// [`route_step`] over admitted capabilities; tool-result and model
+    /// prose remain data only and cannot reset the phase.
+    pub trusted_step: Option<TrustedStepIntent>,
+    /// Whether an admitted capability catalogue was supplied for
+    /// [`Self::trusted_step`] routing. Ignored on the legacy path.
+    pub routing_catalogue: CatalogueAvailability,
+    /// Admitted profiles evaluated when [`Self::routing_catalogue`] is
+    /// [`CatalogueAvailability::Provided`]. Fixture-only unless a real
+    /// catalogue API is installed; never inferred from [`CostTier`](crate::dispatch::CostTier).
+    pub admitted_profiles: Vec<AdmittedProfile>,
+    /// Hard filters applied before cost optimisation on the trusted path.
+    pub routing_filters: RoutingFilters,
+    /// Explicit model pin for trusted routing. Eligible pins stay pinned;
+    /// ineligible pins end the run on [`TerminalReason::SelectionConflict`]
+    /// (never silent substitution). When unset, [`Self::model`] is used if
+    /// present.
+    pub routing_pin: Option<String>,
+    /// Declared deterministic transform for a zero-LLM trusted step.
+    pub deterministic_transform: Option<DeterministicTransform>,
 }
 
 impl DriverConfig {
@@ -1337,7 +1376,26 @@ impl DriverConfig {
             operation_intent: None,
             effective_dispatch: None,
             route_protection: RouteProtection::LegacyOutsideGuarantee,
+            trusted_step: None,
+            routing_catalogue: CatalogueAvailability::Unavailable,
+            admitted_profiles: Vec::new(),
+            routing_filters: RoutingFilters::permissive(),
+            routing_pin: None,
+            deterministic_transform: None,
         }
+    }
+
+    /// Enable the R1 trusted step-intent path with the offline fixture catalogue.
+    ///
+    /// Test / development helper: production callers without an installed
+    /// admitted catalogue must leave [`Self::routing_catalogue`] as
+    /// [`CatalogueAvailability::Unavailable`].
+    #[must_use]
+    pub fn with_trusted_step(mut self, intent: TrustedStepIntent) -> Self {
+        self.trusted_step = Some(intent);
+        self.routing_catalogue = CatalogueAvailability::Provided;
+        self.admitted_profiles = fixture_admitted_catalogue();
+        self
     }
 
     /// Map an invalid budget to the existing fail-closed terminal reason that
@@ -1487,6 +1545,49 @@ enum Polled {
 enum StepResult {
     Continue(ContinueReason),
     Terminal(TerminalReason, Option<String>),
+}
+
+/// Outcome of per-step model selection before a connector attempt.
+enum StepSelection {
+    /// Dispatch an LLM with the chosen model id / bill tier.
+    Model(ModelChoice),
+    /// Execute a declared deterministic transform without an LLM.
+    ZeroLlm {
+        /// Transform id that was admitted (retained for audit/tests).
+        #[allow(dead_code)]
+        transform_id: String,
+        /// Exact transform output surfaced as the run's final text.
+        output: String,
+    },
+}
+
+/// Absorb conversation history into the untrusted observation channel.
+///
+/// Tool results and assistant prose are data only: they must not become
+/// routing authority when a trusted step intent is present.
+fn untrusted_from_history(history: &[HistoryEntry]) -> UntrustedObservation {
+    let mut untrusted = UntrustedObservation::default();
+    for entry in history.iter().rev() {
+        match entry {
+            HistoryEntry::ToolResult { content, .. } if untrusted.tool_result.is_none() => {
+                untrusted.tool_result = Some(content.clone());
+            }
+            HistoryEntry::Assistant(text) if untrusted.model_prose.is_none() => {
+                untrusted.model_prose = Some(text.clone());
+            }
+            HistoryEntry::Injected(text) if untrusted.prompt_injection.is_none() => {
+                untrusted.prompt_injection = Some(text.clone());
+            }
+            _ => {}
+        }
+        if untrusted.tool_result.is_some()
+            && untrusted.model_prose.is_some()
+            && untrusted.prompt_injection.is_some()
+        {
+            break;
+        }
+    }
+    untrusted
 }
 
 /// What the loop tells a model that answered without acting.
@@ -2198,6 +2299,51 @@ impl<'a> Driver<'a> {
         None
     }
 
+    /// Select the model (or zero-LLM outcome) for this step.
+    ///
+    /// When [`DriverConfig::trusted_step`] is set, builds a [`RoutingRequest`]
+    /// from the trusted intent + admitted catalogue and calls [`route_step`].
+    /// History tool/model prose is attached as [`UntrustedObservation`] only.
+    /// Otherwise preserves the legacy [`classify`] + [`ModelPolicy::select`]
+    /// decision for unmigrated conversational paths.
+    fn select_step_model(
+        &self,
+        history: &[HistoryEntry],
+        turn: u32,
+    ) -> Result<StepSelection, RoutingConflict> {
+        let Some(trusted) = self.config.trusted_step.as_ref() else {
+            let ctx = SelectionContext { history, turn };
+            return Ok(StepSelection::Model(
+                self.config.policy.select(classify(&ctx)),
+            ));
+        };
+
+        let pin = self
+            .config
+            .routing_pin
+            .clone()
+            .or_else(|| self.config.model.clone());
+        let request = RoutingRequest {
+            trusted: trusted.clone(),
+            filters: self.config.routing_filters.clone(),
+            catalogue: self.config.routing_catalogue,
+            profiles: self.config.admitted_profiles.clone(),
+            pin,
+            deterministic: self.config.deterministic_transform.clone(),
+            untrusted: untrusted_from_history(history),
+        };
+        match route_step(&request)? {
+            RoutingDecision::Model(choice) => Ok(StepSelection::Model(choice)),
+            RoutingDecision::ZeroLlm {
+                transform_id,
+                output,
+            } => Ok(StepSelection::ZeroLlm {
+                transform_id,
+                output,
+            }),
+        }
+    }
+
     /// One step: guards → select model → connector attempt → interpret → (tool
     /// turn | final). `attempts` is the shared connector-attempt counter that
     /// enforces `max_turns`; `selected` accumulates the ordered per-step model
@@ -2216,17 +2362,22 @@ impl<'a> Driver<'a> {
         };
         let history = &mut state.history;
         let attempts = &mut state.attempts;
-        // Per-step multi-model dispatch: classify the step context, select the
-        // model, record it, and route it through the connector on
-        // `ExecuteRequest.model`. Selection keys off the current
-        // connector-attempt index (`*attempts`) before the `max_turns`-enforcing
-        // increment below consumes it, preserving the zero-based turn index the
-        // classifier expects on the first attempt.
-        let ctx = SelectionContext {
-            history,
-            turn: *attempts,
+        // Per-step multi-model dispatch. Migrated paths carry a trusted
+        // current-plan step intent and call `route_step` (filters → eligibility
+        // → cost). Legacy / conversational paths keep classify + ModelPolicy.
+        // Selection keys off the current connector-attempt index (`*attempts`)
+        // before the `max_turns`-enforcing increment below consumes it.
+        let choice = match self.select_step_model(history, *attempts) {
+            Ok(StepSelection::Model(choice)) => choice,
+            Ok(StepSelection::ZeroLlm { output, .. }) => {
+                // Deterministic useful positive: no LLM dispatch, no attempt
+                // consumed. Tool-result prose cannot reset this path.
+                return StepResult::Terminal(TerminalReason::Completed, Some(output));
+            }
+            Err(_conflict) => {
+                return StepResult::Terminal(TerminalReason::SelectionConflict, None);
+            }
         };
-        let choice = self.config.policy.select(classify(&ctx));
         state.selected.push(choice.model_id.clone());
         *attempts = attempts.saturating_add(1);
         let turn = *attempts;
@@ -3122,7 +3273,8 @@ fn reduce_terminal(reason: TerminalReason) -> LoopControl {
         | TerminalReason::NoAction
         | TerminalReason::ResponseTruncated
         | TerminalReason::UnsupportedToolCallFormat
-        | TerminalReason::RequestTooLarge => LoopControl::Stop(reason),
+        | TerminalReason::RequestTooLarge
+        | TerminalReason::SelectionConflict => LoopControl::Stop(reason),
     }
 }
 
@@ -3136,7 +3288,7 @@ mod terminal_reason_tests {
     /// A `const` array with an explicit length is not an exhaustive match, so
     /// the compiler cannot flag a missing variant; the test below asserts the
     /// length against the enum's own count.
-    const ALL: [TerminalReason; 13] = [
+    const ALL: [TerminalReason; 14] = [
         TerminalReason::Completed,
         TerminalReason::MaxTurns,
         TerminalReason::MaxCostUsd,
@@ -3150,6 +3302,7 @@ mod terminal_reason_tests {
         TerminalReason::ResponseTruncated,
         TerminalReason::UnsupportedToolCallFormat,
         TerminalReason::RequestTooLarge,
+        TerminalReason::SelectionConflict,
     ];
 
     /// A variant added to the enum without being added to [`ALL`] is a
@@ -3173,6 +3326,7 @@ mod terminal_reason_tests {
                 TerminalReason::ResponseTruncated => 10,
                 TerminalReason::UnsupportedToolCallFormat => 11,
                 TerminalReason::RequestTooLarge => 12,
+                TerminalReason::SelectionConflict => 13,
             }
         }
         let mut seen = [false; ALL.len()];

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- R1c (development-only): when `DriverConfig::trusted_step` is set, the agent
+  driver selects a model through trusted step-intent routing
+  (`crates/core/src/dispatch/intent_route.rs`, wired in
+  `crates/core/src/agent_loop.rs`) — hard filters, then admitted capability,
+  then cost. An ineligible pin, missing capability, or filter denial ends the
+  run as `TerminalReason::SelectionConflict` before any provider call. Without
+  a trusted intent the legacy history classifier is unchanged. Not wired into
+  the CLI.
+
 - G05: a final effective-dispatch guard on the `arcana-core` model-request and
   tool-effect boundaries (`crates/core/src/effective_dispatch.rs`, opt-in through
   `DriverConfig::effective_dispatch`). Immediately before each consequential

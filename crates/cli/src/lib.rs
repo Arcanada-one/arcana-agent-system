@@ -22,6 +22,7 @@ pub mod repl;
 pub mod run;
 pub mod status;
 pub mod status_watch;
+pub mod step_intent;
 pub mod usage;
 pub mod work_item;
 pub mod workspace;
