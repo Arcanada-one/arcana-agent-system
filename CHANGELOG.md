@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- G07: a durable, private, versioned model-operation intent record on the `arcana-core`
+  `ModelConnector` call boundary (`crates/core/src/operation_intent.rs`, opt-in through
+  `DriverConfig::operation_intent`). Order: validate the native binding, verify the private
+  path, take an exclusive lock, read any retained record, and only then mint a key; a new
+  operation is persisted `pending` (stage, file fsync, rename, parent-directory fsync) before
+  the dispatch, and a dispatch that produced no reply is `unknown`. After a restart an
+  unresolved operation holds its original `Idempotency-Key`: the same request is replayed
+  under that key only when the composition root states that connector replay is verified,
+  otherwise the run refuses with `INTENT_UNKNOWN_OUTCOME_HELD`; a changed request is
+  refused as `ReconcileRequired` and the original bytes are kept. A missing native field
+  (task, plan revision, attempt, lease, deadline, dialect revision), an unsafe path, a corrupt,
+  truncated, misfiled, oversized, competing or stale record, a second driver, a parent swap or
+  a permission failure each refuse with a typed `INTENT_*` code and dispatch nothing. The record
+  holds ids, hashes and closed scalars only. New `ConnectorError::IntentRefused` and
+  `IdempotencyKey::from_persisted`; no existing digest, canonical line or fail-closed default
+  changes. Not a task tracker, budget authority or second Model Connector intent store.
+  The native Model Connector intent, the provider effect, the cost reservation and the
+  Muneral reconcile join are NOT_MEASURED.
+
+### Tests
+
+- G07 stage 2: `crates/core/tests/driver_restart_identity.rs` now asserts the safe property
+  that PR #276 had pinned as a defect (restart after an unknown outcome mints no fresh key,
+  a changed payload is refused, an unchanged one reuses the original key only when replay is
+  verified, the state left behind holds the identity and no prompt text) and covers crash
+  before and after the durable intent, a settled-before-receipt response, conflicting
+  attempt/lease/plan/deadline, two concurrent drivers and truncated or corrupt state, all
+  against mock connectors. `crates/core/tests/operation_intent_store.rs` covers the private
+  path, symlinks, parent swap, permissions, lock and capacity limits.
+
 ### Fixed
 
 - G07: after a dispatch that produced no reply (unknown outcome), a changed payload is no

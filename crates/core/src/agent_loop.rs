@@ -29,6 +29,9 @@ use crate::cost::{CostSnapshot, CostTracker};
 use crate::dispatch::{classify, ModelPolicy, SelectionContext};
 use crate::execution::{AuditFailurePhase, CapabilityError, CapabilityExecutor, CapabilityOutput};
 use crate::hooks::HookContext;
+use crate::operation_intent::{
+    Disposition, IntentError, IntentRecord, NewIntent, OperationIntentConfig, OperationSession,
+};
 use crate::prompt_budget::{
     self, DEFAULT_CONTEXT_BUDGET_UTF16_UNITS, DEFAULT_TOOL_RESULT_BUDGET_UTF16_UNITS,
     MC_FIELD_MAX_UTF16_UNITS,
@@ -1284,6 +1287,11 @@ pub struct DriverConfig {
     /// run ends [`TerminalReason::ConnectorFatal`] saying so rather than
     /// sleeping on.
     pub connector_retry_pause_budget: Duration,
+    /// G07: durable model-operation intent. `None` (the default) keeps the
+    /// in-process identity only, which a restart loses; `Some` makes every
+    /// dispatch go through the private intent record
+    /// ([`crate::operation_intent`]) and refuses when a native field is missing.
+    pub operation_intent: Option<OperationIntentConfig>,
 }
 
 impl DriverConfig {
@@ -1313,6 +1321,7 @@ impl DriverConfig {
             edge_retry_limit: DEFAULT_EDGE_RETRY_LIMIT,
             connector_retry_backoff: DEFAULT_CONNECTOR_RETRY_BACKOFF,
             connector_retry_pause_budget: DEFAULT_CONNECTOR_RETRY_PAUSE_BUDGET,
+            operation_intent: None,
         }
     }
 
@@ -1567,6 +1576,8 @@ struct TurnIntentSeries {
     /// released together. A re-dispatch under the SAME key does not move it; it
     /// is the clock the in-flight wait is bounded against.
     dispatched_at: Option<Instant>,
+    /// G07: the durable intent record of this run, when one is configured.
+    session: Option<OperationSession>,
 }
 
 impl TurnIntentSeries {
@@ -1577,6 +1588,109 @@ impl TurnIntentSeries {
             active: None,
             dispatches: 0,
             dispatched_at: None,
+            session: None,
+        }
+    }
+
+    /// [`Self::stamp`] behind the durable intent record.
+    ///
+    /// Order: reconcile what a previous process left, then (for a new
+    /// operation) persist `pending`, and only then let the caller dispatch.
+    /// Every `Err` means nothing may be sent.
+    fn stamp_durable(
+        &mut self,
+        req: &mut ExecuteRequest,
+        now: Instant,
+    ) -> Result<IntentDecision, ConnectorError> {
+        let refuse = |error: IntentError| ConnectorError::IntentRefused {
+            code: error.code(),
+            detail: error.to_string(),
+        };
+        let Some(session) = self.session.as_mut() else {
+            return Ok(self.stamp(req, now));
+        };
+        let fingerprint = req.intent_fingerprint();
+        if let Some(held) = session.held.clone() {
+            // An unresolved operation from an earlier process holds the
+            // identity. Never a fresh key, even for identical text.
+            let held_fingerprint = IntentRecord::fingerprint_bytes(&held);
+            if held_fingerprint != Some(fingerprint) {
+                return Err(ConnectorError::ReconcileRequired {
+                    key: held.idempotency_key,
+                });
+            }
+            if !session.replay_verified {
+                return Err(ConnectorError::IntentRefused {
+                    code: "INTENT_UNKNOWN_OUTCOME_HELD",
+                    detail: format!(
+                        "an earlier dispatch under Idempotency-Key {} has an unknown outcome and \
+                         connector replay of the same key is not verified",
+                        held.idempotency_key
+                    ),
+                });
+            }
+            let Some(key) = IdempotencyKey::from_persisted(&held.idempotency_key) else {
+                return Err(ConnectorError::IntentRefused {
+                    code: "INTENT_RECORD_CORRUPT",
+                    detail: "retained key is not in the shape this crate mints".to_owned(),
+                });
+            };
+            // The SAME key and the same request: the connector replays the
+            // stored response (verified by the composition root) instead of
+            // charging again. Counted as a re-dispatch of the held operation.
+            self.dispatches = self.dispatches.max(2);
+            if self.active.is_none() {
+                self.dispatched_at = Some(now);
+            }
+            self.active = Some((key.clone(), fingerprint));
+            req.idempotency_key = Some(key);
+            return Ok(IntentDecision::Reused);
+        }
+        let decision = self.stamp(req, now);
+        if decision == IntentDecision::New {
+            let key = req
+                .idempotency_key
+                .as_ref()
+                .map(|key| key.as_str().to_owned())
+                .unwrap_or_default();
+            let intent = NewIntent {
+                run_id: format!("{:032x}", self.run),
+                turn: self.turn,
+                provider: req.connector.clone(),
+                model: req.model.clone(),
+                request_fingerprint: fingerprint,
+                idempotency_key: key,
+            };
+            let persisted = self
+                .session
+                .as_mut()
+                .map_or(Ok(()), |session| session.persist_pending(&intent));
+            if let Err(error) = persisted {
+                // Not persisted, so not dispatched, so no key is in force.
+                self.finish_turn();
+                return Err(refuse(error));
+            }
+        }
+        Ok(decision)
+    }
+
+    /// A dispatch produced no reply: record that its outcome is unknown.
+    /// Best effort by design: `pending` is already the strict state on disk.
+    fn note_no_reply(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            let _ = session.mark(Disposition::Unknown, None);
+        }
+    }
+
+    /// A reply was observed for the key in force.
+    fn note_reply(&mut self, response_id: &str) {
+        if let Some(session) = self.session.as_mut() {
+            if session
+                .mark(Disposition::Reconciled, Some(response_id))
+                .is_ok()
+            {
+                session.held = None;
+            }
         }
     }
 
@@ -1895,6 +2009,22 @@ impl<'a> Driver<'a> {
             return self.invalid_run_output(reason);
         }
         let mut state = RunState::new(task);
+        if let Some(config) = self.config.operation_intent.as_ref() {
+            // Restart rule: read, validate and reconcile the retained record
+            // BEFORE any key is minted or anything is dispatched.
+            match OperationSession::open(config) {
+                Ok(session) => state.intent.session = Some(session),
+                Err(error) => {
+                    eprintln!("arcana: operation intent refused the run: {error}");
+                    state.terminal_detail = Some(error.to_string());
+                    return self.finish_run(
+                        state,
+                        StepResult::Terminal(TerminalReason::ConnectorFatal, None),
+                        TerminalReason::ConnectorFatal,
+                    );
+                }
+            }
+        }
         loop {
             let step = self.step(&mut state).await;
             let outcome = match &step {
@@ -2336,7 +2466,7 @@ No other markup is executed, whatever your training says. \
             req.first_dispatch_measurement = self.config.first_dispatch_measurement.clone();
         }
         // Last, so the fingerprint it records covers the finished request.
-        if intent.stamp(&mut req, Instant::now()) == IntentDecision::Refused {
+        if intent.stamp_durable(&mut req, Instant::now())? == IntentDecision::Refused {
             // G07: an earlier dispatch under the key in force has an unknown
             // outcome and the payload changed. Do not dispatch; keep the
             // original key. Not a `tracing` call: the CLI installs no
@@ -2350,6 +2480,7 @@ No other markup is executed, whatever your training says. \
         }
         match self.connector.execute(req).await {
             Ok(resp) => {
+                intent.note_reply(&resp.id);
                 // `record_llm_call` takes u32; `Usage` fields are u64 — saturate.
                 let tokens_in = u32::try_from(resp.usage.input_tokens).unwrap_or(u32::MAX);
                 let tokens_out = u32::try_from(resp.usage.output_tokens).unwrap_or(u32::MAX);
@@ -2357,7 +2488,10 @@ No other markup is executed, whatever your training says. \
                     .record_llm_call(&resp.model, tokens_in, tokens_out, resp.usage.cost_usd);
                 Ok(resp)
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                intent.note_no_reply();
+                Err(error)
+            }
         }
     }
 

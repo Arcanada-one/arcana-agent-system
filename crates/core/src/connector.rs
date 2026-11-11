@@ -105,6 +105,22 @@ impl IdempotencyKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Re-read a key this crate minted earlier (G07 durable intent record).
+    ///
+    /// Accepts exactly the shape [`Self::for_turn`] produces and nothing else,
+    /// so a corrupt or foreign record cannot smuggle a value into the header.
+    #[must_use]
+    pub fn from_persisted(text: &str) -> Option<Self> {
+        let rest = text.strip_prefix("arcana.")?;
+        let (run, turn) = rest.split_once('.')?;
+        let run_ok = run.len() == 32 && run.bytes().all(|b| b.is_ascii_hexdigit());
+        let turn_ok = !turn.is_empty()
+            && turn.len() <= 20
+            && turn.bytes().all(|b| b.is_ascii_digit())
+            && turn.parse::<u64>().is_ok();
+        (run_ok && turn_ok).then(|| Self(text.to_owned()))
+    }
 }
 
 impl std::fmt::Display for IdempotencyKey {
@@ -534,6 +550,11 @@ pub enum ConnectorError {
          outcome and the request changed, so it was not sent; reconcile that operation first"
     )]
     ReconcileRequired { key: String },
+    /// G07: the durable model-operation intent record refused the dispatch
+    /// (missing native field, unsafe path, corrupt or competing state, held
+    /// unknown outcome ...). Nothing was sent. `code` is a closed identifier.
+    #[error("operation intent refused ({code}): {detail}; nothing was sent")]
+    IntentRefused { code: &'static str, detail: String },
     /// Body was not the JSON shape we expect for the given status.
     #[error("upstream returned non-JSON body (content-type: {content_type:?}, {bytes} bytes)")]
     UpstreamNonJson {
@@ -649,7 +670,8 @@ impl ConnectorError {
             | Self::UpstreamNonJson { .. }
             | Self::UnexpectedStatus(_)
             | Self::UnexpectedEnvelopeStatus
-            | Self::ReconcileRequired { .. } => false,
+            | Self::ReconcileRequired { .. }
+            | Self::IntentRefused { .. } => false,
         }
     }
 
@@ -819,6 +841,7 @@ impl ConnectorError {
             Self::UpstreamNonJson { .. } => "non-JSON body".to_owned(),
             Self::UnexpectedEnvelopeStatus => "unexpected envelope status".to_owned(),
             Self::ReconcileRequired { .. } => "reconcile required".to_owned(),
+            Self::IntentRefused { .. } => "operation intent refused".to_owned(),
             Self::Logical {
                 http_status, kind, ..
             } => format!("HTTP {http_status} {kind}"),
