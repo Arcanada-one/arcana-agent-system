@@ -575,12 +575,14 @@ def validate(raw):
 
 ACTIONLINT_VERSION = '1.7.12'
 ACTIONLINT_SHA256 = 'c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4'
-# Current authenticated runner inventory (2026-10-18); keep the allowlist
+# Current authenticated runner inventory (2026-10-18; extended 2026-11-07 with arcana-prod,
+# arcana-db, arcana-dbs from `gh api orgs/Arcanada-one/actions/runners`); keep the allowlist
 # aligned with the organization labels used by supported Program workflows.
 ACTIONLINT_CONFIG = (b'self-hosted-runner:\n  labels:\n    - ci-general\n'
                      b'    - arcana-ci-general-host\n    - arcana-ai\n    - ci-broad\n    - ci-nodocker\n'
                      b'    - arcana-devs\n    - deploy-gate\n    - docker\n'
-                     b'    - arcana-prd-host\n    - arcana-prod-ci\n')
+                     b'    - arcana-prd-host\n    - arcana-prod-ci\n'
+                     b'    - arcana-prod\n    - arcana-db\n    - arcana-dbs\n')
 
 
 def native_fitness(path, raw, executable=None):

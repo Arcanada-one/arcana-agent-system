@@ -219,6 +219,16 @@
    "verdict": "refuse",
    "order": 21,
    "rule": "A2-314. A non-structural exemption is a DECISION to proceed (DEC-AUP-0037 R3) and is issued only by `admit_change.py exempt-decision`: a DecisionExemption/v1 payload signed (SSHSIG, Ed25519, namespace decision_exemptions.namespace) by a signer listed in decision_exemptions.signers AS READ AT BASE (program repository) or in the pinned bundle (caller). The gate re-verifies the signature, the binding to the receipt's own diff (digest), the expiry by the GATE's clock and max_ttl_days, the DEC-AUP-0037 R3 wording, and the class eligibility against the receipt it is shown. Any problem: the exemption exempts nothing and the change is refused. A signed exemption is always checked; under enforcement=signed an UNSIGNED non-structural exemption is refused too. Gate-issued exemptions (structural codes, the automated-author receipt) are not decisions and are not judged here."
+  },
+  {
+   "id": "C22",
+   "code": "OPEN_PR_BUDGET_EXCEEDED",
+   "verdict": "admit",
+   "informational": true,
+   "order": 22,
+   "rule": "DEC-AUP-0181 dark launch. A lane holds more than one open agent pull request on the same repository without a dated hotfix/security exception recorded in HANDOFF. Informational only: never required until a dated calibration receipt and per-repository ci_promotion_rule promotion. Does not replace C18 HEAD_IMPACT_NOT_COVERED. Runtime open-PR counting remains not_measured until first batch receipt.",
+   "what": "Proposed observation that the per-lane open-PR budget (≤1 open agent PR per repository) is exceeded. Complements DEC-AUP-0167 stage delivery and session-hygiene § PR budget. Dark launch / informational; Collect-all green alone must not promote this check to required.",
+   "measured_by": "NOT_MEASURED in this introduction — dark launch proposal only; calibration receipt + ci_promotion_rule required before enforcement"
   }
  ],
  "work_item_evidence": {
