@@ -39,6 +39,10 @@ runner, strict up-to-date rebuilds and the graph gate's blind spots (workflow/sh
    control#182, KC #1612): merge their heads into the direction's `integration/<DIR>` now; they ship with the stage.
    Leave the GitHub PR open with a comment "folded into stage <DIR>, ships with stage PR"; close it when the stage merges.
 6. **Muneral**: a task moves to `review` when its work is in integration, to `done` when its stage is merged and live.
+   After DEC-AUP-0168 adoption, the author records task acceptance evidence by criterion and the independent reviewer
+   records exact-head verdicts at that ordinary handoff. The stage check aggregates those task records with its
+   existing criteria; this adds no per-feature CAR, full CI run or gate. NOT_MEASURED remains NOT_MEASURED and follows
+   the existing stage policy.
 7. **Backup**: `/home/dev/aup/integration/backup.sh` copies hub integration branches hourly to the private repo
    Arcanada-one/arcana-devs-backup-20261014 (gitleaks first, HELD on findings). JANITOR runs it in its hourly check.
 8. **Stop**: ROOT-CODEX's DEC-0166 lane (Program PR486) and per-feature gate/CAR work for product PRs stop. ARC2's
@@ -91,3 +95,21 @@ recorded; 4. gitleaks clean on the outgoing range; 5. graph gate / CAR has **0 F
 - A local tool difference (e.g. Node 24 locally vs Node 22 in CI) is settled by the green CI run, not a re-run.
 - Then: merge (normal, no bypass), deploy through the repo's normal path, live check, status line "shipped".
 ROOT-CODEX applies this today: each listed PR merged by 19:30Z or one named real FAILED/finding that blocks it.
+
+## Addendum 2026-11-02T13:58Z — divergent integration branch after a freeze (Claude Root)
+
+Trigger: TALO (root-requests 2026-11-02T13:40:59Z) and ARC2 (ARC2-SHARED-READY-LINEAGE, 10:04:59Z) — after the
+2026-10-29 freeze, `integration/<DIR>` (or `integration/shared`) is not an ancestor of the reviewed stage built on
+fresh main.
+
+Rule, standing for every direction (no further Root request needed):
+1. Leave the old `integration/<DIR>` / `integration/shared` untouched (the hub refuses force/deletion anyway). Its
+   unshipped commits are not adopted blindly; whatever is still wanted is re-composed onto fresh main as ordinary work.
+2. A stage reviewed on an exact head built from current main is pushed to the hub as a fresh ref
+   `stage/<DIR>-<YYYYMMDD>[-<slug>]` at exactly that head, and the same name/head to the product repo for ONE PR.
+   No force, no "ours" merge, no rewriting of the reviewed head.
+3. Merge criteria are unchanged (Addendum 18:25Z: required CI green, stage review APPROVE on the exact head, E2E
+   evidence of the user path). If main moved, merge main into the stage (merge, not rebase) and review the new head.
+4. Shared repos: same rule, ARC2 cuts `stage/shared-<YYYYMMDD>[-<slug>]`.
+reverse_if: a stage shipped this way loses commits that were only on the old integration branch and were needed —
+then the owner re-composes them; the old ref is still there.

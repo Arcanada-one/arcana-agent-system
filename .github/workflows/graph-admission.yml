@@ -173,6 +173,32 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # Resolve the same authenticated GitHub event range before the pre-payload trust check.
+      # The resolver consumes only PR base/head event fields; push events retain the existing
+      # HEAD~1 fallback. Later admission steps reuse these exact outputs.
+      - name: Resolve the change range
+        id: range
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          BASE_BRANCH=""
+          if [ -n "${PR_BASE:-}" ]; then
+            if [ -n "${PR_BASE_REF:-}" ]; then BASE_BRANCH="refs/remotes/origin/${PR_BASE_REF}"; fi
+            BASE="$(git merge-base "$PR_BASE" "$PR_HEAD")"
+            HEAD_SHA="$PR_HEAD"
+          else
+            BASE="$(git rev-parse HEAD~1)"
+            HEAD_SHA="$(git rev-parse HEAD)"
+          fi
+          {
+            echo "base=$BASE"
+            echo "head=$HEAD_SHA"
+            echo "base_branch=$BASE_BRANCH"
+          } >> "$GITHUB_OUTPUT"
+
       # The reusable workflow is loaded from the caller-pinned Program ref. Before it invokes any
       # vendored code, independently authenticate the complete bundle with the caller's pin and the
       # runner's native OpenSSH verifier. In particular, never import the bundle's ci_gate.py or
@@ -191,6 +217,7 @@ jobs:
           CALLER_REF: ${{ github.ref }}
           CALLER_SHA: ${{ github.sha }}
           CALLER_EVENT_NAME: ${{ github.event_name }}
+          RANGE_BASE: ${{ steps.range.outputs.base }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -203,6 +230,7 @@ jobs:
           import stat
           import subprocess
           import sys
+          import tempfile
           import urllib.error
           import urllib.parse
           import urllib.request
@@ -419,6 +447,85 @@ jobs:
               if manifest_path.stat().st_size > 16 * 1024 * 1024:
                   refuse("BUNDLE.json exceeds the 16 MiB preflight limit")
               manifest_bytes = manifest_path.read_bytes()
+
+              # A consumer refresh must be authorized by a key already present at the exact
+              # merge-base, before any candidate bundle module is imported. The remote reusable
+              # workflow is itself pinned to program_ref above; this native OpenSSH check binds the
+              # candidate payload manifest to a BASE bundle key, independent of the candidate's
+              # public-key file and of any caller-supplied receipt.
+              base = os.environ.get("RANGE_BASE", "")
+              if not re.fullmatch(r"[0-9a-f]{40}", base):
+                  refuse("BUNDLE_BASE_KEY_UNBOUND: exact merge-base is unavailable")
+              base_manifest_result = subprocess.run(
+                  ["git", "-C", str(workspace), "show", f"{base}:{raw_tools}/BUNDLE.json"],
+                  capture_output=True, check=False)
+              if base_manifest_result.returncode == 0 and base_manifest_result.stdout:
+                  base_manifest_bytes = base_manifest_result.stdout
+                  base_pairs = [("BUNDLE.json.sig", "SIGNING-KEY.pub")]
+                  for number in range(2, MAX_SIGNERS + 1):
+                      sig_name = f"BUNDLE.json.{number}.sig"
+                      key_name = f"SIGNING-KEY.{number}.pub"
+                      sig_result = subprocess.run(
+                          ["git", "-C", str(workspace), "show", f"{base}:{raw_tools}/{sig_name}"],
+                          capture_output=True, check=False)
+                      key_result = subprocess.run(
+                          ["git", "-C", str(workspace), "show", f"{base}:{raw_tools}/{key_name}"],
+                          capture_output=True, check=False)
+                      if (sig_result.returncode == 0) != (key_result.returncode == 0):
+                          refuse(f"BASE bundle has a half signature pair: {sig_name} / {key_name}")
+                      if sig_result.returncode == 0:
+                          base_pairs.append((sig_name, key_name))
+                  base_key_verified = False
+                  primary_sig = bundle / "BUNDLE.json.sig"
+                  head_sig_paths = [regular_file(primary_sig, "BUNDLE.json.sig")]
+                  for number in range(2, MAX_SIGNERS + 1):
+                      sig_name = f"BUNDLE.json.{number}.sig"
+                      sig_path = bundle / sig_name
+                      if sig_path.exists() or sig_path.is_symlink():
+                          head_sig_paths.append(regular_file(sig_path, sig_name))
+                  with tempfile.TemporaryDirectory(prefix="graph-base-key-continuity-") as temp_dir:
+                      temp = Path(temp_dir)
+                      for base_sig_name, base_key_name in base_pairs:
+                          base_key_result = subprocess.run(
+                              ["git", "-C", str(workspace), "show", f"{base}:{raw_tools}/{base_key_name}"],
+                              capture_output=True, check=False)
+                          if base_key_result.returncode != 0:
+                              refuse(f"BASE bundle key is unavailable: {base_key_name}")
+                          base_key_path = temp / base_key_name
+                          base_key_path.write_bytes(base_key_result.stdout)
+                          key_lines = base_key_result.stdout.decode("utf-8").splitlines()
+                          if len(key_lines) != 1 or not key_lines[0].startswith("ssh-ed25519 "):
+                              refuse(f"BASE bundle key is malformed: {base_key_name}")
+                          allowed_path = temp / (base_key_name + ".allowed")
+                          allowed_path.write_text(f"bundle-preflight {key_lines[0]}\n", encoding="utf-8")
+                          for head_sig_path in head_sig_paths:
+                              verify_base = subprocess.run(
+                                  ["ssh-keygen", "-Y", "verify", "-f", str(allowed_path),
+                                   "-I", "bundle-preflight", "-n", NAMESPACE, "-s", str(head_sig_path)],
+                                  input=manifest_bytes, capture_output=True, timeout=20, check=False)
+                              if verify_base.returncode == 0:
+                                  base_key_verified = True
+                                  break
+                          if base_key_verified:
+                              break
+                  if not base_key_verified:
+                      refuse("BUNDLE_BASE_KEY_CONTINUITY_FAILED: HEAD manifest has no valid signature by a key in the exact BASE bundle")
+                  print("BUNDLE_BASE_KEY_CONTINUITY_VERIFIED: HEAD manifest signature verified by a key from the exact merge-base")
+              elif base_manifest_result.returncode == 0:
+                  refuse("BUNDLE_BASE_MANIFEST_INVALID: the BASE manifest exists but is empty")
+              else:
+                  base_manifest_entry = subprocess.run(
+                      ["git", "-C", str(workspace), "ls-tree", "-z", base, "--",
+                       f"{raw_tools}/BUNDLE.json"],
+                      capture_output=True, check=False)
+                  if base_manifest_entry.returncode != 0:
+                      refuse("BUNDLE_BASE_MANIFEST_UNREADABLE: the exact BASE tree could not be inspected")
+                  if base_manifest_entry.stdout:
+                      refuse("BUNDLE_BASE_MANIFEST_UNREADABLE: BASE contains BUNDLE.json but its object could not be read")
+                  # First-time bundle installation has no BASE signer to continue; it remains on
+                  # the existing install route and is not classified as a mixed refresh.
+                  print("BUNDLE_BASE_KEY_CONTINUITY_NOT_APPLICABLE: no bundle manifest exists at the exact merge-base")
+
               pairs = [("BUNDLE.json.sig", "SIGNING-KEY.pub")]
               for number in range(2, MAX_SIGNERS + 1):
                   signature = f"BUNDLE.json.{number}.sig"
@@ -459,7 +566,6 @@ jobs:
                   allowed = f"bundle-preflight {key_line}\n".encode("utf-8")
                   # `ssh-keygen -Y verify` accepts the allowed-signers FILE path, never its contents.
                   # Use a private temporary file outside the bundle, then feed the exact manifest bytes.
-                  import tempfile
                   with tempfile.TemporaryDirectory(prefix="graph-bundle-preflight-") as temp_dir:
                       allowed_path = Path(temp_dir) / "allowed_signers"
                       allowed_path.write_bytes(allowed)
@@ -799,29 +905,6 @@ jobs:
           python3 "$compiler_root/qualify-tsc.py" "$compiler_root" "$compiler_root/node_modules/.bin/tsc"
           printf '%s\n' "$compiler_root/node_modules/.bin" >> "$GITHUB_PATH"
 
-      - name: Resolve the change range
-        id: range
-        env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          BASE_BRANCH=""
-          if [ -n "${PR_BASE:-}" ]; then
-            if [ -n "${PR_BASE_REF:-}" ]; then BASE_BRANCH="refs/remotes/origin/${PR_BASE_REF}"; fi
-            BASE="$(git merge-base "$PR_BASE" "$PR_HEAD")"
-            HEAD_SHA="$PR_HEAD"
-          else
-            BASE="$(git rev-parse HEAD~1)"
-            HEAD_SHA="$(git rev-parse HEAD)"
-          fi
-          {
-            echo "base=$BASE"
-            echo "head=$HEAD_SHA"
-            echo "base_branch=$BASE_BRANCH"
-          } >> "$GITHUB_OUTPUT"
-
       # The prior bundle_preflight step is the trust boundary for callers. Only after it succeeds may
       # this job import the pinned native structural classifier. The classifier sees GitHub's exact
       # checked-out range; it does not consume caller-authored eligibility or branch names.
@@ -976,6 +1059,72 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile
           pnpm --filter @muneral/types build
           cat "$PLAN_PATH" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate canonical Auth dependency source and toolchain
+        id: candidate_auth_dependency_setup
+        if: github.repository == 'Arcanada-one/auth-arcana'
+        env:
+          TOOLS_PATH: ${{ inputs.tools_path }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          GRAPH_TOOLS_ROOT="$GITHUB_WORKSPACE/$TOOLS_PATH"
+          PLAN_ROOT="$RUNNER_TEMP/graph-admission/auth-dependency-setup"
+          mkdir -p "$PLAN_ROOT"
+          PLAN_PATH="$PLAN_ROOT/plan.json"
+          set -C
+          python3 -I -B "$GRAPH_TOOLS_ROOT/tools/graph/ci_gate.py" candidate-auth-dependency-setup-plan \
+            --repo "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" \
+            --base "$RANGE_BASE" --head "$RANGE_HEAD" > "$PLAN_PATH"
+          python3 -I -B - "$PLAN_PATH" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          plan = json.load(open(sys.argv[1], encoding="utf-8"))
+          if plan.get("policy") != "auth-pnpm-frozen-root-account-spa/v1":
+              raise SystemExit("AUTH_DEPENDENCY_SETUP_POLICY_REFUSED")
+          print("node_version=" + plan["node_version"])
+          print("pnpm_version=" + plan["pnpm_version"])
+          PY
+
+      - name: Pin pnpm for canonical Auth candidate verification
+        if: github.repository == 'Arcanada-one/auth-arcana'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ steps.candidate_auth_dependency_setup.outputs.pnpm_version }}
+          dest: ${{ runner.temp }}/auth-setup-pnpm
+
+      - name: Pin Node for canonical Auth candidate verification
+        if: github.repository == 'Arcanada-one/auth-arcana'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.candidate_auth_dependency_setup.outputs.node_version }}
+
+      - name: Prepare fixed Auth root and account-SPA verifier dependencies
+        if: github.repository == 'Arcanada-one/auth-arcana'
+        env:
+          DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          test -f package.json && test ! -L package.json
+          test -f pnpm-lock.yaml && test ! -L pnpm-lock.yaml
+          CONFIG_ROOT="$RUNNER_TEMP/graph-admission/auth-pnpm-config"
+          mkdir -p "$CONFIG_ROOT"
+          test ! -e "$CONFIG_ROOT/user.npmrc" && test ! -e "$CONFIG_ROOT/global.npmrc"
+          umask 077
+          : > "$CONFIG_ROOT/user.npmrc"
+          : > "$CONFIG_ROOT/global.npmrc"
+          export NPM_CONFIG_USERCONFIG="$CONFIG_ROOT/user.npmrc"
+          export NPM_CONFIG_GLOBALCONFIG="$CONFIG_ROOT/global.npmrc"
+          pnpm --version | grep -Fx '10.30.3'
+          node --version | grep -Fx 'v24.22.1'
+          # The source validator pins pnpm-workspace.yaml to base, including its onlyBuiltDependencies allowlist.
+          pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --registry=https://registry.npmjs.org/
+          pnpm exec prisma generate
+          cat "$RUNNER_TEMP/graph-admission/auth-dependency-setup/plan.json" >> "$GITHUB_STEP_SUMMARY"
 
       # The canonical Model Connector self-update is the only caller admitted by the narrow
       # B1 pin/permission grammar. Its current-candidate TypeScript verifiers need the same

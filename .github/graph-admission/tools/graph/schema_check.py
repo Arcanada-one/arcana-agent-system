@@ -685,6 +685,15 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset(), arm_definition=
         missing = [f for f in ("node_type", "reason") if not x.get(f)]
         if missing:
             c.add("STRUCTURAL_EXCLUSION_INVALID", f"{x['entity']}: missing {', '.join(missing)}"); continue
+        identity_type = x["entity"].split(":", 1)[0]
+        if x["node_type"] != identity_type:
+            c.add("STRUCTURAL_EXCLUSION_INVALID",
+                  f"{x['entity']}: node_type {x['node_type']!r} does not match entity identity type {identity_type!r}"); continue
+        if x.get("rule") != "DEC-AUP-0035" and x["node_type"] == "work_item":
+            c.add("STRUCTURAL_EXCLUSION_INVALID",
+                  f"{x['entity']}: work_item identities are fileless and cannot prove byte identity"); continue
+        if x.get("rule") != "DEC-AUP-0035" and not isinstance(x.get("path"), str):
+            c.add("STRUCTURAL_EXCLUSION_INVALID", f"{x['entity']}: structural exclusion has no file path"); continue
         # The entity a receipt cannot verify is the PREVIOUS VERSION OF ITSELF (DEC-AUP-0035). That
         # one IS in the change set and its bytes DO differ — the two facts DEC-AUP-0034 relies on
         # are inverted here, so it is admitted on entirely different evidence: the excluded path is
@@ -1000,7 +1009,7 @@ def check_receipt(doc: dict, schema: dict, disabled=frozenset(), arm_definition=
     # row's listing is load-bearing. A boundary entity that owes no canary here cannot be the reason
     # some canary row is being spent there.
     def owes_canary(ent: str) -> bool:
-        return ent not in valid_exempt and (verdict_of.get(ent) == "verified"
+        return ent not in excluded and ent not in valid_exempt and (verdict_of.get(ent) == "verified"
                                             or av in ("admitted", "admitted_with_exemptions"))
 
     for ent in boundary_inferred:
