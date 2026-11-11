@@ -58,6 +58,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import build_graph  # noqa: E402
+import python_contracts  # noqa: E402
 import schema_check  # noqa: E402
 
 VERSION = "1.0.0"
@@ -239,6 +240,10 @@ def ts_paths(tree: build_graph.Tree) -> list[str]:
             and not p.endswith(".d.ts")]
 
 
+def py_paths(tree: build_graph.Tree) -> list[str]:
+    return python_contracts.py_paths(list(tree.paths))
+
+
 # ----------------------------------------------------------------------------------------------- extraction
 class Decl:
     """One declaration found in a file (contract candidates and the auxiliary types needed to resolve references)."""
@@ -263,11 +268,49 @@ class Extractor:
         self.imports: dict[str, dict[str, tuple[str, str]]] = {}  # path → local → (spec, imported)
         self.limitations: list[str] = []
         self._cache: dict[tuple[str, str], dict] = {}
+        self._pydantic_contracts: dict[str, dict] = {}
+        self._pydantic_unknowns: list[dict] = []  # {id, path, symbol, reason}
+        self._pydantic_version_policy: str | None = None
+        self._pydantic_disabled: bool = "x_pydantic" in self.disabled
+        self._py_paths_present: bool = bool(py_paths(tree))
         for p in ts_paths(tree):
             try:
                 self._scan(p, build_graph.strip_comments(tree.text(p)))
             except Exception as e:  # noqa: BLE001 — extraction must never abort the diff
                 self.limitations.append(f"{p}: extraction error {type(e).__name__}: {e}")
+        # Bounded Pydantic BaseModel frontend (stdlib AST). Unknowns bind into run_diff refusal, never silent PASS.
+        try:
+            py_files = {p: tree.files[p] for p in py_paths(tree)}
+            # Exact-version pin path is not a .py source; include it when present in the tree map.
+            pin_rel = python_contracts.PYDANTIC_EXACT_PIN_RELPATH
+            if pin_rel in tree.files and pin_rel not in py_files:
+                py_files = {**py_files, pin_rel: tree.files[pin_rel]}
+            py_result = python_contracts.extract_from_tree_files(py_files, disabled=self.disabled)
+            self._py_paths_present = bool(py_result.py_paths_present or self._py_paths_present)
+            self._pydantic_disabled = bool(py_result.disabled or self._pydantic_disabled)
+            self.limitations.extend(py_result.limitations)
+            if py_result.pydantic_version_policy:
+                self._pydantic_version_policy = py_result.pydantic_version_policy
+            for cid, c in py_result.contracts.items():
+                path, sym = c["path"], c["symbol"]
+                text = tree.text(path) if path in tree.files else ""
+                # Decl body unused for pydantic; schema lives in extra for schema_of.
+                self._add(Decl(path, sym, "pydantic_basemodel", text, text, True, {"schema": c["schema"], "contract": c}))
+                self._pydantic_contracts[cid] = c
+                if not self._pydantic_version_policy:
+                    self._pydantic_version_policy = c.get("pydantic_version_policy") or python_contracts.VERSION_POLICY
+            for u in py_result.unknowns:
+                uid = f"contract:{u.path}#{u.symbol}"
+                self._pydantic_unknowns.append(
+                    {"id": uid, "path": u.path, "symbol": u.symbol, "reason": u.reason}
+                )
+                # already mirrored into limitations by extract_from_texts; keep explicit trail
+                if not any(u.symbol in lim and u.path in lim for lim in self.limitations):
+                    self.limitations.append(f"{uid}: unknown — {u.reason}")
+            if self._pydantic_unknowns and not self._pydantic_version_policy:
+                self._pydantic_version_policy = python_contracts.VERSION_POLICY
+        except Exception as e:  # noqa: BLE001
+            self.limitations.append(f"python_contracts: extraction error {type(e).__name__}: {e}")
 
     def on(self, rule: str) -> bool:
         return rule not in self.disabled
@@ -352,7 +395,7 @@ class Extractor:
                            {"extends": (m.group(3) or "").strip() or None}))
 
     # ---- contracts ------------------------------------------------------------------------------------------
-    CONTRACT_KINDS = ("zod", "class_validator_dto", "type_alias_union", "ts_enum")
+    CONTRACT_KINDS = ("zod", "class_validator_dto", "type_alias_union", "ts_enum", "pydantic_basemodel")
 
     def contracts(self) -> dict[str, dict]:
         """id → {kind, path, symbol, direction, schema, decl_hash, text_hash}."""
@@ -363,12 +406,20 @@ class Extractor:
                     d.kind = "class_validator_dto"
                 if d.kind not in self.CONTRACT_KINDS or (d.kind != "zod" and not d.exported):
                     continue
+                if d.kind == "pydantic_basemodel" and not self.on("x_pydantic"):
+                    continue
                 kind = {"ts_enum": "cross_repo_enum"}.get(d.kind, d.kind)
                 schema = self.schema_of(d)
-                out[d.id] = {"id": d.id, "kind": kind, "path": path, "symbol": sym, "exported": d.exported,
-                             "direction": self.direction_of(d), "schema": schema,
-                             "decl_hash": sha_text(norm_ws(d.text)) if self.on("decl_hash") else sha_text(d.text + "\n" + str(len(d.text))),
-                             "error_code": bool(ERROR_CODE_RE.search(sym)) and schema.get("kind") == "enum"}
+                rec = {"id": d.id, "kind": kind, "path": path, "symbol": sym, "exported": d.exported,
+                       "direction": self.direction_of(d), "schema": schema,
+                       "decl_hash": sha_text(norm_ws(d.text)) if self.on("decl_hash") else sha_text(d.text + "\n" + str(len(d.text))),
+                       "error_code": bool(ERROR_CODE_RE.search(sym)) and schema.get("kind") == "enum"}
+                if d.kind == "pydantic_basemodel":
+                    meta = d.extra.get("contract") or {}
+                    rec["pydantic_version_policy"] = meta.get(
+                        "pydantic_version_policy", python_contracts.VERSION_POLICY
+                    )
+                out[d.id] = rec
         return out
 
     def _extends_dto(self, d: Decl, depth: int = 0) -> bool:
@@ -424,7 +475,9 @@ class Extractor:
         if key in stack:
             return {"kind": "ref", "name": d.symbol, "recursive": True}
         stack = stack + (key,)
-        if d.kind == "zod":
+        if d.kind == "pydantic_basemodel":
+            s = copy.deepcopy(d.extra.get("schema") or {"kind": "unknown"})
+        elif d.kind == "zod":
             s = self.zod(d.body, d.path, stack)
         elif d.kind in ("class_validator_dto", "class"):
             s = self.cv_class(d, stack)
@@ -2197,6 +2250,135 @@ def discover_edges(ex_h: Extractor, ch: dict, ex_b: Extractor, cb: dict) -> list
     return list(edges.values())
 
 
+def _pydantic_selected(item_id: str, symbol: str, only: set[str] | None) -> bool:
+    if not only:
+        return True
+    return item_id in only or symbol in only
+
+
+def _only_names_python_obligation(only: set[str], trees: tuple) -> bool:
+    """True when ``only`` explicitly names a .py contract id or a class defined in scanned .py files."""
+    for token in only:
+        if ".py#" in token:
+            return True
+    symbols = set()
+    for token in only:
+        symbols.add(token.split("#")[-1] if "#" in token else token)
+    for tree in trees:
+        for path in py_paths(tree):
+            try:
+                text = tree.text(path)
+            except Exception:  # noqa: BLE001
+                continue
+            for sym in symbols:
+                if re.search(rf"\bclass\s+{re.escape(sym)}\b", text):
+                    return True
+    return False
+
+
+def _pydantic_admission_refusal(
+    ex_b: "Extractor",
+    ex_h: "Extractor",
+    cb: dict,
+    ch: dict,
+    only: set[str] | None,
+    base_tree: "build_graph.Tree",
+    head_tree: "build_graph.Tree",
+) -> None:
+    """Fail-closed pydantic admission: unknowns and unqualified version policy bind to Refusal.
+
+    Limitation strings alone never clear exit/admission. ``only`` may exclude unrelated Python
+    obligations from a TS-focused selection, but cannot silently hide a selected Python obligation.
+    """
+    disabled = ex_b._pydantic_disabled or ex_h._pydantic_disabled
+    py_present = ex_b._py_paths_present or ex_h._py_paths_present
+
+    unknowns = []
+    for tag, ex in (("base", ex_b), ("head", ex_h)):
+        for u in ex._pydantic_unknowns:
+            if _pydantic_selected(u["id"], u["symbol"], only):
+                unknowns.append({**u, "rev": tag})
+
+    pydantic_ids = sorted(
+        {
+            cid
+            for cid, c in {**cb, **ch}.items()
+            if c.get("kind") == "pydantic_basemodel" and _pydantic_selected(cid, c["symbol"], only)
+        }
+    )
+
+    selected_python = bool(unknowns or pydantic_ids)
+    if only is not None and not selected_python and _only_names_python_obligation(only, (base_tree, head_tree)):
+        selected_python = True
+
+    if only is not None and not selected_python:
+        # Exact TS (or other non-Python) scope: unrelated Python must not block.
+        return
+
+    if disabled and py_present:
+        if not cb and not ch and only is None:
+            # Python-only trees fall through to NO_CONTRACTS in caller.
+            return
+        raise Refusal(
+            "PYDANTIC_DISABLED",
+            "x_pydantic disabled while Python sources are present; required Python extraction "
+            "cannot be omitted from admission (not_measured)",
+        )
+
+    policy = ex_b._pydantic_version_policy or ex_h._pydantic_version_policy or python_contracts.VERSION_POLICY
+    policy_blocks = python_contracts.version_policy_blocks_admission(policy)
+
+    if unknowns:
+        # Refuse before Differ so unknown head never masquerades as CONTRACT_REMOVED (B1).
+        bits = [
+            "unknowns=["
+            + "; ".join(f"{u['rev']}:{u['id']} ({u['reason']})" for u in unknowns)
+            + "]"
+        ]
+        bits.append(f"version_policy={policy}")
+        if pydantic_ids:
+            bits.append("known_contracts=" + ",".join(pydantic_ids))
+        if policy == python_contracts.VERSION_POLICY:
+            bits.append(
+                "missing_exact_pin="
+                f"env:{python_contracts.PYDANTIC_EXACT_PIN_ENV}"
+                f"|tree:{python_contracts.PYDANTIC_EXACT_PIN_RELPATH}"
+            )
+        bits.append("compatibility/admission not_measured (unknowns present; known subset cannot clean-admit)")
+        raise Refusal("PYDANTIC_NOT_MEASURED", "; ".join(bits))
+
+    if pydantic_ids and policy_blocks:
+        # Known contracts alone still refuse without a matched exact pin (or on pin mismatch).
+        bits = [f"version_policy={policy}"]
+        bits.append("known_contracts=" + ",".join(pydantic_ids))
+        if policy == python_contracts.VERSION_POLICY:
+            bits.append(
+                "missing_exact_pin="
+                f"env:{python_contracts.PYDANTIC_EXACT_PIN_ENV}"
+                f"|tree:{python_contracts.PYDANTIC_EXACT_PIN_RELPATH}"
+            )
+            bits.append("compatibility/admission not_measured (declared-range-only; no exact pin)")
+        elif policy == python_contracts.VERSION_POLICY_MISMATCH:
+            bits.append("compatibility/admission not_measured (exact pin mismatch or invalid)")
+        else:
+            bits.append("compatibility/admission not_measured (version policy not exact-matched)")
+        raise Refusal("PYDANTIC_NOT_MEASURED", "; ".join(bits))
+
+    if selected_python and not pydantic_ids:
+        # Obligation asserted (e.g. `.py#` only-token / class scan) but nothing resolved
+        # into selected unknowns/contracts — must not fall through to a TS-subset Differ PASS.
+        unresolved = sorted(t for t in (only or ()) if ".py#" in t)
+        bits = [
+            "selected Python obligation unresolved",
+            "only-set named a Python target that did not resolve to extract identities",
+        ]
+        if unresolved:
+            bits.append("unresolved_only=" + ",".join(unresolved))
+        bits.append(f"version_policy={policy}")
+        bits.append("compatibility/admission not_measured")
+        raise Refusal("PYDANTIC_NOT_MEASURED", "; ".join(bits))
+
+
 def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph: dict | None = None, directions: dict | None = None,
              consumer_keys: dict | None = None, disabled: set[str] | None = None, repo_name: str = "", only: set[str] | None = None,
              metadata_root: Path | None = None, metadata_git_repo: Path | None = None) -> dict:
@@ -2206,6 +2388,8 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
     if only:
         cb = {k: v for k, v in cb.items() if k in only or v["symbol"] in only}
         ch = {k: v for k, v in ch.items() if k in only or v["symbol"] in only}
+    # Pydantic unknowns / unqualified version policy / disable: refuse before shape comparison.
+    _pydantic_admission_refusal(ex_b, ex_h, cb, ch, only, base_tree, head_tree)
     for src, dst, ex in ((cb, ch, ex_h), (ch, cb, ex_b)):
         for cid, c in src.items():
             if cid in dst:
@@ -2215,7 +2399,11 @@ def run_diff(base_tree: build_graph.Tree, head_tree: build_graph.Tree, *, graph:
                 dst[cid] = {**c, "schema": ex.schema_of(d), "decl_hash": sha_text(norm_ws(d.text)), "kind": c["kind"],
                             "error_code": c.get("error_code") and ex.schema_of(d).get("kind") == "enum", "kind_at_rev": d.kind}
     if not cb and not ch:
-        raise Refusal("NO_CONTRACTS", "neither revision declares a contract the extractors understand (zod / class-validator / union / enum)")
+        raise Refusal(
+            "NO_CONTRACTS",
+            "neither revision declares a contract the extractors understand "
+            "(zod / class-validator / union / enum / pydantic_basemodel)",
+        )
     differ = Differ(disabled)
     directions = directions or {}
     contracts = {}

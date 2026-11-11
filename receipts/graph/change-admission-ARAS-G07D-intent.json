@@ -5,9 +5,9 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted_with_exemptions"
  },
- "captured_at_utc": "2026-11-08T21:14:20Z",
+ "captured_at_utc": "2026-11-11T00:56:18Z",
  "change_set": {
-  "base": "9f122d7dab58390918e036c3629f2e63f9829476",
+  "base": "a216d64a83cc7cf3c90b4d8129d025d20692deb2",
   "files": [
    {
     "kind": "config",
@@ -91,6 +91,15 @@
     "status": "A"
    },
    {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-ARAS-G07D-intent.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-ARAS-G07D-intent.json"
+    ],
+    "path": "receipts/graph/change-admission-ARAS-G07D-intent.json",
+    "status": "A"
+   },
+   {
     "kind": "doc",
     "node_id": "document:receipts/graph/change-admission-ARAS-G07D-intent.not-measured.md",
     "node_ids": [
@@ -100,34 +109,34 @@
     "status": "A"
    }
   ],
-  "head": "e4a522ecb072b2bb429959e6651e2382e76f23ad",
+  "head": "0e667210ee856f0b63ec8831b9a8fbc3933f4600",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
  "exemptions": [
   {
    "entity": "code_unit:.github/workflows/ci.yml",
-   "expires_at_utc": "2026-11-22T21:13:43Z",
+   "expires_at_utc": "2026-11-25T00:54:45Z",
    "owner": "KCLIVE-11 worker (arcana-devs) / ARAS owner",
    "reason": "This range adds only `timeout-minutes: 30` on job platform-isolation (platform-contract-mock). The v-workflow-config not_measured findings name pre-existing shell steps (changelog/lint-test/network-exposure reusable/opaque contexts) that this diff does not rewrite; the O_NOFOLLOW store behaviour and test fixtures are covered by v-fitness/v-doc-reference. Exemption expires in 14 days so it cannot become the permanent fix for workflow shell measurement."
   }
  ],
  "graph": {
   "builder_version": "1.0.6",
-  "built_at_utc": "2026-11-07T23:52:18Z",
-  "graph_digest": "sha256:cbd5bd56506b338e47aa99425ec3b05b06aecd46c7003a9295aa62f4d680c3f5",
-  "path": "/home/dev/orca/workspaces/arcanada/arasg07f/work-kclive11/gate-276/base-graph.json",
-  "source_commit": "9f122d7dab58390918e036c3629f2e63f9829476"
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:fe1e5d0eb3aa4d26ffa39ffba0e8832f53a773384588b9b4bccf7c4b0fc7f3c0",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l2-receipt-work/verifier-out-4/graph-a216d64a83cc.json",
+  "source_commit": "a216d64a83cc7cf3c90b4d8129d025d20692deb2"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:2df551282a6d3ef2d9da7ecb2f98e0dc7ce72841072fefeacd968cd1acffe1bd",
-  "path": "/tmp/arcana-verify-gyhb0k1v/verifier-out/graph-head-e4a522ecb072.json",
-  "source_commit": "e4a522ecb072b2bb429959e6651e2382e76f23ad",
+  "graph_digest": "sha256:f3e5d8baa887df4366e78807d090504ee381bfa561b3582df4e55ea9bfb54cfc",
+  "path": "/home/dev/aup/claude-work/r1stack/logs/l2-receipt-work/verifier-out-4/graph-head-0e667210ee85.json",
+  "source_commit": "0e667210ee856f0b63ec8831b9a8fbc3933f4600",
   "staleness": {
-   "checked_at_utc": "2026-11-08T21:14:33Z",
-   "checked_nodes": 465,
+   "checked_at_utc": "2026-11-11T00:57:11Z",
+   "checked_nodes": 468,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -2138,18 +2147,17 @@
  "notes": [
   "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
   "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none",
-  "exemptions: 1 attached from /home/dev/orca/workspaces/arcanada/arasg07f/work-kclive11/gate-276/exemptions.json",
-  "this receipt is being filed at receipts/graph/change-admission-ARAS-G07D-intent.json with `work_item: null` — no --work-item was given. A record under receipts/graph/ is re-issued at its own path after a rebase or a second commit, and DEC-AUP-0035 supersedes the previous draft only when both declare the SAME work item. Without one, this file can never be superseded at this path: a later run will carry an I14 on it that no verifier can discharge. Re-issue with --work-item <ID>."
+  "exemptions: 1 attached from /home/dev/aup/claude-work/r1stack/logs/l2-receipt-work/exemptions.json"
  ],
  "producer": {
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261108T211420Z-e4a522ec",
+ "receipt_id": "car-verify-20261111T005618Z-0e667210",
  "receipt_path": "receipts/graph/change-admission-ARAS-G07D-intent.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/orca/workspaces/arcanada/arasg07f/work-kclive11/arasg07b"
+  "path": "/home/dev/aup/claude-work/r1stack/arcana-agent-system"
  },
  "revision_selection": {
   "base": [
@@ -2344,6 +2352,7 @@
    "document:CHANGELOG.md",
    "document:receipts/graph/change-admission-ARAS-G07B-restart.not-measured.md",
    "document:receipts/graph/change-admission-ARAS-G07D-intent.not-measured.md",
+   "receipt:receipts/graph/change-admission-ARAS-G07D-intent.json",
    "receipt:receipts/graph/change-admission-a2-234.json",
    "receipt:receipts/graph/change-admission-a2-238.json",
    "receipt:receipts/graph/change-admission-a2-272.json",
@@ -2356,12 +2365,27 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-08T21:14:33Z",
+  "checked_at_utc": "2026-11-11T00:57:10Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
  "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:0d478cb2d144bde73dd6aecc8d01d5890f11bcf3ad444849d37d5e7e3a3cf486"
+   },
+   "entity": "receipt:receipts/graph/change-admission-ARAS-G07D-intent.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-ARAS-G07D-intent.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-ARAS-G07D-intent.json for work item KCLIVE-11",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-ARAS-G07D-intent.json",
+    "work_item": "KCLIVE-11"
+   }
+  },
   {
    "content_hash": {
     "base": "sha256:771c93c08d2811a7f4ea40c3ad350e3a5387d3668b40fef0f010157f54a454bf",
@@ -2430,7 +2454,7 @@
   }
  ],
  "tree": {
-  "commit": "e4a522ecb072b2bb429959e6651e2382e76f23ad",
+  "commit": "0e667210ee856f0b63ec8831b9a8fbc3933f4600",
   "dirty": false
  },
  "verdicts": [
@@ -3207,8 +3231,8 @@
    "exit_code": 1,
    "id": "v-workflow-config-b803fcb7f17ed923",
    "kind": "config_schema",
-   "output_ref": "/tmp/arcana-verify-gyhb0k1v/verifier-out/v-workflow-config-b803fcb7f17ed923.txt",
-   "started_at_utc": "2026-11-08T21:14:37Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l2-receipt-work/verifier-out-4/v-workflow-config-b803fcb7f17ed923.txt",
+   "started_at_utc": "2026-11-11T00:57:18Z",
    "summary": "workflow shell caller closure not measured: job changelog step 1: command/process substitution closure is unresolved; job lint-test step 9: line 1: wrapper execution scope/options unresolved; job lint-test step 9: line 2: wrapper execution scope/options unresolved; job lint-test step 9: line 3: missing literal helper dev-tools/tests; job network-exposure-lint: reusable/opaque shell context; job platform-isolation step 5: line 1: unsupported loader/interpreter options; job platform-native-negative-controls step 2: command/process substitution closure is unresolved; job release-pending step 1: command/process substitution closure is unresolved; job security-audit: reusable/opaque shell context; 9 workflow shell-caller uncertainty item(s) remain separate from YAML schema validation and are retained in graph closure evidence"
   },
   {
@@ -3403,8 +3427,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/tmp/arcana-verify-gyhb0k1v/verifier-out/v-fitness.json",
-   "started_at_utc": "2026-11-08T21:14:37Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l2-receipt-work/verifier-out-4/v-fitness.json",
+   "started_at_utc": "2026-11-11T00:57:18Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3423,22 +3447,23 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/tmp/arcana-verify-gyhb0k1v/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-11-08T21:14:37Z",
+   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l2-receipt-work/verifier-out-4/v-doc-reference.txt",
+   "started_at_utc": "2026-11-11T00:57:18Z",
    "summary": "3 document(s), 0 failed"
   }
  ],
  "verify": {
   "events": [
    {
-    "code": "RECEIPT_WITHOUT_WORK_ITEM",
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-ARAS-G07D-intent.json",
     "rule": "DEC-AUP-0035",
-    "text": "this receipt is being filed at receipts/graph/change-admission-ARAS-G07D-intent.json with `work_item: null` — no --work-item was given. A record under receipts/graph/ is re-issued at its own path after a rebase or a second commit, and DEC-AUP-0035 supersedes the previous draft only when both declare the SAME work item. Without one, this file can never be superseded at this path: a later run will carry an I14 on it that no verifier can discharge. Re-issue with --work-item <ID>."
+    "text": "the receipt at receipts/graph/change-admission-ARAS-G07D-intent.json is the previous version of the one this run is writing, for the same work item KCLIVE-11 — superseded by construction, so it owes this change no verdict"
    },
    {
     "code": "STRUCTURAL_EXCLUSION",
     "rule": "DEC-AUP-0034",
-    "text": "6 affected entity(ies) owe no verdict (receipt: 6): unchanged at both revisions and given no verifier by the matrix"
+    "text": "7 affected entity(ies) owe no verdict (receipt: 7): unchanged at both revisions and given no verifier by the matrix"
    }
   ],
   "required_by_entity": {
@@ -3725,6 +3750,7 @@
    "document:receipts/graph/change-admission-ARAS-G07D-intent.not-measured.md": [
     "doc_reference"
    ],
+   "receipt:receipts/graph/change-admission-ARAS-G07D-intent.json": [],
    "receipt:receipts/graph/change-admission-a2-234.json": [],
    "receipt:receipts/graph/change-admission-a2-238.json": [],
    "receipt:receipts/graph/change-admission-a2-272.json": [],
@@ -3733,9 +3759,10 @@
    "receipt:receipts/graph/change-admission-macos-15-runners.json": []
   },
   "seconds": {
-   "prepare": 1.49,
-   "total": 17.73,
+   "prepare": 2.94,
+   "total": 60.1,
    "verifiers": 0.02
   }
- }
+ },
+ "work_item": "KCLIVE-11"
 }

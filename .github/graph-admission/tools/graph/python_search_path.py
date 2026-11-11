@@ -12,13 +12,16 @@ import hashlib
 import io
 import posixpath
 import tokenize
-from collections import deque
+from collections import OrderedDict, deque
 
 MAX_MODULE_CONTEXTS = 32
 MAX_TOTAL_CONTEXTS = 2048
 # Caller provenance is separate from semantic (module, ordered-roots) states.
 # Retain at most 32 origin-labelled visits per total-state budget, never truncate.
 MAX_CONTEXT_ORIGIN_VISITS = 65536
+# Retained root-analysis entries are call-local and bounded independently of the
+# semantic context caps. A miss after eviction recomputes the same analysis.
+MAX_ROOT_ANALYSIS_CACHE_ENTRIES = 128
 # Closed source-model assumptions, not a host import or general stdlib exemption.
 # A matching Git module anywhere defeats this assumption conservatively.
 PATH_NEUTRAL_STDLIB = frozenset({'sys', 'pathlib', 'functools', 'copy', 'json', 'unittest',
@@ -299,6 +302,29 @@ def contextual_imports(files, modes, discovered_roots):
     """
     parsed = {}
     limitations = set()
+    root_analysis_cache = OrderedDict()
+
+    def analyze_roots(file, incoming):
+        # `files` is the immutable source snapshot for this call. The key binds
+        # the exact Git path and ordered incoming roots; cached mutable outputs
+        # are copied on both insertion and return so callers cannot share state.
+        key = (file, tuple(incoming))
+        result = root_analysis_cache.get(key)
+        if result is not None:
+            root_analysis_cache.move_to_end(key)
+            by_line, errors, final_roots = result
+            return ({line: None if roots is None else list(roots)
+                     for line, roots in by_line.items()}, list(errors),
+                    list(final_roots) if final_roots is not None else None)
+        final = []
+        by_line, errors = import_roots(files[file], file, incoming=incoming, final_roots=final)
+        root_analysis_cache[key] = (
+            {line: None if roots is None else tuple(roots) for line, roots in by_line.items()},
+            tuple(errors), tuple(final))
+        if len(root_analysis_cache) > MAX_ROOT_ANALYSIS_CACHE_ENTRIES:
+            root_analysis_cache.popitem(last=False)
+        return ({line: None if roots is None else list(roots)
+                 for line, roots in by_line.items()}, list(errors), list(final))
 
     def neutral_import(module):
         root = (module or '').split('.')[0]
@@ -321,7 +347,7 @@ def contextual_imports(files, modes, discovered_roots):
         sys_indirections = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
                             and n.module == 'sys' and not n.level]
         cache = cache or any(a.name == 'modules' for n in sys_indirections for a in n.names)
-        _, errors = import_roots(text, file)
+        _, errors, _ = analyze_roots(file, ())
         reason = 'module cache access/mutation' if cache else ('unresolved path mutation' if errors else None)
         if sys_indirections and not reason:
             reason = 'unsupported sys indirection'
@@ -409,8 +435,7 @@ def contextual_imports(files, modes, discovered_roots):
         effect_contexts.add(key)
         if len(effect_contexts) > MAX_TOTAL_CONTEXTS or len(chain) >= MAX_MODULE_CONTEXTS:
             raise ValueError(f'python caller-context effect cap exhausted at {file}; incomplete graph refused')
-        final = []
-        by_line, errors = import_roots(files[file], file, incoming=incoming, final_roots=final)
+        by_line, errors, final = analyze_roots(file, incoming)
         if errors:
             return [], None
         rows, active = [], None
