@@ -48,6 +48,7 @@ import nest_bootstrap
 import canary_evidence
 import argparse
 import ast
+import atexit
 import hashlib
 import json
 import os
@@ -85,9 +86,22 @@ import shell_source
 import source_input_contract
 
 
+_KEEP_SCRATCH = False   # --keep-scratch: leave implicit scratch directories behind at exit
+
+
+def _remove_scratch(path: Path) -> None:
+    if not _KEEP_SCRATCH:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _new_private_scratch(prefix: str) -> Path:
-    """Create retained, private scratch unique to this invocation under the temp parent."""
-    return Path(tempfile.mkdtemp(prefix=prefix))
+    """Create private scratch unique to this invocation under the temp parent.
+
+    It lives for the whole process and is removed at exit, unless --keep-scratch was given. Only a
+    directory created here is ever removed: a caller-supplied --workdir / --pilot-out is never touched."""
+    path = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(_remove_scratch, path)
+    return path
 
 
 VERSION = "1.4.1"   # workflow shell unknown cannot discharge mandatory caller closure
@@ -334,7 +348,7 @@ UNRESOLVED_MODULE_CODES = {"TS2307", "TS2688", "TS7016"}
 SHARED_KINDS = {"library", "shared_package"}
 MANDATORY_IDS = ["type_check", "contract_diff", "route_config_consistency", "schema_diff", "config_schema", "fitness_rules", "doc_reference",
                  "canary", "shell_syntax", "shell_behavior", "systemd_unit_semantics", "source_file_integrity",
-                 "source_input_contract"]
+                 "source_input_contract", "trust_anchor_pin_consistency"]
 SELECTABLE_IDS = ["targeted_test", "property_check"]
 # internal rules the mutation battery disables one at a time
 RULES = ["aggregate_failed_wins", "missing_required_not_measured", "disabled_mandatory_event", "inferred_boundary_hold",
@@ -640,7 +654,75 @@ def systemd_graph_parity(doc: dict, tree: build_graph.Tree) -> list[str]:
     return errors
 
 
-SYSTEMD_MANDATORY_FLOOR = {"systemd_unit": ["systemd_unit_semantics"], "source_file": ["source_file_integrity"]}
+SYSTEMD_MANDATORY_FLOOR = {"systemd_unit": ["systemd_unit_semantics"], "source_file": ["source_file_integrity"],
+                           "trust_anchor_pin": ["trust_anchor_pin_consistency"]}
+
+
+_ANCHOR_UNIT_USES_RE = re.compile(
+    r"^\s*uses:\s*Arcanada-one/arcanada-universal-program/\.github/workflows/graph-admission\.ya?ml@(?P<sha>[0-9a-f]{40})\s*(?:#.*)?$", re.M)
+_ANCHOR_ANY_USES_RE = re.compile(
+    r"^\s*uses:\s*Arcanada-one/arcanada-universal-program/\.github/workflows/graph-admission\.ya?ml@(?P<ref>\S+?)\s*(?:#.*)?$", re.M)
+_ANCHOR_PROGRAM_REF_RE = re.compile(r"^\s*program_ref:\s*['\"]?(?P<sha>[0-9a-f]{40})['\"]?\s*(?:#.*)?$", re.M)
+_ANCHOR_FINGERPRINT_RE = re.compile(r"^\s*signing_key_fingerprint:\s*['\"]?(?P<fp>SHA256:[A-Za-z0-9+/=]+)['\"]?\s*(?:#.*)?$", re.M)
+ANCHOR_BUNDLE_MANIFEST = ".github/graph-admission/BUNDLE.json"
+
+
+def trust_anchor_pin_evaluate(pin_raw: bytes, files: dict) -> tuple[str, str]:
+    """(verdict, reason) for one trust-anchor pin file against the caller workflow(s) and the vendored bundle manifest
+    of the same tree. Pure function of bytes: no network, no clock."""
+    try:
+        pin = json.loads(pin_raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return "failed", "TRUST_ANCHOR_PIN_UNREADABLE"
+    if not isinstance(pin, dict) or not isinstance(pin.get("program_ref"), str) or not isinstance(pin.get("signing_key_fingerprint"), str):
+        return "failed", "TRUST_ANCHOR_PIN_FIELDS_MISSING"
+    callers = []  # (path, uses shas, program_ref inputs, fingerprints) for every workflow that carries the program_ref input
+    for path in sorted(files):
+        if not (path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))):
+            continue
+        text = files[path].decode("utf-8", errors="replace")
+        refs = [m.group("sha") for m in _ANCHOR_PROGRAM_REF_RE.finditer(text)]
+        if not refs:
+            continue
+        callers.append((path, [m.group("sha") for m in _ANCHOR_UNIT_USES_RE.finditer(text)], refs,
+                        [m.group("fp") for m in _ANCHOR_FINGERPRINT_RE.finditer(text)],
+                        [m.group("ref") for m in _ANCHOR_ANY_USES_RE.finditer(text)]))
+    manifest_raw = files.get(ANCHOR_BUNDLE_MANIFEST)
+    if not callers or manifest_raw is None:
+        return "not_measured", "ANCHOR_CALLER_OR_BUNDLE_UNAVAILABLE"
+    try:
+        manifest_ref = json.loads(manifest_raw.decode("utf-8")).get("program_ref")
+    except (UnicodeError, ValueError, AttributeError):
+        return "not_measured", "ANCHOR_BUNDLE_MANIFEST_UNREADABLE"
+    problems = []
+    if manifest_ref != pin["program_ref"]:
+        problems.append(f"pin.program_ref != {ANCHOR_BUNDLE_MANIFEST} program_ref")
+    unmeasured = []
+    compared = ["bundle manifest program_ref"]
+    for path, uses, refs, fingerprints, any_uses in callers:
+        # control review of #606: a graph-admission `uses:` line that is not a 40-hex SHA (tag, branch) is a failure,
+        # never a silent skip; a caller with no signing_key_fingerprint line cannot be compared (not_measured).
+        for ref in any_uses:
+            if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                problems.append(f"uses: ref '{ref}' in {path} is not a 40-hex SHA")
+        if any_uses:
+            compared.append(f"uses: SHA in {path}")
+        compared.append(f"program_ref input in {path}")
+        if fingerprints:
+            compared.append(f"signing_key_fingerprint input in {path}")
+        else:
+            unmeasured.append(f"signing_key_fingerprint input absent in {path}")
+        if any(sha != pin["program_ref"] for sha in uses):
+            problems.append(f"pin.program_ref != uses: SHA in {path}")
+        if any(sha != pin["program_ref"] for sha in refs):
+            problems.append(f"pin.program_ref != program_ref input in {path}")
+        if any(fp != pin["signing_key_fingerprint"] for fp in fingerprints):
+            problems.append(f"pin.signing_key_fingerprint != signing_key_fingerprint input in {path}")
+    if problems:
+        return "failed", "TRUST_ANCHOR_DRIFT: " + "; ".join(problems)
+    if unmeasured:
+        return "not_measured", "TRUST_ANCHOR_FINGERPRINT_NOT_COMPARABLE: " + "; ".join(unmeasured)
+    return "verified", "pin equals, as compared: " + "; ".join(compared)
 
 
 def validate_systemd_matrix_floor(matrix: dict, node_types: set[str]) -> None:
@@ -2025,6 +2107,24 @@ class Verify:
                         entities, 0 if all(v[0] == "verified" for v in verdicts.values()) else 2,
                         json.dumps({"schema": "SystemdSourceFileIntegrity/v1", "rows": rows}, ensure_ascii=False, indent=1),
                         now_iso(), 0.0, "same-tree source-file identity", verdicts, ext="json")
+
+    def v_trust_anchor_pin_consistency(self):
+        entities = self.needing("trust_anchor_pin_consistency")
+        verdicts, rows = {}, []
+        for eid in entities:
+            ent = self.entities[eid]; path = ent["node"].get("path")
+            raw = self.tree_head.files.get(path) if path else None
+            if raw is None:
+                verdict, reason = "not_measured", "TRUST_ANCHOR_PIN_UNAVAILABLE_AT_HEAD"
+            else:
+                verdict, reason = trust_anchor_pin_evaluate(raw, self.tree_head.files)
+            verdicts[eid] = (verdict, reason)
+            rows.append({"entity": eid, "path": path, "verdict": verdict, "reason": reason})
+        if entities:
+            self.record("v-trust_anchor_pin_consistency", "trust_anchor_pin_consistency", "verify.py trust_anchor_pin_consistency",
+                        entities, 0 if all(v[0] == "verified" for v in verdicts.values()) else 2,
+                        json.dumps({"schema": "TrustAnchorPinConsistency/v1", "rows": rows}, ensure_ascii=False, indent=1),
+                        now_iso(), 0.0, "caller trust-anchor pin vs workflow and bundle", verdicts, ext="json")
 
     def v_systemd_unit_semantics(self):
         entities = self.needing("systemd_unit_semantics")
@@ -4329,6 +4429,7 @@ class Verify:
                         ("shell_syntax", self.v_shell_syntax), ("shell_behavior", self.v_shell_behavior),
                         ("systemd_unit_semantics", self.v_systemd_unit_semantics),
                         ("source_file_integrity", self.v_source_file_integrity),
+                        ("trust_anchor_pin_consistency", self.v_trust_anchor_pin_consistency),
                         ("source_input_contract", self.v_source_input_contract),
                         ("full_fallback_test", self.v_global_fallback_test), ("targeted_test", self.v_targeted_test), ("property_check", self.v_property_check)):
             with impact_pair.trace_phase("verifier-" + mid):
@@ -4736,6 +4837,14 @@ def selftest(a) -> int:
             check(f"mandatory verifier {vid}: pinned positive, identity fault and disabled controls",
                   result.returncode == 0, output=(result.stdout + result.stderr)[-2000:])
             continue
+        if vid == "trust_anchor_pin_consistency":
+            result = subprocess.run([sys.executable, "-m", "unittest",
+                                     "test_trust_anchor_pin.TrustAnchorPinTests."
+                                     "test_trust_anchor_verifier_enabled_fault_and_disabled_control"],
+                                    cwd=Path(__file__).parent, capture_output=True, text=True)
+            check("mandatory verifier trust_anchor_pin_consistency: pinned positive, drift fault and disabled control",
+                  result.returncode == 0, output=(result.stdout + result.stderr)[-2000:])
+            continue
         if vid in {"shell_syntax", "shell_behavior"}:
             # The historical ts-mini fault catalog contains no Bash/Bats nodes. Exercise
             # these additive mandatory verifiers against actual shell/native-process
@@ -4954,12 +5063,14 @@ def selftest(a) -> int:
 
 def run_pilot(a, check, tsc, prisma) -> dict:
     """≥ 10 historical changes of the pilot: graph at the parent, impact, mandatory verifiers (+ targeted tests), draft receipt."""
+    # Allocate default scratch before touching the pilot repo so concurrent/shared-runner
+    # invocations never collide on fixed TMPDIR names (same class as ordinary/selftest).
+    out_dir = Path(a.pilot_out) if a.pilot_out else _new_private_scratch("arcana-verify-pilot-")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    work = Path(a.workdir) if a.workdir else _new_private_scratch("arcana-verify-pilot-work-")
     repo = impact.Repo(Path(a.pilot))
     before = git(["status", "--porcelain"], repo.top)
     head = repo.head()
-    out_dir = Path(a.pilot_out) if a.pilot_out else Path(os.environ.get("TMPDIR", "/tmp")) / "arcana-verify-pilot"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    work = Path(a.workdir) if a.workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "arcana-verify-selftest"
     revs = git(["rev-list", "--no-merges", "HEAD"], repo.top).split()
     selected, skipped = [], []
     graph_cache = {}
@@ -5117,6 +5228,9 @@ def main(argv=None) -> int:
     compiler_sdk_arguments(ap)
     ap.add_argument("--prisma")
     ap.add_argument("--workdir", help="scratch directory for exports / generated tsconfigs")
+    ap.add_argument("--keep-scratch", action="store_true",
+                    help="keep the implicit scratch directories this run creates under TMPDIR (default: removed at exit); "
+                         "a --workdir / --pilot-out you supply is never removed")
     ap.add_argument("--phase-log", type=Path, help="new private JSONL phase log; diagnostics only, never receipt evidence")
     ap.add_argument("--out", type=Path, help="write the ChangeAdmissionReceipt/v1 draft here")
     ap.add_argument("--verifier-out", help="directory for captured verifier outputs (default <workdir>/verifier-out; never beside --out)")
@@ -5142,6 +5256,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-out", help="with --pilot: directory for the per-commit drafts")
     ap.add_argument("--pilot-commits", type=int, default=12)
     a = ap.parse_args(argv)
+    global _KEEP_SCRATCH
+    _KEEP_SCRATCH = bool(a.keep_scratch)
     a._github_token = os.environ.pop("GH_TOKEN", None)
     if any(getattr(a, name, None) for name in (
             "compiler_sdk_root", "compiler_sdk_declaration",

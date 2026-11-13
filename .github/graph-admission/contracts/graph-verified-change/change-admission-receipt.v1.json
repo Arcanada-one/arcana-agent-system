@@ -126,6 +126,7 @@
      "global_config",
      "source_file",
      "systemd_unit",
+     "trust_anchor_pin",
      "test",
      "receipt",
      "other"
@@ -228,7 +229,8 @@
     "shell_syntax",
     "shell_behavior",
     "systemd_unit_semantics",
-    "source_file_integrity"
+    "source_file_integrity",
+    "trust_anchor_pin_consistency"
    ],
    "optional": [
     "started_at_utc",

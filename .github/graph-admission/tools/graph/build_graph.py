@@ -74,6 +74,7 @@ BUILDER = "tools/graph/build_graph.py"
 EXTRACTORS = ["imports", "routes", "contracts", "prisma", "config", "reuse", "di", "queue", "tests",
               "http_client", "deployables", "docs", "work_items", "receipts", "rust", "python"]
 EXTRACTORS.append("systemd")
+EXTRACTORS.append("trust_anchor")
 # `.mts` / `.cts` are TypeScript's ESM / CommonJS module flavours. impact.py and verify.py have always
 # counted them as code (their CODE_EXTS), so a producer that did not left every such file — and every
 # `.d.mts` / `.d.cts` declaration — without a node, and a change to one was refused as UNKNOWN_NODE
@@ -140,6 +141,18 @@ SYSTEMD_SOURCE_EXPECTED = {
          "systemd_unit:deploy/systemd-user/prime-daily-sample.service", "deterministic"],
     ],
 }
+
+# Muneral 7fbbccbe (b1): the trust_anchor extractor has its own fixture, like systemd. The second pin-like file has an
+# unrelated schema and must stay uncovered (no node).
+TRUST_ANCHOR_FIXTURE_DIR = ROOT / "tools" / "graph" / "fixtures" / "trust-anchor"
+TRUST_ANCHOR_EXPECTED = {
+    "nodes": ["trust_anchor_pin:.github/security/TRUST-ANCHOR.pin.json"],
+    "edges": [],
+    "absent_nodes": ["trust_anchor_pin:.github/security/NOT-A-PIN.pin.json"],
+}
+# extractors whose expectations live in a dedicated fixture rather than in the ts-mini EXPECTED.json
+DEDICATED_FIXTURE_EXTRACTORS = {"systemd": (SYSTEMD_SOURCE_FIXTURE_DIR, SYSTEMD_SOURCE_EXPECTED),
+                                "trust_anchor": (TRUST_ANCHOR_FIXTURE_DIR, TRUST_ANCHOR_EXPECTED)}
 
 # AUP-GRAPH-006:gate3b (hole H7) — a directory that carries a `GraphAdmissionBundle/v1` manifest holds a
 # VENDORED copy of another repository's code. The files exist in this tree, so they get nodes; they are not
@@ -501,7 +514,13 @@ SYSTEMD_ALLOWED = {
                  "ProtectKernelModules", "ProtectControlGroups", "RestrictSUIDSGID", "LockPersonality",
                  "RestrictRealtime", "SystemCallArchitectures", "ReadOnlyPaths", "ReadWritePaths",
                  "StateDirectory"},
-    "Timer": {"OnCalendar", "Persistent", "RandomizedDelaySec", "Unit"},
+    # Muneral 7fbbccbe: every key of systemd.timer(5) (systemd 255), not the three the first fixtures used. A valid
+    # key was reported as SYSTEMD_KEY_UNKNOWN and failed the verdict of any change that touched the file
+    # (scrutator deploy/muneral-kb-sync.timer, AccuracySec=15s). Keys stay single-valued: a duplicate is still
+    # SYSTEMD_DUPLICATE_KEY (fail closed), see SYSTEMD_REPEATABLE.
+    "Timer": {"OnActiveSec", "OnBootSec", "OnStartupSec", "OnUnitActiveSec", "OnUnitInactiveSec", "OnCalendar",
+              "AccuracySec", "RandomizedDelaySec", "FixedRandomDelay", "OnClockChange", "OnTimezoneChange",
+              "Unit", "Persistent", "WakeSystem", "RemainAfterElapse"},
     "Install": {"WantedBy", "RequiredBy"},
 }
 SYSTEMD_REPEATABLE = {
@@ -516,6 +535,9 @@ SYSTEMD_BOOLEAN_VALUES = {"1", "yes", "true", "on", "0", "no", "false", "off"}
 SYSTEMD_BOOLEAN_DIRECTIVES = {
     "NoNewPrivileges", "ProtectKernelTunables", "ProtectKernelModules", "RestrictSUIDSGID",
     "LockPersonality", "RestrictRealtime",
+}
+SYSTEMD_TIMER_BOOLEAN_DIRECTIVES = {
+    "FixedRandomDelay", "OnClockChange", "OnTimezoneChange", "Persistent", "WakeSystem", "RemainAfterElapse",
 }
 SYSTEMD_ARCHITECTURES = {
     "x86", "x86-64", "ppc", "ppc-le", "ppc64", "ppc64-le", "ia64", "parisc", "parisc64",
@@ -627,6 +649,8 @@ def _systemd_path_list_is_valid(value: str) -> bool:
 
 
 def _systemd_value_is_valid(section: str, key: str, value: str) -> bool:
+    if section == "Timer" and key in SYSTEMD_TIMER_BOOLEAN_DIRECTIVES:
+        return value.lower() in SYSTEMD_BOOLEAN_VALUES
     if section != "Service":
         return True
     if key == "StateDirectory":
@@ -654,6 +678,10 @@ def _systemd_value_is_valid(section: str, key: str, value: str) -> bool:
 
 class SystemdParseError(ValueError):
     pass
+
+
+TRUST_ANCHOR_PATH_RE = re.compile(r"\.github/security/[^/]+\.pin\.json")
+TRUST_ANCHOR_SCHEMA_SUFFIX = ".graph-admission.trust-anchor/v1"
 
 
 def parse_systemd_unit(path: str, raw: bytes) -> dict:
@@ -859,6 +887,32 @@ class Builder:
 
     def on(self, name: str) -> bool:
         return name not in self.disabled
+
+    def x_trust_anchor(self):
+        """Muneral 7fbbccbe (b1): a caller's `.github/security/*.pin.json` with a graph-admission trust-anchor schema is a
+        covered node (`trust_anchor_pin`), so a change to it carries a verdict row (trust_anchor_pin_consistency) instead
+        of an empty impact set. Any other JSON file in that directory stays uncovered; no file, no node."""
+        for path in self.tree.paths:
+            if not TRUST_ANCHOR_PATH_RE.fullmatch(path):
+                continue
+            data = self.tree.files[path]
+            try:
+                doc = json.loads(data.decode("utf-8"))
+            except (UnicodeError, ValueError):
+                continue
+            if not (isinstance(doc, dict) and isinstance(doc.get("schema"), str)
+                    and doc["schema"].endswith(TRUST_ANCHOR_SCHEMA_SUFFIX)):
+                continue
+            entry = self.tree.meta.get("file_entries", {}).get(path, {})
+            mode = entry.get("mode", self.tree.meta.get("file_modes", {}).get(path))
+            source_ok = (self.tree.meta.get("source_tree_oid") and entry.get("type") == "blob"
+                         and mode in {"100644", "100755"})
+            origin = {"repo": self.tree.meta.get("source_repo"), "commit": self.tree.meta.get("source_commit"),
+                      "tree": self.tree.meta.get("source_tree_oid"), "path": path, "mode": mode,
+                      "type": entry.get("type"), "oid": entry.get("oid"), "bytes": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(), "bound": bool(source_ok)}
+            self.g.node("trust_anchor_pin:" + path, "trust_anchor_pin", sha_bytes(data), path=path,
+                        attrs={"source_origin": origin, "schema": doc["schema"]})
 
     def x_systemd(self):
         """Extract byte-bound service/timer declarations; never resolve a runtime or host path."""
@@ -2058,7 +2112,8 @@ class Builder:
                  ("config", self.x_config), ("reuse", self.x_reuse), ("di", self.x_di), ("queue", self.x_queue), ("tests", self.x_tests),
                  ("http_client", self.x_http_client), ("deployables", self.x_deployables), ("rust", self.x_rust),
                  ("python", self.x_python), ("docs", self.x_docs), ("work_items", self.x_work_items),
-                 ("receipts", self.x_receipts), ("systemd", self.x_systemd)]
+                 ("receipts", self.x_receipts), ("systemd", self.x_systemd),
+                 ("trust_anchor", self.x_trust_anchor)]
         for name, fn in order:
             if self.on(name):
                 fn()
@@ -2262,9 +2317,9 @@ def selftest(receipt_out: Path | None, pilot: Path | None, pilot_graph_out: Path
     check(f"every expected node/edge of ts-mini is present ({n_exp} expectations over {len(expected['extractors'])} extractors)", not missing, missing=missing)
     forbidden = [e for e in expected.get("forbidden_edges", []) if tuple(e) in edges]
     check("no forbidden edge is emitted (negative fixtures: external package, self-import, test file as provider)", not forbidden, present=forbidden)
-    check("every extractor has an explicit expectation set", set(expected["extractors"]) | {"systemd"} == set(EXTRACTORS),
-          unexercised=sorted(set(EXTRACTORS) - (set(expected["extractors"]) | {"systemd"})),
-          unknown=sorted((set(expected["extractors"]) | {"systemd"}) - set(EXTRACTORS)))
+    check("every extractor has an explicit expectation set", set(expected["extractors"]) | set(DEDICATED_FIXTURE_EXTRACTORS) == set(EXTRACTORS),
+          unexercised=sorted(set(EXTRACTORS) - (set(expected["extractors"]) | set(DEDICATED_FIXTURE_EXTRACTORS))),
+          unknown=sorted((set(expected["extractors"]) | set(DEDICATED_FIXTURE_EXTRACTORS)) - set(EXTRACTORS)))
     systemd_graph = build(SYSTEMD_SOURCE_FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT)
     systemd_nodes = {node["id"] for node in systemd_graph["nodes"] if node["type"] == "systemd_unit"}
     systemd_edges = _edge_set(systemd_graph)
@@ -2275,6 +2330,14 @@ def selftest(receipt_out: Path | None, pilot: Path | None, pilot_graph_out: Path
     check("pinned PRIME source fixture: systemd nodes, timer pairs and graph schema",
           not systemd_missing and systemd_classification["verdict"] == "conformant",
           missing=systemd_missing, schema=systemd_classification["verdict"])
+    ta_graph = build(TRUST_ANCHOR_FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT)
+    ta_nodes = {node["id"] for node in ta_graph["nodes"] if node["type"] == "trust_anchor_pin"}
+    ta_missing = ["node " + n for n in TRUST_ANCHOR_EXPECTED["nodes"] if n not in ta_nodes]
+    ta_present = [n for n in TRUST_ANCHOR_EXPECTED["absent_nodes"] if n in ta_nodes]
+    ta_classification = _classify(ta_graph, ignore_dirty=True)
+    check("trust-anchor fixture: the pin with the trust-anchor schema is a node, the other pin-like file is not, graph schema conformant",
+          not ta_missing and not ta_present and ta_classification["verdict"] == "conformant",
+          missing=ta_missing, unexpected=ta_present, schema=ta_classification["verdict"])
     psi = _provider_side_inferred(full)
     check("fixture: 0 inferred among provider-side contract/route edges (provides_route, implements_contract, consumes_contract→contract)", not psi, offending=psi[:5])
     cons = _consumer_route_bindings(full)
@@ -2289,10 +2352,10 @@ def selftest(receipt_out: Path | None, pilot: Path | None, pilot_graph_out: Path
     # mutation battery
     survived = []
     for ext in EXTRACTORS:
-        if ext == "systemd":
-            mut = build(SYSTEMD_SOURCE_FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT, disabled={ext})
+        if ext in DEDICATED_FIXTURE_EXTRACTORS:
+            fixture_dir, exp = DEDICATED_FIXTURE_EXTRACTORS[ext]
+            mut = build(fixture_dir, worktree=True, built_at=FIXED_BUILT_AT, disabled={ext})
             m_edges, m_nodes = _edge_set(mut), {n["id"] for n in mut["nodes"]}
-            exp = SYSTEMD_SOURCE_EXPECTED
         else:
             mut = build(FIXTURE_DIR, worktree=True, built_at=FIXED_BUILT_AT, disabled={ext})
             m_edges, m_nodes = _edge_set(mut), {n["id"] for n in mut["nodes"]}

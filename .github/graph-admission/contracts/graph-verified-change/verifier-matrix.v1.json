@@ -365,7 +365,8 @@
    "selectable": []
   },
   "systemd_unit": {"mandatory":["systemd_unit_semantics"],"selectable":[]},
-  "source_file": {"mandatory":["source_file_integrity"],"selectable":[]}
+  "source_file": {"mandatory":["source_file_integrity"],"selectable":[]},
+  "trust_anchor_pin": {"mandatory":["trust_anchor_pin_consistency"],"selectable":[]}
 },
  "global_fallback_rule": "When global_fallback.triggered, preserve normal traversal obligations and additionally require full_fallback_test for every fallback unit; targeted spec evidence cannot discharge the full-suite obligation (verify producer 1.3.0).",
  "portion_id": "AUP-GRAPH-005:verify0",
@@ -523,7 +524,8 @@
    "verdict_rule": "Exact committed native CanaryResult/v2 process fixture row for this entity, independently source/plan bound; no local caller execution. Bats additionally requires complete nonempty unfiltered non-skipped literal test inventory in retained TAP. Unresolved dynamic closure stays not_measured."
   },
   "systemd_unit_semantics": {"applies_to_nodes":["systemd_unit"],"kind":"systemd_unit_semantics","tool":"tools/graph/verify.py (built in)","verdict_rule":"verified only for byte-bound owner-pinned declarations that satisfy every mapped policy predicate and have no unresolved controlling reference; failed for exact identity or semantic mismatch; not_measured for unavailable source binding or unresolved external/runtime references","what":"bounded systemd service/timer source declarations, same-tree references, owner-pinned policy and durable unresolved-reference evidence"},
-  "source_file_integrity": {"applies_to_nodes":["source_file"],"kind":"source_file_integrity","tool":"tools/graph/verify.py (built in)","verdict_rule":"verified only when exact same-tree regular blob identity, byte length and SHA-256 match; otherwise not_measured or failed on a measured mismatch","what":"integrity of a directly referenced source file node"}
+  "source_file_integrity": {"applies_to_nodes":["source_file"],"kind":"source_file_integrity","tool":"tools/graph/verify.py (built in)","verdict_rule":"verified only when exact same-tree regular blob identity, byte length and SHA-256 match; otherwise not_measured or failed on a measured mismatch","what":"integrity of a directly referenced source file node"},
+  "trust_anchor_pin_consistency": {"applies_to_nodes":["trust_anchor_pin"],"kind":"trust_anchor_pin_consistency","tool":"tools/graph/verify.py (built in)","verdict_rule":"verified only when the pin file's program_ref equals the hosted caller's `uses: ...graph-admission.yml@<sha>` SHA (when the caller is hosted), the caller's program_ref input and .github/graph-admission/BUNDLE.json program_ref, and its signing_key_fingerprint equals the caller's signing_key_fingerprint input; failed on any mismatch (the mismatching fields are named); not_measured when the caller workflow or the bundle manifest cannot be read","what":"a caller's second pin of the program commit and signing key (trust anchor) against the caller workflow and the vendored bundle"}
 },
  "node_kinds": {
   "native_patch_manifest": {
