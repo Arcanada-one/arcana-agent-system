@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependencies: `rustix` 1.1.4 -> 1.1.6 (RUSTSEC-2026-0486, unsound xattr functions)
+  and `quinn-udp` 0.5.14 -> 0.5.16 (RUSTSEC-2026-0538, receive loop could spin after a
+  truncated datagram); lockfile only. Internal: the execution-boundary scanner's
+  final separator-stripped check is one boolean expression (clippy `needless_bool`),
+  same evaluation order, no behaviour change.
 - `arcana run --work-item` asks Muneral for dependency readiness after the contract
   binding is verified and before the authority gate. `ready: false` refuses with
   `WORK_ITEM_NOT_READY`; unavailable, non-200 (including 201), malformed,
