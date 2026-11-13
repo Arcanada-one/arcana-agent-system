@@ -1888,9 +1888,21 @@ AUTH_DEPENDENCY_SETUP_UNCHANGED = (
     "vendor/arcanada-access-contracts-dac7c5ede606698b10c2c5edd0c07ff21a798f83.tgz",
 )
 AUTH_DEPENDENCY_SETUP_REPO = "Arcanada-one/auth-arcana"
-AUTH_DEPENDENCY_SETUP_NODE = "24.22.1"
+AUTH_DEPENDENCY_SETUP_NODE_VERSIONS = ("24.22.1", "24.22.2")
+AUTH_DEPENDENCY_SETUP_VITE_VERSIONS = ("6.4.4", "6.4.5")
 AUTH_DEPENDENCY_SETUP_PNPM = "10.30.3"
 AUTH_DEPENDENCY_SETUP_REGISTRY = "https://registry.npmjs.org/"
+# Qualified action pins for the Auth CI closure (DEC-AUP-0187 follow-up). The older pins stay valid;
+# the newer ones are ADDITIONAL. Keep identical to AUTH_QUALIFIED_*_PINS in full_suite_ci.py
+# (a unit test asserts equality). Each entry is the full commit of the named release tag.
+AUTH_QUALIFIED_PNPM_SETUP_PINS = (
+    "pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413",  # v6.1.0
+    "pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115",  # v6.1.1
+)
+AUTH_QUALIFIED_NODE_SETUP_PINS = (
+    "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",  # v7.0.0
+    "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",  # v7.1.0
+)
 
 
 def _candidate_setup_blob(repo: Path, revision: str, relative: str) -> tuple[str, bytes]:
@@ -1977,7 +1989,8 @@ def validate_candidate_auth_dependency_setup(repo_path: str | Path, repository: 
                                        "Auth account-spa/tsconfig.json")
     except (UnicodeError, ValueError) as exc:
         raise ValueError("Auth dependency package inputs are malformed") from exc
-    if (source[".nvmrc"].decode("utf-8").strip() != AUTH_DEPENDENCY_SETUP_NODE
+    node_version = source[".nvmrc"].decode("utf-8").strip()
+    if (node_version not in AUTH_DEPENDENCY_SETUP_NODE_VERSIONS
             or root.get("packageManager") != f"pnpm@{AUTH_DEPENDENCY_SETUP_PNPM}"
             or (root.get("scripts") or {}).get("test") != "vitest run"
             or (root.get("scripts") or {}).get("postinstall") != "prisma generate"):
@@ -2001,17 +2014,19 @@ def validate_candidate_auth_dependency_setup(repo_path: str | Path, repository: 
     importer_text = importer.group(1) if importer else ""
     lock_dependencies = {
         "@testing-library/jest-dom": ("^6.6.3", "6.9.1"),
-        "vite": (">=6.4.3 <7", "6.4.4"),
+        "vite": (">=6.4.3 <7", AUTH_DEPENDENCY_SETUP_VITE_VERSIONS),
         "vitest": ("^4.1.11", "4.1.11"),
     }
     lock_inputs_match = bool(importer_text)
-    for package, (specifier, locked_version) in lock_dependencies.items():
+    for package, (specifier, locked_versions) in lock_dependencies.items():
+        if isinstance(locked_versions, str):
+            locked_versions = (locked_versions,)
         pattern = (r"(?m)^      '?" + re.escape(package) + r"'?:\n"
                    r"        specifier: ([^\n]+)\n        version: ([^\n(]+)")
         match = re.search(pattern, importer_text)
         recorded_specifier = match.group(1).strip("'\"") if match else None
         lock_inputs_match = lock_inputs_match and bool(
-            match and recorded_specifier == specifier and match.group(2) == locked_version)
+            match and recorded_specifier == specifier and match.group(2) in locked_versions)
     if (not re.search(r"(?m)^lockfileVersion:\s*['\"]?9\.0['\"]?\s*$", lock)
             or not re.search(r"(?m)^\s+-\s+account-spa\s*$", workspace)
             or allowed_builds not in workspace
@@ -2019,14 +2034,14 @@ def validate_candidate_auth_dependency_setup(repo_path: str | Path, repository: 
             or re.search(r"(?m)^\s+tarball:\s*(?!file:vendor/arcanada-access-contracts-[0-9a-f]{40}\.tgz\s*$)", lock)):
         raise ValueError("Auth workspace lockfile does not bind the supported frozen dependency closure")
     required_ci = (
-        "pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413",
-        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         "node-version-file: .nvmrc", "pnpm install --frozen-lockfile",
         "pnpm exec prisma generate", "pnpm exec tsc --noEmit",
         "pnpm --filter @arcanada/account-spa exec tsc --noEmit",
         "pnpm --filter @arcanada/account-spa test", "pnpm test",
     )
-    if any(literal not in workflow for literal in required_ci):
+    if (any(literal not in workflow for literal in required_ci)
+            or not any(pin in workflow for pin in AUTH_QUALIFIED_PNPM_SETUP_PINS)
+            or not any(pin in workflow for pin in AUTH_QUALIFIED_NODE_SETUP_PINS)):
         raise ValueError("Auth CI source does not declare the fixed root/account-SPA dependency closure")
 
     return {
@@ -2034,7 +2049,7 @@ def validate_candidate_auth_dependency_setup(repo_path: str | Path, repository: 
         "policy": AUTH_DEPENDENCY_SETUP_POLICY,
         "repository": repository, "base": base, "head": head,
         "working_directory": ".", "scope": "root+account-spa",
-        "node_version": AUTH_DEPENDENCY_SETUP_NODE,
+        "node_version": node_version,
         "pnpm_version": AUTH_DEPENDENCY_SETUP_PNPM,
         "registry": AUTH_DEPENDENCY_SETUP_REGISTRY,
         "files": checked,

@@ -1107,6 +1107,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
           RUNNER_TEMP: ${{ runner.temp }}
+          AUTH_NODE_VERSION: ${{ steps.candidate_auth_dependency_setup.outputs.node_version }}
         run: |
           set -euo pipefail
           test -f package.json && test ! -L package.json
@@ -1120,7 +1121,8 @@ jobs:
           export NPM_CONFIG_USERCONFIG="$CONFIG_ROOT/user.npmrc"
           export NPM_CONFIG_GLOBALCONFIG="$CONFIG_ROOT/global.npmrc"
           pnpm --version | grep -Fx '10.30.3'
-          node --version | grep -Fx 'v24.22.1'
+          test -n "$AUTH_NODE_VERSION"
+          test "$(node --version)" = "v${AUTH_NODE_VERSION}"
           # The source validator pins pnpm-workspace.yaml to base, including its onlyBuiltDependencies allowlist.
           pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --registry=https://registry.npmjs.org/
           pnpm exec prisma generate

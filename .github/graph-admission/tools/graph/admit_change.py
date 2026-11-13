@@ -26,6 +26,7 @@ import io
 from contextlib import redirect_stdout
 import full_suite_ci
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -4167,6 +4168,7 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         # signature is refused whatever the enforcement); under `signed`, an unsigned one exempts nothing.
         d_enf = decision_policy(policy).get("enforcement") or "off"
         d_problems = []
+        scope_gap_uses: list[str] = []
         gate_issued = rec["path"] == automated.get("receipt_path")
         for x in doc.get("exemptions") or []:
             if not isinstance(x, dict) or x.get("code") in STRUCTURAL_CODES or gate_issued:
@@ -4183,7 +4185,13 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
             if probs:
                 d_problems += probs
                 valid_exempt.discard(x.get("entity"))
+            elif isinstance(x.get("decision"), dict) and x["decision"].get("class") == SCOPE_GAP_CLASS:
+                line = scope_gap_loud_line(x)
+                scope_gap_uses.append(line)
+                print(line, file=sys.stderr)
         rec["decision_exemptions"] = {"enforcement": d_enf, "problems": d_problems}
+        if scope_gap_uses:
+            rec["decision_exemptions"]["scope_gap_uses"] = scope_gap_uses
         if d_problems:
             add("C21", f"{Path(rec['path']).name}: {len(d_problems)} problem(s) [enforcement={d_enf}]: "
                        + "; ".join(d_problems[:4]), decision_problems=d_problems)
@@ -4314,7 +4322,6 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
     # receipt's head (GATEORDER-0: contracts/graph-verified-change/trailing-record-commits.v1.md)
     record = None
     if bound:
-        wd_rc = Path(automated_workdir) if automated_workdir else Path(tempfile.mkdtemp(prefix="gateorder0-"))
         # Clause (c) is licensed by OWNING the ledger, not by the enforcement flag. Measured on this
         # card's own pull request (#141): the program repository's `ci.yml` calls the reusable gate
         # without setting `enforcement`, so CI runs with `off` — and an earlier version of this line,
@@ -4324,7 +4331,14 @@ def gate(repo: Path, base: str, head: str, receipt_paths: list[Path], policy: di
         # A caller repository owns no ledger, so there the path stays ordinary content.
         ledger_rel = LEDGER_REL if is_program_repo(repo, repo_name) else None
         gate_repo = impact_pair.impact.Repo(repo)
-        record = trailing_record_commits(gate_repo.top, base, head, bound, changed, wd_rc, ledger_rel)
+        # Remove only a scratch directory this gate run created itself; a caller-supplied workdir is theirs.
+        wd_rc_owned = not automated_workdir
+        wd_rc = Path(automated_workdir) if automated_workdir else Path(tempfile.mkdtemp(prefix="gateorder0-"))
+        try:
+            record = trailing_record_commits(gate_repo.top, base, head, bound, changed, wd_rc, ledger_rel)
+        finally:
+            if wd_rc_owned:
+                shutil.rmtree(wd_rc, ignore_errors=True)
         record_paths = (set(record["admitted_paths"]["receipts"])
                         | set(record["admitted_paths"]["derived"])
                         | set(record["admitted_paths"]["work_item_evidence"]))
@@ -7330,10 +7344,16 @@ def cmd_exempt(a) -> int:
 #     be measured, the decision to proceed (DEC-AUP-0037 R3 wording), the evidence, `reverse_if`, and
 #     the diff it is bound to — void for any other diff, and void after `max_ttl_days` by the GATE's
 #     clock, never the receipt's. An eternal exemption is a disabled gate;
-#   * only two classes exist, each re-checked by the gate against the receipt it is shown: a
-#     historical receipt ADDED by the range (I14), and a v-canary pause in a repository with no declared
-#     live contour. A `failed` verdict is never decision-exempted, nor is the work-item evidence ledger
-#     (its 19 out-of-repository attachments are a `build_attachment` defect, not an unmeasurable thing).
+#   * three classes exist (DEC-AUP-0187 added the third), each re-checked by the gate against the receipt it
+#     is shown: a historical receipt ADDED by the range (I14); a v-canary pause in a repository with no
+#     declared live contour; and `verifier_scope_gap` — a verifier RAN on a workflow/shell/mjs entity and
+#     declared its own scope exceeded (7-day default lifetime, cap 14, at most 12 entities per receipt).
+#     `verifier_scope_gap` is computed from the receipt and from git, never from a signer's label: an
+#     UNCHANGED pinned workflow with an identical closure at BASE and head, or a CHANGED shell file with
+#     compensating evidence whose blob hash the gate re-computes at head. deployable_unit is OUT — a
+#     missing tool is an infrastructure fault, not a scope gap. A `failed` verdict is never
+#     decision-exempted, nor is the work-item evidence ledger (its 19 out-of-repository attachments are a
+#     `build_attachment` defect, not an unmeasurable thing).
 # Under `decision_exemptions.enforcement: off` (main's behaviour) an unsigned exemption is still judged
 # by C10 alone; a signed one is always checked. Under `signed`, an unsigned non-structural exemption
 # exempts nothing (C21). Which setting is in force is control's decision, not this tool's.
@@ -7372,8 +7392,296 @@ def _range_status(repo: Path, base: str, head: str) -> dict[str, str]:
     return {f["path"]: f["status"] for f in range_files(repo, base, head)}
 
 
+# ------------------------------------------------------------------ DEC-AUP-0187: class verifier_scope_gap
+# A verifier RAN on the entity and answered «my scope is exceeded» (workflow shell caller closure, shell
+# syntax/closure). Everything below is computed by the gate from the receipt and from git on every
+# evaluation; nothing is believed because a signer labelled it. See governance/decisions/DEC-AUP-0187.md.
+SCOPE_GAP_CLASS = "verifier_scope_gap"
+_ISO_UTC_STRICT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_SHA256_PREFIXED = re.compile(r"^sha256:[0-9a-f]{64}$")
+_REGULAR_MODES = ("100644", "100755")
+_USES_LINE = re.compile(r"^\s*-?\s*uses:\s*['\"]?([^\s'\"#]+)")
+_SCRIPT_TOKEN = re.compile(r"(?<![\w/.\-])((?:\./)?[\w][\w./\-]*\.(?:sh|mjs|cjs|bats|py|js))(?![\w\-])")
+
+
+def git_blob_bytes(repo: Path, rev: str, path: str) -> bytes | None:
+    r = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"], capture_output=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+def _tree_entry(repo: Path, rev: str, path: str) -> tuple[str, str] | None:
+    """(mode, object type) of `path` at `rev`, or None when it does not exist there."""
+    r = subprocess.run(["git", "-C", str(repo), "ls-tree", "-z", rev, "--", path], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip("\0"):
+        return None
+    meta = r.stdout.split("\t", 1)[0].split()
+    return (meta[0], meta[1]) if len(meta) >= 2 else None
+
+
+def _norm_repo_path(p: str) -> str | None:
+    p = p.strip()
+    q = posixpath.normpath(p[2:] if p.startswith("./") else p)
+    return None if q.startswith("..") or q.startswith("/") or q in ("", ".") else q
+
+
+def parse_uses_refs(text: str, where: str) -> tuple[list[str], list[str]]:
+    """Every `uses` reference of one workflow/action YAML document → (refs, problems). F1 of the DEC-AUP-0187
+    review: a line regex cannot see flow style, quoted keys, a value on the next line or `uses :`; the document
+    is PARSED and every mapping key `uses` anywhere in it is collected. FAIL CLOSED: a document that does not
+    parse (or is not a mapping), has anchors/aliases/tags/directives or duplicate keys, a `uses` whose value is
+    not a single non-empty scalar, or a key that is `uses` only after case/space folding, is a problem — and the
+    caller refuses a problem, so nothing unclassifiable reads as «unchanged and pinned»."""
+    try:
+        import yaml
+    except ImportError:
+        return [], [f"{where}: PyYAML is not importable: the `uses` references cannot be classified"]
+    try:
+        for token in yaml.scan(text):
+            if isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken,
+                                  yaml.tokens.TagToken, yaml.tokens.DirectiveToken)):
+                return [], [f"{where}: YAML anchors/aliases/tags/directives are not classified"]
+
+        class _Unique(yaml.BaseLoader):
+            pass
+
+        def _mapping(loader, node):
+            out: dict = {}
+            for kn, vn in node.value:
+                k = loader.construct_object(kn, deep=True)
+                if not isinstance(k, str) or k in out:
+                    raise ValueError("non-string or duplicate mapping key")
+                out[k] = loader.construct_object(vn, deep=True)
+            return out
+
+        _Unique.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
+        doc = yaml.load(text, Loader=_Unique)
+    except Exception as exc:  # any parse failure is a refusal, not a guess
+        return [], [f"{where}: YAML does not parse cleanly ({type(exc).__name__}): `uses` cannot be classified"]
+    if not isinstance(doc, dict):
+        return [], [f"{where}: not a YAML mapping: `uses` cannot be classified"]
+    refs: list[str] = []
+    problems: list[str] = []
+
+    def walk(node, depth=0):
+        if depth > 64:
+            problems.append(f"{where}: YAML nested deeper than 64 levels")
+            return
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "uses":
+                    if isinstance(v, str) and v.strip() and "\n" not in v.strip() and not any(c.isspace() for c in v.strip()):
+                        refs.append(v.strip())
+                    else:
+                        problems.append(f"{where}: a `uses` value that is not one non-empty scalar ({str(v)[:40]!r})")
+                elif k.strip().lower() == "uses":
+                    problems.append(f"{where}: key {k!r} is `uses` only after folding: not classified")
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, depth + 1)
+
+    walk(doc)
+    return refs, problems
+
+
+def workflow_closure(repo: Path, rev: str, path: str, max_files: int = 200) -> tuple[dict[str, str], list[str], list[str]]:
+    """The statically referenced closure of a workflow at `rev` → (path→blob sha, `uses:` values, problems).
+
+    Followed: the workflow file itself; every local `uses: ./x` (a local workflow file, or every file under a
+    local action directory); every repo-local script a step names (sh/mjs/cjs/bats/py/js) that exists at `rev`,
+    and the `uses:`/script references of the local workflows and actions reached that way. NOT followed: what a
+    script sources or calls (that is the very closure the verifier said it could not measure), so this proves
+    «nothing the workflow statically names has moved», never «the closure is correct»."""
+    closure: dict[str, str] = {}
+    uses_all: list[str] = []
+    problems: list[str] = []
+    queue = [path]
+    seen = set()
+
+    def blob_sha(p: str) -> str | None:
+        raw = git_blob_bytes(repo, rev, p)
+        return None if raw is None else sha256_bytes(raw)
+
+    while queue:
+        cur = queue.pop(0)
+        if cur in seen:
+            continue
+        seen.add(cur)
+        raw = git_blob_bytes(repo, rev, cur)
+        if raw is None:
+            problems.append(f"{cur} is not a file at {rev[:12]}")
+            continue
+        closure[cur] = sha256_bytes(raw)
+        if len(closure) > max_files:
+            problems.append(f"closure exceeds {max_files} files")
+            break
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            problems.append(f"{cur} is not UTF-8")
+            continue
+        if cur.endswith((".yml", ".yaml")):
+            parsed, parse_problems = parse_uses_refs(text, cur)
+            problems.extend(parse_problems)
+        else:
+            parsed = []
+            problems.append(f"{cur}: reached through a local `uses` but is not a YAML workflow/action: not classified")
+        # the line regex stays as an EXTRA net: a reference only it sees is added, never dropped
+        net = [m.group(1) for m in map(_USES_LINE.match, text.splitlines()) if m]
+        for ref in parsed + [r for r in net if r not in parsed]:
+            uses_all.append(ref)
+            if ref.startswith("./"):
+                q = _norm_repo_path(ref)
+                if q is None:
+                    problems.append(f"{cur}: local uses {ref!r} leaves the repository")
+                else:
+                    entry = _tree_entry(repo, rev, q)
+                    if entry is None:
+                        problems.append(f"{cur}: local uses {ref!r} resolves to nothing at {rev[:12]}")
+                    elif entry[1] == "tree":
+                        for f in git(repo, "ls-tree", "-r", "--name-only", rev, "--", q, check=False).split("\n"):
+                            if not f:
+                                continue
+                            sha = blob_sha(f)
+                            if sha:
+                                closure[f] = sha
+                            if f.endswith((".yml", ".yaml")):
+                                queue.append(f)
+                    else:
+                        queue.append(q)
+        for line in text.splitlines():
+            for tok in _SCRIPT_TOKEN.findall(line):
+                q = _norm_repo_path(tok)
+                if q and q not in closure and _tree_entry(repo, rev, q) in (("100644", "blob"), ("100755", "blob")):
+                    sha = blob_sha(q)
+                    if sha:
+                        closure[q] = sha
+    return closure, uses_all, problems
+
+
+def closure_digest(closure: dict[str, str]) -> str:
+    return sha256_bytes(canonical(closure).encode("utf-8"))
+
+
+def check_compensating_evidence(repo: Path, head: str, path: str, ev) -> list[str]:
+    """Problems with the compensating evidence of a CHANGED shell/mjs entity; [] = the gate accepts it.
+    The blob hash is re-computed from git at head here — the signed payload is not believed about it."""
+    if not isinstance(ev, dict):
+        return ["a changed file needs `compensating_evidence` inside the signed decision"]
+    probs = []
+    for k in ("command", "runner_id"):
+        if not isinstance(ev.get(k), str) or not ev[k].strip():
+            probs.append(f"compensating_evidence.{k} is empty")
+    ec = ev.get("exit_code")
+    if isinstance(ec, bool) or not isinstance(ec, int) or ec != 0:
+        probs.append(f"compensating_evidence.exit_code is {ec!r}: only a run that exited 0 is evidence")
+    if not _SHA256_PREFIXED.match(str(ev.get("output_digest") or "")):
+        probs.append("compensating_evidence.output_digest is not sha256:<64 hex>")
+    files = ev.get("files")
+    if not isinstance(files, list) or not files:
+        return probs + ["compensating_evidence.files is empty"]
+    named = {}
+    for f in files:
+        if not isinstance(f, dict) or not isinstance(f.get("path"), str) or not _SHA256_PREFIXED.match(str(f.get("sha256") or "")):
+            probs.append("compensating_evidence.files carries an entry without path + sha256:<64 hex>")
+            continue
+        named[f["path"]] = f["sha256"]
+    if path not in named:
+        probs.append(f"compensating_evidence.files does not name {path}")
+    for p, want in named.items():
+        raw = git_blob_bytes(repo, head, p)
+        got = None if raw is None else sha256_bytes(raw)
+        if got != want:
+            probs.append(f"compensating_evidence: {p} is {got} at head {head[:12]}, the evidence says {want}")
+    return probs
+
+
+def scope_gap_check(repo: Path, doc: dict, entity: str, spec: dict, verdict: dict, facts: dict,
+                    evidence) -> tuple[bool, str]:
+    """Every eligibility rule of class verifier_scope_gap, computed from the receipt and from git."""
+    cs = doc.get("change_set") or {}
+    base, head = cs.get("base") or "", cs.get("head") or ""
+    if not base or not head:
+        return False, "the receipt has no change_set.base/head: unchanged/changed cannot be derived"
+    if spec.get("require_failed_zero", True):
+        failed = sorted(v.get("entity") for v in doc.get("verdicts") or []
+                        if isinstance(v, dict) and v.get("verdict") == "failed")
+        if failed:
+            return False, (f"the receipt carries {len(failed)} failed verdict(s) ({failed[0]}…): a change with a "
+                           f"defect in it is not decided past")
+    kind = next((k for k, ks in (spec.get("kinds") or {}).items()
+                 if re.match(ks.get("entity_pattern") or "(?!)", entity)), None)
+    if kind is None:
+        return False, (f"class {SCOPE_GAP_CLASS} covers only code_unit entities of kind {sorted(spec.get('kinds') or {})} "
+                       f"(deployable_unit is OUT, DEC-AUP-0187 C3); {entity!r} is none")
+    ks = spec["kinds"][kind]
+    facts["kind"] = kind
+    path = entity.split(":", 1)[1]
+    ids = [i for i in verdict.get("verifier_ids") or [] if isinstance(i, str)]
+    allowed_always = set(spec.get("verifier_always_allowed") or [])
+    prefixes = list(ks.get("verifier_prefixes") or [])
+    foreign = [i for i in ids if i not in allowed_always and not any(i.startswith(p) for p in prefixes)]
+    if foreign:
+        return False, (f"verifier(s) {foreign} are not a {kind} scope-gap family {prefixes}: an entity with a "
+                       f"verifier outside the allowlist has a measurement to make (DEC-AUP-0039)")
+    fam = sorted({p for p in prefixes if any(i.startswith(p) for i in ids)})
+    if not fam:
+        return False, f"no {kind} scope-gap verifier {prefixes} ran on this entity: nothing declared its scope exceeded"
+    facts["verifier_family"] = "+".join(fam)
+    reason = facts.get("measured_reason") or ""
+    bad = [s for s in spec.get("reason_forbidden_substrings") or [] if s in reason]
+    if bad:
+        return False, f"the measured reason carries {bad[0]!r}: a missing tool or a missing verifier is not a scope gap"
+    body = reason
+    for i in sorted(ids, key=len, reverse=True):
+        if reason.startswith(i + ": "):
+            body = reason[len(i) + 2:]
+            break
+    if not any(body.startswith(m) for m in ks.get("reason_prefixes") or []):
+        return False, (f"the measured reason must START with one of {ks.get('reason_prefixes')} (after an optional "
+                       f"`<verifier id>: `); this one says {reason[:100]!r}")
+    # ---- unchanged / changed by git status in the range, never by a label
+    st = _range_status(repo, base, head).get(path)
+    facts["status_in_range"] = st
+    if st not in (None, "A", "M"):
+        return False, f"{path} has status {st!r} in the range: renames, copies, type changes and deletions are not covered"
+    b_entry, h_entry = _tree_entry(repo, base, path), _tree_entry(repo, head, path)
+    if h_entry is None or h_entry[1] != "blob" or h_entry[0] not in _REGULAR_MODES:
+        return False, f"{path} is not a regular file at head (mode/type {h_entry}): symlinks and submodules are not covered"
+    if st == "M" and (b_entry is None or b_entry[0] != h_entry[0]):
+        return False, f"{path} changed mode between base and head ({b_entry} → {h_entry}): not covered"
+    if st is None:
+        facts["changed"] = False
+        if kind == "workflow":
+            c_base, _, p_base = workflow_closure(repo, base, path, int(spec.get("closure_max_files") or 200))
+            c_head, uses, p_head = workflow_closure(repo, head, path, int(spec.get("closure_max_files") or 200))
+            if p_base or p_head:
+                return False, "the closure could not be read identically: " + "; ".join((p_base + p_head)[:3])
+            facts["closure_digest_base"], facts["closure_digest_head"] = closure_digest(c_base), closure_digest(c_head)
+            if c_base != c_head:
+                moved = sorted(set(c_base) ^ set(c_head) | {p for p in c_base if p in c_head and c_base[p] != c_head[p]})
+                return False, f"the workflow's closure moved between base and head ({moved[0]}…): measure it"
+            ok_uses = re.compile(spec.get("uses_allowed_pattern") or "(?!)")
+            floating = sorted({u for u in uses if not ok_uses.match(u)})
+            if floating:
+                return False, (f"floating `uses:` {floating[0]!r}: pin it to a 40-hex SHA or a local path — a moving "
+                               f"reference is a closure nobody measured")
+            return True, "eligible"
+    else:
+        facts["changed"] = True
+        if ks.get("unchanged_only"):
+            return False, (f"{path} is a CHANGED {kind}: the class covers only an UNCHANGED one — a changed {kind} "
+                           f"needs its measurement or another review route")
+    # a shell/mjs file: the gate computes no closure for it, so changed or not it needs evidence it can re-hash
+    if ks.get("changed_requires_compensating_evidence"):
+        probs = check_compensating_evidence(repo, head, path, evidence)
+        if probs:
+            return False, "; ".join(probs[:3])
+    return True, "eligible"
+
+
 def decision_eligibility(repo: Path, doc: dict, entity: str, klass: str, policy: dict,
-                         repo_name: str) -> tuple[bool, str, dict]:
+                         repo_name: str, evidence=None) -> tuple[bool, str, dict]:
     """Is `entity` of this receipt a thing a decision may cover? → (ok, reason, facts).
 
     Called by the issuer AND by the gate on every evaluation: the receipt is never believed about its
@@ -7398,6 +7706,9 @@ def decision_eligibility(repo: Path, doc: dict, entity: str, klass: str, policy:
                        "(tools/graph/admit_change.py build_attachment, the `except ValueError` branch); the "
                        "remedy is to re-attach from the committed receipt, not a decision"), facts
     spec = classes[klass]
+    if spec.get("kinds"):  # DEC-AUP-0187: a class defined by kinds, verifier families and git, not by one marker
+        ok, why = scope_gap_check(repo, doc, entity, spec, v, facts, evidence)
+        return ok, why, facts
     prefix = spec.get("entity_prefix")
     if prefix and not entity.startswith(prefix):
         return False, f"class {klass} covers only entities named {prefix}…", facts
@@ -7458,10 +7769,18 @@ def verify_decision_exemption(repo: Path, doc: dict, x: dict, policy: dict, *, b
     # expiry, by the GATE's clock
     def _aware(d):
         return d.replace(tzinfo=timezone.utc) if d is not None and d.tzinfo is None else d
+    kspec = (dp.get("classes") or {}).get(p.get("class")) or {}
+    scope_gap = bool(kspec.get("kinds"))
+    strict_bad = scope_gap and not (_ISO_UTC_STRICT.match(str(p["issued_at_utc"]))
+                                    and _ISO_UTC_STRICT.match(str(p["expires_at_utc"])))
     iss, exp = _aware(parse_iso(p["issued_at_utc"])), _aware(parse_iso(p["expires_at_utc"]))
     now = _aware(now)
     ttl = int(dp.get("max_ttl_days") or 14)
-    if iss is None or exp is None:
+    if scope_gap:  # DEC-AUP-0187 C5: the class's own lifetime, under its own hard cap, fail closed on a bad timestamp
+        ttl = min(int(kspec.get("max_ttl_days") or 7), int(kspec.get("hard_cap_days") or 14), ttl)
+    if strict_bad:
+        probs.append(f"{ent}: issued/expires must be strict ISO-8601 UTC (YYYY-MM-DDTHH:MM:SSZ) for class {p.get('class')}")
+    elif iss is None or exp is None:
         probs.append(f"{ent}: issued/expires not ISO-8601")
     else:
         if exp <= now:
@@ -7488,12 +7807,70 @@ def verify_decision_exemption(repo: Path, doc: dict, x: dict, policy: dict, *, b
     if p.get("receipt_id") != doc.get("receipt_id"):
         probs.append(f"{ent}: signed for receipt {p.get('receipt_id')!r}, this is {doc.get('receipt_id')!r}")
     # the class is re-derived here, from the receipt and the policy in force — never read from the payload
-    ok, why, facts = decision_eligibility(repo, doc, ent, p["class"], policy, repo_name)
+    ok, why, facts = decision_eligibility(repo, doc, ent, p["class"], policy, repo_name,
+                                          evidence=p.get("compensating_evidence"))
     if not ok:
         probs.append(f"{ent}: not eligible — {why}")
     elif facts.get("measured_reason") != p["measured_reason"]:
         probs.append(f"{ent}: the verdict reason changed since the decision was signed")
+    elif scope_gap:
+        probs += scope_gap_payload_problems(repo, doc, p, kspec, facts, ent)
     return probs
+
+
+def scope_gap_payload_problems(repo: Path, doc: dict, p: dict, spec: dict, facts: dict, ent: str) -> list[str]:
+    """What the gate additionally checks on a signed verifier_scope_gap payload (DEC-AUP-0187 C2, C5, C6, C8)."""
+    probs = []
+    if p.get("verifier") != facts.get("verifier_family"):
+        probs.append(f"{ent}: payload verifier {p.get('verifier')!r} is not the verdict's verifier family "
+                     f"{facts.get('verifier_family')!r}")
+    sid = str((p.get("signer") or {}).get("id") or "").strip().lower()
+    for role in spec.get("require_signer_distinct_from") or []:
+        who = str(p.get(role) or "").strip().lower()
+        if not who:
+            probs.append(f"{ent}: payload field {role!r} is empty — separation of duties is a checked field, not a convention")
+        elif who == sid:
+            probs.append(f"{ent}: the signer {sid!r} is the {role.replace('_', ' ')}")
+    mine = {x.get("entity") for x in doc.get("exemptions") or []
+            if isinstance(x, dict) and isinstance(x.get("decision"), dict) and x["decision"].get("class") == p.get("class")}
+    cap = int(spec.get("max_waived_per_receipt") or 12)
+    if len(mine) > cap:
+        probs.append(f"{ent}: {len(mine)} entities are waived in this receipt, the class allows {cap}: split the "
+                     f"change or measure the entities down")
+    seq = p.get("waiver_sequence")
+    max_w = int(spec.get("max_waivers_per_blob") or 3)
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+        probs.append(f"{ent}: waiver_sequence {seq!r} is not an integer >= 1")
+    else:
+        if seq > max_w:
+            probs.append(f"{ent}: the same blob is waived for the {seq}th time (limit {max_w}): the debt becomes a "
+                         f"verifier task, not a fourth waiver")
+        if seq > 1:
+            pr = p.get("prior_decision_ref")
+            rm = p.get("renewal_measurement")
+            new_head = (p.get("change_binding") or {}).get("head")
+            if not (isinstance(pr, dict) and pr.get("receipt_id") and pr.get("head")):
+                probs.append(f"{ent}: a renewal needs prior_decision_ref {{receipt_id, head}}")
+            elif pr.get("head") == new_head:
+                probs.append(f"{ent}: a renewal on the same head as the decision it renews is not a new measurement")
+            if not (isinstance(rm, dict) and _SHA256_PREFIXED.match(str(rm.get("measurement_sha256") or ""))
+                    and rm.get("run_id") and rm.get("head") == new_head):
+                probs.append(f"{ent}: a renewal needs renewal_measurement {{measurement_sha256, run_id, head}} bound "
+                             f"to the NEW head")
+    cs = doc.get("change_set") or {}
+    raw = git_blob_bytes(repo, cs.get("head") or "", ent.split(":", 1)[1])
+    if raw is None or p.get("blob_sha256") != sha256_bytes(raw):
+        probs.append(f"{ent}: blob_sha256 {str(p.get('blob_sha256'))[:23]}… is not the entity's blob at head")
+    return probs
+
+
+def scope_gap_loud_line(x: dict, fp: str | None = None) -> str:
+    """The one visible line every use of the class writes (DEC-AUP-0187 C7)."""
+    p = x.get("decision") or {}
+    return (f"VERIFIER_SCOPE_GAP_WAIVER entity={x.get('entity')} owner={x.get('owner')} "
+            f"expires={x.get('expires_at_utc')} decision_ref={p.get('decision_ref')} "
+            f"signer={(p.get('signer') or {}).get('id')} fingerprint={(p.get('signer') or {}).get('fingerprint') or fp} "
+            f"blob={p.get('blob_sha256')} waiver_sequence={p.get('waiver_sequence')}")
 
 
 def ssh_sign(key_path: Path, message: bytes, namespace: str, workdir: Path) -> str:
@@ -7545,6 +7922,10 @@ def cmd_exempt_decision(a) -> int:
         refusals.append(f"--signing-key {key} is inside a repository: a key anyone with the tree holds signs "
                         f"nothing")
     ttl = int(dp.get("max_ttl_days") or 14)
+    kspec = (dp.get("classes") or {}).get(a.klass) or {}
+    sg = bool(kspec.get("kinds"))
+    if sg:  # DEC-AUP-0187 C5: this class's own default and cap (default 7 days, hard cap 14)
+        ttl = min(int(kspec.get("max_ttl_days") or 7), int(kspec.get("hard_cap_days") or 14), ttl)
     days = a.ttl_days if a.ttl_days is not None else ttl
     if days <= 0 or days > ttl:
         refusals.append(f"--ttl-days {days}: the policy allows 1..{ttl}; an exemption must expire")
@@ -7565,6 +7946,34 @@ def cmd_exempt_decision(a) -> int:
             if mine != (me.get("public_key") or "").split()[:2]:
                 refusals.append(f"--signing-key is not the key enrolled for {a.signer_id!r} (or its .pub is "
                                 f"missing beside it)")
+    sg_extra: dict = {}
+    if sg:
+        def _load(path_s, what):
+            if not path_s:
+                return None
+            try:
+                if path_s.lstrip().startswith("{"):
+                    return json.loads(path_s)
+                return json.loads(Path(path_s).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                refusals.append(f"{what} is not readable JSON")
+                return None
+        for fld in ("pr_author", "independent_reviewer"):
+            if not (getattr(a, fld, None) or "").strip():
+                refusals.append(f"--{fld.replace('_', '-')} is empty: separation of duties is a checked field")
+            elif a.signer_id and a.signer_id.strip().lower() == getattr(a, fld).strip().lower():
+                refusals.append(f"the signer {a.signer_id!r} is the {fld.replace('_', ' ')}")
+        maxw = int(kspec.get("max_waivers_per_blob") or 3)
+        if a.waiver_sequence < 1 or a.waiver_sequence > maxw:
+            refusals.append(f"--waiver-sequence {a.waiver_sequence}: 1..{maxw}; the same blob is not waived a "
+                            f"{maxw + 1}th time — the debt becomes a verifier task")
+        sg_extra = {"compensating_evidence": _load(a.compensating_evidence, "--compensating-evidence"),
+                    "pr_author": (a.pr_author or "").strip(), "independent_reviewer": (a.independent_reviewer or "").strip(),
+                    "waiver_sequence": a.waiver_sequence,
+                    "prior_decision_ref": _load(a.prior_decision_ref, "--prior-decision-ref"),
+                    "renewal_measurement": _load(a.renewal_measurement, "--renewal-measurement")}
+        if a.waiver_sequence > 1 and not (sg_extra["prior_decision_ref"] and sg_extra["renewal_measurement"]):
+            refusals.append("a renewal needs --prior-decision-ref and --renewal-measurement (a NEW measurement)")
     ents = list(a.entity or [])
     if a.all_eligible:
         ents += [v["entity"] for v in doc.get("verdicts") or []
@@ -7575,8 +7984,17 @@ def cmd_exempt_decision(a) -> int:
               "repo": repo_name, "receipt": str(rp), "class": a.klass, "issued": [], "refused": []}
     elig = []
     for e in ents:
-        ok, why, facts = decision_eligibility(repo, doc, e, a.klass, policy, repo_name)
+        ok, why, facts = decision_eligibility(repo, doc, e, a.klass, policy, repo_name,
+                                              evidence=sg_extra.get("compensating_evidence"))
         (elig if ok else report["refused"]).append(facts if ok else {"entity": e, "reason": why})
+    if sg and elig:  # the per-receipt ratchet (DEC-AUP-0187 C6): already waived + this call, distinct entities
+        have = {x.get("entity") for x in doc.get("exemptions") or []
+                if isinstance(x, dict) and isinstance(x.get("decision"), dict) and x["decision"].get("class") == a.klass}
+        total = len(have | {f["entity"] for f in elig})
+        capn = int(kspec.get("max_waived_per_receipt") or 12)
+        if total > capn:
+            refusals.append(f"{total} entities would be waived in this receipt, the class allows {capn}: split the "
+                            f"change or measure the entities down")
     if a.all_eligible:  # an --all-eligible sweep reports what it did not take; only named entities refuse
         named = set(a.entity or [])
         blocking = [r for r in report["refused"] if r["entity"] in named]
@@ -7603,7 +8021,8 @@ def cmd_exempt_decision(a) -> int:
     new = []
     for facts in elig:
         e = facts["entity"]
-        verifier = "I14" if a.klass == "historical_receipt" else "v-canary"
+        verifier = ("I14" if a.klass == "historical_receipt" else
+                    facts.get("verifier_family") if sg else "v-canary")
         payload = {"schema": DECISION_SCHEMA, "entity": e, "class": a.klass, "verifier": verifier,
                    "measured_reason": facts["measured_reason"], "why_unmeasurable": a.why_unmeasurable.strip(),
                    "decision_to_proceed": a.decision.strip(), "evidence": a.evidence.strip(),
@@ -7612,6 +8031,11 @@ def cmd_exempt_decision(a) -> int:
                    "change_binding": binding, "issued_at_utc": issued_at, "expires_at_utc": expires,
                    "signer": {"id": a.signer_id, "fingerprint": fp},
                    "decision_ref": "DEC-AUP-0037 R3; A2-314"}
+        if sg:
+            payload.update(sg_extra)
+            raw = git_blob_bytes(repo, cs["head"], e.split(":", 1)[1])
+            payload["blob_sha256"] = sha256_bytes(raw) if raw is not None else None
+            payload["decision_ref"] = kspec.get("decision_ref") or "DEC-AUP-0187"
         sig = ssh_sign(key, decision_payload_bytes(payload), dp["namespace"], wd)
         new.append({"entity": e, "code": DECISION_CODE, "owner": a.signer_id,
                     "reason": a.decision.strip(), "expires_at_utc": expires,
@@ -7677,6 +8101,33 @@ def cmd_b7_opine(a) -> int:
         print(f"  [{c['verdict']}] {c['id']} {c['code']}: {c['detail'][:200]}")
     print(f"{verdict.upper()} — second opinion by {a.authority_id!r} written to {a.out}")
     return 0 if verdict == "verified" else 3
+
+
+class _LazyDecisionClasses:
+    """argparse `choices` for `exempt-decision --class`: the policy's decision_exemptions classes, loaded on
+    first use (membership test, iteration or length), falling back to the built-in trio when the policy
+    cannot be read — the same list the eager read produced, without reading the policy at parser build."""
+
+    def __init__(self) -> None:
+        self._items: list[str] | None = None
+
+    def _load(self) -> list[str]:
+        if self._items is None:
+            try:
+                classes = sorted(((load_policy(None).get("decision_exemptions") or {}).get("classes")) or {})
+            except (OSError, ValueError):
+                classes = []
+            self._items = classes or ["historical_receipt", "no_live_contour", SCOPE_GAP_CLASS]
+        return self._items
+
+    def __contains__(self, item) -> bool:
+        return item in self._load()
+
+    def __iter__(self):
+        return iter(self._load())
+
+    def __len__(self) -> int:
+        return len(self._load())
 
 
 def main(argv=None) -> int:
@@ -7805,7 +8256,11 @@ def main(argv=None) -> int:
                                                 "re-verifies it (C21). Never the change author, never by hand")
     xd.add_argument("--repo", required=True)
     xd.add_argument("--receipt", required=True, help="the ChangeAdmissionReceipt/v1 to issue into")
-    xd.add_argument("--class", dest="klass", required=True, choices=["historical_receipt", "no_live_contour"])
+    # the classes come from the policy, not from a second hard-coded list that could drift from it; they are
+    # read lazily (only when a `--class` value is checked or listed), so that parsing every other command, and
+    # the fail-closed argument checks, never load the policy first.
+    # `metavar` is explicit because argparse otherwise iterates `choices` inside add_argument, which would read the policy here.
+    xd.add_argument("--class", dest="klass", required=True, choices=_LazyDecisionClasses(), metavar="CLASS")
     xd.add_argument("--entity", action="append", help="an entity to decide past (repeatable)")
     xd.add_argument("--all-eligible", action="store_true",
                     help="every not_measured entity of the receipt that this class covers; the rest are listed")
@@ -7815,7 +8270,17 @@ def main(argv=None) -> int:
     xd.add_argument("--reverse-if", help="the observation that voids this decision — required")
     xd.add_argument("--signer-id", help="the admitting agent's id as enrolled in decision_exemptions.signers")
     xd.add_argument("--signing-key", help="the admitting agent's private Ed25519 key file (never in a repository)")
-    xd.add_argument("--ttl-days", type=int, help="lifetime in days, 1..decision_exemptions.max_ttl_days")
+    xd.add_argument("--ttl-days", type=int, help="lifetime in days, 1..decision_exemptions.max_ttl_days "
+                                                 "(class verifier_scope_gap: default 7, cap 14)")
+    xd.add_argument("--compensating-evidence", help="verifier_scope_gap, CHANGED shell/mjs: a JSON file "
+                     "{files:[{path,sha256}], command, exit_code, runner_id, output_digest}; the gate re-hashes the blobs at head")
+    xd.add_argument("--pr-author", help="verifier_scope_gap: the pull request author (the signer must be someone else)")
+    xd.add_argument("--independent-reviewer", help="verifier_scope_gap: the independent reviewer (the signer must be someone else)")
+    xd.add_argument("--waiver-sequence", type=int, default=1,
+                    help="verifier_scope_gap: 1 for a first waiver of this blob, up to max_waivers_per_blob")
+    xd.add_argument("--prior-decision-ref", help="verifier_scope_gap renewal: JSON {receipt_id, head} of the decision renewed")
+    xd.add_argument("--renewal-measurement", help="verifier_scope_gap renewal: JSON {measurement_sha256, run_id, head} "
+                    "of a NEW measurement bound to the new head")
     xd.add_argument("--out", help="write the amended receipt here (default: in place)")
     xd.add_argument("--evidence-out", help="write the DecisionExemptionIssuance/v1 report here")
     xd.add_argument("--policy", type=Path)

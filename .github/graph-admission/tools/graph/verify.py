@@ -48,6 +48,7 @@ import nest_bootstrap
 import canary_evidence
 import argparse
 import ast
+import atexit
 import hashlib
 import json
 import os
@@ -85,9 +86,22 @@ import shell_source
 import source_input_contract
 
 
+_KEEP_SCRATCH = False   # --keep-scratch: leave implicit scratch directories behind at exit
+
+
+def _remove_scratch(path: Path) -> None:
+    if not _KEEP_SCRATCH:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _new_private_scratch(prefix: str) -> Path:
-    """Create retained, private scratch unique to this invocation under the temp parent."""
-    return Path(tempfile.mkdtemp(prefix=prefix))
+    """Create private scratch unique to this invocation under the temp parent.
+
+    It lives for the whole process and is removed at exit, unless --keep-scratch was given. Only a
+    directory created here is ever removed: a caller-supplied --workdir / --pilot-out is never touched."""
+    path = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(_remove_scratch, path)
+    return path
 
 
 VERSION = "1.4.1"   # workflow shell unknown cannot discharge mandatory caller closure
@@ -4954,12 +4968,14 @@ def selftest(a) -> int:
 
 def run_pilot(a, check, tsc, prisma) -> dict:
     """≥ 10 historical changes of the pilot: graph at the parent, impact, mandatory verifiers (+ targeted tests), draft receipt."""
+    # Allocate default scratch before touching the pilot repo so concurrent/shared-runner
+    # invocations never collide on fixed TMPDIR names (same class as ordinary/selftest).
+    out_dir = Path(a.pilot_out) if a.pilot_out else _new_private_scratch("arcana-verify-pilot-")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    work = Path(a.workdir) if a.workdir else _new_private_scratch("arcana-verify-pilot-work-")
     repo = impact.Repo(Path(a.pilot))
     before = git(["status", "--porcelain"], repo.top)
     head = repo.head()
-    out_dir = Path(a.pilot_out) if a.pilot_out else Path(os.environ.get("TMPDIR", "/tmp")) / "arcana-verify-pilot"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    work = Path(a.workdir) if a.workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "arcana-verify-selftest"
     revs = git(["rev-list", "--no-merges", "HEAD"], repo.top).split()
     selected, skipped = [], []
     graph_cache = {}
@@ -5117,6 +5133,9 @@ def main(argv=None) -> int:
     compiler_sdk_arguments(ap)
     ap.add_argument("--prisma")
     ap.add_argument("--workdir", help="scratch directory for exports / generated tsconfigs")
+    ap.add_argument("--keep-scratch", action="store_true",
+                    help="keep the implicit scratch directories this run creates under TMPDIR (default: removed at exit); "
+                         "a --workdir / --pilot-out you supply is never removed")
     ap.add_argument("--phase-log", type=Path, help="new private JSONL phase log; diagnostics only, never receipt evidence")
     ap.add_argument("--out", type=Path, help="write the ChangeAdmissionReceipt/v1 draft here")
     ap.add_argument("--verifier-out", help="directory for captured verifier outputs (default <workdir>/verifier-out; never beside --out)")
@@ -5142,6 +5161,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-out", help="with --pilot: directory for the per-commit drafts")
     ap.add_argument("--pilot-commits", type=int, default=12)
     a = ap.parse_args(argv)
+    global _KEEP_SCRATCH
+    _KEEP_SCRATCH = bool(a.keep_scratch)
     a._github_token = os.environ.pop("GH_TOKEN", None)
     if any(getattr(a, name, None) for name in (
             "compiler_sdk_root", "compiler_sdk_declaration",
