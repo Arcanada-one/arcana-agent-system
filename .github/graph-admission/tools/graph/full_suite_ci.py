@@ -830,6 +830,18 @@ def receipt_errors(repo, head, repository, rows):
     return errors
 
 
+# Qualified action pins for the Auth compiler job (DEC-AUP-0187 follow-up). The older pins stay valid;
+# the newer ones are ADDITIONAL. Keep identical to AUTH_QUALIFIED_*_PINS in ci_gate.py (a unit test
+# asserts equality). Each entry is the full commit of the named release tag.
+AUTH_QUALIFIED_PNPM_SETUP_PINS = (
+    "pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413",  # v6.1.0
+    "pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115",  # v6.1.1
+)
+AUTH_QUALIFIED_NODE_SETUP_PINS = (
+    "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",  # v7.0.0
+    "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",  # v7.1.0
+)
+
 # A distinct typed input. It never uses the full-suite scope, profile declaration or consumer.
 ROOT_TYPECHECK_SCHEMA = "GitHubTypecheckEvidence/v1"
 ROOT_TYPECHECK_REPO = "Arcanada-one/auth-arcana"
@@ -980,11 +992,9 @@ def root_typecheck_source_binding(repo, source):
                   and isinstance(s.get("uses"), str) and s["uses"].startswith("pnpm/action-setup@")]
     node_setup = [s for s in steps if isinstance(s, dict)
                   and isinstance(s.get("uses"), str) and s["uses"].startswith("actions/setup-node@")]
-    if (len(pnpm_setup) != 1 or pnpm_setup[0]["uses"] !=
-            "pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413"
+    if (len(pnpm_setup) != 1 or pnpm_setup[0]["uses"] not in AUTH_QUALIFIED_PNPM_SETUP_PINS
             or pnpm_setup[0].get("with") != {"dest": "${{ runner.temp }}/setup-pnpm"}
-            or len(node_setup) != 1 or node_setup[0]["uses"] !=
-            "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
+            or len(node_setup) != 1 or node_setup[0]["uses"] not in AUTH_QUALIFIED_NODE_SETUP_PINS
             or node_setup[0].get("with") != {"node-version-file": ".nvmrc", "cache": "pnpm"}):
         raise ValueError("Auth compiler toolchain setup differs from the exact qualified pinned actions")
     by_command = {}

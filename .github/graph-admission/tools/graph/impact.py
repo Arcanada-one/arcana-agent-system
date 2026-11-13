@@ -76,7 +76,7 @@ FALLBACK_KINDS = {"lockfile", "global_config"}
 TEST_RE = re.compile(r"(^|/)(test|tests|__tests__|e2e|spec)(/|$)|\.(spec|test)\.[cm]?[jt]sx?$")
 FORWARD_TYPES = {"provides_route", "implements_contract", "maps_model", "deploys_to"}
 BOUNDARY_RANK = {"intra_unit": 0, "service": 1, "repo": 2}
-FILE_HASH_TYPES = {"code_unit", "document", "receipt", "deployable_unit", "systemd_unit", "source_file"}  # whole-file bytes
+FILE_HASH_TYPES = {"code_unit", "document", "receipt", "deployable_unit", "systemd_unit", "source_file", "trust_anchor_pin"}  # whole-file bytes
 DEPLOYABLE_MANIFEST_NAMES = ("package.json", "Cargo.toml", "pyproject.toml", "setup.py", "setup.cfg")  # AUP-GRAPH-009: deployable_unit
 # manifests are no longer always npm — try every builder's manifest name, first one present in the tree wins
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -317,6 +317,8 @@ def classify_file(path: str, idx: GraphIndex | None) -> str:
             return "systemd_unit"
         if "source_file" in types:
             return "source_file"
+        if "trust_anchor_pin" in types:
+            return "trust_anchor_pin"
         if "contract" in types:
             return "contract"
         if "route" in types:
@@ -717,7 +719,7 @@ def query(idx: GraphIndex, files: list[dict], *, mode: str, base: str | None = N
                     "by_node_type": _count(e["node_type"] for e in imp["deterministic_core"] + imp["inferred_tail"]),
                     "service_boundary_entries": sum(1 for e in imp["inferred_tail"] if e["boundary"] in ("service", "repo")),
                     "uncovered_files": uncovered, "new_files": new_files, "graph_nodes": len(idx.nodes)}
-    non_doc = [f for f in cs["files"] if f["kind"] not in DOC_KINDS]
+    non_doc = [f for f in cs["files"] if f["kind"] not in DOC_KINDS and not self_verifying_leaf(idx, f)]
     if imp["total"] == 0 and not imp["global_fallback"]["triggered"] and non_doc and "empty_impact_event" in rules:
         per_file = []
         for f in non_doc:
@@ -743,6 +745,18 @@ def query(idx: GraphIndex, files: list[dict], *, mode: str, base: str | None = N
                               "text": "non-documentation change with an empty impact set: a prediction that must be explained "
                                       "in the receipt (empty_impact_explanation), never an approval"})
     return out
+
+
+SELF_VERIFYING_LEAF_TYPES = {"trust_anchor_pin"}
+
+
+def self_verifying_leaf(idx: "GraphIndex", f: dict) -> bool:
+    """Muneral 7fbbccbe (b1). A trust-anchor pin has no consumers by design: its mandatory verifier compares the file with its
+    peers (caller workflow, bundle manifest) and returns a verdict row for the node itself. An empty impact set therefore
+    predicts nothing that needs explaining, and raising EMPTY_IMPACT_REQUIRES_EXPLANATION (exit 3) would make the hosted
+    stage, which accepts only verifier exits 0/1, refuse every change to it. Only a file whose EVERY node is of such a type."""
+    ids = f.get("node_ids") or []
+    return bool(ids) and all(idx.nodes.get(i, {}).get("type") in SELF_VERIFYING_LEAF_TYPES for i in ids)
 
 
 def _count(it) -> dict:

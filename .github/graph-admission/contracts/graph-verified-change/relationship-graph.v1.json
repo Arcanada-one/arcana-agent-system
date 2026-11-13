@@ -19,7 +19,8 @@
   "work_item": {"granularity": "one Muneral work item", "id_form": "work_item:<ID>", "content_hash": "sha256 of the id (revision hash once Muneral supplies it)"},
   "receipt": {"granularity": "one receipt file", "id_form": "receipt:<path>", "content_hash": "sha256 of the receipt bytes"},
   "systemd_unit": {"granularity":"one byte-bound systemd service or timer declaration","id_form":"systemd_unit:<repo-relative path>","content_hash":"sha256 of exact unit file bytes","kinds":["service","timer"]},
-  "source_file": {"granularity":"one directly referenced regular file without an existing canonical node","id_form":"source_file:<repo-relative path>","content_hash":"sha256 of exact file bytes"}
+  "source_file": {"granularity":"one directly referenced regular file without an existing canonical node","id_form":"source_file:<repo-relative path>","content_hash":"sha256 of exact file bytes"},
+  "trust_anchor_pin": {"granularity":"one caller trust-anchor pin file (.github/security/*.pin.json with a graph-admission trust-anchor schema)","id_form":"trust_anchor_pin:<repo-relative path>","content_hash":"sha256 of exact file bytes"}
 },
  "edge_types": {
   "imports": {"from": ["code_unit"], "to": ["code_unit"], "meaning": "static import/export/require of another unit (resolved) or a reuse: @arcanada/* marker", "mandatory_verifier_hint": "type-check / compile of the importer"},

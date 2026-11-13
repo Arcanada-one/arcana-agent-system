@@ -1296,7 +1296,8 @@ def fixture_type_check_is_owed(path: str, before: impact.GraphIndex, after: impa
 def validate_systemd_admission_floor(matrix: dict, present_types: set[str]) -> None:
     """Independent fixed floor for admission; deliberately duplicates verify.py's constant."""
     fixed_systemd_floor = {"systemd_unit": ("systemd_unit_semantics",),
-                           "source_file": ("source_file_integrity",)}
+                           "source_file": ("source_file_integrity",),
+                           "trust_anchor_pin": ("trust_anchor_pin_consistency",)}
     for node_type, floor in fixed_systemd_floor.items():
         if node_type not in present_types:
             continue
