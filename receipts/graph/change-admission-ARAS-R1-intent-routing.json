@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-11-11T01:22:16Z",
+ "captured_at_utc": "2026-11-17T17:16:01Z",
  "change_set": {
   "base": "62fc939f1ecb0906a23bdf2b7d20a0df64bc1629",
   "files": [
@@ -120,7 +120,7 @@
     "status": "A"
    }
   ],
-  "head": "43a8fd41523c3a978530f3ddc7aff4f2959f601d",
+  "head": "59adfb9a9bed7e4bf97f4b7d33e7350aaff3d8d9",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -129,24 +129,26 @@
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:ac97f1cc1626d96da3f4661312838eb93b9a2cf7cd590ac36906036b8669e51c",
-  "path": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/graph-62fc939f1ecb.json",
+  "path": "/tmp/asw-pr281-graph-59adfb9-r2/verifier-out/graph-62fc939f1ecb.json",
   "source_commit": "62fc939f1ecb0906a23bdf2b7d20a0df64bc1629"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:011252e53ecaaa07bf440e92d8c885f1bf45b0da616eb6abcbb7a4f571061fd1",
-  "path": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/graph-head-43a8fd41523c.json",
-  "source_commit": "43a8fd41523c3a978530f3ddc7aff4f2959f601d",
+  "graph_digest": "sha256:bd6a7452106a12218a7387aca02746a53614265c66058f738be3b49a62166cda",
+  "path": "/tmp/asw-pr281-graph-59adfb9-r2/verifier-out/graph-head-59adfb9a9bed.json",
+  "source_commit": "59adfb9a9bed7e4bf97f4b7d33e7350aaff3d8d9",
   "staleness": {
-   "checked_at_utc": "2026-11-11T01:23:03Z",
+   "checked_at_utc": "2026-11-17T17:16:35Z",
    "checked_nodes": 481,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
   }
  },
- "host": "arcana-devs",
+ "host": "agent-swe-r1-evidence",
+ "host_redacted": true,
+ "host_sha256": "a03590ba71f2bba21a4af116f28dfa8b868ba87d785c9d74badeef7accccda82",
  "impact_set": {
   "deterministic_core": [
    {
@@ -2553,11 +2555,11 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261111T012216Z-43a8fd41",
+ "receipt_id": "car-verify-20261117T171601Z-59adfb9a",
  "receipt_path": "receipts/graph/change-admission-ARAS-R1-intent-routing.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
-  "path": "/home/dev/aup/claude-work/r1stack/arcana-agent-system"
+  "path": "/home/dev/aup/claude-work/asw-pr281-combined-r1"
  },
  "revision_selection": {
   "base": [
@@ -2733,7 +2735,7 @@
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-11T01:23:03Z",
+  "checked_at_utc": "2026-11-17T17:16:35Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
@@ -2742,7 +2744,7 @@
   {
    "content_hash": {
     "base": null,
-    "head": "sha256:a9e410570f739e52b537de2b29c2e249b4180b6565901d4a6971d18b1e42c352"
+    "head": "sha256:88e6cb72293018e296d3402691dc71788b2d1e9254590ca6a4bda128d7019963"
    },
    "entity": "receipt:receipts/graph/change-admission-ARAS-R1-intent-routing.json",
    "node_type": "receipt",
@@ -2756,7 +2758,7 @@
   }
  ],
  "tree": {
-  "commit": "43a8fd41523c3a978530f3ddc7aff4f2959f601d",
+  "commit": "59adfb9a9bed7e4bf97f4b7d33e7350aaff3d8d9",
   "dirty": false
  },
  "verdicts": [
@@ -3626,8 +3628,8 @@
    "exit_code": 0,
    "id": "v-fitness",
    "kind": "fitness_rules",
-   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/v-fitness.json",
-   "started_at_utc": "2026-11-11T01:23:09Z",
+   "output_ref": "/tmp/asw-pr281-graph-59adfb9-r2/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-11-17T17:16:40Z",
    "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
   },
   {
@@ -3642,8 +3644,8 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/home/dev/aup/claude-work/r1stack/logs/l4-receipt-work/verifier-out-tip/v-doc-reference.txt",
-   "started_at_utc": "2026-11-11T01:23:09Z",
+   "output_ref": "/tmp/asw-pr281-graph-59adfb9-r2/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-11-17T17:16:40Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
@@ -3920,8 +3922,8 @@
    "receipt:receipts/graph/change-admission-ARAS-R1-intent-routing.json": []
   },
   "seconds": {
-   "prepare": 2.16,
-   "total": 53.13,
+   "prepare": 1.9,
+   "total": 39.57,
    "verifiers": 0.02
   }
  },
