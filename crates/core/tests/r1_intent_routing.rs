@@ -243,7 +243,7 @@ fn c9_deterministic_exact_transform_zero_llm_positive() {
         other => panic!("expected {expected}, observed {other:?}"),
     }
     assert_eq!(
-        execute_deterministic_transform(req.deterministic.as_ref().unwrap()),
+        execute_deterministic_transform(req.deterministic.as_ref().unwrap()).expect(expected),
         "ABC"
     );
 }
@@ -628,7 +628,7 @@ fn r2_mt_identity_trim_preserves_whitespace() {
         input: input.to_owned(),
     };
     assert_eq!(
-        execute_deterministic_transform(&transform),
+        execute_deterministic_transform(&transform).expect(expected),
         input,
         "{expected}"
     );
@@ -644,5 +644,131 @@ fn r2_mt_identity_trim_preserves_whitespace() {
             assert_eq!(output, input, "{expected}");
         }
         other => panic!("expected {expected}, observed {other:?}"),
+    }
+}
+
+/// An admitted generic capability cannot implement an unknown transform.
+#[test]
+fn unsupported_deterministic_transform_is_a_routing_conflict() {
+    for transform_id in ["not_registered", "", "exact_identity "] {
+        let mut req = base_request(StepIntent::DeterministicTransform);
+        req.deterministic = Some(DeterministicTransform {
+            transform_id: transform_id.to_owned(),
+            input: "keep this input".to_owned(),
+        });
+        assert_eq!(
+            route_step(&req),
+            Err(RoutingConflict::DeterministicContractMissing),
+            "unsupported id must not become a successful result: {transform_id:?}"
+        );
+    }
+}
+
+/// Direct callers must also distinguish an unavailable transform from output.
+#[test]
+fn unsupported_deterministic_helper_returns_an_error() {
+    let transform = DeterministicTransform {
+        transform_id: "not_registered".to_owned(),
+        input: "keep this input".to_owned(),
+    };
+    assert_eq!(
+        execute_deterministic_transform(&transform),
+        Err(RoutingConflict::DeterministicContractMissing)
+    );
+}
+
+/// A deterministic route must not silently discard a nonmatching pin.
+#[test]
+fn deterministic_pin_must_name_an_eligible_zero_llm_profile() {
+    for pin in ["grok-3-latest", "not_registered", "none "] {
+        let mut req = base_request(StepIntent::DeterministicTransform);
+        req.pin = Some(pin.to_owned());
+        req.deterministic = Some(DeterministicTransform {
+            transform_id: "exact_ascii_uppercase".to_owned(),
+            input: "AbC".to_owned(),
+        });
+
+        match route_step(&req) {
+            Err(RoutingConflict::IneligiblePin { pin: observed, .. }) => {
+                assert_eq!(observed, pin);
+            }
+            other => panic!("expected ineligible deterministic pin {pin:?}, got {other:?}"),
+        }
+    }
+}
+
+/// An explicit eligible pin preserves the useful exact zero-LLM result.
+#[test]
+fn deterministic_eligible_pin_preserves_exact_output() {
+    let mut req = base_request(StepIntent::DeterministicTransform);
+    req.pin = Some("none".to_owned());
+    req.deterministic = Some(DeterministicTransform {
+        transform_id: "exact_ascii_uppercase".to_owned(),
+        input: "AbC".to_owned(),
+    });
+
+    assert_eq!(
+        route_step(&req),
+        Ok(RoutingDecision::ZeroLlm {
+            transform_id: "exact_ascii_uppercase".to_owned(),
+            output: "ABC".to_owned(),
+        })
+    );
+}
+
+/// A different eligible profile cannot repair the pinned profile's omissions.
+#[test]
+fn deterministic_pin_checks_zero_llm_and_all_capabilities_on_the_same_profile() {
+    for (zero_llm, admits_all) in [(false, true), (true, false)] {
+        let mut req = base_request(StepIntent::DeterministicTransform);
+        req.trusted = TrustedStepIntent::new(StepIntent::DeterministicTransform).with_required(
+            BTreeSet::from([
+                StepCapability::DeterministicTransform,
+                StepCapability::Verification,
+            ]),
+        );
+        req.pin = Some("pinned-zero".to_owned());
+        req.deterministic = Some(DeterministicTransform {
+            transform_id: "exact_identity".to_owned(),
+            input: "  keep pads  ".to_owned(),
+        });
+
+        let mut alternative = req
+            .profiles
+            .iter()
+            .find(|profile| profile.zero_llm)
+            .expect("fixture has a zero-LLM profile")
+            .clone();
+        alternative.admitted = req.trusted.required.clone();
+
+        let mut pinned = alternative.clone();
+        pinned.profile_id = "pinned_candidate".to_owned();
+        pinned.model_id = "pinned-zero".to_owned();
+        pinned.zero_llm = zero_llm;
+        if !admits_all {
+            pinned.admitted.remove(&StepCapability::Verification);
+        }
+        req.profiles = vec![alternative, pinned];
+
+        match route_step(&req) {
+            Err(RoutingConflict::IneligiblePin { pin, .. }) => {
+                assert_eq!(pin, "pinned-zero");
+            }
+            other => panic!(
+                "expected refusal for zero_llm={zero_llm}, admits_all={admits_all}; got {other:?}"
+            ),
+        }
+
+        // Restore only the pinned record's eligibility: the same request
+        // must become useful without switching to the alternative profile.
+        req.profiles[1].zero_llm = true;
+        req.profiles[1].admitted = req.trusted.required.clone();
+        assert_eq!(
+            route_step(&req),
+            Ok(RoutingDecision::ZeroLlm {
+                transform_id: "exact_identity".to_owned(),
+                output: "  keep pads  ".to_owned(),
+            })
+        );
     }
 }

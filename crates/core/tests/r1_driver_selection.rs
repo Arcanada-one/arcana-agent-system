@@ -393,3 +393,84 @@ async fn d12_injection_cannot_override_trusted_planning() {
         "{expected}"
     );
 }
+
+/// Unsupported transforms refuse the actual driver path without model fallback.
+#[tokio::test]
+async fn d13_unsupported_transform_never_completes_or_dispatches() {
+    let connector = ScriptedConnector::new(vec![response("should not run", 0.001)]);
+    let mut config = trusted_config(StepIntent::DeterministicTransform);
+    config.deterministic_transform = Some(DeterministicTransform {
+        transform_id: "not_registered".to_owned(),
+        input: "AbC".to_owned(),
+    });
+    let mut dispatcher = ToolDispatcher::new();
+    dispatcher.register(Arc::new(EchoTool)).unwrap();
+    let (executor, _audit) =
+        common::test_executor(dispatcher, common::allow_cascade(), HookChain::new());
+    let driver = Driver::new(
+        &connector,
+        &executor,
+        Arc::new(CostTracker::new()),
+        CancellationToken::new(),
+        config,
+    );
+    let out = driver.run("transform AbC").await;
+    assert_eq!(out.reason, TerminalReason::SelectionConflict);
+    assert!(!out.reason.is_success());
+    assert_eq!(out.final_text, None);
+    assert_eq!(out.turns, 0);
+    assert!(out.selected_models.is_empty());
+    assert!(connector.requests().is_empty());
+}
+
+/// Both configured pin sources preserve eligibility and routing-pin priority.
+#[tokio::test]
+async fn d14_deterministic_pin_is_enforced_without_connector_fallback() {
+    let cases = [
+        (Some("grok-3-latest"), None, false),
+        (None, Some("grok-3-latest"), false),
+        (Some("none"), None, true),
+        (Some("none"), Some("grok-3-latest"), true),
+        (Some("grok-3-latest"), Some("none"), false),
+    ];
+
+    for (routing_pin, model, allowed) in cases {
+        let connector = ScriptedConnector::new(vec![response("should not run", 0.001)]);
+        let mut config = trusted_config(StepIntent::DeterministicTransform);
+        config.routing_pin = routing_pin.map(str::to_owned);
+        config.model = model.map(str::to_owned);
+        config.deterministic_transform = Some(DeterministicTransform {
+            transform_id: "exact_ascii_uppercase".to_owned(),
+            input: "AbC".to_owned(),
+        });
+
+        let mut dispatcher = ToolDispatcher::new();
+        dispatcher.register(Arc::new(EchoTool)).unwrap();
+        let (executor, _audit) =
+            common::test_executor(dispatcher, common::allow_cascade(), HookChain::new());
+        let driver = Driver::new(
+            &connector,
+            &executor,
+            Arc::new(CostTracker::new()),
+            CancellationToken::new(),
+            config,
+        );
+
+        let out = driver.run("transform AbC").await;
+        let expected_reason = if allowed {
+            TerminalReason::Completed
+        } else {
+            TerminalReason::SelectionConflict
+        };
+        assert_eq!(
+            out.reason, expected_reason,
+            "routing_pin={routing_pin:?}, model={model:?}"
+        );
+        assert_eq!(out.reason.is_success(), allowed);
+        assert_eq!(out.final_text.as_deref(), allowed.then_some("ABC"));
+        assert_eq!(out.turns, 0);
+        assert_eq!(out.tool_calls, 0);
+        assert!(out.selected_models.is_empty());
+        assert!(connector.requests().is_empty());
+    }
+}

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Development-only trusted routing now refuses unsupported deterministic
+  transforms with a selection conflict. An unknown transform no longer returns
+  an error string as a successfully completed result or falls back to a model.
+  The direct transform helper returns a typed error; supported identity and
+  ASCII-uppercase transforms keep their exact output. Explicit pins must name
+  an eligible zero-LLM profile; incompatible pins produce a selection conflict
+  instead of being ignored, preserving the existing pin precedence. The offline
+  CLI pin precheck now accepts eligible deterministic fixture pins while
+  retaining actual transform-payload requirements.
+
 ### Added
 
 - R1c (development-only): when `DriverConfig::trusted_step` is set, the agent

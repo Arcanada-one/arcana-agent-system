@@ -300,7 +300,7 @@ pub enum RoutingConflict {
     },
     /// Filters passed but no profile remained.
     NoEligibleProfile,
-    /// Deterministic transform was required but no contract / zero-LLM profile.
+    /// Deterministic transform has no contract, supported implementation or zero-LLM profile.
     DeterministicContractMissing,
 }
 
@@ -314,7 +314,7 @@ pub enum RoutingConflict {
 /// Returns [`RoutingConflict`] when a hard filter denies the step, the complete
 /// context is oversized, no admitted catalogue is available, a required
 /// capability is missing, an explicit pin is ineligible, no eligible profile
-/// remains, or a deterministic-transform contract is missing.
+/// remains, or a deterministic-transform contract is missing or unsupported.
 pub fn route_step(request: &RoutingRequest) -> Result<RoutingDecision, RoutingConflict> {
     // Absorb untrusted observations so callers can pass tool/model prose without
     // granting them routing authority (black_box prevents dead-code elision).
@@ -424,7 +424,21 @@ fn route_deterministic(
         return Err(RoutingConflict::DeterministicContractMissing);
     }
 
-    let output = execute_deterministic_transform(transform);
+    if let Some(pin) = request.pin.as_deref() {
+        let pinned_zero_llm = request.profiles.iter().any(|profile| {
+            profile.model_id == pin
+                && profile.zero_llm
+                && required.iter().all(|cap| profile.admitted.contains(cap))
+        });
+        if !pinned_zero_llm {
+            return Err(RoutingConflict::IneligiblePin {
+                pin: pin.to_owned(),
+                reason: "pinned model is not an eligible zero-LLM transform profile".to_owned(),
+            });
+        }
+    }
+
+    let output = execute_deterministic_transform(transform)?;
     Ok(RoutingDecision::ZeroLlm {
         transform_id: transform.transform_id.clone(),
         output,
@@ -433,15 +447,21 @@ fn route_deterministic(
 
 /// Exact deterministic transforms admitted by fixture contracts.
 ///
-/// Currently: identity and ASCII uppercase. Unknown transform ids return the
-/// input unchanged only when the caller already admitted the profile; the
-/// router requires a known id for a useful positive.
-#[must_use]
-pub fn execute_deterministic_transform(transform: &DeterministicTransform) -> String {
+/// Currently: identity and ASCII uppercase. A profile's capability does not
+/// provide an implementation for an unknown transform id.
+///
+/// # Errors
+///
+/// Returns [`RoutingConflict::DeterministicContractMissing`] when the exact
+/// transform id has no implementation. Error text must never become a
+/// successful transform output.
+pub fn execute_deterministic_transform(
+    transform: &DeterministicTransform,
+) -> Result<String, RoutingConflict> {
     match transform.transform_id.as_str() {
-        "exact_identity" => transform.input.clone(),
-        "exact_ascii_uppercase" => transform.input.to_ascii_uppercase(),
-        other => format!("unsupported_transform:{other}"),
+        "exact_identity" => Ok(transform.input.clone()),
+        "exact_ascii_uppercase" => Ok(transform.input.to_ascii_uppercase()),
+        _ => Err(RoutingConflict::DeterministicContractMissing),
     }
 }
 
