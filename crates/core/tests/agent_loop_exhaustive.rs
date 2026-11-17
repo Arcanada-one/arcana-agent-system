@@ -1,12 +1,12 @@
 //! Agent loop state machine exhaustiveness.
 //!
 //! Contract: `enum TurnOutcome { Continue(ContinueReason), Terminal(TerminalReason) }`
-//! has 10 `ContinueReason` and 12 `TerminalReason` variants. Regression is
+//! has 10 `ContinueReason` and 14 `TerminalReason` variants. Regression is
 //! blocked two independent ways:
 //!   1. Compile-time exhaustive match — adding a variant without updating
 //!      the driver produces a «non-exhaustive patterns» error.
 //!   2. Run-time enumeration — the explicit per-variant list confirms the
-//!      driver still covers the documented 10/12 surface.
+//!      driver still covers the documented 10/14 surface.
 
 #![allow(
     clippy::unwrap_used,
@@ -20,8 +20,10 @@ use arcana_core::agent_loop::{ContinueReason, TerminalReason, TurnOutcome};
 const CONTINUE_VARIANTS: usize = 10;
 // Was 8 while the enum had 9 variants, and the `all` array below simply left
 // `AuditFatal` out — a test named "exhaustive" that had stopped being so. Both
-// are corrected here rather than only extended for `NoAction`.
-const TERMINAL_VARIANTS: usize = 12;
+// are corrected here rather than only extended for `NoAction`. Later additions
+// (`RequestTooLarge`, `SelectionConflict`) keep this count aligned with the
+// enum so the runtime enumeration cannot silently drop a variant again.
+const TERMINAL_VARIANTS: usize = 14;
 
 fn classify_continue(reason: ContinueReason) -> &'static str {
     match reason {
@@ -53,6 +55,7 @@ fn classify_terminal(reason: TerminalReason) -> &'static str {
         TerminalReason::ResponseTruncated => "response_truncated",
         TerminalReason::UnsupportedToolCallFormat => "unsupported_tool_call_format",
         TerminalReason::RequestTooLarge => "request_too_large",
+        TerminalReason::SelectionConflict => "selection_conflict",
     }
 }
 
@@ -100,6 +103,8 @@ fn all_terminal_variants_are_distinct() {
         TerminalReason::NoAction,
         TerminalReason::ResponseTruncated,
         TerminalReason::UnsupportedToolCallFormat,
+        TerminalReason::RequestTooLarge,
+        TerminalReason::SelectionConflict,
     ];
     assert_eq!(all.len(), TERMINAL_VARIANTS);
 
