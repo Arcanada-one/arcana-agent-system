@@ -34,7 +34,10 @@ Reusable workflow invocation: `Arcanada-one/datarim/.github/workflows/reusable-s
 
 ## Accepted Risks
 
-Source-of-truth: `accepted-risk.yml`. Currently empty.
+Source-of-truth: `accepted-risk.yml`. The current time-boxed entry is
+`RUSTSEC-2026-0543` for transitive `chrono`, reviewed 2026-11-17 and due for
+re-review by 2026-12-17. The advisory reports an unmaintained dependency with
+no patched version; the exact rationale and reversal condition are in the register.
 
 ## Hardening Baseline
 
