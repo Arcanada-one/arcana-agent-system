@@ -5,7 +5,7 @@
   "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
   "verdict": "admitted"
  },
- "captured_at_utc": "2026-11-18T02:12:17Z",
+ "captured_at_utc": "2026-11-18T02:13:55Z",
  "change_set": {
   "base": "0716973f79ce826cc648d41066649115b138fde2",
   "files": [
@@ -35,9 +35,18 @@
     "path": "deny.toml",
     "status": "M",
     "uncovered": true
+   },
+   {
+    "kind": "receipt",
+    "node_id": "receipt:receipts/graph/change-admission-ddae-chrono-risk.json",
+    "node_ids": [
+     "receipt:receipts/graph/change-admission-ddae-chrono-risk.json"
+    ],
+    "path": "receipts/graph/change-admission-ddae-chrono-risk.json",
+    "status": "A"
    }
   ],
-  "head": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+  "head": "7fd9fb5d2e84d99c2c0561a8870b6ff6d357cf87",
   "mode": "diff"
  },
  "decision_ref": "DEC-AUP-0008",
@@ -46,13 +55,13 @@
    "input": {
     "base": "0716973f79ce826cc648d41066649115b138fde2",
     "base_graph_digest": "sha256:701b1fb83e0ceec582a5704fccf6b7ff661cf9a2cce56ae0df46cfd977e63444",
-    "head": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
-    "head_graph_digest": "sha256:101f226af38566d6158ccb5ea850f2f6d8ed628e5b6a8012035752e255e4e93f",
+    "head": "7fd9fb5d2e84d99c2c0561a8870b6ff6d357cf87",
+    "head_graph_digest": "sha256:d13c589e7b456a6f91ff14e904efcccd830513e6a1703767155bb29093156699",
     "reason": "The four changed security-policy files (.cargo/audit.toml, deny.toml, accepted-risk.yml and SECURITY.md) have no modeled reverse dependents in this graph; zero impact is a graph coverage prediction, not approval. The exact candidate must instead pass accepted-risk schema validation, cargo audit --deny warnings, cargo deny check advisories licenses and independent security review. The baseline audit fails on RUSTSEC-2026-0543 while the candidate passes with only that time-boxed advisory ignored.",
     "schema": "EmptyImpactExplanation/v1",
     "scope": "graph_non_seed_dependents"
    },
-   "input_sha256": "sha256:a7b569a39f7cb8d2260922490f94dae5867e8bf50412f42bc45d3007de79b338",
+   "input_sha256": "sha256:47524ed310d6b7d8acace7183609f2d7e4ced1e3ef47dc0b42784afc4a4bea70",
    "schema": "BoundEmptyImpactExplanation/v1"
   },
   "graph_metadata": {
@@ -108,6 +117,12 @@
        "path": "deny.toml",
        "status": "M",
        "uncovered": true
+      },
+      {
+       "kind": "receipt",
+       "new": true,
+       "path": "receipts/graph/change-admission-ddae-chrono-risk.json",
+       "status": "A"
       }
      ],
      "graph_digest": "sha256:701b1fb83e0ceec582a5704fccf6b7ff661cf9a2cce56ae0df46cfd977e63444",
@@ -180,9 +195,18 @@
        "path": "deny.toml",
        "status": "M",
        "uncovered": true
+      },
+      {
+       "kind": "receipt",
+       "node_id": "receipt:receipts/graph/change-admission-ddae-chrono-risk.json",
+       "node_ids": [
+        "receipt:receipts/graph/change-admission-ddae-chrono-risk.json"
+       ],
+       "path": "receipts/graph/change-admission-ddae-chrono-risk.json",
+       "status": "A"
       }
      ],
-     "graph_digest": "sha256:101f226af38566d6158ccb5ea850f2f6d8ed628e5b6a8012035752e255e4e93f",
+     "graph_digest": "sha256:d13c589e7b456a6f91ff14e904efcccd830513e6a1703767155bb29093156699",
      "internal_reverse_edges": 0,
      "language_coverage": [
       "typescript",
@@ -197,9 +221,10 @@
      ],
      "max_depth": 3,
      "seeds": [
-      "document:SECURITY.md"
+      "document:SECURITY.md",
+      "receipt:receipts/graph/change-admission-ddae-chrono-risk.json"
      ],
-     "source_commit": "5901bb1ca1d5e46955792c82993fdaaa382d864c"
+     "source_commit": "7fd9fb5d2e84d99c2c0561a8870b6ff6d357cf87"
     }
    },
    "scope": "graph_non_seed_dependents"
@@ -212,18 +237,18 @@
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
   "graph_digest": "sha256:701b1fb83e0ceec582a5704fccf6b7ff661cf9a2cce56ae0df46cfd977e63444",
-  "path": "/tmp/arcana-verify-ls3t9y52/verifier-out/graph-0716973f79ce.json",
+  "path": "/tmp/arcana-verify-rwete0jc/verifier-out/graph-0716973f79ce.json",
   "source_commit": "0716973f79ce826cc648d41066649115b138fde2"
  },
  "head_graph": {
   "builder_version": "1.0.6",
   "built_at_utc": "2026-09-05T00:00:00Z",
-  "graph_digest": "sha256:101f226af38566d6158ccb5ea850f2f6d8ed628e5b6a8012035752e255e4e93f",
-  "path": "/tmp/arcana-verify-ls3t9y52/verifier-out/graph-head-5901bb1ca1d5.json",
-  "source_commit": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+  "graph_digest": "sha256:d13c589e7b456a6f91ff14e904efcccd830513e6a1703767155bb29093156699",
+  "path": "/tmp/arcana-verify-rwete0jc/verifier-out/graph-head-7fd9fb5d2e84.json",
+  "source_commit": "7fd9fb5d2e84d99c2c0561a8870b6ff6d357cf87",
   "staleness": {
-   "checked_at_utc": "2026-11-18T02:12:56Z",
-   "checked_nodes": 462,
+   "checked_at_utc": "2026-11-18T02:14:34Z",
+   "checked_nodes": 463,
    "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
    "mismatched_nodes": [],
    "verdict": "fresh"
@@ -231,7 +256,7 @@
  },
  "host": "development",
  "host_redacted": true,
- "host_sha256": "64786ff5dda420b2d36f98acbc1c74ec98f29f8813dc522cfbee479168abef26",
+ "host_sha256": "a59debdfbab5e66e287d923cf577c95714a4ecf85509307ef43e757324101558",
  "impact_set": {
   "deterministic_core": [],
   "edge_types": "all",
@@ -251,7 +276,7 @@
   "tool": "tools/graph/verify.py",
   "version": "1.4.1"
  },
- "receipt_id": "car-verify-20261118T021217Z-5901bb1c",
+ "receipt_id": "car-verify-20261118T021355Z-7fd9fb5d",
  "receipt_path": "receipts/graph/change-admission-ddae-chrono-risk.json",
  "repo": {
   "name": "Arcanada-one/arcana-agent-system",
@@ -262,21 +287,38 @@
    "document:SECURITY.md"
   ],
   "head": [
-   "document:SECURITY.md"
+   "document:SECURITY.md",
+   "receipt:receipts/graph/change-admission-ddae-chrono-risk.json"
   ],
   "schema": "RevisionImpactSelection/v1",
   "unmeasured_head_files": []
  },
  "schema": "ChangeAdmissionReceipt/v1",
  "staleness": {
-  "checked_at_utc": "2026-11-18T02:12:56Z",
+  "checked_at_utc": "2026-11-18T02:14:34Z",
   "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
   "mismatched_nodes": [],
   "verdict": "fresh"
  },
- "structural_exclusions": [],
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": null,
+    "head": "sha256:c001f8d44265807f9eb26893915b3921ed9b982ccb92345c19d8b836df81b265"
+   },
+   "entity": "receipt:receipts/graph/change-admission-ddae-chrono-risk.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-ddae-chrono-risk.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it; superseded by construction — this run re-issues the receipt at receipts/graph/change-admission-ddae-chrono-risk.json for work item ddae1b91-5b0e-4e09-9625-c6eb6259b040",
+   "rule": "DEC-AUP-0035",
+   "superseded": {
+    "receipt_path": "receipts/graph/change-admission-ddae-chrono-risk.json",
+    "work_item": "ddae1b91-5b0e-4e09-9625-c6eb6259b040"
+   }
+  }
+ ],
  "tree": {
-  "commit": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+  "commit": "7fd9fb5d2e84d99c2c0561a8870b6ff6d357cf87",
   "dirty": false
  },
  "verdicts": [
@@ -308,13 +350,24 @@
    "exit_code": 0,
    "id": "v-doc-reference",
    "kind": "doc_reference",
-   "output_ref": "/tmp/arcana-verify-ls3t9y52/verifier-out/v-doc-reference.txt",
-   "started_at_utc": "2026-11-18T02:13:02Z",
+   "output_ref": "/tmp/arcana-verify-rwete0jc/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-11-18T02:14:40Z",
    "summary": "1 document(s), 0 failed"
   }
  ],
  "verify": {
   "events": [
+   {
+    "code": "SUPERSEDED_SELF_EXCLUSION",
+    "entity": "receipt:receipts/graph/change-admission-ddae-chrono-risk.json",
+    "rule": "DEC-AUP-0035",
+    "text": "the receipt at receipts/graph/change-admission-ddae-chrono-risk.json is the previous version of the one this run is writing, for the same work item ddae1b91-5b0e-4e09-9625-c6eb6259b040 — superseded by construction, so it owes this change no verdict"
+   },
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "1 affected entity(ies) owe no verdict (receipt: 1): unchanged at both revisions and given no verifier by the matrix"
+   },
    {
     "code": {
      "code": "EMPTY_IMPACT_REQUIRES_EXPLANATION",
@@ -333,11 +386,12 @@
   "required_by_entity": {
    "document:SECURITY.md": [
     "doc_reference"
-   ]
+   ],
+   "receipt:receipts/graph/change-admission-ddae-chrono-risk.json": []
   },
   "seconds": {
-   "prepare": 2.74,
-   "total": 45.45,
+   "prepare": 2.91,
+   "total": 45.22,
    "verifiers": 0.0
   }
  },
