@@ -5,10 +5,14 @@
 //! logic lives here so it can be unit-tested without spawning a subprocess.
 
 pub mod bootstrap;
+pub mod cli;
 pub mod demo;
+pub mod effect;
+pub mod ground_truth;
 pub mod http_error;
 pub mod interrupt;
 pub mod kb_read;
+pub mod learning_trace;
 pub mod login;
 pub mod models;
 pub mod out;
@@ -16,6 +20,8 @@ pub mod permission_prompt;
 pub mod receipt;
 pub mod repl;
 pub mod run;
+pub mod status;
+pub mod status_watch;
 pub mod usage;
 pub mod work_item;
 pub mod workspace;

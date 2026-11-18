@@ -260,7 +260,7 @@ async fn driver_rejects_prompt_without_measurement_before_connector_io() {
     let output = driver.run("task").await;
     assert_eq!(output.reason, TerminalReason::ConnectorFatal);
     assert_eq!(output.turns, 0);
-    assert!(connector.requests().is_empty());
+    assert_eq!(connector.requests().len(), 0);
 }
 
 #[tokio::test]
@@ -290,7 +290,7 @@ async fn driver_rejects_first_dispatch_prompt_over_context_budget_before_io() {
     let output = driver.run("task").await;
     assert_eq!(output.reason, TerminalReason::RequestTooLarge);
     assert_eq!(output.turns, 0);
-    assert!(connector.requests().is_empty());
+    assert_eq!(connector.requests().len(), 0);
 }
 
 /// The negative control for the unit above: the SAME prompt, under a budget

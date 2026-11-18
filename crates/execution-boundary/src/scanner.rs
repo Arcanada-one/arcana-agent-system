@@ -381,10 +381,7 @@ impl QuarantineScanner {
             return Ok(true);
         }
         let sep = strip_separators(data);
-        if sep.len() != data.len() && sep != ws && self.scan(&sep, 0)? {
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(sep.len() != data.len() && sep != ws && self.scan(&sep, 0)?)
     }
 
     /// Check one decoded window against the configured bound.

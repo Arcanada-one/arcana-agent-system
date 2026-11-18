@@ -10,8 +10,9 @@
 //! The agent's key is a `mun_sk_` secret and is read from a FILE, never from a
 //! command line and never from an inherited plain environment variable holding
 //! the value itself. It is wrapped in [`SecretString`] from the moment it is
-//! read, so no `Debug`, log line or error message can carry it: every error
-//! this module returns is built from the response, not from the request.
+//! read. File-policy failures contain neither its value nor its path.
+
+pub use crate::credential_file::CredentialFileError;
 
 use std::path::Path;
 use std::time::Duration;
@@ -55,22 +56,49 @@ pub struct WorkItem {
     pub status: Option<String>,
     #[serde(default)]
     pub revision: Option<i64>,
+    /// Row modification time; not an execution heartbeat.
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// The KC2 contract this item is bound to. `None` is the refusal the plan
     /// names `CONTRACT_MISSING` — see `arcana_core::contract`.
     #[serde(default)]
     pub contract_digest: Option<String>,
 }
 
+/// Dependency readiness is served separately from the task row. Required
+/// fields deliberately have no defaults: missing evidence is not readiness.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkItemReadiness {
+    pub task_id: String,
+    pub dependency_count: u64,
+    pub ready: bool,
+    pub blocked_by: Vec<serde_json::Value>,
+}
+
+impl WorkItemReadiness {
+    /// Whether the verdict agrees with itself: `ready` holds exactly when
+    /// nothing blocks, and no more blockers are named than dependencies
+    /// exist. A verdict that contradicts itself is evidence of nothing.
+    #[must_use]
+    pub fn is_consistent(&self) -> bool {
+        self.ready == self.blocked_by.is_empty()
+            && self.blocked_by.len() as u64 <= self.dependency_count
+    }
+}
+
 /// Everything that can go wrong reading a work item.
 ///
-/// Each variant is the SERVER's answer, classified. None of them can carry the
-/// key, because none of them is built from the request.
+/// Remote failures classify the server's answer. Local file-policy failures
+/// identify the rejected condition without including the key or its path.
 #[derive(Debug, thiserror::Error)]
 pub enum MuneralError {
     #[error("the Muneral API root is unusable: {0}")]
     BaseUrl(String),
     #[error("the agent key could not be read from the file named by {ENV_KEY_FILE}: {0}")]
     Key(String),
+    #[error("{0}")]
+    KeyFile(#[from] CredentialFileError),
     #[error("Muneral could not be reached: {0}")]
     Transport(String),
     #[error("Muneral refused the key (HTTP 401): the agent is not authenticated")]
@@ -138,7 +166,30 @@ impl MuneralClient {
     /// # Errors
     /// [`MuneralError`] — each variant is the server's answer, classified.
     pub async fn work_item(&self, id: &str) -> Result<WorkItem, MuneralError> {
-        let url = self.endpoint(&["tasks", id])?;
+        self.get(id, &["tasks", id], false).await
+    }
+
+    /// Read the server-computed dependency verdict; this is not permission to execute.
+    ///
+    /// Only HTTP 200 carries the verdict. Muneral's consumer contract serves
+    /// readiness with 200, so any other 2xx (a 201 with plausible JSON, a 204)
+    /// is a different answer and is returned as [`MuneralError::Status`], not
+    /// decoded. The caller must also compare `task_id` with the id it asked
+    /// for; the transport cannot know what a foreign id means.
+    ///
+    /// # Errors
+    /// Returns the classified API or decoding failure without inventing a verdict.
+    pub async fn readiness(&self, id: &str) -> Result<WorkItemReadiness, MuneralError> {
+        self.get(id, &["tasks", id, "readiness"], true).await
+    }
+
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        id: &str,
+        segments: &[&str],
+        only_200: bool,
+    ) -> Result<T, MuneralError> {
+        let url = self.endpoint(segments)?;
         let response = self
             .http
             .get(url)
@@ -151,7 +202,7 @@ impl MuneralClient {
             .text()
             .await
             .map_err(|err| MuneralError::Transport(err.to_string()))?;
-        if !status.is_success() {
+        if !status.is_success() || (only_200 && status.as_u16() != 200) {
             return Err(classify(status.as_u16(), id, &body));
         }
         serde_json::from_str(&body).map_err(|err| MuneralError::Decode(err.to_string()))
@@ -206,13 +257,10 @@ fn excerpt(body: &str) -> String {
 /// leaves behind.
 ///
 /// # Errors
-/// When the file cannot be read or holds nothing.
+/// Returns a typed file-policy refusal for missing, unsafe, unavailable or
+/// unsupported paths. Unix requires a regular non-symlink file owned by the
+/// effective UID, no group/other permissions, and 1..4096 bytes with content
+/// remaining after trimming whitespace. Non-Unix validation is unsupported.
 pub fn read_key_file(path: &Path) -> Result<SecretString, MuneralError> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|err| MuneralError::Key(format!("{}: {err}", path.display())))?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(MuneralError::Key(format!("{} is empty", path.display())));
-    }
-    Ok(SecretString::from(trimmed.to_owned()))
+    crate::credential_file::read(path).map_err(MuneralError::KeyFile)
 }

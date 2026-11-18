@@ -14,8 +14,21 @@
 //!    answers with some other contract, or with bytes that were edited after
 //!    they were stamped, gets `CONTRACT_DIGEST_MISMATCH` — also before the
 //!    first model call.
-//! 4. Only then run, with the contract's allowlist in the permission cascade,
-//!    and write `receipts/ReadinessReceipt-<id>.json`.
+//!
+//! Between 3 and 4, step 3b asks Muneral for the dependency verdict
+//! (`GET /tasks/:id/readiness`). A work item whose dependencies are unfinished,
+//! or whose readiness cannot be established, stops there with
+//! `WORK_ITEM_NOT_READY` / `WORK_ITEM_READINESS_UNKNOWN`. Readiness is a
+//! different instrument from authority: it never grants anything, and
+//! `ready: true` only lets the run reach step 4.
+//!
+//! 4. Authenticate task/project/subject, independent issuer and current
+//!    generation through a trusted task-run authority provider. A digest or
+//!    Argana source label is not authority. The production mapping is absent:
+//!    fail closed before constructing the Model Connector client.
+//! 5. Only an admitted continuation may run with the contract's allowlist in
+//!    the permission cascade and write a readiness receipt. Effect-time
+//!    revocation fencing remains a separate, unsupported runtime gate.
 //!
 //! What this command never does is write to Muneral. The work item's status is
 //! the control plane's to move, and an executor that closed its own work item
@@ -26,9 +39,14 @@ use std::path::{Path, PathBuf};
 use arcana_connectors::contract_source::{
     ArganaContractClient, ContractSource, FileContractSource,
 };
-use arcana_connectors::muneral::{MuneralClient, WorkItem};
+use arcana_connectors::muneral::{MuneralClient, WorkItem, WorkItemReadiness};
 use arcana_core::contract::{verify, ContractBinding, ContractRefusal};
+use arcana_core::contract_authority::{
+    admit_then, AdmittedContract, UnavailableContractAuthority, WorkItemScope,
+};
 
+use crate::ground_truth::{self, GroundTruth};
+use crate::learning_trace;
 use crate::receipt;
 use crate::run::{RunRequest, DONE_MARKER};
 
@@ -37,8 +55,11 @@ pub struct WorkItemRequest {
     /// The Muneral work item id.
     pub id: String,
     /// Read the contract from this file instead of from Argana. The receipt
-    /// records which was used, and only Argana counts as verified live.
+    /// records which was used. Neither source supplies admission authority.
     pub contract_file: Option<PathBuf>,
+    /// Files quoted into the brief as ground truth about this repository, in
+    /// the order the dispatcher named them. See [`crate::ground_truth`].
+    pub ground_truth: Vec<PathBuf>,
     /// The run itself. `prompt` is overwritten from the work item and the
     /// contract; `contract` is filled in once the binding is verified.
     pub run: RunRequest,
@@ -62,7 +83,7 @@ pub fn run(request: WorkItemRequest) -> i32 {
     runtime.block_on(run_async(request))
 }
 
-async fn run_async(mut request: WorkItemRequest) -> i32 {
+async fn run_async(request: WorkItemRequest) -> i32 {
     let client = match MuneralClient::try_from_env() {
         Ok(client) => client,
         Err(err) => return refuse("MUNERAL_UNAVAILABLE", &err.to_string()),
@@ -81,35 +102,127 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         );
     };
 
-    let source: Box<dyn ContractSource> = match resolve_source(request.contract_file.as_deref()) {
-        Ok(source) => source,
-        Err(refusal) => return refuse(refusal.code(), &refusal.to_string()),
-    };
-    println!(
-        "contract {digest} from {} ({})",
-        source.origin(),
-        source.label()
-    );
-
     // Step 3.
-    let binding = match fetch_and_verify(source.as_ref(), &digest).await {
-        Ok(binding) => binding,
-        Err(refusal) => return refuse(refusal.code(), &refusal.to_string()),
+    let (source, binding) = match bind_contract(request.contract_file.as_deref(), &digest).await {
+        Ok(bound) => bound,
+        Err(code) => return code,
     };
-    println!(
-        "contract verified: {} re-hashed over its {}; tools {:?} (from {})",
-        binding.digest(),
-        binding.preimage().as_str(),
-        binding.allowlist(),
-        binding.allowlist_source().as_str(),
-    );
 
-    // Step 4.
-    request.run.prompt = task_prompt(&item, &binding);
+    // Step 3b. After a verified binding and before the authority gate: the
+    // contract refusals above keep their precedence (and cost no readiness
+    // request), and a "ready" answer only lets the run reach authority.
+    if let Err(code) = require_ready(&client, &request.id).await {
+        return code;
+    }
+
+    // A matching hash proves bytes, not permission. Neither local file claims,
+    // Muneral task revision nor the KB-reader M2M token provides task-run
+    // authority. No purpose-correct production adapter is published yet.
+    let scope = WorkItemScope {
+        task_id: request.id.clone(),
+        project_id: item.project_id.clone(),
+        subject_id: None,
+    };
+    match admit_then(
+        binding,
+        &scope,
+        &UnavailableContractAuthority,
+        None,
+        |admitted| execute_admitted(request, item, source, admitted),
+    )
+    .await
+    {
+        Ok(code) => code,
+        Err(err) => refuse(err.code(), &err.to_string()),
+    }
+}
+
+/// Refusal code: Muneral answered, and the work item is not ready.
+pub const NOT_READY: &str = "WORK_ITEM_NOT_READY";
+
+/// Refusal code: readiness could not be established.
+pub const READINESS_UNKNOWN: &str = "WORK_ITEM_READINESS_UNKNOWN";
+
+/// Step 3b. `Ok` only for a 200 answer about THIS task that agrees with itself
+/// and says `ready: true`; every other outcome is a refusal printed here and
+/// returned as the exit code.
+async fn require_ready(client: &MuneralClient, id: &str) -> Result<(), i32> {
+    let readiness = client.readiness(id).await.map_err(|err| {
+        refuse(
+            READINESS_UNKNOWN,
+            &format!("Muneral's readiness for {id} could not be established: {err}"),
+        )
+    })?;
+    judge_readiness(id, &readiness)
+}
+
+fn judge_readiness(id: &str, readiness: &WorkItemReadiness) -> Result<(), i32> {
+    if readiness.task_id != id {
+        return Err(refuse(
+            READINESS_UNKNOWN,
+            &format!(
+                "Muneral answered readiness for another task ({}), not for {id}",
+                readiness.task_id
+            ),
+        ));
+    }
+    if !readiness.is_consistent() {
+        return Err(refuse(
+            READINESS_UNKNOWN,
+            &format!(
+                "Muneral's readiness for {id} contradicts itself: ready={}, {} blocker(s), {} dependenc(ies)",
+                readiness.ready,
+                readiness.blocked_by.len(),
+                readiness.dependency_count
+            ),
+        ));
+    }
+    println!(
+        "readiness: ready={} dependencies={} blocked_by={}",
+        readiness.ready,
+        readiness.dependency_count,
+        readiness.blocked_by.len()
+    );
+    if readiness.ready {
+        return Ok(());
+    }
+    Err(refuse(
+        NOT_READY,
+        &format!(
+            "work item {id} is not ready: {} of {} dependenc(ies) block it; refused before the first model call",
+            readiness.blocked_by.len(),
+            readiness.dependency_count
+        ),
+    ))
+}
+
+async fn execute_admitted(
+    mut request: WorkItemRequest,
+    item: WorkItem,
+    source: Box<dyn ContractSource>,
+    admitted: AdmittedContract,
+) -> i32 {
+    let binding = admitted.binding();
+
+    // Before step 4, and therefore before the first billable call.
+    let grounding = match grounding_or_refuse(&request.ground_truth) {
+        Ok(grounding) => grounding,
+        Err(code) => return code,
+    };
+
+    // The model client is constructed only inside this admitted continuation.
+    request.run.prompt = task_prompt(&item, binding, &grounding);
     request.run.contract = Some(binding.clone());
 
-    let out = match crate::run::execute(&request.run).await {
-        Ok(out) => out,
+    // Taken BEFORE the run, because it is the only thing that can say which
+    // records in a shared append-only log belong to it. Measured, never
+    // assumed: `None` here becomes `slice_unbounded` in the trace rather than
+    // a zero that would read as "this run wrote everything in the log".
+    let audit_path = crate::run::audit_dir().join(learning_trace::AUDIT_FILE);
+    let audit_offset = learning_trace::audit_offset(&audit_path);
+
+    let summary = match crate::run::execute(&request.run).await {
+        Ok(summary) => summary,
         Err(err) => return refuse("RUN_NOT_STARTED", &err),
     };
 
@@ -120,12 +233,19 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         .unwrap_or_else(|_| request.run.cwd.clone());
     let built = receipt::build(
         &item.id,
-        &binding,
+        binding,
         source.as_ref(),
         &root,
-        &out,
+        &summary,
+        // Resolved again rather than carried from the run: the rule is a pure
+        // function of the flag, the environment and two files, so asking it
+        // twice in one process cannot disagree with itself — and threading a
+        // value through `execute` for the receipt alone would put the model
+        // choice into the run's signature, which is where it does not belong.
+        &crate::models::resolve(request.run.model.as_deref()),
         produced_by(),
         measured_at(),
+        &grounding,
     );
     let receipt_path = match receipt::write(&root, &built) {
         Ok(path) => path,
@@ -138,7 +258,90 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
         }
     };
     println!("receipt: {}", receipt_path.display());
-    crate::run::report_run(&out, &root)
+
+    // The trace is written AFTER the receipt and links to it by digest, so a
+    // trace can never claim a receipt that does not exist. A failure to write
+    // it is reported and does not change the run's verdict: the receipt is the
+    // acceptance, and losing the candidate loses an input to learning, not the
+    // evidence that the work happened.
+    let trace = learning_trace::build(
+        &learning_trace::Sources {
+            task_id: &item.id,
+            binding,
+            contract_source: source.label(),
+            contract_origin: source.origin(),
+            source_is_argana: source.label() == "argana",
+            worktree_sha: built.worktree.sha.clone(),
+            receipt_path: &receipt_path,
+            audit_path,
+            audit_offset,
+            produced_by: produced_by(),
+            recorded_at: built.measured_at.clone(),
+        },
+        &summary,
+        &root,
+    );
+    match learning_trace::write(&root, &trace) {
+        Ok(path) => println!(
+            "learning trace: {} ({}, capabilities {:?})",
+            path.display(),
+            if trace.outcome.negative {
+                "negative"
+            } else {
+                "positive"
+            },
+            trace.capability_set,
+        ),
+        Err(err) => eprintln!("arcana run: the learning trace was not written: {err}"),
+    }
+
+    crate::run::report_run(&summary, &root)
+}
+
+/// Steps 2b and 3: pick the contract source, fetch the document under `digest`,
+/// and re-hash it.
+///
+/// Returns the process exit code of the refusal, because every failure here is a
+/// refusal before the first model call and they all print the same way.
+async fn bind_contract(
+    contract_file: Option<&Path>,
+    digest: &str,
+) -> Result<(Box<dyn ContractSource>, ContractBinding), i32> {
+    let source: Box<dyn ContractSource> = resolve_source(contract_file)
+        .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
+    println!(
+        "contract {digest} from {} ({})",
+        source.origin(),
+        source.label()
+    );
+    let binding = fetch_and_verify(source.as_ref(), digest)
+        .await
+        .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
+    println!(
+        "contract verified: {} re-hashed over its {}; tools {:?} (from {})",
+        binding.digest(),
+        binding.preimage().as_str(),
+        binding.allowlist(),
+        binding.allowlist_source().as_str(),
+    );
+    Ok((source, binding))
+}
+
+/// Read the declared grounding, and say on stdout what was quoted.
+///
+/// Grounding that cannot be read must not become a run that silently had none,
+/// so the refusal is returned as the process exit code — before the contract is
+/// used and before the first billable call.
+fn grounding_or_refuse(paths: &[PathBuf]) -> Result<Vec<GroundTruth>, i32> {
+    let grounding = ground_truth::load(paths)
+        .map_err(|refusal| refuse(refusal.code(), &refusal.to_string()))?;
+    for item in &grounding {
+        println!(
+            "ground truth: {} ({}, {} bytes)",
+            item.path, item.sha256, item.bytes
+        );
+    }
+    Ok(grounding)
 }
 
 /// The prompt a contract-bound run is given.
@@ -149,7 +352,7 @@ async fn run_async(mut request: WorkItemRequest) -> i32 {
 /// cascade — pilot A2-231 spent 78 turns on a restriction nobody had told the
 /// model about, and an enforced-but-undisclosed allowlist is that failure with
 /// a different noun.
-fn task_prompt(item: &WorkItem, binding: &ContractBinding) -> String {
+fn task_prompt(item: &WorkItem, binding: &ContractBinding, grounding: &[GroundTruth]) -> String {
     let admitted = binding
         .allowlist()
         .iter()
@@ -165,15 +368,27 @@ THE CONTRACT (authoritative — it defines the work and its limits):\n\
 THE WORK ITEM:\n\
 {title}\n\
 {description}\n\
-\n\
+{grounding}\n\
 CONTRACT TOOL ALLOWLIST. This contract admits exactly these tools: {admitted}. A call to any \
 other tool is refused by the permission cascade and recorded; it is not a call to re-send in \
-another shape, and it cannot be argued into the contract.\n",
+another shape, and it cannot be argued into the contract.\n\
+\n\
+HOW THIS RUN IS JUDGED. Not by your closing message. The working directory is digested before \
+your first turn and again after your last one, and the two digests are compared. If they are \
+equal the run is recorded `NoEffect` and fails, however the work is described. If your closing \
+message names a file that is not on disk, the run is recorded `ClaimedButAbsent` and fails — a \
+path you name is a claim you are held to. Writing a probe or placeholder file to check that \
+writing works does not count and does not help.\n\
+\n\
+So: produce the deliverable with a `write` call, in one piece, before you say anything about \
+it. Write the whole file in a single call rather than describing its sections — a description \
+of a file is not a file. Then, and only then, say in plain text which path you wrote.\n",
         id = item.id,
         digest = binding.digest(),
         projection = binding.projection(),
         title = item.title,
         description = item.description.as_deref().unwrap_or(""),
+        grounding = ground_truth::render(grounding),
     )
 }
 
@@ -223,20 +438,58 @@ fn measured_at() -> String {
         .unwrap_or_else(|_| "not_measured".to_owned())
 }
 
-/// Print a typed refusal, its done-marker, and return exit code `1`.
+/// The stderr line a typed refusal prints: `arcana run: <CODE>: <detail>`.
 ///
-/// The code is the first token on stderr and is repeated in the marker, so a
-/// runner can branch on `CONTRACT_MISSING` without parsing a sentence.
-fn refuse(code: &str, detail: &str) -> i32 {
-    eprintln!("arcana run: {code}: {detail}");
-    println!(
+/// The code is printed ONCE. `ContractRefusal`'s own `Display` already opens
+/// with the code (`CONTRACT_MISSING: the work item carries no contractDigest,
+/// …`), and every contract call site passes that string as the detail, so
+/// until this stripped it an operator read
+/// `arcana run: CONTRACT_MISSING: CONTRACT_MISSING: …`. Measured while
+/// building `crates/cli/tests/printed_output.rs`: writing down the one shape
+/// this program prints is what made the doubled one visible.
+///
+/// Public because it is the ONE definition of that shape. A documentation page
+/// that quotes a refusal is checked against this function
+/// (`crates/cli/tests/printed_output.rs`), not against a second spelling of the
+/// format in a test — A2-292's first live page printed
+/// `Error: CONTRACT_MISSING: …`, which no build of this program has ever
+/// produced, and every check in CI was green on it.
+#[must_use]
+pub fn refusal_line(code: &str, detail: &str) -> String {
+    format!("arcana run: {code}: {}", undoubled(code, detail))
+}
+
+/// `detail` with a leading `<CODE>: ` removed, when it is the same code.
+fn undoubled<'a>(code: &str, detail: &'a str) -> &'a str {
+    detail
+        .strip_prefix(code)
+        .and_then(|rest| rest.strip_prefix(": "))
+        .unwrap_or(detail)
+}
+
+/// The done-marker line a typed refusal prints, marker included.
+///
+/// `reason` and `code` carry the same code on purpose: a runner that branches
+/// on either reads the same thing.
+#[must_use]
+pub fn refusal_marker(code: &str, detail: &str) -> String {
+    format!(
         "{DONE_MARKER} {}",
         serde_json::json!({
             "completed": false,
             "reason": code,
             "code": code,
-            "error": detail,
+            "error": undoubled(code, detail),
         })
-    );
+    )
+}
+
+/// Print a typed refusal, its done-marker, and return exit code `1`.
+///
+/// The code is the first token on stderr and is repeated in the marker, so a
+/// runner can branch on `CONTRACT_MISSING` without parsing a sentence.
+fn refuse(code: &str, detail: &str) -> i32 {
+    eprintln!("{}", refusal_line(code, detail));
+    println!("{}", refusal_marker(code, detail));
     1
 }

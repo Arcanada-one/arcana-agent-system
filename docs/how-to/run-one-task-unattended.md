@@ -48,16 +48,17 @@ interpret its absence — which looks identical to a crash.
 
 | Field | Meaning |
 |-------|---------|
-| `completed` | The run did the work. Never `true` with `tool_calls` at `0`. |
+| `completed` | The run did the work. Never `true` with `tool_calls` at `0`, and never `true` when `effect.tree_changed` is `false` unless the task was declared `--read-only`. |
 | `reason` | The terminal verdict (`Completed`, `NoAction`, `ResponseTruncated`, `UnsupportedToolCallFormat`, `PermissionDenied`, `MaxTurns`, `NotStarted`, …). |
 | `turns` | Connector attempts consumed. |
 | `tool_calls` | Tool calls the executor **actually carried out**. Not intent: a call the policy refused, or one the model only described in prose, is not counted. |
 | `cost_usd_micros` | Spend for the run, in micro-USD. |
+| `effect` | What the run left on disk. `null` only for a run that never started — see below. |
 
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | The run completed and executed at least one tool call. `completed` is `true`. |
-| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
+| `1` | The run failed, or never started (no key, unreachable connector, bad `--cwd`, missing task, unreadable `permissions.toml`), or ended on `NoAction`, `NoEffect`, `ClaimedButAbsent`, `ResponseTruncated` or `UnsupportedToolCallFormat`. |
 | `130` | The operator interrupted it. The spend line above the marker is what the interrupted dispatch cost. |
 
 ### A run that claimed to have done the work
@@ -76,11 +77,76 @@ Two things stop it now:
   `"completed":false`, exit `1`. The final text is still printed — it is paid
   for — but it is not a verdict.
 
-A run that legitimately needs no change ("check whether X is true") must
-therefore still demonstrate it with a tool call, for example by reading the
-file it is reporting on. That is the intended trade: the command exists to
-change a working directory, and an unattended run that changed nothing and was
-read as success is the failure this whole surface is for.
+### A run that called its tools and still did nothing — `NoEffect`
+
+The two guards above count tool calls, and a count cannot tell reading from
+writing. Pilot A2-278 (2026-09-24, `deepseek-v4-flash`, live) ran the same
+Muneral work item twice. Runs 2 and 4 executed **nine** and **three** tool
+calls — every one of them a `read` or a `grep` — wrote nothing, and ended
+`"completed":true`, rc `0`, with the model describing "the documentation page
+`docs/how-to/run-work-item.md`" and the sections in it. That file does not
+exist, and the commands the model listed inside it are not commands this
+binary has. $0.051 for two receipts for work nobody did.
+
+So completion is now tied to an effect a third party can check. The working
+tree is digested before the first model call and again after the last one:
+
+```json
+"effect": {
+  "expectation": "artefact",
+  "tree_digest_before": "sha256:1f0a…",
+  "tree_digest_after": "sha256:1f0a…",
+  "tree_changed": false,
+  "changed_paths": [],
+  "changed_count": 0,
+  "writes": [],
+  "executed_tools": { "grep": 2, "read": 7 },
+  "claimed_paths": ["docs/how-to/run-work-item.md"],
+  "claimed_but_absent": ["docs/how-to/run-work-item.md"],
+  "claimed_but_unchanged": []
+}
+```
+
+* The digest covers every file under `--cwd`, tracked and untracked, minus
+  `.git/`, minus the runner's own `.arcana/`, and minus everything the
+  repository's `.gitignore` files exclude. A `cargo build` is not an artefact.
+* `tree_changed: false` with `expectation: "artefact"` ends the run on
+  **`NoEffect`**: `"completed":false`, exit `1`. The tools ran; nothing came
+  of them.
+* `writes` names the executed `write`/`edit` calls. It is corroboration, not
+  the verdict — `bash` can create a file too, and the digest catches that
+  whether or not a write tool was involved.
+* `claimed_but_absent` lists the paths the model's closing sentence named that
+  are not on disk, and a non-empty list ends the run on **`ClaimedButAbsent`**:
+  `"completed":false`, exit `1`. It is a separate refusal because the digest
+  alone does not cover it — the first live run under this check wrote an empty
+  probe file `test-write-check.md`, which moved the digest, and then described a
+  how-to page it never wrote. An incidental write must not buy a run out of its
+  own claim. `claimed_but_unchanged` names the paths that are on disk exactly as
+  they were; it is reported, not refused, because a rewrite with identical bytes
+  is ambiguous. Both are a string scan and a `stat`; neither costs a model call,
+  and both are printed on stderr as well as in the marker.
+* `tree_changed: null` is the third verdict: the walk could not complete (an
+  unreadable directory, or more than 200 000 files). `NoEffect` is a refusal
+  and a refusal has to be provable, so a `null` refuses nothing — it is
+  recorded and the run is judged on its other evidence.
+
+### Declaring a read-only task
+
+Some tasks are finished when the answer is on stdout: an audit, a review, a
+question about the corpus. Pass `--read-only`:
+
+```bash
+arcana run --cwd /path/to/worktree --read-only \
+  --prompt 'Which of the runbooks under docs/ still name arcana-agents?'
+```
+
+`expectation` then reads `read-only`, an unchanged tree is the expected
+outcome, and the run may complete. The declaration is made **by the caller,
+before the run starts**. Nothing the model does or says during the run can set
+it — a run able to declare itself read-only afterwards could excuse having done
+nothing, which is the failure this surface exists to catch. A read-only run
+still has to execute at least one tool call: `NoAction` is unchanged.
 
 ### A reply that ran out of room
 
@@ -115,6 +181,66 @@ local evidence there is.
 
 Every tool call, allowed or denied, is appended to the audit log named on the
 second line of stdout (`~/.local/state/arcana/run/audit.log`, mode 0600).
+
+## Which model the run uses
+
+A model choice is **configuration**, not run state. Five things can supply it,
+and the first one that does wins:
+
+| Order | Source | `model_source` | Where it comes from |
+|---|---|---|---|
+| 1 | `--model <id>` | `flag` | This invocation. |
+| 2 | `ARCANA_MODEL` | `env` | The process that started the run. What a lane, a CI step or a `tmux` dispatcher actually has — it needs no writable home at all. |
+| 3 | `$XDG_CONFIG_HOME/arcana/model.json` | `config` | Written by `arcana models use <id>`, beside `permissions.toml`. |
+| 4 | `$XDG_STATE_HOME/arcana/model.json` | `legacy-state` | Where the choice used to live. Still read, never written, and reported as deprecated on stderr. |
+| 5 | — | `tier-policy` | Nobody chose. The tiered policy routes per turn: a code turn to the expensive model, the rest to the cheap one. |
+
+The run says which of them answered, before it builds the Model Connector
+client and therefore before it can have spent anything:
+
+```
+model: deepseek-v4-flash (source: env)
+```
+
+**A resolved model pins the whole run.** Every dispatch uses it, whatever the
+turn's task type — that is the difference between a model choice and a hint.
+To ask for tiered dispatch on purpose, pass the value `tier` in any of the
+three top slots (`--model tier`, `ARCANA_MODEL=tier`, `arcana models use
+tier`); the run then prints `tiered dispatch policy — selected explicitly`, and
+the receipt still records which slot said so. "Nobody chose" and "route per
+turn, deliberately" are different facts and the receipt keeps them apart.
+
+### Why the choice is not in the state home
+
+Every isolated runner overrides `XDG_STATE_HOME`, so one run's audit log cannot
+leak into the next. Until A2-276 the model choice lived there too, and went
+with it. Measured on pilot A2-272 (2026-09-24): a contract-bound run under an
+overridden state home fell through to the tiered policy and dispatched its
+first turn to `grok-3-latest` and the other five to `deepseek-v4-flash`, while
+the lane had pinned one model. The receipt recorded the two ids and nothing
+that said why — which is why `mc_usage.model_source` now sits beside
+`mc_usage.selected_models`: the intent next to what was dispatched.
+
+## The receipt of a paid run is not committed
+
+`arcana run --work-item <id>` writes `receipts/ReadinessReceipt-<id>.json` into
+the worktree it ran in. That file belongs in the pull request body, in an
+attachment, or under the dispatcher's `runs/` directory — **not** in the
+repository tree.
+
+This is not tidiness. Graph admission reads a committed `ReadinessReceipt/v1`
+as a historical receipt (I14: asserted, never re-verified), returns
+`not_measured` for it, and the change's admission becomes `PAUSED_SAFE` — so
+committing the evidence of a run is what stops the change that run was meant to
+support. `.gitignore` carries the rule, so the ordinary case needs no
+discipline; a run in a worktree of THIS repository leaves its receipt on disk
+and out of `git status`.
+
+The measured-cost half of the same rule: a `ReadinessReceipt/v1` describes one
+execution, at one commit, for one contract digest. Re-reading it later tells
+you what happened then, never what happens now — which is exactly what the
+admission gate's `not_measured` verdict says, and why re-running is the only
+way to turn it into a pass.
 
 ## What the agent may do
 

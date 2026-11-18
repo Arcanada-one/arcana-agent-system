@@ -21,7 +21,7 @@ use rmcp::ErrorData;
 use rmcp::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, JsonObject, PaginatedRequestParams, ServerCapabilities,
-    ServerInfo,
+    ServerConfig,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use serde_json::Value;
@@ -251,8 +251,8 @@ impl ArcanaMcpServer {
 }
 
 impl ServerHandler for ArcanaMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
     }
 
     // Nothing here awaits: the descriptors are already in memory. Returning a

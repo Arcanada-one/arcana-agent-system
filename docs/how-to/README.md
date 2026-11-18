@@ -7,4 +7,5 @@ Problem-solving recipes. Each page solves one concrete task.
 - [`install.md`](install.md) — binary-name collision probe + `cargo install` path.
 - [`configure-permissions.md`](configure-permissions.md) — set up the permission cascade via `permissions.toml`.
 - [`run-one-task-unattended.md`](run-one-task-unattended.md) — drive one task to completion in a working directory with `arcana run`.
+- [`run-work-item-under-kc2-contract.md`](run-work-item-under-kc2-contract.md) — run a Muneral work item under the KC2 contract it names.
 - [`gotchas.md`](gotchas.md) — hard-won lessons.

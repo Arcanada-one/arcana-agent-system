@@ -41,6 +41,21 @@ pub const IDEMPOTENCY_KEY_REUSED: &str = "idempotency_key_reused";
 /// the one idempotency outcome that states the request WAS charged.
 pub const IDEMPOTENCY_REPLAY_UNAVAILABLE: &str = "idempotency_replay_unavailable";
 
+/// The `error.type` Model Connector answers when the provider call it made on
+/// our behalf was aborted because it had consumed the whole per-attempt budget
+/// (`model-connector:src/connectors/base-api.connector.ts:408,420` —
+/// `AbortSignal.timeout(request.timeout ?? this.getTimeout())`, whose catch
+/// arm maps an `AbortError` to `status: "timeout"`).
+///
+/// Marked `retryable: true` by Model Connector's blanket action map
+/// (`src/connectors/interfaces/connector.interface.ts:115` — `timeout:
+/// { retryable: true, recommendation: 'retry' }`), which is why it cannot be
+/// distinguished by the `retryable` flag alone and needs its own name here.
+///
+/// Distinct from `queue_timeout`, which says the request never reached the
+/// provider at all and IS worth another dispatch.
+pub const UPSTREAM_ATTEMPT_TIMEOUT: &str = "timeout";
+
 /// A caller-minted key that identifies one logical request across however many
 /// times the wire drops while asking for it.
 ///
@@ -222,6 +237,22 @@ pub trait ModelConnector: Send + Sync {
     /// it abandons turns that are still being produced, which is the whole
     /// defect, so a real client states its own.
     fn upstream_dispatch_budget(&self) -> Option<std::time::Duration> {
+        None
+    }
+
+    /// The budget ONE upstream attempt may spend, as this connector has
+    /// configured it — the `ExecuteRequest.timeout` it sends.
+    ///
+    /// [`Self::upstream_dispatch_budget`]'s sibling and not a duplicate of it:
+    /// that one is the whole request (this budget times the server's own
+    /// attempts, plus queue slack) and answers "how long may I wait?". This
+    /// one is a single attempt and answers "what did the upstream run out
+    /// of?" — the number a verdict must quote when an attempt is aborted for
+    /// exhausting it, because it is also the number an operator would raise.
+    ///
+    /// `None` means the connector states nothing; the verdict then says so
+    /// rather than inventing a figure.
+    fn upstream_attempt_budget(&self) -> Option<std::time::Duration> {
         None
     }
 }
@@ -697,6 +728,38 @@ impl ConnectorError {
     #[must_use]
     pub fn is_idempotency_conflict(&self) -> bool {
         self.logical_kind() == Some(IDEMPOTENCY_CONFLICT)
+    }
+
+    /// True when the provider call Model Connector made for this turn was
+    /// aborted for consuming the whole per-attempt budget this client sent.
+    ///
+    /// This is the one `retryable: true` envelope that a re-dispatch cannot
+    /// improve on, and A2-290 is what it is for. The budget is a fixed number
+    /// the CALLER states (`ExecuteRequest::timeout_ms`), and a re-dispatch of
+    /// the turn sends byte-identical bytes — the `Idempotency-Key` is stable
+    /// across an attempt-series precisely because the payload is. Identical
+    /// prompt plus identical budget against a model that has just proved it
+    /// needs more than that budget is not a second chance; it is the same
+    /// experiment.
+    ///
+    /// It is also the most expensive thing the loop can repeat, and the
+    /// expense is invisible. Model Connector reports the aborted attempt as
+    /// `usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }`
+    /// (`base-api.connector.ts:503-511`) although the provider has already
+    /// been fed the whole prompt, and it makes up to `CONNECTOR_MAX_RETRIES +
+    /// 1` such attempts inside ONE `/execute`
+    /// (`connectors.service.ts:984-1026`, `timeout` being in
+    /// `RETRYABLE_ERRORS`). So `DriverConfig::max_cost_usd` — which is fed
+    /// from `ConnectorResponse::usage` — cannot bound this class at all: the
+    /// run can burn the provider account with the cost tracker reading $0.
+    ///
+    /// Narrow on purpose. `queue_timeout` (the request never left Model
+    /// Connector's queue) and a client-side [`Self::Timeout`] (our own socket
+    /// gave up while the answer was still coming) are both genuinely worth
+    /// another dispatch and are deliberately NOT this.
+    #[must_use]
+    pub fn is_upstream_attempt_timeout(&self) -> bool {
+        self.logical_kind() == Some(UPSTREAM_ATTEMPT_TIMEOUT)
     }
 
     /// True when the key was already claimed by a different payload.

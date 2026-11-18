@@ -280,7 +280,7 @@ mod tests {
             out.token_count,
             g.cap_tokens()
         );
-        assert!(!out.text.is_empty());
+        assert_ne!(out.text, "");
     }
 
     #[test]
@@ -299,6 +299,6 @@ mod tests {
         let out = g.apply(&body);
         assert!(out.truncated);
         assert!(out.token_count <= g.cap_tokens(), "guard exceeded the cap");
-        assert!(!out.text.is_empty());
+        assert_ne!(out.text, "");
     }
 }

@@ -160,7 +160,7 @@ async fn search_rejects_unauthenticated_fallback_and_refreshes_once_on_401() {
         ScrutatorClient::new(Url::parse(&server.uri()).unwrap(), provider.clone()).unwrap();
     let response = client.search(&SearchQuery::new("ground me")).await.unwrap();
 
-    assert!(response.results.is_empty());
+    assert_eq!(response.results.len(), 0);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(provider.invalidations.load(Ordering::SeqCst), 1);
 }
@@ -204,7 +204,7 @@ async fn search_sends_only_query_when_optionals_unset() {
         .search(&SearchQuery::new("bare query"))
         .await
         .expect("must match the bare-query mock");
-    assert!(resp.results.is_empty());
+    assert_eq!(resp.results.len(), 0);
 }
 
 #[tokio::test]
@@ -252,7 +252,7 @@ async fn search_empty_results_is_ok_not_error() {
         .search(&SearchQuery::new("no matches for this"))
         .await
         .expect("empty results must still be Ok");
-    assert!(resp.results.is_empty());
+    assert_eq!(resp.results.len(), 0);
 }
 
 #[tokio::test]

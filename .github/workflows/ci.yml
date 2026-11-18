@@ -53,6 +53,10 @@ jobs:
         # A2-238. The defect this guards is an EMPTY check list, so it cannot be guarded by a check
         # that only runs when the list is populated — it is asserted here, on every event.
         run: dev-tools/check-workflow-triggers.sh
+      - name: every environment variable the code reads is declared in .env.example
+        # A2-361. `.env.example` is the env source graph admission's `v-config-schema` reads; this
+        # also resolves reads through a `const` name, which that verifier does not.
+        run: dev-tools/check-env-declared.py
       - name: SEC-0030 governance and platform control contracts
         run: |
           sudo apt-get update
@@ -71,7 +75,7 @@ jobs:
           - platform: linux
             os: ubuntu-24.04
           - platform: macos
-            os: macos-14
+            os: macos-15
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,7 +92,7 @@ jobs:
         run: bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
 
   security-audit:
-    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@b6719c336d8e777d4ca1f9f272fcd4ef694742bb
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@5800861ad1e1a75f7e3ad986212a0faeaa1bfc98
     with:
       stack: rust_cargo
       # Public pull-request code must not execute on a persistent self-hosted
@@ -96,10 +100,10 @@ jobs:
       runner_labels: '["ubuntu-24.04"]'
 
   network-exposure-lint:
-    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@dcba69e8811be8680fc1096b5ad572b73c65023b
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@4225a082c3f341d907abca5b6610807314605a9d
     with:
       compose_paths: ''
-      datarim_ref: '939a72870815b039c8a57df804259a13aa72c508'
+      datarim_ref: '5800861ad1e1a75f7e3ad986212a0faeaa1bfc98'
       # Pinned to a hosted runner for the same reason security-audit above is: the
       # reusable workflow defaults to ["self-hosted","linux","ci-general"], and that
       # pool is oversubscribed. Jobs queued there expire after 24h and are
@@ -253,7 +257,7 @@ jobs:
 
   platform-native-negative-controls:
     name: platform-native-negative-controls / macos-xpc-sandbox
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
