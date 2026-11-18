@@ -3,7 +3,7 @@
 # Canonical template: Projects/Datarim/code/datarim/templates/accepted-risk.yml
 # Source-of-truth — SECURITY.md § Accepted Risks renders from this file.
 #
-# Empty on purpose. An entry here SUPPRESSES an advisory, so it must correspond
+# An entry here SUPPRESSES an advisory, so it must correspond
 # to a finding that can actually occur against this workspace. An acceptance for
 # a package absent from the dependency graph suppresses nothing today and
 # silently suppresses the real thing on the day that package arrives — with
@@ -26,4 +26,14 @@
 
 schema_version: 1
 
-entries: []
+entries:
+  - id: RUSTSEC-2026-0543
+    pkg: chrono
+    severity: low
+    scope: transitive
+    reviewed_by: agent
+    last_review: 2026-11-17
+    re_review: 2026-12-17
+    reason: "Informational unmaintained advisory with no patched version and no vulnerability; chrono is a non-optional dependency of rmcp (3.9.0 and latest 3.11.0). Upstream: https://github.com/chronotope/chrono/issues/1768"
+    reverse_if: "a chrono vulnerability advisory appears, or an rmcp release drops chrono"
+    upstream_tracking_url: "https://github.com/chronotope/chrono/issues/1768"
