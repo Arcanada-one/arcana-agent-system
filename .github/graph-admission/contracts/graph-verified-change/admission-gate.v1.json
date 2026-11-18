@@ -219,6 +219,16 @@
    "verdict": "refuse",
    "order": 21,
    "rule": "A2-314. A non-structural exemption is a DECISION to proceed (DEC-AUP-0037 R3) and is issued only by `admit_change.py exempt-decision`: a DecisionExemption/v1 payload signed (SSHSIG, Ed25519, namespace decision_exemptions.namespace) by a signer listed in decision_exemptions.signers AS READ AT BASE (program repository) or in the pinned bundle (caller). The gate re-verifies the signature, the binding to the receipt's own diff (digest), the expiry by the GATE's clock and max_ttl_days, the DEC-AUP-0037 R3 wording, and the class eligibility against the receipt it is shown. Any problem: the exemption exempts nothing and the change is refused. A signed exemption is always checked; under enforcement=signed an UNSIGNED non-structural exemption is refused too. Gate-issued exemptions (structural codes, the automated-author receipt) are not decisions and are not judged here."
+  },
+  {
+   "id": "C22",
+   "code": "OPEN_PR_BUDGET_EXCEEDED",
+   "verdict": "admit",
+   "informational": true,
+   "order": 22,
+   "rule": "DEC-AUP-0181 dark launch. A lane holds more than one open agent pull request on the same repository without a dated hotfix/security exception recorded in HANDOFF. Informational only: never required until a dated calibration receipt and per-repository ci_promotion_rule promotion. Does not replace C18 HEAD_IMPACT_NOT_COVERED. Runtime open-PR counting remains not_measured until first batch receipt.",
+   "what": "Proposed observation that the per-lane open-PR budget (≤1 open agent PR per repository) is exceeded. Complements DEC-AUP-0167 stage delivery and session-hygiene § PR budget. Dark launch / informational; Collect-all green alone must not promote this check to required.",
+   "measured_by": "NOT_MEASURED in this introduction — dark launch proposal only; calibration receipt + ci_promotion_rule required before enforcement"
   }
  ],
  "work_item_evidence": {
@@ -871,12 +881,49 @@
      "Arcanada-one/auth-arcana": "contracts/graph-verified-change/canary-plans/auth-arcana-production.v1.json"
     },
     "why": "matrix P6 / observed-edges C1 wants a canary on a live contour; for a repository with no declared contour (the gate's own tools/graph/**, receipts/** scripts) no canary can exist. A repository listed in live_contours is NOT covered: run the canary."
+   },
+   "verifier_scope_gap": {
+    "verifier": "v-verifier-scope-gap",
+    "decision_ref": "DEC-AUP-0187 (parent: DEC-AUP-0008; wording: DEC-AUP-0037 R3; debt: DEC-AUP-0039)",
+    "why": "a verifier ran on this entity and declared its own scope exceeded (workflow shell caller closure, shell syntax/closure): the entity HAS a verifier and the verifier answered not_measured. Covered only where the gate itself re-derives, from the receipt and from git, that the verifier family and the reason are on the allowlist, that nothing failed anywhere in the receipt, and that the change either leaves the entity untouched (a workflow whose closure is identical at BASE and head and whose every `uses:` is a 40-hex SHA or a local path) or carries compensating evidence the gate re-hashes at head (a changed shell/mjs file). deployable_unit is OUT: a missing tool (tsc, actionlint) is an infrastructure fault and DEC-AUP-0039 applies (a measurement beats an exemption).",
+    "kinds": {
+     "workflow": {
+      "entity_pattern": "^code_unit:\\.github/workflows/[^/]+\\.ya?ml$",
+      "verifier_prefixes": ["v-workflow-config-"],
+      "reason_prefixes": ["workflow shell caller closure not measured"],
+      "unchanged_only": true
+     },
+     "shell": {
+      "entity_pattern": "^code_unit:(?:[^/]+/)*[^/]+\\.sh$",
+      "verifier_prefixes": ["v-shell-behavior-", "v-shell-syntax-"],
+      "reason_prefixes": ["shell syntax/closure: not_measured"],
+      "changed_requires_compensating_evidence": true
+     },
+     "mjs": {
+      "entity_pattern": "^code_unit:(?:[^/]+/)*[^/]+\\.mjs$",
+      "verifier_prefixes": [],
+      "reason_prefixes": [],
+      "changed_requires_compensating_evidence": true,
+      "note": "declared so the kind set is closed, and INERT: the only verifier seen on an .mjs entity (v-type-check-tsconfig-mjs) emits tool/config faults (tsc unavailable, not in tsconfig), which DEC-AUP-0187 C3 keeps out. An .mjs entity becomes coverable only by a reviewed policy change that names a verifier family and a reason prefix measured to be a scope gap."
+     }
+    },
+    "verifier_always_allowed": ["v-fitness"],
+    "reason_forbidden_substrings": ["unavailable on this host", "MANDATORY_VERIFIER_DISABLED", "required verifier ", "does not include", "COVERAGE_GAP", "binary unavailable"],
+    "uses_allowed_pattern": "^(?:\\./\\S*|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40})$",
+    "max_ttl_days": 7,
+    "hard_cap_days": 14,
+    "max_waived_per_receipt": 12,
+    "max_waivers_per_blob": 3,
+    "require_failed_zero": true,
+    "require_signer_distinct_from": ["pr_author", "independent_reviewer"],
+    "closure_max_files": 200
    }
   },
   "not_covered": [
    "a `failed` verdict — a defect to fix, never a decision",
    "the work-item evidence ledger (receipts/graph/work-item-evidence/**): its out-of-repository attachments are a build_attachment defect (absolute-path fallback), refused as ATTACHMENT_NOT_EXEMPTIBLE",
-   "any entity whose verdict reason is not one of the classes' markers"
+   "any entity whose verdict reason is not one of the classes' markers",
+   "a deployable_unit entity, a missing-tool reason (tsc unavailable, pinned actionlint unavailable) or an entity that is not in a tsconfig: those have a verifier and a missing tool — an infrastructure fault, never class verifier_scope_gap (DEC-AUP-0187 C3, DEC-AUP-0039)"
   ]
  }
 }

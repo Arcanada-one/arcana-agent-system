@@ -1,68 +1,183 @@
 {
- "bundle_digest": "sha256:61b71c5e70c77c22e206d160aae91e881c271579cece4ed5d5eb1242d67f7c97",
+ "bundle_digest": "sha256:aeb5c081c930f25f05efb1a1109dce22e3342abaa1d75847e1fd95a1cd6470f7",
  "files": [
   {
-   "blob_oid": "29c292424c5d1e520abb6a8a89d6830b1b8d940f",
+   "blob_oid": "1e69463541de68136b4eb683bb6589e79d7a5d46",
    "note": "the workflow file itself; it is already running by the time the job checks the bundle \u2014 so THIS run cannot vouch for it. The next run's verify_bundle hashes it against this entry (BUNDLE_WORKFLOW_DIGEST_MISMATCH) and the self-update battery's B8 refuses a change to it that this manifest does not attest (KB-039, DEC-AUP-0036)",
    "path": ".github/workflows/graph-admission.yml",
-   "sha256": "sha256:fa4cabe05e988e12ed5f3f5d49a240332b68efb076dba7b0a508a691695fabcb",
+   "sha256": "sha256:609addba4876fc0ac6aa2c5b25a948eb4f171f730f4a582c860411a688954123",
    "vendored_to": "graph-admission.yml",
    "verified_by_the_job": false
   },
   {
-   "blob_oid": "2b91540c87fe3af9bc64022a09830fdf6d67bc4d",
+   "blob_oid": "fc5c1a32ed90fc48facb3284e050b256c4e4d857",
+   "path": "tools/ci/stage_userpath.py",
+   "sha256": "sha256:e3a14d1dee8fe1719889b3896f4f4e298799df501250bb05d08d366d466da63a"
+  },
+  {
+   "blob_oid": "3378fd10e9cf5e25482be8c5620ca0d3127bd5f1",
+   "path": "governance/decisions/DEC-AUP-0167.md",
+   "sha256": "sha256:2a901098cf76366eae4159f7c254830ec10619be79205bb283fc6568b50355e6"
+  },
+  {
+   "blob_oid": "1ec30cd0fcd6915434c976e38064b21ab10b49a5",
+   "path": "tools/graph/full_suite_ci.py",
+   "sha256": "sha256:170332cff90f341fa6d381ecad3e216e29072883c1c902144bfde1988551c637"
+  },
+  {
+   "blob_oid": "0729d898bf93030c692f3636a746476aeabcb7ee",
+   "path": "tools/graph/shell_source.py",
+   "sha256": "sha256:acc86acd43ee67811c0a562159e073adb5d6a37e50279988e0005845f2da2cf9"
+  },
+  {
+   "blob_oid": "04b679bdb9927015a2a3836859307818030181e7",
+   "path": "tools/graph/shell_workflow.py",
+   "sha256": "sha256:2758dbafb35c37bf34d39f7d207a0806bc53ade092c9da30054dfa056d4afc11"
+  },
+  {
+   "blob_oid": "64cfc8e1b676bdbb2a036093ceedda0c6c61494b",
    "path": "tools/graph/admit_change.py",
-   "sha256": "sha256:e192b5d50b40235418d31cc0c934e02288dc19924494a30d2a1f55b856b47de8"
+   "sha256": "sha256:a1dc5b231314b95be25136d25ef3fa2a5c9f6f21df6be7d2ed643757e8865a21"
   },
   {
-   "blob_oid": "b093c18d1276addadca1b797cce3be5226fef16f",
+   "blob_oid": "0ecd68b4d73437c73dab4b156f4bf57e42eb5277",
+   "path": "contracts/graph-verified-change/stage-evidence.v1.json",
+   "sha256": "sha256:339dcff4cd1e1915b9712387658f5ba9bee1667240f3f1d593423cd97d33d65e"
+  },
+  {
+   "blob_oid": "8c043e9205b8e52f611ff5e23220dd1c45a5bdde",
    "path": "tools/graph/schema_check.py",
-   "sha256": "sha256:31bcfe54dc59a51417c1041f0359802f21337b7d156bb2df81e0f92d2a9ef4b3"
+   "sha256": "sha256:15bbe0b92c881a7c4bb62ccab533adcbed663dd6333416d5de889ac61f23472c"
   },
   {
-   "blob_oid": "04ba13e43d5febdb8875bed65f718b1a38fc7162",
+   "blob_oid": "db91eee1dff26ef718c214e20faa01fc3b46977c",
    "path": "tools/graph/build_graph.py",
-   "sha256": "sha256:22da01b6dfe719b93938833be65cb19ecc10d62942225a14bce6323991735f07"
+   "sha256": "sha256:684b6538e6ae240c1d404d9c784a797e7b92c0381bd6a46fd41eee189f14f452"
   },
   {
-   "blob_oid": "ef9b26fb7fcb5ffbf87565fe15c52269c98a870e",
+   "blob_oid": "f95691cf3bccb4119dd17f779b7fdaf19a2c328f",
+   "path": "tools/graph/source_input_contract.py",
+   "sha256": "sha256:3e0a8e9105e7b548903d005c2353ec70311aa388676480352df0332cc3f4e94a"
+  },
+  {
+   "blob_oid": "babbeb002da02964d0b9f06e097576ccda50f555",
+   "path": "tools/graph/test_source_input_contract.py",
+   "sha256": "sha256:0375aa691ac716011363a7c25ed470f5eacc5723cb144e1f98886ef4f3166d04"
+  },
+  {
+   "blob_oid": "7a491a3bbed8777867399f869169a5db33cfdf53",
+   "path": "contracts/graph-verified-change/source-input-contract.v1.json",
+   "sha256": "sha256:584da9ecefa596c141a92934aba6173160820992c349dd4b16999404b0d0b067"
+  },
+  {
+   "blob_oid": "a06b70969410c102caa3c014aad70bb2958a2ae5",
+   "path": "tools/graph/python_search_path.py",
+   "sha256": "sha256:86b402a52fe622bf254474599c006dbc161448fe68d81b6fbd6b23c4798e114c"
+  },
+  {
+   "blob_oid": "57d761c3451f53ac836cd90b613c6d1e142eb370",
+   "path": "tools/graph/selected_dependency.py",
+   "sha256": "sha256:8043718706bea7ada4bf4b1e364dd9b51166effdadd62b975072cb06fde6d033"
+  },
+  {
+   "blob_oid": "3d6d931b23e0c9862f053829b24de16dada6b53f",
+   "path": "tools/graph/selected_dependency_fitness.py",
+   "sha256": "sha256:0de833030ae29db2246e2d49f92e4c5338a3f25e13a2ee96b21559f9280d93bc"
+  },
+  {
+   "blob_oid": "7ac03f17234649b790abe2cea3be25531538dcac",
+   "path": "tools/graph/selected_dependency_replay.py",
+   "sha256": "sha256:8e24dfe5b193c2434cad44934bf79917a40d28a7bd201a5be52530dccc549b01"
+  },
+  {
+   "blob_oid": "9881ef37be15cdb3aaa241fcda38c482cd88e65e",
+   "path": "tools/graph/selected_dependency_runner.py",
+   "sha256": "sha256:e32e84a8eb3f478ae98bbd5848231994e066ac2cacba0e30ca427ea0477cba56"
+  },
+  {
+   "blob_oid": "f6ff6cc1a3eb128ff266f75fe0fe26386132ef70",
+   "path": "tools/graph/native_projection.py",
+   "sha256": "sha256:b76326d47bf082f43818e9bf29881e0a13b50f7c2796afc53d40bb0a6f06e137"
+  },
+  {
+   "blob_oid": "536445fcfc967f88db349f578e8101ba026604dd",
    "path": "tools/graph/nest_bootstrap.py",
-   "sha256": "sha256:6514b666a838e39679e8bca374542ec6fdab3ae9e3c8ae5971d12482a5327bd8"
+   "sha256": "sha256:93f21237bb4400bf5286452b7957093df0fcebe943eb65c0d4097595797d5f1e"
   },
   {
-   "blob_oid": "a275bdb785a8f9fc3b36a55f77d69ca0d1208c30",
+   "blob_oid": "ecb381576e73c30f1c030f44e184440956697006",
+   "path": "tools/graph/nest_fixture_scope.py",
+   "sha256": "sha256:f63a2f8b74279de0b5c70d4bd10ee07480ecead99fcf45e60ed8f1490a647a34"
+  },
+  {
+   "blob_oid": "53c2f60bb6e96dd2e0b95e8a20679ca1ddd70271",
+   "path": "tools/graph/inline_nest_harness.cjs",
+   "sha256": "sha256:3e4c786d14a4519bbce01d963e45581ce19eda48fb810655be56b6b196e9e083"
+  },
+  {
+   "blob_oid": "692f5350452bbedc1359a9d234c0f4bd58052e7b",
+   "path": "tools/graph/fixture_contracts.py",
+   "sha256": "sha256:d0dc7ce4a2c43bc101ed2d369ec522c145d48fe8a696667dcd14c0e19d71951e"
+  },
+  {
+   "blob_oid": "aa1ecb64712cb9ecf2fff304ef273983b89b4983",
    "path": "tools/graph/workflow_config.py",
-   "sha256": "sha256:687c921891291e7261174c25453673f024d065cfd9718a62dd28124180d0f85c"
+   "sha256": "sha256:bef3f824ab4a1b675ae30879de65bd0dd3cf5697c924af446caddd7a2ce73eeb"
   },
   {
-   "blob_oid": "903cb52e25e73c240c62eace1348c027e57d5181",
+   "blob_oid": "22073735176576c92bdba73c0677bfe49e890814",
    "path": "tools/graph/impact.py",
-   "sha256": "sha256:021e0d0d5be7e24a1f67f595b8823ef21aafc9190116612df107f748c14806f4"
+   "sha256": "sha256:13c2f047ab6a7fcd33b7754a04bd38459f328d978f2e3f80365e66ec924dbede"
   },
   {
-   "blob_oid": "e37538582586595f17de4c61179571889e43d1c8",
+   "blob_oid": "bba97ad453ab0af1df7ff23b4875abeeb1d0ad07",
    "path": "tools/graph/impact_pair.py",
-   "sha256": "sha256:8a02f1d9f530b7edadae352da35b71b49ba0437874cfbc89927e1ace0b5f7460"
+   "sha256": "sha256:163979afb4493b7e6e747d7594f212439050ef347a2749514b4c43a0b60ebc7f"
   },
   {
-   "blob_oid": "b2748cbbaa691d97148619798e7c366a1c8c4a62",
+   "blob_oid": "81c53e25214deb7b4b543fb4a245a7db78142a06",
+   "path": "tools/graph/ci_selection.py",
+   "sha256": "sha256:37f03532c7515548b5d9a23b8dab0b538788439a5b7ab72ddb96d2a03e5ef18f"
+  },
+  {
+   "blob_oid": "571303e3f8483ee4e62f6986eacf09544feab2f2",
+   "path": "tools/graph/origin_association.py",
+   "sha256": "sha256:78ea54f5ab290f09620b06411dea66e27652036312bea199c18215fc4b5f97d6"
+  },
+  {
+   "blob_oid": "4709692a4e329d01f5d0a5ce0026c49823dfcdd5",
    "path": "tools/graph/verify.py",
-   "sha256": "sha256:b2894b877f78ffd1e4fa3560354ebc08d65c6d785316918c5e1288feebfc2c21"
+   "sha256": "sha256:db0f2ee6ab1704a94890dd1306ac5cd8a463d7dcddfdeac6a92f8a0c680c6265"
   },
   {
-   "blob_oid": "691ca9dd6a388256b7efe47aece2475830d06b77",
+   "blob_oid": "dec76bf2652307649c911327671d866d92804d8d",
    "path": "tools/graph/contract_diff.py",
-   "sha256": "sha256:2b6cb79ac843d183948346a870ad9bef4f8ce7bc14ab8c1cbfe33e010d9a1ab2"
+   "sha256": "sha256:75be4d506ae76f22432541c29dbc5155f654d0d2ad33267330e02644118c7875"
   },
   {
-   "blob_oid": "fbcafbfcab4f4b720e8db491d146ae24887198c1",
+   "blob_oid": "662c9d20badc277e8eb5a36c9aea4d8b42df165b",
+   "path": "tools/graph/python_contracts.py",
+   "sha256": "sha256:242b914917749f2df845dcab8ad665c7010bb16a862d77252261d7e4758fa47c"
+  },
+  {
+   "blob_oid": "dd67be38a78c1b770ea26570fcfbcb295a83350f",
+   "path": "tools/graph/metadata_contract_proof.py",
+   "sha256": "sha256:6d1592d8fd28a4c7f5f8db25b308ce56126f88aaf0c7624fe2b670d4aa8f34bb"
+  },
+  {
+   "blob_oid": "fdae1c30412b4383d3a98709b86702d2f953285a",
+   "path": "tools/graph/metadata_contract_observer.cjs",
+   "sha256": "sha256:8bba8db622af8abc9d06c15722153bb62a1fbea03dc117313c49640745ddc917"
+  },
+  {
+   "blob_oid": "680ab075c19aee414ad3318b078d4a97064bf7bd",
    "path": "tools/graph/canary_evidence.py",
-   "sha256": "sha256:293609d0a477deb4298e1e9851ac76c369cbb7c811a2897752500aa069687a69"
+   "sha256": "sha256:3d0bc25118bab348846e4c067d4570535996a95df2479af715e6d1df2b689cea"
   },
   {
-   "blob_oid": "e0ca0605c43ea74652abce5e785e5ee169048384",
+   "blob_oid": "72c73a52800b0363d43502036010fdafeeb8c7b5",
    "path": "tools/graph/process_observation.py",
-   "sha256": "sha256:860243805d9746716f45acab13097d33475ca705167c94517ec4960e6df66a9d"
+   "sha256": "sha256:2027f3ef66425a68e54d81d1cdc5d075457205ee94f934b822b8c12a0934422b"
   },
   {
    "blob_oid": "e9defbc9f662f6dd0f75e2bf1f0567b31f37119d",
@@ -75,29 +190,34 @@
    "sha256": "sha256:bcc2b9c986588c689a9ef015e04dcaf2e69971cf64c69e761138de70c19258a7"
   },
   {
-   "blob_oid": "e8cb66fb7031de5b5db5abc823bddae227fea60d",
+   "blob_oid": "cae40160e2c0b6223a01a8c98b5684fdc042daec",
    "path": "tools/graph/ci_gate.py",
-   "sha256": "sha256:fb91c8e8cbdf45ff1eb8889b97a34087f3e665e5d4087378ace1fdd8c72b3fc0"
+   "sha256": "sha256:d3cdb59dc71bc8e56fb58a7035a0520e62547d23609c5e75f3bff6a4dcec35a0"
   },
   {
-   "blob_oid": "f97c4273c635f3e3215c13a0e063930951d7b48d",
+   "blob_oid": "6713f7a05bdf097494a3de43ce19c245b44e9ac0",
    "path": "contracts/graph-verified-change/admission-gate.v1.json",
-   "sha256": "sha256:7b233af4a3ef48361a92a7752c263b4fa395904cc4f4ec3b71e27609d7829f3d"
+   "sha256": "sha256:83cb38cc60bc280fd3cf7f36d884acffab3952354eb054ea0a1b63bb25d071d8"
   },
   {
-   "blob_oid": "0af90c8111f640ffe677babd4a81be7cbe57fb21",
+   "blob_oid": "3d33a146b9472c45a57f89a967307ab71804b148",
    "path": "contracts/graph-verified-change/relationship-graph.v1.json",
-   "sha256": "sha256:7d4d78242ac31b774fc3a45178a31b75805cf404be6b87fcd4378bd4fbf7df2b"
+   "sha256": "sha256:69a28a2311d645e6c4d3815dc28df1cd80c86032d3a5364ce09bd91237379fb4"
   },
   {
-   "blob_oid": "63598b7bde8de59f7d11fbe13a738081a616e79e",
+   "blob_oid": "d5b8bb6a22a950599f4d59db7756b3e350f7b33b",
    "path": "contracts/graph-verified-change/change-admission-receipt.v1.json",
-   "sha256": "sha256:b5cdb22558940ef2d3294151ec40447d7ab14ccf9fab4102df8bd4e6fff63e51"
+   "sha256": "sha256:37d26b1581899d17f9cbcdc792cc8f37f5d2beafe6ffadaabacfbbc0f3b5c734"
   },
   {
-   "blob_oid": "37353f0056bdb3e47568ebebf7ea0363f5a3543b",
+   "blob_oid": "b501bfe9bc7a51287a85eaf149cecbf04298ce4e",
    "path": "contracts/graph-verified-change/verifier-matrix.v1.json",
-   "sha256": "sha256:0a68ff5829fbd63a056b6face91db7bd01ec5918ae12d7c6b735d0b063e5f159"
+   "sha256": "sha256:fe71fdf795fe2c88556e53fa446e8a67696461b9fbed33297badbaff8cede274"
+  },
+  {
+   "blob_oid": "3deb84411b7a5580d20a679211f94efb4ccee6ba",
+   "path": "contracts/graph-verified-change/bundle-signing-key.pub",
+   "sha256": "sha256:c288311cfcb97939fd4af0b075f2cc239632862a20f08a2cfeb8f0644a770f8c"
   },
   {
    "blob_oid": "cd9be3dcf7c457d8db597825bbb93ad8282b6e31",
@@ -111,7 +231,7 @@
   "tool": "tools/graph/ci_gate.py",
   "version": "1.0.0"
  },
- "program_ref": "db9784badb35048732f6bb74b8f2b96a7da05da0",
+ "program_ref": "cdbf3b4e4920a68f08136dca510a0b0c8d2dbec5",
  "program_repo": "Arcanada-one/arcanada-universal-program",
  "provisional_until_fable_review": true,
  "rule": "The workflow refuses unless every file's sha256 matches this manifest AND the caller's `program_ref` input matches `program_ref` here. The bundle is a VENDORED copy of one pinned program-repo SHA (the program repository is private and no shared credential exists to check it out from a caller's CI). A pull request that changes anything under the bundle directory is refused by the gate job \u2014 a bundle refresh is its own pull request. Each entry's `blob_oid` is the git object id the bytes were read at: `git hash-object <file>` must equal it, which is how a caller with no credential for the program repository can CONTRADICT this manifest offline (DEC-AUP-0036 R2). Every byte here was read from the object store at program_ref, never from a working tree (R1).",
