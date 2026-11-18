@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn local_identity_is_never_empty() {
-        assert!(!local_identity().is_empty());
+        assert_ne!(local_identity().len(), 0);
     }
 
     #[tokio::test]

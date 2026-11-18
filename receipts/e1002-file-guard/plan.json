@@ -1,0 +1,53 @@
+{
+  "schema": "CanaryPlan/v2",
+  "id": "e1002-auth-file-guard-local",
+  "environment": "task-owned local Unix process and synthetic loopback Auth; not production",
+  "owner": "Codex Agent / Muneral 1be0617b-ebc3-4af8-b8db-7b2751ee5251",
+  "read_only": false,
+  "subject": {
+    "schema": "GitCanarySubject/v1",
+    "commit": "52a0201b2be351952a0932e5785eb6dee9a94b63",
+    "tree": "21b6a0ef9bde201f2f6ba3ba3453ca968006676d",
+    "evidence": {
+      "path": "source.json",
+      "sha256": "f32f85ca981c0131774b749068f584d655c61f718d8ef4b0ba561f5ded888c87",
+      "source_field": "commit"
+    }
+  },
+  "probes": [
+    {
+      "id": "auth-adapter-positive-and-negative-contracts",
+      "kind": "process",
+      "argv": [
+        "/home/dev/aup/codex-astra/target/debug/deps/auth_arcana_client_credentials-4d9b5276564c135e",
+        "--test-threads=1"
+      ],
+      "cwd": ".",
+      "env_keys": [],
+      "timeout_seconds": 30,
+      "capture_limit_bytes": 65536,
+      "mutating": true,
+      "entities": [
+        "code_unit:crates/connectors/src/auth_arcana.rs"
+      ],
+      "executable_sha256": "a52391b6ee0a03c2d618c9df7e93ae1ea0c436ea8b0f6ba3d3a47eeaa51f718d",
+      "execution_files": [
+        {
+          "path": "/home/dev/aup/codex-astra/target/debug/deps/auth_arcana_client_credentials-4d9b5276564c135e",
+          "sha256": "a52391b6ee0a03c2d618c9df7e93ae1ea0c436ea8b0f6ba3d3a47eeaa51f718d"
+        }
+      ],
+      "expect": {
+        "exit_codes": [
+          0
+        ],
+        "stdout_contains": [
+          "test result: ok. 7 passed; 0 failed",
+          "mints_exact_client_credentials_profile_and_caches_singleflight ... ok",
+          "rejects_insecure_secret_file_before_network ... ok",
+          "rejects_symlinked_secret_file_before_network ... ok"
+        ]
+      }
+    }
+  ]
+}

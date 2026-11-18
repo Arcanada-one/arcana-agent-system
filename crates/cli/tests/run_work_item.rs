@@ -29,6 +29,11 @@ use arcana_core::contract::digest_of;
 fn key_file(dir: &TempDir) -> std::path::PathBuf {
     let path = dir.path().join("muneral.key");
     std::fs::write(&path, "mun_sk_test\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     path
 }
 

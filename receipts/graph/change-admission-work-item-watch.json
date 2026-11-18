@@ -1,0 +1,469 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted"
+ },
+ "captured_at_utc": "2026-09-28T04:27:33Z",
+ "change_set": {
+  "base": "300fabb12e8ad6873006613b525687786c37f4ce",
+  "files": [
+   {
+    "kind": "doc",
+    "node_id": "document:CHANGELOG.md",
+    "node_ids": [
+     "document:CHANGELOG.md"
+    ],
+    "path": "CHANGELOG.md",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/cli.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/cli.rs"
+    ],
+    "path": "crates/cli/src/cli.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/lib.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/lib.rs"
+    ],
+    "path": "crates/cli/src/lib.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/main.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/main.rs"
+    ],
+    "path": "crates/cli/src/main.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/status.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/status.rs"
+    ],
+    "path": "crates/cli/src/status.rs",
+    "status": "M"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/src/status_watch.rs",
+    "node_ids": [
+     "code_unit:crates/cli/src/status_watch.rs"
+    ],
+    "path": "crates/cli/src/status_watch.rs",
+    "status": "A"
+   },
+   {
+    "kind": "other",
+    "node_id": "code_unit:crates/cli/tests/status_watch_smoke.rs",
+    "node_ids": [
+     "code_unit:crates/cli/tests/status_watch_smoke.rs"
+    ],
+    "path": "crates/cli/tests/status_watch_smoke.rs",
+    "status": "A"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:docs/how-to/work-item-status.md",
+    "node_ids": [
+     "document:docs/how-to/work-item-status.md"
+    ],
+    "path": "docs/how-to/work-item-status.md",
+    "status": "M"
+   }
+  ],
+  "head": "628883caf8c0427e9281ed90b52e5a9aa990ea19",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:9d0c55218baaa824c65d9e6689bd12658f7837fab4519faa3d7b60aa3144a5ff",
+  "path": "/home/dev/aup/codex-astra/graph-watch/verifier-out/graph-300fabb12e8a.json",
+  "source_commit": "300fabb12e8ad6873006613b525687786c37f4ce"
+ },
+ "head_graph": {
+  "builder_version": "1.0.1",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:bbf0fa4bb79e67dafd91769a6232612da0c162112982bdd69f974c75155f5287",
+  "path": "/home/dev/aup/codex-astra/graph-watch/verifier-out/graph-head-628883caf8c0.json",
+  "source_commit": "628883caf8c0427e9281ed90b52e5a9aa990ea19",
+  "staleness": {
+   "checked_at_utc": "2026-09-28T04:27:38Z",
+   "checked_nodes": 384,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "arcana-devs",
+ "impact_set": {
+  "deterministic_core": [
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "deployable_unit:crates/cli",
+    "node_type": "deployable_unit",
+    "path": [
+     {
+      "edge_type": "deploys_to",
+      "from": "code_unit:crates/cli/src/cli.rs",
+      "provenance": "deterministic",
+      "to": "deployable_unit:crates/cli",
+      "via": "containment"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/cli.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "deployable_unit:crates/cli",
+      "node_type": "deployable_unit",
+      "path": [
+       {
+        "edge_type": "deploys_to",
+        "from": "code_unit:crates/cli/src/cli.rs",
+        "provenance": "deterministic",
+        "to": "deployable_unit:crates/cli",
+        "via": "containment"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+     }
+    ],
+    "verifier_hint": "can-i-deploy gate (GRAPH-008)"
+   },
+   {
+    "boundary": "intra_unit",
+    "depth": 1,
+    "entity": "receipt:receipts/graph/change-admission-work-item-status.json",
+    "node_type": "receipt",
+    "path": [
+     {
+      "edge_type": "verifies",
+      "from": "receipt:receipts/graph/change-admission-work-item-status.json",
+      "provenance": "deterministic",
+      "to": "document:docs/how-to/work-item-status.md",
+      "via": "explicit-path"
+     }
+    ],
+    "revision_paths": [
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-work-item-status.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-work-item-status.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/work-item-status.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "base",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     },
+     {
+      "boundary": "intra_unit",
+      "depth": 1,
+      "entity": "receipt:receipts/graph/change-admission-work-item-status.json",
+      "node_type": "receipt",
+      "path": [
+       {
+        "edge_type": "verifies",
+        "from": "receipt:receipts/graph/change-admission-work-item-status.json",
+        "provenance": "deterministic",
+        "to": "document:docs/how-to/work-item-status.md",
+        "via": "explicit-path"
+       }
+      ],
+      "revision": "head",
+      "section": "deterministic_core",
+      "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+     }
+    ],
+    "verifier_hint": "selectable: run the targeted test / re-read the receipt"
+   }
+  ],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 2
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.2.0) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.2.0"
+ },
+ "receipt_id": "car-verify-20260928T042733Z-628883ca",
+ "receipt_path": "receipts/graph/change-admission-work-item-watch.json",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/aup/codex-astra/repos/arcana-agent-system"
+ },
+ "revision_selection": {
+  "base": [
+   "code_unit:crates/cli/src/cli.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/status.rs",
+   "deployable_unit:crates/cli",
+   "document:CHANGELOG.md",
+   "document:docs/how-to/work-item-status.md",
+   "receipt:receipts/graph/change-admission-work-item-status.json"
+  ],
+  "head": [
+   "code_unit:crates/cli/src/cli.rs",
+   "code_unit:crates/cli/src/lib.rs",
+   "code_unit:crates/cli/src/main.rs",
+   "code_unit:crates/cli/src/status.rs",
+   "code_unit:crates/cli/src/status_watch.rs",
+   "code_unit:crates/cli/tests/status_watch_smoke.rs",
+   "deployable_unit:crates/cli",
+   "document:CHANGELOG.md",
+   "document:docs/how-to/work-item-status.md",
+   "receipt:receipts/graph/change-admission-work-item-status.json"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-09-28T04:27:38Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [
+  {
+   "content_hash": {
+    "base": "sha256:43cd58605a3668b530078be2e089df4b2fc491e1a71acc33c3eed304d7a0a6cb",
+    "head": "sha256:43cd58605a3668b530078be2e089df4b2fc491e1a71acc33c3eed304d7a0a6cb"
+   },
+   "entity": "receipt:receipts/graph/change-admission-work-item-status.json",
+   "node_type": "receipt",
+   "path": "receipts/graph/change-admission-work-item-status.json",
+   "reason": "historical receipt: asserted, never re-verified (I14); a new receipt supersedes it",
+   "rule": "DEC-AUP-0034"
+  }
+ ],
+ "tree": {
+  "commit": "628883caf8c0427e9281ed90b52e5a9aa990ea19",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "code_unit:crates/cli/src/cli.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/lib.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/main.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/status.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/src/status_watch.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "code_unit:crates/cli/tests/status_watch_smoke.rs",
+   "reason": "v-fitness: no new fitness violation",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "deployable_unit:crates/cli",
+   "reason": "v-fitness: no new violation in crates/cli",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-fitness"
+   ]
+  },
+  {
+   "entity": "document:CHANGELOG.md",
+   "reason": "v-doc-reference: 5 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  },
+  {
+   "entity": "document:docs/how-to/work-item-status.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifier_selection": {
+  "applied": {},
+  "not_applied": [],
+  "requested": [],
+  "schema": "VerifierSelection/v1"
+ },
+ "verifiers": [
+  {
+   "command": "verify.py fitness_rules FR-01..FR-05 over the head graph + head sources",
+   "duration_s": 0.01,
+   "entities": [
+    "code_unit:crates/cli/src/cli.rs",
+    "code_unit:crates/cli/src/lib.rs",
+    "code_unit:crates/cli/src/main.rs",
+    "code_unit:crates/cli/src/status.rs",
+    "code_unit:crates/cli/src/status_watch.rs",
+    "code_unit:crates/cli/tests/status_watch_smoke.rs",
+    "deployable_unit:crates/cli"
+   ],
+   "entity_verdicts": {
+    "code_unit:crates/cli/src/cli.rs": "verified",
+    "code_unit:crates/cli/src/lib.rs": "verified",
+    "code_unit:crates/cli/src/main.rs": "verified",
+    "code_unit:crates/cli/src/status.rs": "verified",
+    "code_unit:crates/cli/src/status_watch.rs": "verified",
+    "code_unit:crates/cli/tests/status_watch_smoke.rs": "verified",
+    "deployable_unit:crates/cli": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-fitness",
+   "kind": "fitness_rules",
+   "output_ref": "/home/dev/aup/codex-astra/graph-watch/verifier-out/v-fitness.json",
+   "started_at_utc": "2026-09-28T04:27:43Z",
+   "summary": "0 finding(s): 0 new / 0 frozen; 0 entity(ies) failed"
+  },
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.01,
+   "entities": [
+    "document:CHANGELOG.md",
+    "document:docs/how-to/work-item-status.md"
+   ],
+   "entity_verdicts": {
+    "document:CHANGELOG.md": "verified",
+    "document:docs/how-to/work-item-status.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/home/dev/aup/codex-astra/graph-watch/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-09-28T04:27:43Z",
+   "summary": "2 document(s), 0 failed"
+  }
+ ],
+ "verify": {
+  "events": [
+   {
+    "code": "STRUCTURAL_EXCLUSION",
+    "rule": "DEC-AUP-0034",
+    "text": "1 affected entity(ies) owe no verdict (receipt: 1): unchanged at both revisions and given no verifier by the matrix"
+   }
+  ],
+  "required_by_entity": {
+   "code_unit:crates/cli/src/cli.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/lib.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/main.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/status.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/src/status_watch.rs": [
+    "fitness_rules"
+   ],
+   "code_unit:crates/cli/tests/status_watch_smoke.rs": [
+    "fitness_rules"
+   ],
+   "deployable_unit:crates/cli": [
+    "fitness_rules"
+   ],
+   "document:CHANGELOG.md": [
+    "doc_reference"
+   ],
+   "document:docs/how-to/work-item-status.md": [
+    "doc_reference"
+   ],
+   "receipt:receipts/graph/change-admission-work-item-status.json": []
+  },
+  "seconds": {
+   "prepare": 2.92,
+   "total": 9.54,
+   "verifiers": 0.02
+  }
+ },
+ "work_item": "79a802e4-de36-4979-a593-0bbbc1154667"
+}
