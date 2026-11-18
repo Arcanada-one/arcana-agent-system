@@ -47,6 +47,15 @@ async fn untrusted_claims_refuse_before_provider(claims: serde_json::Value, http
         .expect(1)
         .mount(&server)
         .await;
+    // Valid readiness, so the run still reaches the authority gate under test.
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v1/tasks/{TASK}/readiness")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "taskId": TASK, "ready": true, "dependencyCount": 0, "blockedBy": [],
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
     let mut command = Command::cargo_bin("arcana").unwrap();
     command
         .env_remove("ARCANA_MC_TOKEN")

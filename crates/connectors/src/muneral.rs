@@ -76,6 +76,17 @@ pub struct WorkItemReadiness {
     pub blocked_by: Vec<serde_json::Value>,
 }
 
+impl WorkItemReadiness {
+    /// Whether the verdict agrees with itself: `ready` holds exactly when
+    /// nothing blocks, and no more blockers are named than dependencies
+    /// exist. A verdict that contradicts itself is evidence of nothing.
+    #[must_use]
+    pub fn is_consistent(&self) -> bool {
+        self.ready == self.blocked_by.is_empty()
+            && self.blocked_by.len() as u64 <= self.dependency_count
+    }
+}
+
 /// Everything that can go wrong reading a work item.
 ///
 /// Remote failures classify the server's answer. Local file-policy failures
@@ -155,21 +166,28 @@ impl MuneralClient {
     /// # Errors
     /// [`MuneralError`] — each variant is the server's answer, classified.
     pub async fn work_item(&self, id: &str) -> Result<WorkItem, MuneralError> {
-        self.get(id, &["tasks", id]).await
+        self.get(id, &["tasks", id], false).await
     }
 
     /// Read the server-computed dependency verdict; this is not permission to execute.
     ///
+    /// Only HTTP 200 carries the verdict. Muneral's consumer contract serves
+    /// readiness with 200, so any other 2xx (a 201 with plausible JSON, a 204)
+    /// is a different answer and is returned as [`MuneralError::Status`], not
+    /// decoded. The caller must also compare `task_id` with the id it asked
+    /// for; the transport cannot know what a foreign id means.
+    ///
     /// # Errors
     /// Returns the classified API or decoding failure without inventing a verdict.
     pub async fn readiness(&self, id: &str) -> Result<WorkItemReadiness, MuneralError> {
-        self.get(id, &["tasks", id, "readiness"]).await
+        self.get(id, &["tasks", id, "readiness"], true).await
     }
 
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
         id: &str,
         segments: &[&str],
+        only_200: bool,
     ) -> Result<T, MuneralError> {
         let url = self.endpoint(segments)?;
         let response = self
@@ -184,7 +202,7 @@ impl MuneralClient {
             .text()
             .await
             .map_err(|err| MuneralError::Transport(err.to_string()))?;
-        if !status.is_success() {
+        if !status.is_success() || (only_200 && status.as_u16() != 200) {
             return Err(classify(status.as_u16(), id, &body));
         }
         serde_json::from_str(&body).map_err(|err| MuneralError::Decode(err.to_string()))
