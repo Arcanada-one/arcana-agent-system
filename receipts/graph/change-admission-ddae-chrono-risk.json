@@ -1,0 +1,345 @@
+{
+ "admission": {
+  "rule": "admitted requires every verdict = verified; failed without exemption ⇒ refused; not_measured without exemption ⇒ paused_safe; exemptions (owner + expiry) are attached by the admitting agent, never by the verifier (DEC-AUP-0008, matrix P1/P4)",
+  "structural_exclusion_rule": "DEC-AUP-0034: an affected entity is NOT verdict-owing when all three hold — the verifier matrix declares neither a mandatory nor a selectable verifier for its node type (so the only verdict it could ever carry states a property of the MATRIX, not of this change), the change set does not contain it, and its bytes are identical at base and head. Each one is listed in structural_exclusions with the content hash at both revisions that proves the byte-identity, and impact_pair.receipt_problems re-derives that proof from Git rather than believing the receipt.",
+  "superseded_self_rule": "DEC-AUP-0035: the entity a receipt can never verify is the PREVIOUS VERSION OF ITSELF. When a receipt is re-issued at the same path for the same work item — the ordinary case after a rebase or a second commit on a card — the copy of it standing in the tree is superseded by construction: this run is the measurement that replaces it, so the only verdict it could carry is I14 `not_measured` about a document that no longer exists at that path once the run finishes. It is excluded with the work item and the output path that identify it, both re-derived from Git by impact_pair.receipt_problems, never asserted.",
+  "verdict": "admitted"
+ },
+ "captured_at_utc": "2026-11-18T02:12:17Z",
+ "change_set": {
+  "base": "0716973f79ce826cc648d41066649115b138fde2",
+  "files": [
+   {
+    "kind": "config",
+    "new": true,
+    "path": ".cargo/audit.toml",
+    "status": "A"
+   },
+   {
+    "kind": "doc",
+    "node_id": "document:SECURITY.md",
+    "node_ids": [
+     "document:SECURITY.md"
+    ],
+    "path": "SECURITY.md",
+    "status": "M"
+   },
+   {
+    "kind": "config",
+    "path": "accepted-risk.yml",
+    "status": "M",
+    "uncovered": true
+   },
+   {
+    "kind": "config",
+    "path": "deny.toml",
+    "status": "M",
+    "uncovered": true
+   }
+  ],
+  "head": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+  "mode": "diff"
+ },
+ "decision_ref": "DEC-AUP-0008",
+ "empty_impact_explanation": {
+  "binding": {
+   "input": {
+    "base": "0716973f79ce826cc648d41066649115b138fde2",
+    "base_graph_digest": "sha256:701b1fb83e0ceec582a5704fccf6b7ff661cf9a2cce56ae0df46cfd977e63444",
+    "head": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+    "head_graph_digest": "sha256:101f226af38566d6158ccb5ea850f2f6d8ed628e5b6a8012035752e255e4e93f",
+    "reason": "The four changed security-policy files (.cargo/audit.toml, deny.toml, accepted-risk.yml and SECURITY.md) have no modeled reverse dependents in this graph; zero impact is a graph coverage prediction, not approval. The exact candidate must instead pass accepted-risk schema validation, cargo audit --deny warnings, cargo deny check advisories licenses and independent security review. The baseline audit fails on RUSTSEC-2026-0543 while the candidate passes with only that time-boxed advisory ignored.",
+    "schema": "EmptyImpactExplanation/v1",
+    "scope": "graph_non_seed_dependents"
+   },
+   "input_sha256": "sha256:a7b569a39f7cb8d2260922490f94dae5867e8bf50412f42bc45d3007de79b338",
+   "schema": "BoundEmptyImpactExplanation/v1"
+  },
+  "graph_metadata": {
+   "revisions": {
+    "base": {
+     "changed_node_known_to_graph": true,
+     "edge_types": "all",
+     "external_reverse_edges": 0,
+     "extractors": [
+      "imports",
+      "routes",
+      "contracts",
+      "prisma",
+      "config",
+      "reuse",
+      "di",
+      "queue",
+      "tests",
+      "http_client",
+      "deployables",
+      "docs",
+      "work_items",
+      "receipts",
+      "rust",
+      "python",
+      "systemd",
+      "trust_anchor"
+     ],
+     "files": [
+      {
+       "kind": "config",
+       "new": true,
+       "path": ".cargo/audit.toml",
+       "status": "A"
+      },
+      {
+       "kind": "doc",
+       "node_id": "document:SECURITY.md",
+       "node_ids": [
+        "document:SECURITY.md"
+       ],
+       "path": "SECURITY.md",
+       "status": "M"
+      },
+      {
+       "kind": "config",
+       "path": "accepted-risk.yml",
+       "status": "M",
+       "uncovered": true
+      },
+      {
+       "kind": "config",
+       "path": "deny.toml",
+       "status": "M",
+       "uncovered": true
+      }
+     ],
+     "graph_digest": "sha256:701b1fb83e0ceec582a5704fccf6b7ff661cf9a2cce56ae0df46cfd977e63444",
+     "internal_reverse_edges": 0,
+     "language_coverage": [
+      "typescript",
+      "javascript",
+      "prisma",
+      "markdown",
+      "json-receipts",
+      "rust",
+      "python",
+      "bash",
+      "bats"
+     ],
+     "max_depth": 3,
+     "seeds": [
+      "document:SECURITY.md"
+     ],
+     "source_commit": "0716973f79ce826cc648d41066649115b138fde2"
+    },
+    "head": {
+     "changed_node_known_to_graph": true,
+     "edge_types": "all",
+     "external_reverse_edges": 0,
+     "extractors": [
+      "imports",
+      "routes",
+      "contracts",
+      "prisma",
+      "config",
+      "reuse",
+      "di",
+      "queue",
+      "tests",
+      "http_client",
+      "deployables",
+      "docs",
+      "work_items",
+      "receipts",
+      "rust",
+      "python",
+      "systemd",
+      "trust_anchor"
+     ],
+     "files": [
+      {
+       "kind": "config",
+       "new": true,
+       "path": ".cargo/audit.toml",
+       "status": "A"
+      },
+      {
+       "kind": "doc",
+       "node_id": "document:SECURITY.md",
+       "node_ids": [
+        "document:SECURITY.md"
+       ],
+       "path": "SECURITY.md",
+       "status": "M"
+      },
+      {
+       "kind": "config",
+       "path": "accepted-risk.yml",
+       "status": "M",
+       "uncovered": true
+      },
+      {
+       "kind": "config",
+       "path": "deny.toml",
+       "status": "M",
+       "uncovered": true
+      }
+     ],
+     "graph_digest": "sha256:101f226af38566d6158ccb5ea850f2f6d8ed628e5b6a8012035752e255e4e93f",
+     "internal_reverse_edges": 0,
+     "language_coverage": [
+      "typescript",
+      "javascript",
+      "prisma",
+      "markdown",
+      "json-receipts",
+      "rust",
+      "python",
+      "bash",
+      "bats"
+     ],
+     "max_depth": 3,
+     "seeds": [
+      "document:SECURITY.md"
+     ],
+     "source_commit": "5901bb1ca1d5e46955792c82993fdaaa382d864c"
+    }
+   },
+   "scope": "graph_non_seed_dependents"
+  },
+  "reason": "The four changed security-policy files (.cargo/audit.toml, deny.toml, accepted-risk.yml and SECURITY.md) have no modeled reverse dependents in this graph; zero impact is a graph coverage prediction, not approval. The exact candidate must instead pass accepted-risk schema validation, cargo audit --deny warnings, cargo deny check advisories licenses and independent security review. The baseline audit fails on RUSTSEC-2026-0543 while the candidate passes with only that time-boxed advisory ignored.",
+  "schema": "BoundEmptyImpactExplanation/v1"
+ },
+ "exemptions": [],
+ "graph": {
+  "builder_version": "1.0.6",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:701b1fb83e0ceec582a5704fccf6b7ff661cf9a2cce56ae0df46cfd977e63444",
+  "path": "/tmp/arcana-verify-ls3t9y52/verifier-out/graph-0716973f79ce.json",
+  "source_commit": "0716973f79ce826cc648d41066649115b138fde2"
+ },
+ "head_graph": {
+  "builder_version": "1.0.6",
+  "built_at_utc": "2026-09-05T00:00:00Z",
+  "graph_digest": "sha256:101f226af38566d6158ccb5ea850f2f6d8ed628e5b6a8012035752e255e4e93f",
+  "path": "/tmp/arcana-verify-ls3t9y52/verifier-out/graph-head-5901bb1ca1d5.json",
+  "source_commit": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+  "staleness": {
+   "checked_at_utc": "2026-11-18T02:12:56Z",
+   "checked_nodes": 462,
+   "method": "manifest.dirty must be false; manifest.source_commit == change_set.head; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at head (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+   "mismatched_nodes": [],
+   "verdict": "fresh"
+  }
+ },
+ "host": "development",
+ "host_redacted": true,
+ "host_sha256": "64786ff5dda420b2d36f98acbc1c74ec98f29f8813dc522cfbee479168abef26",
+ "impact_set": {
+  "deterministic_core": [],
+  "edge_types": "all",
+  "global_fallback": {
+   "triggered": false
+  },
+  "inferred_tail": [],
+  "max_depth": 3,
+  "method": "Union of independently revision-bound base/head traversals; reverse traversal (dependents) + forward declared-by hops (provides_route, implements_contract, maps_model of the same file, deploys_to); best path = fewest inferred/observed hops, then shortest; max_depth 3",
+  "total": 0
+ },
+ "notes": [
+  "DRAFT produced by `arcana verify` (tools/graph/verify.py 1.4.1) from matrix contracts/graph-verified-change/verifier-matrix.v1.json; selection rule: required(entity) = ⋃ edge_types[t].mandatory over the edge types t of the hops that reach the entity in its best path (i…",
+  "profile: (auto-detected); baseline: (auto-base-freeze: pre-existing findings at base frozen for this run; persist one with --freeze-baseline) (valid); selected: none; disabled: none"
+ ],
+ "producer": {
+  "tool": "tools/graph/verify.py",
+  "version": "1.4.1"
+ },
+ "receipt_id": "car-verify-20261118T021217Z-5901bb1c",
+ "receipt_path": "receipts/graph/change-admission-ddae-chrono-risk.json",
+ "repo": {
+  "name": "Arcanada-one/arcana-agent-system",
+  "path": "/home/dev/aup/claude-work/asw-ddae-chrono-risk"
+ },
+ "revision_selection": {
+  "base": [
+   "document:SECURITY.md"
+  ],
+  "head": [
+   "document:SECURITY.md"
+  ],
+  "schema": "RevisionImpactSelection/v1",
+  "unmeasured_head_files": []
+ },
+ "schema": "ChangeAdmissionReceipt/v1",
+ "staleness": {
+  "checked_at_utc": "2026-11-18T02:12:56Z",
+  "method": "manifest.dirty must be false; manifest.source_commit == change_set.base; working tree must be clean (a receipt in diff mode describes committed history only); content_hash of every whole-file node (code_unit, document, receipt; deployable_unit via its package.json) must equal the sha256 of the file bytes at base (git objects); contract/route/data_model hashes are extractor-owned (declaration text) and not recomputed",
+  "mismatched_nodes": [],
+  "verdict": "fresh"
+ },
+ "structural_exclusions": [],
+ "tree": {
+  "commit": "5901bb1ca1d5e46955792c82993fdaaa382d864c",
+  "dirty": false
+ },
+ "verdicts": [
+  {
+   "entity": "document:SECURITY.md",
+   "reason": "v-doc-reference: 0 reference(s) resolve at head",
+   "verdict": "verified",
+   "verifier_ids": [
+    "v-doc-reference"
+   ]
+  }
+ ],
+ "verifier_selection": {
+  "applied": {},
+  "not_applied": [],
+  "requested": [],
+  "schema": "VerifierSelection/v1"
+ },
+ "verifiers": [
+  {
+   "command": "verify.py doc_reference: path / route / model references of affected documents resolve at head",
+   "duration_s": 0.0,
+   "entities": [
+    "document:SECURITY.md"
+   ],
+   "entity_verdicts": {
+    "document:SECURITY.md": "verified"
+   },
+   "exit_code": 0,
+   "id": "v-doc-reference",
+   "kind": "doc_reference",
+   "output_ref": "/tmp/arcana-verify-ls3t9y52/verifier-out/v-doc-reference.txt",
+   "started_at_utc": "2026-11-18T02:13:02Z",
+   "summary": "1 document(s), 0 failed"
+  }
+ ],
+ "verify": {
+  "events": [
+   {
+    "code": {
+     "code": "EMPTY_IMPACT_REQUIRES_EXPLANATION",
+     "revision": "base",
+     "text": "non-documentation change with an empty impact set: a prediction that must be explained in the receipt (empty_impact_explanation), never an approval"
+    }
+   },
+   {
+    "code": {
+     "code": "EMPTY_IMPACT_REQUIRES_EXPLANATION",
+     "revision": "head",
+     "text": "non-documentation change with an empty impact set: a prediction that must be explained in the receipt (empty_impact_explanation), never an approval"
+    }
+   }
+  ],
+  "required_by_entity": {
+   "document:SECURITY.md": [
+    "doc_reference"
+   ]
+  },
+  "seconds": {
+   "prepare": 2.74,
+   "total": 45.45,
+   "verifiers": 0.0
+  }
+ },
+ "work_item": "ddae1b91-5b0e-4e09-9625-c6eb6259b040"
+}
