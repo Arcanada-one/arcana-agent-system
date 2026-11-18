@@ -118,6 +118,7 @@ async fn drive(
         tool_result_budget: None,
         save_transcript: None,
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     };
     let config = driver_config(&request, &workspace.tools, root);
     workspace
@@ -251,6 +252,7 @@ fn the_prompt_offers_only_the_tools_the_contract_admits() {
         tool_result_budget: None,
         save_transcript: None,
         contract: Some(binding(&["read", "grep"])),
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
     };
     let prompt = driver_config(&bound, &workspace.tools, work.path())
         .system_prompt
@@ -268,10 +270,67 @@ fn the_prompt_offers_only_the_tools_the_contract_admits() {
     // The paired negative: without a contract the catalogue is unchanged.
     let unbound = RunRequest {
         contract: None,
+        expect_effect: arcana_cli::effect::EffectExpectation::default(),
         ..bound
     };
     let prompt = driver_config(&unbound, &workspace.tools, work.path())
         .system_prompt
         .expect("a headless run always has a system prompt");
     assert!(prompt.contains("- `bash`"));
+}
+
+#[tokio::test]
+async fn an_explicit_empty_contract_refuses_the_actual_write_effect() {
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let call = tool_call(
+        "write",
+        serde_json::json!({ "path": "proof.txt", "content": "HELLO" }),
+    );
+    let out = drive(
+        work.path(),
+        audit.path(),
+        Some(binding(&[])),
+        &[&call, "refused"],
+    )
+    .await;
+    assert!(
+        !work.path().join("proof.txt").exists(),
+        "deny-all cannot create a file"
+    );
+    assert_eq!(out.tool_calls, 0);
+    assert_eq!(out.tool_calls_denied, 1);
+    let records: Vec<_> = std::fs::read_dir(work.path().join(DENIED_DIR))
+        .unwrap()
+        .collect();
+    assert_eq!(records.len(), 1);
+    let record: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(records[0].as_ref().unwrap().path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["layer"], "contract-allowlist");
+    assert_eq!(record["tool"], "write");
+}
+
+#[tokio::test]
+async fn an_explicit_write_contract_performs_the_paired_effect() {
+    let work = TempDir::new().unwrap();
+    let audit = TempDir::new().unwrap();
+    let call = tool_call(
+        "write",
+        serde_json::json!({ "path": "proof.txt", "content": "HELLO" }),
+    );
+    let out = drive(
+        work.path(),
+        audit.path(),
+        Some(binding(&["write"])),
+        &[&call, "done"],
+    )
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("proof.txt")).unwrap(),
+        "HELLO"
+    );
+    assert_eq!(out.tool_calls, 1);
+    assert_eq!(out.tool_calls_denied, 0);
 }

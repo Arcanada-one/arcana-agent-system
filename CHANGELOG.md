@@ -7,7 +7,326 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies: `rustix` 1.1.4 -> 1.1.6 (RUSTSEC-2026-0486, unsound xattr functions)
+  and `quinn-udp` 0.5.14 -> 0.5.16 (RUSTSEC-2026-0538, receive loop could spin after a
+  truncated datagram); lockfile only. Internal: the execution-boundary scanner's
+  final separator-stripped check is one boolean expression (clippy `needless_bool`),
+  same evaluation order, no behaviour change.
+- `arcana run --work-item` asks Muneral for dependency readiness after the contract
+  binding is verified and before the authority gate. `ready: false` refuses with
+  `WORK_ITEM_NOT_READY`; unavailable, non-200 (including 201), malformed,
+  self-contradicting or foreign-task readiness refuses with
+  `WORK_ITEM_READINESS_UNKNOWN`; both before any model call. `ready: true` only lets
+  the run reach the unchanged authority gate (still
+  `CONTRACT_AUTHORITY_UNAVAILABLE`). `MuneralClient::readiness` now accepts only
+  HTTP 200, which also tightens `arcana status` (a 201 verdict is unknown).
+
+- Internal: `Driver::run_tool_turn` executor error and success folding moved
+  into `fold_capability_error` and `accept_tool_capability`. No behaviour change.
+- Internal: `Driver::run` invalid-config and stop-path assembly moved into
+  `invalid_run_output` and `finish_run`. No behaviour change.
+- Internal: `Driver::step` early refusals and post-dispatch reply settlement
+  moved into `refuse_before_ask` and `settle_reply`. No behaviour change.
+- Internal: connector-error recovery and the in-flight wait moved from
+  `agent_loop.rs` into `agent_loop/recovery.rs` and `agent_loop/in_flight.rs`,
+  and the module's narrative comments were cut to the reasons the code relies
+  on. No behaviour change.
+
+### Fixed
+
+- Task-run admission rejects self-issuers even when an authority adapter omits
+  the acting subject, and requires that subject in executor lineage. Learning
+  trace transport provenance no longer sets the legacy verification flag.
+
 ### Added
+
+- Bounded, noninteractive `status --watch` with separate ready, not-ready and
+  indeterminate outcomes for stored task completion, reusing scoped Muneral reads.
+- `arcana status --work-item ID` reads the authorized task status and dependency
+  readiness without inference or task writes. Unavailable readiness stays
+  unknown; the output does not infer runtime progress or freshness.
+- **A line of printed output quoted in our documentation is now checked against
+  the functions that print it.** `crates/cli/tests/printed_output.rs` takes every
+  fenced line under `docs/` and in `README.md` that claims to be this program's
+  output and rebuilds it: a refusal through `work_item::refusal_line` /
+  `refusal_marker`, a done-marker through `run::done_marker_body`, whose keys the
+  test therefore reads off the writer instead of a list of its own. A refusal
+  code comes from the source that prints it — the `refuse("…")` call sites and
+  the `code()` functions — so an invented code is a finding and a real code
+  printed with a prefix no build uses (`Error: CONTRACT_MISSING: …`, A2-292's
+  first live page) is a finding too. `docs_truth.rs` declared printed output out
+  of scope and left it there; that hole shipped a page whose every command parsed
+  and whose two output lines nothing had read (A2-297b).
+- **`docs/how-to/run-work-item-under-kc2-contract.md`**, written end to end by
+  `arcana run --work-item d931525f-… --ground-truth …` and committed unedited —
+  the index line in `docs/how-to/README.md` is ours. It is the first page
+  registered in `AGENT_WRITTEN_PAGES`, so `prose_claims.rs`'s
+  `every_agent_written_page_is_supported_by_the_source` stops being vacuously
+  green and carries a real page (A2-297b).
+
+### Fixed
+- Cancelled turns cannot invoke a tool through an empty hook chain or after
+  cancellation during final validation or the durable admission audit. Refusals
+  retain a correlated audit result and report operator abort; already-admitted
+  effects are not promised rollback. This is local admission, not remote fencing.
+
+- A matching contract digest alone no longer starts `run --work-item`.
+  Task-run admission requires authenticated task/project/subject binding,
+  independent issuer standing and current non-revoked generation. The shipped
+  authority adapter is unavailable and refuses before model client construction;
+  contract JSON, a local file and an Argana source label cannot authorize a run.
+- Publish the interactive session banner only after SIGINT registration has
+  completed. The real-signal smoke test waits for the full readiness banner,
+  bounds missing readiness, and reaps its child on failure. An unavailable
+  listener retains the existing fallback with a distinct unarmed banner.
+- Explicit empty contract tool allowlists now refuse every tool effect instead
+  of inheriting the default read, grep, write, and edit capabilities.
+- Retain the empty and nonempty test assertions using Rust 1.99-compatible
+  comparison macros under strict Clippy warnings.
+- Muneral reuses Auth Arcana's descriptor-based Unix credential-file checks.
+  Missing files and unsafe owner/permissions/type/size have distinct reasons;
+  status/watch include the rejected condition. FIFOs cannot block file opening.
+  Non-Unix file loading explicitly refuses without an ACL verifier.
+- **A typed refusal printed its code twice.** `ContractRefusal`'s `Display`
+  already opens with the code and every contract call site passes it to
+  `refuse()` as the detail, so an operator read
+  `arcana run: CONTRACT_MISSING: CONTRACT_MISSING: …` on stderr and the same
+  doubling in the done-marker's `error`. Found by writing down the one shape this
+  program prints (A2-297b).
+- **`arcana run --work-item … --ground-truth <PATH>`** quotes a file from the
+  repository into the work item's brief as the authority on names, flags and
+  environment variables, and records each path with the sha256 of the bytes that
+  reached the prompt in the receipt's new `ground_truth` section. A2-285's run
+  produced the page it was asked for and got every command in it wrong: the brief
+  described the deliverable and never showed the command it was about. Grounding
+  is a DECLARATION by whoever dispatches the run, in the same shape as
+  `--read-only` — a repository file such as `arcana run --help` piped out, not
+  prose written for the model to copy, which would make the run a measurement of
+  the operator. A named file that cannot be read or is empty refuses the run
+  (`GROUND_TRUTH_UNREADABLE`, `GROUND_TRUTH_EMPTY`) before the first model call,
+  because a run that silently lost its grounding is indistinguishable in the
+  receipt from a grounded one that went wrong (A2-292).
+- **A command line printed in our documentation is now parsed by the CLI's real
+  clap definition.** `crates/cli/tests/docs_truth.rs` extracts every command in
+  every fenced block under `docs/` and in `README.md`, and runs it through
+  `Cli::try_parse_from`; every `NAME=` assignment in those blocks must occur
+  somewhere in the program outside the docs. It exists because PR #214's
+  `docs/how-to/run-work-item-under-kc2-contract.md` — written end to end by the
+  agent under its KC2 contract, reviewed as an artefact, green on all eight
+  checks — named a binary `aras` (it is `arcana`), a flag `--contract` (it is
+  `--contract-file`, which requires `--work-item`), a flag `--item` (it is
+  `--work-item`), and two environment variables, `KC2_CONTRACT` and
+  `KC2_SNAPSHOT`, that exist nowhere in this repository. "The page was written"
+  and "the page is true" were being measured by the same check, which was the
+  first one only (A2-292).
+
+  Run against that page unedited, the check reports twelve findings and two
+  unknown variables; the page is kept as a fixture so the red is reproducible
+  rather than described. The clap definition moved out of `main.rs` into
+  `arcana_cli::cli` for this: a test parsing against a second copy of the
+  surface would have accepted `--contract` as soon as the copy drifted.
+
+  Names that are not `arcana` but are this tool (`aras`, `arcana-agent-system`,
+  …) are findings in themselves — without that list the check would have passed
+  #214's page in silence, because the page never mentioned the binary at all.
+  Printed OUTPUT is out of scope and stated as such: a parser cannot judge a
+  success line a model invented. Nine dated allowances cover shell locals of the
+  runbooks' own example scripts (`VAULT_*`, `BROKER`, `TAG`); an allowance that
+  excuses nothing any more is itself a failing test.
+
+### Fixed
+- **`write` reported success for writing nothing.** Measured in the A2-285 live
+  run: the model called `write` twice, each call created the same 0-byte file,
+  each was recorded `outcome: success` in the audit log, and the run's effect
+  check read the moved tree digest as progress. Empty or whitespace-only
+  `content` is now refused before any filesystem I/O, with a refusal that names
+  the way to ask for it on purpose — `allow_empty: true`, which is in the schema
+  the model is shown, because an enforced rule nobody stated is a defect of its
+  own (A2-231). Truncating a file still works; it is now declared (A2-292).
+- **The audit log could not tell a written page from a written nothing.** The
+  `result` record kept `output_hash` and nothing else, so the two 0-byte writes
+  above were indistinguishable in the log from a call that wrote the
+  deliverable. The record now carries `bytes_written`, lifted from the tool's own
+  metadata under the constant both ends share
+  (`arcana_core::hooks::audit::BYTES_WRITTEN`). A count carries no file text and
+  no model text, so it can be written in clear where the output cannot; it is
+  `null`, not `0`, for every tool that does not write (A2-292).
+
+### Fixed
+- **Ctrl-C in the first milliseconds of a command no longer kills `arcana`
+  without reporting the spend.** `Interrupt::install` reported success as soon
+  as the `arcana-sigint` thread was spawned, but SIGINT only becomes ours later,
+  inside that thread, once `tokio::signal::unix::signal(SIGINT)` has succeeded.
+  A Ctrl-C arriving between the two got the kernel's DEFAULT disposition and
+  ended the process where it stood — no cost report, no audit line, which is the
+  whole failure the interrupt handler exists to prevent.
+
+  Not theoretical: on a loaded 16-core machine the end-to-end `sigint_real_signal`
+  test, which signals immediately after `install()`, was killed by its own signal
+  in **44 of 200 runs** and 61 of a further 200 (rc 130). It also caused a red
+  check on an unrelated pull request (#216) that does not touch `crates/cli` at
+  all, so a change was blamed for a race that was always there.
+
+  `install` now returns only once the listener reports that it has registered,
+  over a rendezvous channel, and returns `None` — telling the operator Ctrl-C is
+  unarmed — if it cannot within 2 s. The three failure causes are distinguished
+  in the message because they are fixed by different things: the thread would not
+  spawn, the thread gave up before registering, or nothing was heard in time.
+  Only the last leaves the process-wide install latch taken, since that thread
+  may still take the signal and a second listener racing it would be worse than
+  none. After the change the same test passes 250 of 250 under the same load.
+- **A run no longer re-dispatches to a model that cannot answer inside its
+  budget.** Model Connector aborts the provider call it makes for us when that
+  call has consumed the whole per-attempt budget THIS client sent
+  (`ExecuteRequest.timeout`), and reports it as `status: "timeout"` with
+  `retryable: true` — its action map marks every `timeout` that way
+  (`connector.interface.ts:115`). The loop read only the flag, so the class
+  landed in "transient connector failure" and bought two more flat
+  re-dispatches of byte-identical bytes under the identical budget.
+
+  Measured on pilot A2-278 run 5 (2026-09-24, live): `deepseek-v4-pro`, a
+  ~37 000-token turn, 120 s per attempt. The run ended `ConnectorFatal` after
+  **15 attempts, 33 turns and no answer**, having spent $0.086584 on the three
+  dispatches that did return — and two further full 120 s budgets of provider
+  compute that nothing bounded, because Model Connector reports an aborted
+  attempt as `usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }`
+  (`base-api.connector.ts:503-511`) although the provider has already been fed
+  the whole prompt. `--max-cost-usd` is computed from that usage, so it cannot
+  see this class at all.
+
+  An exhausted attempt budget is now terminal on the FIRST refusal, and the
+  verdict names the two things an operator changes: *"the upstream attempt was
+  aborted for spending the 120s this client allows one upstream attempt, and a
+  re-dispatch would send the same prompt to deepseek-v4-pro under the same
+  budget. Raise the per-attempt budget or dispatch to a faster model…"*.
+
+  Narrow on purpose: `queue_timeout` (the request never left Model Connector's
+  queue, so nothing was computed and nothing was charged) and a client-side
+  socket timeout keep their re-dispatches, and a regression test asserts it.
+- **`arcana run` said "Completed" for work it never wrote.** The done-marker's
+  `completed` was decided by the terminal reason and the number of tool calls
+  that executed, and a count cannot tell reading from writing. Pilot A2-278
+  (2026-09-24, `deepseek-v4-flash`, live) ran one Muneral work item twice: runs
+  2 and 4 executed nine and three calls, every one a `read` or a `grep`, wrote
+  nothing, and both ended `"completed":true` with rc `0` while the model
+  described "the documentation page `docs/how-to/run-work-item.md`" — a file
+  that does not exist, containing commands this binary does not have. The guard
+  documented in `docs/how-to/run-one-task-unattended.md` ("`completed` is never
+  `true` with `tool_calls` at `0`") counted the reads and passed them.
+
+  Completion is now tied to an effect a third party can check. The working tree
+  under `--cwd` is digested before the first model call and again after the last
+  one — tracked and untracked files alike, excluding `.git/`, the runner's own
+  `.arcana/`, and everything the repository's `.gitignore` files exclude, so a
+  `cargo build` is not mistaken for an artefact. A run that completed with the
+  digest unmoved ends on **`NoEffect`**: `"completed":false`, exit `1`. Both
+  digests, the executed tools by name, and the successful `write`/`edit` calls
+  are carried in `ARCANA_RUN_DONE` and in the `ReadinessReceipt/v1`.
+
+  A second refusal, measured into existence by the first live run under the new
+  check: that run executed two `write` calls, both of which created the same
+  EMPTY probe file `test-write-check.md`, then described
+  `docs/how-to/run-work-item-under-kc2-contract.md` in four numbered points. The
+  page does not exist — but the tree HAD changed, so the digest alone said
+  `Completed`. An incidental write must not buy a run out of its own claim, so
+  the paths the final message names are looked up on disk and a non-empty
+  `effect.claimed_but_absent` ends the run on **`ClaimedButAbsent`**, exit `1`
+  (printed on stderr as well as carried in the marker). A string scan and a
+  `stat`; no model call. `claimed_but_unchanged` is reported and not refused —
+  a rewrite with identical bytes is ambiguous. And a task that legitimately changes nothing
+  is declared `--read-only` **by the caller, before the run**; nothing the model
+  does during the run can set it. An unmeasurable tree — an unreadable directory
+  or more than 200 000 files — reports `tree_changed: null` and refuses nothing,
+  because `NoEffect` is a refusal and a refusal has to be provable.
+- **A tool call may carry a code fence.** The closing fence of a `tool_call`
+  block used to be the first ```` ``` ```` after the opening one — including a
+  fence inside the JSON payload. Asked on a live contract-bound run for a
+  Markdown how-to page, the model sent a well-formed `write` whose `content`
+  held ```` ```json ````; the body was cut there, the slice was not JSON, and
+  the run ended `UnsupportedToolCallFormat` having written nothing. Every
+  documentation page with a code block in it was unwritable through the runner.
+  The closing fence is now one that STARTS A LINE: the block's body is JSON, so
+  a real newline never occurs inside one of its string literals, which makes
+  that boundary exactly the line between the model's markup and its data. A
+  block with no line-initial fence is still `Unterminated`.
+
+### Changed
+- **A contract-bound run is told how it will be judged.** The brief a
+  `--work-item` run is given now states, in the prompt, that the working
+  directory is digested before the first turn and after the last, that equal
+  digests are `NoEffect`, that a path named in the closing message and absent
+  from disk is `ClaimedButAbsent`, and that a probe file does not help — then
+  asks for the deliverable in a single `write` before anything is said about
+  it. An enforced-but-undisclosed rule is the same defect as no rule at all
+  (A2-231), and this one decides whether the run counts.
+
+  Measured on the same work item and model as the failures above: four live
+  runs under the old brief produced nothing while reporting success, the fifth
+  wrote an empty probe file and described a page it had not written, and the
+  first run under this brief wrote the whole page in one `write` call for
+  $0.009045 (`claimed_but_absent: []`, `changed_paths` naming exactly the page).
+- **The model choice is configuration, and survives an isolated state
+  directory.** It used to be read from `$XDG_STATE_HOME/arcana/model.json`.
+  Every isolated runner overrides that directory so one run's audit log cannot
+  leak into the next, and the choice went with it: a pilot run under an
+  overridden state home fell through to the tiered policy and dispatched its
+  first turn to `grok-3-latest` and its remaining five to `deepseek-v4-flash`,
+  while the lane had pinned a single model. Resolution is now, first answer
+  wins: `--model <id>` → `ARCANA_MODEL` → `$XDG_CONFIG_HOME/arcana/model.json`
+  (where `arcana models use` writes from now on, beside `permissions.toml`) →
+  the old state file, still read but reported as deprecated on stderr → the
+  tiered policy. A resolved model pins every dispatch in the run; the value
+  `tier` in any of the top three slots selects tiered dispatch on purpose, and
+  is reported as a decision rather than as an absence.
+
+  The run prints which source answered before the Model Connector client is
+  built, so it cannot have spent anything by the time it says so:
+  `model: deepseek-v4-flash (source: env)`. A contract-bound run records the
+  same answer in its receipt as `mc_usage.model_source` beside
+  `mc_usage.configured_model` — the intent next to `selected_models`, which is
+  what was dispatched. A receipt that carries only the second cannot tell a
+  lane's choice from a policy filling a gap.
+
+- **A `ReadinessReceipt/v1` written by a run is no longer committable by
+  accident.** `/receipts/ReadinessReceipt-*.json` is ignored. Graph admission
+  reads a committed run receipt as a historical claim — asserted, never
+  re-verified — and returns `not_measured`, which admits the change
+  `PAUSED_SAFE`; the evidence of a paid run belongs in the pull request and in
+  the dispatcher's run directory. `receipts/graph/` stays tracked: an admission
+  receipt is a claim about the change that carries it.
+
+### Added
+- **Every executed work item now leaves a blueprint candidate.** A
+  `--work-item` run writes a `LearningTraceCandidate/v1` next to its receipt:
+  the contract digest it ran under, the ordered steps the audit log records it
+  actually took with the decision and outcome of each, the distinct tools that
+  executed, cost, the receipt linked by digest, and the verification state.
+  KC2's upward half — `LearningTrace` → `PromotionProposal` → `Blueprint` — had
+  no producer at all: all five upward records in the knowledge store were
+  hand-authored, none came out of an executed task.
+
+  Derived, never narrated. Every field comes from the audit log, the contract
+  binding and the driver's counters; there is no model call and the model's own
+  final text is not read. A trace assembled by asking the model what it had
+  done would be the model's account of itself, which is the one kind of
+  evidence a promotion may not rest on. A run that was refused, ran out of
+  budget or changed nothing writes a trace too, marked `negative` — a
+  capability set that succeeds twice and fails nine times is not a blueprint,
+  and that is only visible if the nine were kept. Verification is reported as
+  `not_measured` by name rather than as an empty list of verdicts, so a reader
+  cannot take "nothing ran" for "nothing was wrong".
+
+  The grouping key is the capability set: the distinct tools the run ACTUALLY
+  executed, not the contract's allowlist. It is derived twice, independently —
+  once by reading the durable audit log, once from the driver's own
+  `executed_tools` — and a disagreement marks the trace negative rather than
+  picking a winner. The first live run of this code reported an empty
+  capability set for a run that had executed three tools, because the
+  derivation matched an outcome literal the log has never written, and every
+  unit test agreed with it: the fixtures carried the same wrong literal. The
+  second witness is what that defect bought.
 - **`arcana run --work-item <id>` — one Muneral work item, executed under the
   KC2 contract it is bound to, and a `ReadinessReceipt/v1` that says so.** The
   command is four steps and the first three are refusals. Read the work item

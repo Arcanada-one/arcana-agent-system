@@ -156,7 +156,7 @@ mod tests {
             .validate_input(&json!({ "prompt": "hi", "model": "m", "token": "leak" }))
             .await
             .expect_err("additionalProperties:false must reject an unknown field");
-        assert!(!err.to_string().is_empty());
+        assert_ne!(err.to_string().len(), 0);
     }
 
     #[tokio::test]
