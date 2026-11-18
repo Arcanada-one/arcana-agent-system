@@ -46,6 +46,11 @@ def hash_valid(value):
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def canonical_digest_hex(value):
+    """Return a CanaryResult/v2 stream digest in the shared lowercase-hex comparison form."""
+    return value if hash_valid(value) else None
+
+
 def strings(value, nonempty=False):
     return isinstance(value, list) and (bool(value) or not nonempty) and all(isinstance(x, str) and bool(x) and "\0" not in x for x in value) and len(set(value)) == len(value)
 
@@ -59,6 +64,30 @@ def manifest_errors(items, required=False):
             return ["manifest requires absolute regular-file paths and SHA256"]
         paths.append(item["path"])
     return [] if len(set(paths)) == len(paths) else ["duplicate manifest paths"]
+
+
+def process_entity_path(entity):
+    """Return the canonical source path for a graph-backed process entity, or None."""
+    if not isinstance(entity, str) or "\\" in entity or "\0" in entity:
+        return None
+    if entity.startswith("document:"):
+        path = entity[len("document:"):]
+        if not path.endswith((".md", ".markdown")):
+            return None
+    elif entity.startswith("contract:"):
+        value = entity[len("contract:"):]
+        if value.count("#") != 1:
+            return None
+        path, symbol = value.split("#", 1)
+        if not symbol.isidentifier():
+            return None
+    else:
+        return None
+    parts = Path(path).parts
+    if (not path or Path(path).is_absolute() or Path(path).as_posix() != path
+            or any(part in ("", ".", "..") for part in parts)):
+        return None
+    return path
 
 
 def plan_probe_errors(p):
@@ -101,10 +130,16 @@ def plan_probe_errors(p):
     if not hash_valid(p.get("executable_sha256")):
         errors.append("missing expected executable digest")
     entities = p.get("entities")
-    if not strings(entities, nonempty=True) or any(not re.fullmatch(r"(?:code_unit|config_key):.+", e) for e in entities):
-        errors.append("process evidence supports only code units and config keys")
-    if p.get("mutating") is not True or any(k in p for k in ("status", "url", "method", "path", "auth")):
-        errors.append("process requires explicit mutation scope and no HTTP fields")
+    if not strings(entities, nonempty=True) or any(
+            not (re.fullmatch(r"(?:code_unit|config_key):.+", e)
+                 or re.fullmatch(r"deployable_unit:\S(?:.*\S)?", e)
+                 or process_entity_path(e) is not None)
+            for e in entities):
+        errors.append("process evidence supports code units, config keys, deployable-unit roots, and graph-bound contracts/documents")
+    if type(p.get("mutating")) is not bool:
+        errors.append("process requires an explicit boolean mutation scope")
+    if any(k in p for k in ("status", "url", "method", "path", "auth")):
+        errors.append("process cannot contain HTTP fields")
     return errors
 
 
@@ -115,15 +150,103 @@ def plan_errors(plan):
     for key in ("id", "owner", "environment"):
         if not isinstance(plan.get(key), str) or not plan[key].strip():
             errors.append("missing named plan " + key)
-    if plan.get("read_only") is not False:
-        errors.append("process plans require explicit non-read-only ownership")
+    if type(plan.get("read_only")) is not bool:
+        errors.append("process plans require an explicit boolean read_only scope")
+    producer_root = plan.get("producer_repository")
+    if producer_root is not None and (not isinstance(producer_root, str)
+            or not os.path.isabs(producer_root) or os.path.normpath(producer_root) != producer_root
+            or producer_root == os.path.sep):
+        errors.append("producer_repository must name a canonical absolute repository directory")
     probes = plan.get("probes")
     if not isinstance(probes, list) or not probes:
         return errors + ["missing original process probes"]
     for probe in probes:
         errors.extend(plan_probe_errors(probe))
+        if (isinstance(probe, dict) and type(plan.get("read_only")) is bool
+                and probe.get("mutating") is not (not plan["read_only"])):
+            errors.append("process mutation scope differs from original plan read_only scope")
     if not errors and len({p["id"] for p in probes}) != len(probes):
         errors.append("duplicate original probe ids")
+    graph_entities = [entity for probe in probes if isinstance(probe, dict)
+                      for entity in (probe.get("entities") if isinstance(probe.get("entities"), list) else [])
+                      if process_entity_path(entity) is not None]
+    graph_ref = plan.get("source_graph")
+    graph_keys = {"schema", "source_repo", "source_commit", "source_tree_oid",
+                  "builder_version", "graph_digest"}
+    if graph_entities:
+        if (not isinstance(producer_root, str)
+                or not isinstance(graph_ref, dict) or set(graph_ref) != graph_keys
+                or graph_ref.get("schema") != "RelationshipGraph/v1"
+                or not isinstance(graph_ref.get("source_repo"), str) or not graph_ref["source_repo"].strip()
+                or not isinstance(graph_ref.get("builder_version"), str) or not graph_ref["builder_version"].strip()
+                or any(not isinstance(graph_ref.get(key), str)
+                       or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", graph_ref[key])
+                       for key in ("source_commit", "source_tree_oid"))
+                or not isinstance(graph_ref.get("graph_digest"), str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", graph_ref["graph_digest"])):
+            errors.append("contract/document process evidence requires an exact source graph identity")
+    elif graph_ref is not None:
+        errors.append("source graph identity is only valid when a process claims contract/document entities")
+    # Legacy plans may omit producer_repository and retain their inventory-based freshness
+    # behavior. When a root is declared, untyped rows must stay beneath it. StageEvidence applies
+    # its stricter source-root requirement at admission; this generic producer must not impose it
+    # on legacy canary plans.
+    for probe in probes:
+        if not isinstance(probe, dict) or not isinstance(probe.get("execution_files"), list):
+            continue
+        rows = probe["execution_files"]
+        attributed = [isinstance(row, dict) and "attribution" in row for row in rows]
+        if any(attributed) and not all(attributed):
+            errors.append("execution input attribution is incomplete")
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("path"), str):
+                continue
+            path = Path(row["path"])
+            if (not path.is_absolute() or os.path.normpath(row["path"]) != row["path"]
+                    or ".." in path.parts):
+                errors.append("execution input path is not a normalized absolute path")
+                continue
+            if "attribution" in row and row["attribution"] is None:
+                errors.append("execution input attribution cannot be null")
+                continue
+            attribution = row.get("attribution")
+            if attribution is None:
+                if producer_root is not None:
+                    try:
+                        path.relative_to(Path(producer_root))
+                    except (TypeError, ValueError):
+                        errors.append("untyped execution input is outside the declared product source root")
+                continue
+            if not isinstance(attribution, dict) or not isinstance(attribution.get("kind"), str):
+                errors.append("execution input attribution is malformed")
+                continue
+            kind = attribution["kind"]
+            if kind == "product_source":
+                if set(attribution) != {"kind"} or producer_root is None:
+                    errors.append("product execution input requires the single declared source root")
+                    continue
+                try:
+                    path.relative_to(Path(producer_root))
+                except (TypeError, ValueError):
+                    errors.append("product execution input is outside the declared source root")
+            elif kind == "program_producer":
+                # The measured subject evidence below binds only producer_repository. There is no
+                # independent source record/Git object reference for this external repository, so
+                # repeating source_id and a content hash cannot authenticate its origin.
+                errors.append("program producer source identity has no verifiable source record")
+            elif kind == "system_executable":
+                # version is deliberately the measured content digest, not a package version.
+                if (set(attribution) != {"kind", "source_id", "version"}
+                        or not isinstance(attribution.get("source_id"), str)
+                        or not attribution["source_id"].strip()
+                        or not isinstance(attribution.get("version"), str)
+                        or attribution["version"] != "sha256:" + row.get("sha256", "")):
+                    errors.append("external execution input requires explicit source identity and measured content version")
+                elif kind == "system_executable" and attribution["source_id"] != row["path"]:
+                    errors.append("system executable identity must name its exact measured path")
+            else:
+                errors.append("unsupported execution input attribution kind")
     return errors
 
 
@@ -174,6 +297,28 @@ def result_errors(result):
     for key in ("execution_files", "artifacts"):
         items = result.get(key)
         if not isinstance(items, list) or any(not isinstance(i, dict) or not isinstance(i.get("path"), str) or type(i.get("matched")) is not bool or (i.get("sha256") is not None and not hash_valid(i["sha256"])) or (i.get("bytes") is not None and (type(i["bytes"]) is not int or i["bytes"] < 0)) for i in items): errors.append("invalid observed manifest " + key)
+        if key == "execution_files" and isinstance(items, list):
+            for item in items:
+                attribution = item.get("attribution") if isinstance(item, dict) else None
+                if isinstance(item, dict) and "attribution" in item and attribution is None:
+                    errors.append("observed execution input attribution cannot be null")
+                    continue
+                if attribution is None:
+                    continue
+                if isinstance(attribution, dict) and attribution.get("kind") == "program_producer":
+                    errors.append("program producer source identity has no verifiable source record")
+                    continue
+                if (not isinstance(attribution, dict)
+                        or attribution.get("kind") not in ("product_source", "program_producer", "system_executable")
+                        or (attribution.get("kind") == "product_source" and set(attribution) != {"kind"})
+                        or (attribution.get("kind") in ("program_producer", "system_executable")
+                            and (set(attribution) != {"kind", "source_id", "version"}
+                                 or not isinstance(attribution.get("source_id"), str)
+                                 or not attribution["source_id"].strip()
+                                 or attribution.get("version") != "sha256:" + str(item.get("sha256", ""))))
+                        or (attribution.get("kind") == "system_executable"
+                            and attribution.get("source_id") != item.get("path"))):
+                    errors.append("invalid observed execution input attribution")
     if not hash_valid(result.get("invocation_digest")): errors.append("invalid invocation digest")
     if result.get("executable_sha256") is not None and not hash_valid(result["executable_sha256"]): errors.append("invalid executable digest")
     if not strings(result.get("environment_keys")): errors.append("invalid observed environment names")
@@ -197,13 +342,37 @@ def host_cannot_reach(exc) -> bool:
     Forgiving it is safe and changes no verdict upward: the branch it reaches records the entry in
     `execution_freshness_not_measured` BY NAME, the committed pins are still checked, and
     `not_measured` is never read as a pass (DEC-AUP-0008 I4). What stays a refusal is the case the
-    discriminator is for: if ANY of the inventory resolves, the tree IS on this host and a missing
-    or unreadable member is a removal.
+    discriminator is for: if ANY producer-specific inventory path resolves, the tree IS on this
+    host and a missing or unreadable member is a removal. Shared system tools are filtered out by
+    `_shared_toolchain_path` below; their presence says nothing about the producer checkout.
     """
     return isinstance(exc, (FileNotFoundError, NotADirectoryError, PermissionError))
 
 
-def bound_errors(doc, read):
+_SHARED_TOOLCHAIN_DIRS = (
+    "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+    # The arcana-prd-general runner's actions/setup-python installation. This
+    # runner-wide tool is not evidence that the producer checkout is local.
+    "/opt/arcanada-runners/arcana-prd-general/_work/_tool/Python",
+)
+
+
+def _shared_toolchain_path(path):
+    """A host executable is not proof that the producer's project tree is present.
+
+    Legacy plans do not carry `producer_repository`, so their discriminator uses the input
+    inventory. Exclude only standard system executable directories from that presence check;
+    project and canary-input paths still make a partial local tree visible and keep missing-member
+    refusals intact.
+    """
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return False
+    normalized = os.path.normpath(path)
+    return any(normalized == root or normalized.startswith(root + os.sep)
+               for root in _SHARED_TOOLCHAIN_DIRS)
+
+
+def bound_errors(doc, read, repo=None):
     """Read original hash-bound plan and recompute its full entity/probe coverage.
 
     `read` maps a reference the result carries to the bytes of the document BESIDE it — from git
@@ -219,10 +388,77 @@ def bound_errors(doc, read):
         plan = json.loads(raw)
         errors = plan_errors(plan)
         if errors: return errors
-        if plan["id"] != ref["id"] or plan["environment"] != doc["environment"] or plan["owner"] != doc.get("mutating_owner") or doc.get("read_only") is not False or plan.get("subject") != doc.get("subject"):
+        owner_field = "observation_owner" if plan["read_only"] else "mutating_owner"
+        other_owner_field = "mutating_owner" if plan["read_only"] else "observation_owner"
+        if (plan["id"] != ref["id"] or plan["environment"] != doc["environment"]
+                or plan["owner"] != doc.get(owner_field) or other_owner_field in doc
+                or doc.get("read_only") is not plan["read_only"]
+                or plan.get("subject") != doc.get("subject")):
             return ["process plan identity/subject differs from result"]
         if doc.get("source_binding_errors") != []:
             return ["producer could not preserve source attribution"]
+        producer_root = plan.get("producer_repository")
+        if producer_root is not None:
+            source_ref = plan.get("subject", {}).get("evidence", {})
+            source_raw = read(source_ref.get("path"))
+            source = json.loads(source_raw)
+            if (digest(source_raw) != source_ref.get("sha256")
+                    or source.get("schema") != "MeasuredGitSource/v1"
+                    or source.get("repository_path") != producer_root):
+                return ["producer repository is not anchored in original hash-bound Git source evidence"]
+        graph_entities = [entity for probe in plan["probes"] for entity in probe["entities"]
+                          if process_entity_path(entity) is not None]
+        if graph_entities:
+            if repo is None:
+                return ["source-bound process graph cannot be checked without its Git repository"]
+            graph_ref = plan["source_graph"]
+            source_commit = plan["subject"]["commit"]
+            try:
+                import build_graph
+                graph = build_graph.build(Path(repo), rev=source_commit,
+                                          built_at=build_graph.FIXED_BUILT_AT)
+                manifest = graph.get("manifest", {})
+                tree_oid = subprocess.check_output(
+                    ["git", "-C", str(repo), "rev-parse", "--verify", source_commit + "^{tree}"],
+                    text=True, stderr=subprocess.DEVNULL, timeout=10).strip()
+            except (ImportError, OSError, ValueError, TypeError, KeyError,
+                    subprocess.SubprocessError, RuntimeError):
+                return ["source-bound process graph cannot be rebuilt from its measured Git commit"]
+            if (manifest.get("schema") != "RelationshipGraph/v1"
+                    or manifest.get("source_commit") != source_commit
+                    or graph_ref.get("source_commit") != source_commit
+                    or graph_ref.get("source_tree_oid") != tree_oid
+                    or manifest.get("source_repo") != graph_ref.get("source_repo")
+                    or manifest.get("builder_version") != graph_ref.get("builder_version")
+                    or manifest.get("graph_digest") != graph_ref.get("graph_digest")):
+                return ["source graph identity differs from the exact measured Git source"]
+            nodes = {node.get("id"): node for node in graph.get("nodes", [])
+                     if isinstance(node, dict) and isinstance(node.get("id"), str)}
+            for probe in plan["probes"]:
+                inputs = set()
+                for row in probe.get("execution_files", []):
+                    if not isinstance(row, dict):
+                        continue
+                    attribution = row.get("attribution")
+                    if not isinstance(attribution, dict) or attribution != {"kind": "product_source"}:
+                        continue
+                    try:
+                        inputs.add(Path(row["path"]).relative_to(Path(producer_root)).as_posix())
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                for entity in probe["entities"]:
+                    path = process_entity_path(entity)
+                    if path is None:
+                        continue
+                    prefix, _, _ = entity.partition(":")
+                    node = nodes.get(entity)
+                    if (not isinstance(node, dict) or node.get("type") != prefix
+                            or node.get("path") != path
+                            or (prefix == "contract" and node.get("symbol") != entity.rsplit("#", 1)[-1])
+                            or (node.get("attrs") or {}).get("vendored") is True):
+                        return [f"process entity {entity} is not the exact supported source graph node"]
+                    if path not in inputs:
+                        return [f"process probe {probe['id']} has no product-source input for entity {entity}"]
         unmeasured = []
         # A2-263 §5.2. Is the producer's scratch tree HERE at all? `execution_files` and
         # `artifacts` are absolute paths on the machine that ran the probes, and re-digesting them
@@ -234,7 +470,15 @@ def bound_errors(doc, read):
         # simply not on this host and the document is judged on its committed pins instead.
         inventory = [item["path"] for pr in plan["probes"] for key in ("execution_files", "artifacts")
                      for item in pr.get(key, []) if isinstance(item, dict) and isinstance(item.get("path"), str)]
-        tree_present = any(os.path.exists(x) for x in inventory)
+        # A shared /usr/bin executable says nothing about whether this host can
+        # read the producing checkout. The producer validates the optional root
+        # against its actual Git checkout before and after execution; its source
+        # evidence and original plan both bind that root. Legacy plans retain
+        # their existing inventory discriminator.
+        tree_present = (os.path.isdir(producer_root) if producer_root is not None
+                        else any(os.path.exists(x) for x in inventory
+                                 if not _shared_toolchain_path(x)))
+        remote_origin = producer_root is not None and not tree_present
         plans = {p["id"]: p for p in plan["probes"]}
         if {p["id"] for p in doc["probes"]} != set(plans): return ["process result omits or adds original probes"]
         expected_entities = {}
@@ -255,13 +499,16 @@ def bound_errors(doc, read):
             if not set(result["environment_keys"]).issubset(p.get("env_keys", [])): errors.append("undeclared process environment names")
             if result["executed"]:
                 if result.get("executable_sha256") != p["executable_sha256"]: errors.append("executable identity differs from original plan")
-                try:
-                    if file_digest(p["argv"][0])[0] != p["executable_sha256"]: errors.append("executable changed since observation")
-                except (OSError, ValueError) as exc:
-                    if tree_present or not host_cannot_reach(exc):
-                        errors.append("executable is no longer verifiable")
-                    else:
-                        unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
+                if remote_origin:
+                    unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
+                else:
+                    try:
+                        if file_digest(p["argv"][0])[0] != p["executable_sha256"]: errors.append("executable changed since observation")
+                    except (OSError, ValueError) as exc:
+                        if tree_present or not host_cannot_reach(exc):
+                            errors.append("executable is no longer verifiable")
+                        else:
+                            unmeasured.append(f"{result['id']}: executable {p['argv'][0]}")
             cap = p.get("capture_limit_bytes", MAX_CAPTURE)
             captured = sum(x["captured_bytes"] for x in result["streams"].values())
             if captured > cap:
@@ -274,7 +521,18 @@ def bound_errors(doc, read):
                 actuals, expected = result[key], p.get(key, [])
                 if [a["path"] for a in actuals] != [a["path"] for a in expected]: errors.append("manifest differs from original plan")
                 for actual, item in zip(actuals, expected):
+                    if actual.get("attribution") != item.get("attribution"):
+                        errors.append("observed execution input attribution differs from original plan")
                     # Execution inputs remain hash-verifiable; streams are deliberately not retained.
+                    if remote_origin:
+                        if (not re.fullmatch(r"[0-9a-f]{64}", str(actual.get("sha256")))
+                                or not isinstance(actual.get("bytes"), int)):
+                            errors.append("execution manifest entry records no usable digest")
+                        elif actual["matched"] != (actual["sha256"] == item["sha256"]):
+                            errors.append("artifact or execution input changed/unverifiable")
+                        else:
+                            unmeasured.append(f"{result['id']}: {key} {item['path']}")
+                        continue
                     try:
                         h, size = file_digest(item["path"], MAX_CAPTURE if key == "artifacts" else 512 * 1024 * 1024)
                         if actual.get("sha256") != h or actual.get("bytes") != size or actual["matched"] != (h == item["sha256"]): errors.append("artifact or execution input changed/unverifiable")
@@ -314,9 +572,15 @@ def observed_manifest(items, limit):
     for item in items:
         try:
             h, size = file_digest(item["path"], limit)
-            result.append({"path": item["path"], "sha256": h, "bytes": size, "matched": h == item["sha256"]})
+            row = {"path": item["path"], "sha256": h, "bytes": size, "matched": h == item["sha256"]}
+            if "attribution" in item:
+                row["attribution"] = dict(item["attribution"])
+            result.append(row)
         except (OSError, ValueError):
-            result.append({"path": item["path"], "sha256": None, "bytes": None, "matched": False})
+            row = {"path": item["path"], "sha256": None, "bytes": None, "matched": False}
+            if "attribution" in item:
+                row["attribution"] = dict(item["attribution"])
+            result.append(row)
     return result
 
 
