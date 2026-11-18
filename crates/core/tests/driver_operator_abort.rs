@@ -228,7 +228,7 @@ async fn the_abort_is_written_to_the_audit_log_with_what_it_cost() {
     // has to say what we dispatched either way. Pinned against the run output
     // rather than a literal id, so a policy change cannot silently de-sync the
     // two without failing here.
-    assert!(!out.selected_models.is_empty());
+    assert_ne!(out.selected_models.len(), 0);
     assert_eq!(
         record["fields"]["run_models"],
         serde_json::to_value(&out.selected_models).expect("models encode")
@@ -367,7 +367,7 @@ async fn the_recorded_cost_is_the_session_total_and_says_so() {
     .run("first task")
     .await;
     assert_eq!(out.reason, TerminalReason::Completed);
-    assert!(run_records(&audit).is_empty());
+    assert_eq!(run_records(&audit).len(), 0);
 
     let cancel = CancellationToken::new();
     let second = CancelsMidCall {

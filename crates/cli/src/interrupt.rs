@@ -30,9 +30,25 @@
 //! spawned there would be scheduled during a turn and nowhere else — including
 //! while the piped reader is blocked on stdin, where an un-handled SIGINT is
 //! the operator's only way out.
+//!
+//! ## Why `install` waits
+//!
+//! Spawning that thread is not the same as being armed. Between the spawn and
+//! the moment tokio's `signal(SIGINT)` has actually replaced the disposition
+//! there is a window in which a Ctrl-C still gets the *default* disposition and
+//! ends the process where it stood — no cost report, no audit line, precisely
+//! the failure this module exists to prevent. The window is small and entirely
+//! real: measured on a loaded 16-core runner, an `install()` that returned
+//! before registration lost that race in 44 of 200 runs (A2-296).
+//!
+//! So `install` returns only once the listener says it is registered, and if it
+//! cannot say so within `REGISTER_TIMEOUT` the caller is told that Ctrl-C is
+//! unarmed rather than left to assume it is armed.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -49,6 +65,45 @@ arcana: interrupt received — stopping after the request already sent.
         That request will be charged whether or not this process waits, so it
         waits for the reply and reports the amount. Press Ctrl-C again to exit
         now (the charge still applies, you just will not be shown it).";
+
+/// How long `install` waits for the listener to report its registration.
+///
+/// Generous on purpose: the listener has to be scheduled and build a runtime
+/// first, and on a loaded machine that is milliseconds, not microseconds. The
+/// bound exists so a listener that never registers cannot hang the CLI, not to
+/// police its speed.
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The listener's end of the readiness handshake.
+///
+/// Sending consumes it, so "registered" can be reported exactly once; dropping
+/// it without sending is how a listener that gave up before registering tells
+/// `install` so, with no separate error channel to keep in step.
+struct ReadySender(SyncSender<()>);
+
+impl ReadySender {
+    /// Report that SIGINT is now ours. Ignores a closed channel: `install` gave
+    /// up waiting, which changes nothing about listening from here on.
+    fn registered(self) {
+        let _ignored = self.0.send(());
+    }
+}
+
+/// Why the listener never became usable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartError {
+    /// The thread could not be spawned at all. Carries the kind rather than the
+    /// whole `io::Error` so the enum stays `Copy`, while the operator still
+    /// learns which limit the machine hit.
+    Spawn(std::io::ErrorKind),
+    /// The thread ran and gave up before registering (no runtime, or tokio
+    /// refused the signal). Nothing is listening and nothing will be.
+    Registration,
+    /// No answer within `REGISTER_TIMEOUT`. Unlike the other two this is not a
+    /// proof of failure: the thread may still register a moment later, which is
+    /// why the install latch stays taken.
+    Timeout,
+}
 
 /// The slot the signal listener cancels, plus the process-wide install latch.
 struct Shared {
@@ -97,20 +152,51 @@ impl Interrupt {
         if INSTALLED.swap(true, Ordering::SeqCst) {
             return None;
         }
+        match Self::start(listen, REGISTER_TIMEOUT) {
+            Ok(this) => Some(this),
+            Err(err) => {
+                eprintln!(
+                    "arcana: {}; Ctrl-C will end the process without reporting the spend",
+                    unarmed_reason(err)
+                );
+                // A timeout is the one case where the thread may yet take the
+                // signal, so the latch stays taken: releasing it would let a
+                // later `install` spawn a second listener racing the first.
+                if err != StartError::Timeout {
+                    INSTALLED.store(false, Ordering::SeqCst);
+                }
+                None
+            }
+        }
+    }
+
+    /// Spawn a listener and return only once it reports being registered.
+    ///
+    /// Separate from `install` so both halves are testable: this one takes the
+    /// listener body and the bound as arguments and touches no process-wide
+    /// state, so a test can substitute a listener that fails, or one that is
+    /// slow to register, and run more than once in a single test binary.
+    fn start<F>(body: F, wait: Duration) -> Result<Self, StartError>
+    where
+        F: FnOnce(&Arc<Shared>, ReadySender) + Send + 'static,
+    {
         let shared = Arc::new(Shared {
             turn: Mutex::new(None),
         });
         let listener = Arc::clone(&shared);
-        let started = std::thread::Builder::new()
+        // A rendezvous channel: one slot is all the handshake needs, and the
+        // listener must not be able to run ahead of a receiver that is gone.
+        let (ready_tx, ready_rx): (SyncSender<()>, Receiver<()>) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
             .name("arcana-sigint".to_owned())
-            .spawn(move || listen(&listener));
-        match started {
-            Ok(_handle) => Some(Self { shared }),
-            Err(err) => {
-                eprintln!("arcana: could not install the interrupt handler ({err}); Ctrl-C will end the process without reporting the spend");
-                INSTALLED.store(false, Ordering::SeqCst);
-                None
-            }
+            .spawn(move || body(&listener, ReadySender(ready_tx)))
+            .map_err(|err| StartError::Spawn(err.kind()))?;
+        match ready_rx.recv_timeout(wait) {
+            Ok(()) => Ok(Self { shared }),
+            // The sender was dropped without sending: the listener gave up
+            // before registering and said so by ending.
+            Err(RecvTimeoutError::Disconnected) => Err(StartError::Registration),
+            Err(RecvTimeoutError::Timeout) => Err(StartError::Timeout),
         }
     }
 
@@ -131,6 +217,24 @@ impl Interrupt {
     }
 }
 
+/// What to tell the operator when Ctrl-C could not be armed.
+///
+/// One sentence per cause, because the three are fixed by different things: a
+/// spawn failure is the machine out of threads, a registration failure is this
+/// process' signal state, and a timeout is a listener that may simply be late.
+fn unarmed_reason(err: StartError) -> String {
+    match err {
+        StartError::Spawn(kind) => {
+            format!("could not start the interrupt handler thread ({kind:?})")
+        }
+        StartError::Registration => "the interrupt handler could not take over SIGINT".to_owned(),
+        StartError::Timeout => format!(
+            "the interrupt handler did not register SIGINT within {}s",
+            REGISTER_TIMEOUT.as_secs()
+        ),
+    }
+}
+
 /// What one SIGINT means, given what is running.
 ///
 /// Split from the acting on it so all three cases are testable: the `Exit` arm
@@ -147,11 +251,12 @@ enum Decision {
 
 /// The listener loop. One rule: if a live, not-yet-cancelled turn is armed,
 /// cancel it; otherwise leave.
-fn listen(shared: &Arc<Shared>) {
+fn listen(shared: &Arc<Shared>, ready: ReadySender) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
+        // `ready` drops unsent: `install` reads that as "never registered".
         return;
     };
     runtime.block_on(async {
@@ -160,6 +265,10 @@ fn listen(shared: &Arc<Shared>) {
         else {
             return;
         };
+        // Only now is SIGINT ours rather than the kernel's default. Announcing
+        // it any earlier is what let a Ctrl-C in the first milliseconds kill
+        // the process with the spend unreported (A2-296).
+        ready.registered();
         while signals.recv().await.is_some() {
             match decide(shared) {
                 Decision::CancelTurn => {}
@@ -224,8 +333,10 @@ pub fn arm(interrupt: Option<&Interrupt>) -> (CancellationToken, Option<TurnGuar
 
 #[cfg(test)]
 mod tests {
-    use super::{decide, Decision, Shared};
+    use super::{decide, unarmed_reason, Decision, ReadySender, Shared, StartError};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tokio_util::sync::CancellationToken;
 
     fn shared_with(token: Option<CancellationToken>) -> Arc<Shared> {
@@ -328,5 +439,88 @@ mod tests {
             .turn
             .lock()
             .is_ok_and(|slot| slot.is_none()));
+    }
+
+    // ---- the readiness handshake (A2-296) ----
+    //
+    // The three tests below are about the WINDOW, not the decision: what
+    // `install` is allowed to return while SIGINT still has its default
+    // disposition. They drive `start` with a substituted listener body because
+    // the real one blocks forever on `signals.recv()`, and because the process
+    // can only ever hold one real listener.
+
+    /// A listener that never registers must not be reported as installed.
+    ///
+    /// No timing in this one at all: the body returns without sending, so the
+    /// only way to answer is to have waited for an answer. Against an `install`
+    /// that returned as soon as the thread was spawned this is red every run,
+    /// which is the property the end-to-end signal test cannot give us.
+    #[test]
+    fn a_listener_that_never_registers_is_not_reported_as_installed() {
+        let started = Arc::new(AtomicBool::new(false));
+        let ran = Arc::clone(&started);
+        let err = super::Interrupt::start(
+            move |_shared, _ready: ReadySender| {
+                ran.store(true, Ordering::SeqCst);
+                // Give up exactly as the real `listen` does when the runtime or
+                // `signal()` fails: return, dropping `_ready` unsent.
+            },
+            Duration::from_secs(5),
+        )
+        .err();
+        assert_eq!(err, Some(StartError::Registration));
+        assert!(
+            started.load(Ordering::SeqCst),
+            "the body never ran, so this proved nothing"
+        );
+    }
+
+    /// `install` returns only AFTER registration, never merely after the spawn.
+    ///
+    /// The body records its registration in a flag the test reads on the very
+    /// next line. A `start` that does not wait sees `false`: the flag cannot be
+    /// set before the sleep has elapsed.
+    #[test]
+    fn start_returns_only_after_the_listener_has_registered() {
+        let registered = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&registered);
+        let interrupt = super::Interrupt::start(
+            move |_shared, ready| {
+                // Stands in for building a runtime and calling `signal()`, slow
+                // enough that "did not wait" and "waited" cannot be confused.
+                std::thread::sleep(Duration::from_millis(500));
+                flag.store(true, Ordering::SeqCst);
+                ready.registered();
+                // The real listener blocks here; this one returning is fine,
+                // the handshake is already complete.
+            },
+            Duration::from_secs(10),
+        );
+        assert!(interrupt.is_ok(), "a listener that registered was rejected");
+        assert!(
+            registered.load(Ordering::SeqCst),
+            "start() returned while SIGINT still had the default disposition"
+        );
+    }
+
+    /// A listener that is neither dead nor registered is a timeout, and the
+    /// operator is told the bound rather than a bare failure.
+    #[test]
+    fn a_listener_that_does_not_answer_in_time_is_a_timeout() {
+        let err = super::Interrupt::start(
+            |_shared, ready| {
+                // Hold the sender without sending: not disconnected, not ready.
+                std::thread::sleep(Duration::from_secs(2));
+                drop(ready);
+            },
+            Duration::from_millis(50),
+        )
+        .err();
+        assert_eq!(err, Some(StartError::Timeout));
+        let told = unarmed_reason(StartError::Timeout);
+        assert!(
+            told.contains("2s"),
+            "the message must name the bound it waited: {told}"
+        );
     }
 }

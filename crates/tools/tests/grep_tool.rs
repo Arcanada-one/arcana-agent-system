@@ -45,7 +45,7 @@ async fn grep_no_match_returns_empty() {
         }))
         .await
         .expect("grep ok");
-    assert!(output.content.is_empty());
+    assert_eq!(output.content.len(), 0);
     assert_eq!(output.metadata.unwrap()["match_count"], 0);
 }
 

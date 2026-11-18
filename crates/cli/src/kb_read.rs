@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(report.attempts, 1);
         assert_eq!(report.searches, 1, "the search completed");
         assert_eq!(report.hits, 0);
-        assert!(report.sources.is_empty());
+        assert_eq!(report.sources.len(), 0);
     }
 
     #[tokio::test]
@@ -936,7 +936,7 @@ mod tests {
 
         assert_eq!(report.outcome, KbReadOutcome::NoMatches);
         assert_eq!(report.hits, 0);
-        assert!(report.sources.is_empty());
+        assert_eq!(report.sources.len(), 0);
         // The load-bearing assertion: the model's ungrounded sentence is gone.
         assert!(
             report.final_text.is_empty(),
