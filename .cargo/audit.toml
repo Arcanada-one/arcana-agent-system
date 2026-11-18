@@ -1,0 +1,5 @@
+[advisories]
+# Informational unmaintained advisory with no patched version and no vulnerability;
+# chrono is a non-optional dependency of rmcp (3.9.0 and latest 3.11.0).
+# Re-review by 2026-12-17; see accepted-risk.yml for the owner decision and reverse_if.
+ignore = ["RUSTSEC-2026-0543"]

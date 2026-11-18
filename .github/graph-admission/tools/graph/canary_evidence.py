@@ -5,6 +5,7 @@ is trusted evidence, explicitly scoped to the committed Git subject checked here
 """
 from __future__ import annotations
 import os
+import posixpath
 import stat
 import hashlib
 import json
@@ -340,9 +341,11 @@ def ledger_append_errors(repo, candidate_commit, candidate_entries, path, before
     new_atts, old_atts = new.get("attachments"), old.get("attachments")
     if not isinstance(new_atts, list) or not isinstance(old_atts, list):
         return [f"{path} is evidence the gate itself reads and carries no attachments list"]
-    if {k: v for k, v in new.items() if k != "attachments"} != {k: v for k, v in old.items() if k != "attachments"} and before is not None:
+    record_fields = {"attachments", "updated_at_utc"}
+    if ({k: v for k, v in new.items() if k not in record_fields}
+            != {k: v for k, v in old.items() if k not in record_fields} and before is not None):
         return [f"{path} is evidence the gate itself reads: a record commit may append an attachment "
-                f"and change nothing else about the entry"]
+                f"and update updated_at_utc, but may change no other entry field"]
     if len(new_atts) <= len(old_atts) or new_atts[:len(old_atts)] != old_atts:
         return [f"{path} is evidence the gate itself reads: only an APPEND may be skipped over, and "
                 f"this delta rewrites, reorders or removes what was already recorded"]
@@ -371,13 +374,87 @@ def ledger_append_errors(repo, candidate_commit, candidate_entries, path, before
     return errors
 
 
-def record_delta_errors(repo, measured_commit, candidate_commit, executed=()):
+def pinned_closure(doc):
+    """Normalized execution closure of a result, or None when it cannot be read.
+
+    Readable means: at least one probe lists `execution_files`, and EVERY listed item is an object with
+    a string path and a 64-hex sha256. Anything else is not a pinned closure, and the base-branch
+    allowance below does not apply (DEC-AUP-0040 R1 stays exactly as strict as before).
+    """
+    out = set()
+    if not isinstance(doc, dict) or not isinstance(doc.get("probes"), list):
+        return None
+    for probe in doc["probes"]:
+        if not isinstance(probe, dict):
+            return None
+        files = probe.get("execution_files")
+        if files is None:
+            continue
+        if not isinstance(files, list):
+            return None
+        for item in files:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not item["path"] \
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", ""))):
+                return None
+            out.add(posixpath.normpath(item["path"]))
+    return out or None
+
+
+def _in_closure(path, closure):
+    return any(x == path or x.endswith("/" + path) for x in closure)
+
+
+def base_merged_paths(repo, measured_commit, candidate_commit, base_branch=None):
+    """Paths whose candidate entry is the BASE BRANCH's own entry, brought in by a first-parent merge.
+
+    Same ground rules as DEC-AUP-0051 (admit_change.split_base_branch_merge): the base branch is named by
+    the caller or read from refs/remotes/origin/HEAD, never guessed; every merged-in parent must be an
+    ancestor of it (a sideways merge proves nothing); and a path counts only when its (mode, object id)
+    at the candidate equals the one at the merge-base of the base branch and the candidate, i.e. this
+    change wrote nothing there. Returns (set | None, why).
+    """
+    def run(*a):
+        return subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True,
+                              timeout=GIT_TIMEOUT_SECONDS)
+    try:
+        ref = base_branch
+        if not ref:
+            sym = run("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+            ref = sym.stdout.strip() if sym.returncode == 0 else ""
+        if not ref or run("rev-parse", "--verify", ref + "^{commit}").returncode != 0:
+            return None, "no resolvable base branch (no --base-branch and no refs/remotes/origin/HEAD)"
+        merges = [l.split() for l in run("rev-list", "--merges", "--first-parent", "--parents",
+                                         f"{measured_commit}..{candidate_commit}").stdout.splitlines()]
+        merges = [m for m in merges if len(m) >= 3]
+        if not merges:
+            return None, "no merge commit on the first-parent line after the measured subject"
+        for m in merges:
+            for parent in m[2:]:
+                if run("merge-base", "--is-ancestor", parent, ref).returncode != 0:
+                    return None, f"merge {m[0][:12]} brings in {parent[:12]}, which is not an ancestor of {ref}"
+        anchor = run("merge-base", ref, candidate_commit).stdout.strip()
+        if not anchor:
+            return None, f"{ref} and the candidate have no merge base"
+        at_anchor, at_head = tree_entries(repo, anchor), tree_entries(repo, candidate_commit)
+        at_measured = tree_entries(repo, measured_commit)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, "the base-branch merge cannot be decided in this repository"
+    return {p for p in set(at_head) | set(at_anchor) | set(at_measured)
+            if at_head.get(p) == at_anchor.get(p) and at_head.get(p) != at_measured.get(p)}, ""
+
+
+def record_delta_errors(repo, measured_commit, candidate_commit, executed=(), *, closure=None, base_branch=None):
     """DEC-AUP-0040 R1: every refusal is named, and a path is named with it.
 
     Returns [] only when `measured_commit` is an ancestor of `candidate_commit` AND every path whose
     (mode, object id) differs between the two trees is a record document: inside RECORD_NAMESPACES,
     outside RECORD_DENIED_PREFIXES, not a dotfile, one of RECORD_SUFFIXES, landing as a regular
     non-executable file of unchanged type, and not a path the canary's own probes executed.
+
+    One further allowance, only when `closure` (see `pinned_closure`) is given: a NON-record path may
+    differ if the candidate carries the base branch's own entry there (it arrived by a first-parent
+    base-branch merge, not by this change -- see `base_merged_paths`) AND it is not in the pinned
+    execution closure. Without `closure`, or without a decidable base-branch merge, nothing changes.
     """
     try:
         ancestry = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor",
@@ -394,11 +471,16 @@ def record_delta_errors(repo, measured_commit, candidate_commit, executed=()):
     except (OSError, ValueError, subprocess.SubprocessError):
         return ["the trees of the measured subject and the candidate cannot be enumerated"]
     errors = []
+    merged = None
+    if closure:
+        merged, _why = base_merged_paths(repo, measured_commit, candidate_commit, base_branch)
     for path in sorted(set(measured) | set(candidate)):
         before, after = measured.get(path), candidate.get(path)
         if before == after:
             continue
         if not any(path.startswith(ns) for ns in RECORD_NAMESPACES):
+            if merged and path in merged and not _in_closure(path, closure):
+                continue
             errors.append(f"{path} is not a record document: the delta between the measured subject and "
                           f"the candidate may only touch {', '.join(RECORD_NAMESPACES)}")
             continue
@@ -426,7 +508,7 @@ def record_delta_errors(repo, measured_commit, candidate_commit, executed=()):
     return errors[:MAX_REPORTED_DELTA_PATHS]
 
 
-def source_errors(doc, read, repo, commit, *, dirty=False):
+def source_errors(doc, read, repo, commit, *, dirty=False, base_branch=None):
     if dirty:
         return ["dirty worktree has no supported immutable measured subject"]
     subject = doc.get("subject")
@@ -449,7 +531,8 @@ def source_errors(doc, read, repo, commit, *, dirty=False):
                 return ["measured subject commit does not resolve in this repository"]
             if resolved_commit != measured_commit or measured_tree != resolved_tree:
                 return ["measured subject tree is not the tree of the measured subject commit"]
-            delta = record_delta_errors(repo, measured_commit, actual_commit, executed_paths(doc))
+            delta = record_delta_errors(repo, measured_commit, actual_commit, executed_paths(doc),
+                                        closure=pinned_closure(doc), base_branch=base_branch)
             if delta:
                 return delta
         else:
@@ -473,7 +556,7 @@ def source_errors(doc, read, repo, commit, *, dirty=False):
     return []
 
 
-def consume(path, repo, commit, *, dirty=False, at_head=None):
+def consume(path, repo, commit, *, dirty=False, at_head=None, base_branch=None):
     """Return normalized rows and errors; invalid evidence never yields PASS.
 
     `at_head` — the repo-relative path of the result document. When given, EVERY read (the document
@@ -505,10 +588,10 @@ def consume(path, repo, commit, *, dirty=False, at_head=None):
         if doc.get("schema") == "CanaryResult/v2" and not isinstance(reference, (str, os.PathLike)):
             errors = ["invalid original plan reference"]
         else:
-            errors = source_errors(doc, read, repo, commit, dirty=dirty)
+            errors = source_errors(doc, read, repo, commit, dirty=dirty, base_branch=base_branch)
     if not errors and doc.get("schema") == "CanaryResult/v2":
         import process_observation
-        errors = process_observation.bound_errors(doc, read)
+        errors = process_observation.bound_errors(doc, read, repo=repo)
     if errors:
         return {}, errors, doc if isinstance(doc, dict) else {}
     return {r["entity"]: dict(r) for r in doc["entity_verdicts"]}, [], doc
