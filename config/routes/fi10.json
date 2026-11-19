@@ -1,0 +1,82 @@
+{
+  "schema": "FI10RouteTable/v1",
+  "description": "FI10 class routes for arcana-agent-system. All routes disabled by default. Class D and class E remain non-autonomous and must stay disabled.",
+  "enabled": false,
+  "verifier_kind": "mock-only",
+  "installed_verifier_provenance": "not_measured",
+  "runtime_authorized": false,
+  "effect_authorized": false,
+  "knowledge_admitted": false,
+  "routes": [
+    {
+      "id": "fi10-class-a-local-mock",
+      "effect_class": "A",
+      "channel": "local-mock",
+      "enabled": false,
+      "external": false
+    },
+    {
+      "id": "fi10-class-b-local-mock",
+      "effect_class": "B",
+      "channel": "local-mock",
+      "enabled": false,
+      "external": false
+    },
+    {
+      "id": "fi10-class-c-local-mock",
+      "effect_class": "C",
+      "channel": "local-mock",
+      "enabled": false,
+      "external": false
+    },
+    {
+      "id": "fi10-class-d-official",
+      "effect_class": "D",
+      "channel": "external",
+      "enabled": false,
+      "external": true
+    },
+    {
+      "id": "fi10-class-e-official-letter",
+      "effect_class": "E",
+      "channel": "external",
+      "enabled": false,
+      "external": true
+    },
+    {
+      "id": "fi10-class-e-private-address",
+      "effect_class": "E",
+      "channel": "external",
+      "enabled": false,
+      "external": true
+    },
+    {
+      "id": "fi10-class-e-payment",
+      "effect_class": "E",
+      "channel": "external",
+      "enabled": false,
+      "external": true
+    },
+    {
+      "id": "fi10-class-e-contract",
+      "effect_class": "E",
+      "channel": "external",
+      "enabled": false,
+      "external": true
+    },
+    {
+      "id": "fi10-class-e-physical-work",
+      "effect_class": "E",
+      "channel": "external",
+      "enabled": false,
+      "external": true
+    },
+    {
+      "id": "fi10-class-e-social-publish",
+      "effect_class": "E",
+      "channel": "publisher",
+      "enabled": false,
+      "external": true
+    }
+  ]
+}
