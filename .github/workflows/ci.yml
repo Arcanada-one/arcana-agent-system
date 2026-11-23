@@ -92,7 +92,7 @@ jobs:
         run: bash -n packaging/broker-lifecycle.sh packaging/tests/lifecycle-rehearsal.sh
 
   security-audit:
-    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@5800861ad1e1a75f7e3ad986212a0faeaa1bfc98
+    uses: Arcanada-one/datarim/.github/workflows/reusable-security-audit.yml@2ef3dc606919c1b82c5fb440b49519f7f2a1e293 # v4.12.9
     with:
       stack: rust_cargo
       # Public pull-request code must not execute on a persistent self-hosted
@@ -100,10 +100,10 @@ jobs:
       runner_labels: '["ubuntu-24.04"]'
 
   network-exposure-lint:
-    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@4225a082c3f341d907abca5b6610807314605a9d
+    uses: Arcanada-one/datarim/.github/workflows/network-exposure-lint.yml@2ef3dc606919c1b82c5fb440b49519f7f2a1e293 # v4.12.9
     with:
       compose_paths: ''
-      datarim_ref: '5800861ad1e1a75f7e3ad986212a0faeaa1bfc98'
+      datarim_ref: '2ef3dc606919c1b82c5fb440b49519f7f2a1e293'
       # Pinned to a hosted runner for the same reason security-audit above is: the
       # reusable workflow defaults to ["self-hosted","linux","ci-general"], and that
       # pool is oversubscribed. Jobs queued there expire after 24h and are
