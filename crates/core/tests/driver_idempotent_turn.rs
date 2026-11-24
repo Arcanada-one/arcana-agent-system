@@ -717,3 +717,92 @@ async fn a_wait_that_costs_no_prompt_build_still_polls_the_upstream() {
         cost.prompt_builds
     );
 }
+
+// ---------------------------------------------------------------------------
+// G07: a changed payload after an unknown outcome is refused, not redispatched.
+
+/// First dispatch is cut (client timeout: the provider may have executed it).
+/// While it fails the shared cost tracker moves, so the remaining budget the
+/// next request carries differs — the payload changes under the series.
+struct ChangingPayloadConnector {
+    cost: Arc<CostTracker>,
+    calls: AtomicUsize,
+    keys: Mutex<Vec<Option<IdempotencyKey>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelConnector for ChangingPayloadConnector {
+    async fn execute(&self, req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
+        self.keys.lock().unwrap().push(req.idempotency_key.clone());
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.cost.record_llm_call("m", 1, 1, 0.25);
+            return Err(ConnectorError::Timeout("cut".into()));
+        }
+        Ok(response("done at last", 0.0))
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn g07_a_changed_payload_after_an_unknown_outcome_is_not_redispatched() {
+    let cost = Arc::new(CostTracker::new());
+    let connector = ChangingPayloadConnector {
+        cost: Arc::clone(&cost),
+        calls: AtomicUsize::new(0),
+        keys: Mutex::new(Vec::new()),
+    };
+    let (executor, _audit_dir) = common::test_executor(
+        ToolDispatcher::new(),
+        common::allow_cascade(),
+        HookChain::new(),
+    );
+    let mut cfg = config();
+    cfg.max_cost_usd = Some(1.0);
+    let out = Driver::new(&connector, &executor, cost, CancellationToken::new(), cfg)
+        .run("answer the question")
+        .await;
+
+    assert_eq!(
+        connector.calls.load(Ordering::SeqCst),
+        1,
+        "a changed payload was dispatched after an unknown outcome: {:?}",
+        connector.keys.lock().unwrap()
+    );
+    assert_eq!(out.reason, TerminalReason::ConnectorFatal);
+    let detail = out.terminal_detail.unwrap_or_default();
+    assert!(
+        detail.contains("reconcil"),
+        "the verdict must say reconciliation is required: {detail}"
+    );
+}
+
+/// Same payload twice (same key), then the server says the key belongs to a
+/// different request. The first attempt's outcome is unknown, so abandoning
+/// the key and dispatching again could execute and charge the work twice.
+struct CutThenKeyReused {
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl ModelConnector for CutThenKeyReused {
+    async fn execute(&self, _req: ExecuteRequest) -> Result<ConnectorResponse, ConnectorError> {
+        match self.calls.fetch_add(1, Ordering::SeqCst) {
+            0 => Err(ConnectorError::Timeout("cut".into())),
+            1 => Err(key_reused()),
+            _ => Ok(response("done at last", 0.0)),
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn g07_a_reused_key_after_an_unknown_outcome_is_not_abandoned_for_a_fresh_dispatch() {
+    let connector = CutThenKeyReused {
+        calls: AtomicUsize::new(0),
+    };
+    let out = drive(&connector, config()).await;
+    assert_eq!(
+        connector.calls.load(Ordering::SeqCst),
+        2,
+        "the key was abandoned and the work dispatched a third time"
+    );
+    assert_eq!(out.reason, TerminalReason::ConnectorFatal);
+}
